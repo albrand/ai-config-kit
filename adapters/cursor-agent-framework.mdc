@@ -1,0 +1,33 @@
+---
+description: Apply the repository Agent Configuration Framework before substantial coding-agent work.
+globs:
+alwaysApply: true
+---
+
+# Agent Configuration Framework
+
+Before substantial repository work, read and follow:
+
+- `docs/agent-framework/AI_BOOTSTRAP.md`
+- `docs/agent-framework/FRAMEWORK_MANIFEST.md`
+- `docs/agent-framework/GLOBAL_AGENTS.md`
+- `docs/agent-framework/OPERATING_MODEL.md`
+- `docs/agent-framework/AGENT_ORCHESTRATION.md`
+- `docs/agent-framework/HARNESS_STRATEGY.md`
+- `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
+- `docs/agent-framework/QUALITY_GATES.md`
+- `docs/agent-framework/QUALITY_CONVERGENCE.md`
+- `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
+
+Required behavior:
+
+- Analyze before acting.
+- Plan before editing.
+- Map the impacted surface.
+- Verify the framework manifest and active harness capabilities.
+- Route work through the harness only when useful and supported.
+- Keep changes scoped.
+- Verify before completion.
+- Report failed, blocked, skipped, and not-run checks explicitly.
+
+If a referenced framework file is missing, ask the user to provide or install the framework before substantial implementation.
