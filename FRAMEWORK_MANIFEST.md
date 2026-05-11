@@ -24,6 +24,7 @@ Core files:
 - `QUALITY_GATES.md`: validation levels and truth-reporting rules.
 - `QUALITY_CONVERGENCE.md`: iterative targets, scoring, feedback loops, breakpoints, and stop conditions.
 - `REVIEW_AND_PR_FRAMEWORK.md`: review posture and PR evidence requirements.
+- `TOKEN_ECONOMY.md`: empirical token-cost recipes (model tier mapping, prompt compression, output filtering, memory hygiene). Complements `HARNESS_STRATEGY.md`.
 - `TEMPLATES.md`: copyable output templates.
 
 Support files:
@@ -61,8 +62,9 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 6. `ARCHITECTURE_AND_CODE_QUALITY.md`
 7. `QUALITY_GATES.md`
 8. `QUALITY_CONVERGENCE.md` when quality targets require iteration
-9. `TEMPLATES.md` when a structured plan or report is useful
-10. `SESSION_JOURNALING.md` if the repo uses journals
+9. `TOKEN_ECONOMY.md` when delegating, designing sub-agent prompts, or evaluating cost
+10. `TEMPLATES.md` when a structured plan or report is useful
+11. `SESSION_JOURNALING.md` if the repo uses journals
 
 ### Debugging Profile
 
@@ -104,8 +106,9 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 1. Implementation Profile
 2. `AGENT_ORCHESTRATION.md`
 3. `HARNESS_STRATEGY.md`
-4. `QUALITY_GATES.md`
-5. `CONTINUOUS_SKILL_LEARNING.md`
+4. `TOKEN_ECONOMY.md`
+5. `QUALITY_GATES.md`
+6. `CONTINUOUS_SKILL_LEARNING.md`
 
 ## Harness Capability Record
 

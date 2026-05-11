@@ -205,6 +205,8 @@ Bypass cache when the user asks to:
 
 Cache is an optimization layer, not a replacement for reasoning. Fresh source-of-truth evidence beats cached conclusions.
 
+For empirical token-cost recipes — model tier examples, sub-agent prompt compression, output-proxy hooks, and memory hygiene — see `TOKEN_ECONOMY.md`.
+
 ## Anti-Drift Rules
 
 Delegated agents must not:
