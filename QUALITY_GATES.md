@@ -16,13 +16,14 @@ Never imply that skipped or unrun checks passed.
 
 ## Harness Validation Rules
 
-When a harness routes work to delegated agents or smaller models:
+When a harness routes work to delegated agents, smaller models, or another AI tool:
 
 - Each code-producing delegated task should run, generate, or request validation tied to its contract.
-- The master agent must review delegated validation before relying on it.
+- The master or coordinator must review delegated and counterpart validation before relying on it.
 - Validation evidence should name the command, check, or direct behavior observed.
-- A delegated "looks good" is not validation evidence.
+- A delegated or counterpart "looks good" is not validation evidence.
 - Repeated validation failures should escalate to the master or strongest available model instead of broadening the patch.
+- If counterpart access is blocked, unavailable, or unauthenticated, report that capability gap and run the strongest single-agent validation available.
 
 ## Evidence Requirement
 

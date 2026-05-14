@@ -8,8 +8,12 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 
 | Skill | Use When | Expected Output |
 | --- | --- | --- |
-| `analysis-plan-delegate` | Every non-trivial request | Analysis, plan, context expansion, delegation decision, validation report |
-| `harness-routing` | Work that can use model tiers, sub-agents, cache, or delegated validation | Routing plan, model choice, cache decision, escalation triggers |
+| `analysis-plan-delegate` | Every non-trivial request; also when the prompt says `subagents swarm allowed` | Analysis, plan, context expansion, delegation decision, validation report |
+| `harness-routing` | Work that can use model tiers, sub-agents, cache, delegated validation, or the prompt phrase `subagents swarm allowed` | Routing plan, model choice, cache decision, escalation triggers |
+| `token-efficiency` | Delegating to sub-agents, choosing model tiers, coordinating another AI, shaping long prompts, or controlling noisy output | Smallest capable tier, compressed brief, output cap, preserved exact evidence |
+| `cross-agent-coordination` | Work can benefit from another AI tool acting as peer critic, explorer, executor, verifier, or summarizer; also when the prompt says `subagents swarm allowed` and a counterpart may be useful | Communication plan, counterpart capability gate, output contract, fallback |
+| `mcp-routing` | Before using MCPs or external integrations, or when a new registered MCP server appears | Repo/folder/workflow allow-list decision, ask-before-use prompt, external-system fallback |
+| `context-reset` | User changes workflow, repo, incident, objective, or the context window is overloaded | Resume packet for previous work and a clean active scope for the new task |
 | `instruction-discovery` | Starting repo work or changing directories | Applicable instruction files and scope order |
 | `session-journal` | Repo work that needs durable notes | Local action, decision, issue, and validation timeline |
 | `systematic-debugging` | Bugs, failing tests, CI failures, deploy failures, env mismatches | Reproducer, root cause or hypothesis, smallest fix, validation |
@@ -73,6 +77,10 @@ Report...
 
 - One skill should cover one recurring workflow.
 - Trigger text should be concrete.
+- If a skill should translate a user phrase into a runtime routing decision,
+  include the exact phrase in the trigger description and define what it
+  authorizes, what it does not force, and which safety, privacy, budget, and
+  validation checks still apply.
 - Workflow steps should be ordered.
 - Guardrails should describe what the agent must not do.
 - Output requirements should be easy to check.

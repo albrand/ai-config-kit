@@ -30,6 +30,7 @@ If two sources conflict, stop and ask a direct question before implementing.
 - Use instruction discovery at the start of repo work and after changing directories.
 - Use session journaling when enabled for this repository.
 - Use harness routing when the tool supports sub-agents, model tiers, cache, or delegated validation.
+- Use cross-agent coordination when another AI tool can participate as peer critic, explorer, bounded executor, verifier, or summarizer.
 - Use systematic debugging before patching bugs or unexpected behavior.
 - Use big-change planning for architecture, auth, security, schema, migration, release, infrastructure, or broad refactor work.
 - Use verification-before-completion before closing implementation, docs, config, workflow, or generated-artifact work.
@@ -42,8 +43,10 @@ Fill in repo or tool-specific harness support:
 
 - Framework path and manifest: `[path]`.
 - Sub-agents available: `[yes/no/limited]`.
+- Cross-agent counterpart access: `[yes/no/limited]`.
 - Model routing available: `[yes/no/limited]`.
 - Cache available: `[yes/no/limited]`.
+- MCP or external integration routing: `[yes/no/limited and routing source]`.
 - Validation executor available: `[yes/no/limited]`.
 - File edit access available: `[yes/no/limited]`.
 - Network or external tools available: `[yes/no/limited]`.
@@ -52,9 +55,26 @@ Fill in repo or tool-specific harness support:
 Defaults:
 
 - The master agent owns judgment, architecture, escalation, integration, and final review.
+- If the live user prompt includes the exact phrase `subagents swarm allowed`,
+  treat it as explicit authorization and request wording for sub-agents,
+  parallel delegation, model routing, and cross-agent counterpart routing when
+  useful and supported, without bypassing capability, privacy, safety, budget,
+  stop-condition, anti-drift, or validation checks.
 - Delegated agents own only bounded execution slices with explicit validation.
+- When another AI tool participates, create a communication plan first: coordinator, counterpart, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
 - Use the smallest capable model or agent only when the result can be validated.
+- In Codex environments with `gpt-5.3-codex-spark`, route the first safe
+  bounded sidecar for quick or standard work to Spark when useful. Before using
+  a stronger Codex tier for delegated work, ask whether Spark can safely handle
+  the bounded task.
+- Treat subagent concurrency as finite. Close idle or stale agents after their
+  results are integrated, and close stale agents first if thread capacity is
+  exhausted.
+- Use MCPs and external integrations only when enabled for the current repo,
+  folder, or workflow, or when the user explicitly asks for that system.
 - Bypass cache when source-of-truth files changed or the user asks for fresh, current, repeated, or from-scratch analysis.
+- Reset active context on workflow, repo, incident, or objective changes. Leave
+  a resume packet for the previous workflow when useful before continuing.
 - Report unavailable, blocked, or unverified capabilities before relying on a fallback.
 - Define breakpoints before high-risk phases, especially for architecture, security, data, release, destructive operations, and scope expansion.
 

@@ -19,6 +19,7 @@ Load order:
 5. Read the repo-local instruction file if one is provided.
 6. Read the task-relevant framework files:
    - Planning or normal implementation: `REPO_AGENTS_TEMPLATE.md`, `SKILLS_CATALOG.md`, `AGENT_ORCHESTRATION.md`, `HARNESS_STRATEGY.md`, `ARCHITECTURE_AND_CODE_QUALITY.md`, `QUALITY_GATES.md`.
+   - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
    - Review or PR work: also read `REVIEW_AND_PR_FRAMEWORK.md`.
@@ -32,6 +33,14 @@ After loading the files, build an active instruction model:
 - Source-of-truth order.
 - Active repo-local rules.
 - Harness capabilities available in this AI tool.
+- Whether the live prompt includes `subagents swarm allowed`, and therefore
+  explicitly authorizes sub-agents, parallel delegation, model routing, and
+  cross-agent counterpart routing when useful and supported.
+- Cross-agent counterpart availability and fallback, if another AI tool could participate.
+- Whether model routing exposes a bounded worker tier such as Codex
+  `gpt-5.3-codex-spark`, and whether it can handle the first safe sidecar.
+- Which MCP or external integration connections are enabled for the current
+  repo, folder, or workflow.
 - Workflow track: quick, standard, big-change, recovery, or review.
 - Required skills or processes.
 - Quality gates and quality convergence triggers.
@@ -44,6 +53,7 @@ Before substantial implementation, respond with a concise plan containing:
 - Source-of-truth files loaded.
 - Workflow track.
 - Harness capability map.
+- Cross-agent communication plan when another AI tool participates.
 - Impacted surface to inspect.
 - Recommended approach.
 - Validation and quality gates.
@@ -58,7 +68,30 @@ Execution rules:
 - Keep repo-local instructions above generic framework defaults for local architecture, validation, and workflow details.
 - Treat the active thread as the master owner of user intent, architecture, ambiguity, escalation, integration, final validation truth, and delivery.
 - Use sub-agents, model routing, cache, and delegated validation only when the active tool actually supports them and the result can be validated.
+- In Codex, default bounded low-risk delegated execution to
+  `gpt-5.3-codex-spark` when model choice is available. For quick or standard
+  work, route the first safe bounded sidecar to Spark when useful. Before using
+  a stronger Codex tier for delegated work, ask whether Spark can safely handle
+  the bounded task.
+- If the live user prompt includes the exact phrase `subagents swarm allowed`,
+  treat it as explicit authorization and request wording for sub-agents,
+  parallel delegation, model routing, and cross-agent counterpart routing for
+  the current prompt or thread. It satisfies explicit-delegation wording gates,
+  but does not bypass capability, privacy, safety, budget, stop-condition,
+  anti-drift, or validation checks.
+- When another AI tool participates, the coordinator must create a communication plan first: coordinator and counterpart roles, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
+- Do not assume a user has multiple AI memberships, working authentication, or permission to use another tool. Treat blocked counterpart access as a normal capability gap.
 - If those capabilities are unavailable, keep the same lifecycle locally and report the limitation.
+- Treat subagent concurrency as a finite runtime budget. Reuse agents when
+  context matches, close idle or stale agents after integration, and close
+  stale agents first when a thread cap is reached.
+- Before using MCPs or external integrations, confirm they are enabled for the
+  current repo, folder, or workflow. If a new registered MCP server appears,
+  ask where it should be enabled before using it. If Replit OAuth returns
+  `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`
+  and use the fresh URL.
+- On workflow, repo, incident, or objective changes, reset active context and
+  leave a compact resume packet for the previous workflow when useful.
 - Define breakpoints before architecture, security, data, release, destructive, or scope-expanding decisions.
 - Use quality convergence when first-pass validation is insufficient or the work needs high confidence.
 - Do not iterate blindly: set target, max iterations, evidence requirements, and stop reason.
@@ -93,11 +126,14 @@ Report:
 3. Which repo-local instruction file controls this repository, if any.
 4. The active source-of-truth order.
 5. Your harness capability map.
-6. Required validation commands or gaps.
-7. Whether journaling is required.
-8. Which quality convergence triggers apply.
-9. Any conflicts or blockers before implementation.
-10. The smallest safe next step.
+6. Whether cross-agent counterpart access is available, blocked, unavailable, or not useful.
+7. Which token-economy strategy applies: progressive disclosure, deterministic pre-processing, output filtering, context compression, or none.
+8. Whether Claude or another cross-AI counterpart is useful, and if so the budget/output/privacy boundaries.
+9. Required validation commands or gaps.
+10. Whether journaling is required.
+11. Which quality convergence triggers apply.
+12. Any conflicts or blockers before implementation.
+13. The smallest safe next step.
 ```
 
 ## Compact Paste Mode
@@ -105,5 +141,5 @@ Report:
 Use this shorter version when the AI context is limited:
 
 ```text
-Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If a required framework file is missing, ask for it before substantial implementation.
+Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load only the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, token-economy strategy, bounded worker tier availability such as Codex Spark, MCP or external integration routing scope, cross-agent counterpart availability and fallback, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Use progressive disclosure and deterministic pre-processing before model-heavy reasoning. If the live prompt includes `subagents swarm allowed`, treat it as explicit authorization and request wording for sub-agents, parallel delegation, model routing, and cross-agent counterpart routing when useful and supported, without bypassing capability, privacy, safety, budget, stop-condition, anti-drift, or validation checks. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, reset active context on gear changes, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If Claude or another AI tool participates, create a communication plan first with budget/output caps, stop conditions, and privacy boundaries. If a required framework file is missing, ask for it before substantial implementation.
 ```

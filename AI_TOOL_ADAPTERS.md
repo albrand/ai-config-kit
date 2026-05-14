@@ -17,6 +17,7 @@ Use this for any AI assistant:
    - Debugging: `OPERATING_MODEL.md` plus `QUALITY_GATES.md`
    - Code quality: `ARCHITECTURE_AND_CODE_QUALITY.md`
    - Harness, model routing, cache, or delegation: `AGENT_ORCHESTRATION.md` plus `HARNESS_STRATEGY.md`
+   - Cross-agent or multi-tool coordination: `CROSS_AGENT_COORDINATION.md` plus `TOKEN_ECONOMY.md`
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`
    - Journaling: `SESSION_JOURNALING.md`
@@ -94,6 +95,19 @@ Recommended setup:
 - Use imports from `CLAUDE.md` to point to the framework files.
 - Keep local-only preferences out of shared project memory.
 
+When Claude Code is used alongside another coordinator, the coordinator should pass a compact counterpart brief instead of the full conversation. When Claude Code is the coordinator, it should create the same communication plan before asking another AI tool to critique, explore, execute, verify, or summarize work.
+
+For non-interactive Claude Code usage, prefer explicit constraints: model, permission mode, budget cap, allowed tools, output format, and a short output cap. Treat missing login, permission failures, or uncaptured output as a blocked counterpart capability and continue through the single-agent fallback.
+
+If the coordinator runs inside a sandbox that cannot see Claude Code auth while the normal host CLI is logged in, use an approved outside-sandbox `claude -p` invocation when platform policy allows it. Keep that route scoped to the counterpart command, and require a compact brief, `--max-budget-usd`, output cap, and stop conditions.
+
+Treat private-context handoff as a separate approval concern. Sanitize prompts
+by default; do not send secrets, broad board/release/customer context, or env
+matrices unless exact private facts are essential and approved. If the reviewer
+blocks the handoff, do not retry through wrappers, temporary files, or smaller
+fragments of the same data. Fall back to local verification or a paste-ready
+prompt for an approved environment.
+
 ## Codex
 
 Codex can be guided by `AGENTS.md` files placed in the repository. `AGENTS.md` files can describe how to navigate the codebase, run tests, and follow project practices.
@@ -104,6 +118,13 @@ Recommended setup:
 - Place framework files under a stable path such as `docs/agent-framework/`.
 - Put repo-specific validation commands and architecture rules in the repo `AGENTS.md`.
 - Use nested `AGENTS.md` files only for subtrees with different rules.
+- If Codex model routing is available, use `gpt-5.3-codex-spark` as the
+  default bounded sidecar tier for quick or standard work when useful and
+  cheap to validate.
+- Before using MCPs or external integrations from Codex, apply the local
+  repo/folder/workflow routing preferences. If a Replit MCP login returns
+  `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`
+  and use the fresh URL.
 
 ## Any Other AI Tool
 
@@ -123,7 +144,9 @@ Ask the AI to confirm:
 List the instruction layers you will follow.
 State which file controls global behavior.
 State which file controls repo-specific behavior.
-State which harness capabilities you can use: sub-agents, model routing, cache, and validation execution.
+State which harness capabilities you can use: sub-agents, model routing, cache, MCP or external integration routing, and validation execution.
+If Codex model routing is available, state whether `gpt-5.3-codex-spark` can handle the first safe bounded sidecar for this task.
+State whether cross-agent counterpart access is available, blocked, unavailable, or not useful for this task.
 State any missing required framework files.
 State which validation gates apply.
 Do not edit files yet.

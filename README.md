@@ -2,7 +2,7 @@
 
 This repository is a shareable, tool-neutral operating framework for AI coding agents.
 
-It tells an AI assistant how to discover instructions, analyze before acting, plan before editing, route work through available harness capabilities, use delegated agents safely, keep work resumable, enforce quality gates, and report validation truth.
+It tells an AI assistant how to discover instructions, analyze before acting, plan before editing, route work through available harness capabilities, coordinate with other AI tools when available, use delegated agents safely, keep work resumable, enforce quality gates, and report validation truth.
 
 The kit is intentionally generic. Do not add secrets, private URLs, non-public repository names, internal roadmap facts, credentials, private account identifiers, or domain-specific operating details to the shared files.
 
@@ -18,6 +18,7 @@ It provides:
 - Repo-level instruction templates for local architecture, validation, and workflow rules.
 - Tool adapters for AGENTS-compatible tools, Claude Code, Gemini CLI, Cursor, and generic chat assistants.
 - A harness model for master-thread ownership, delegated-agent routing, cache decisions, validation, and escalation.
+- A cross-agent coordination addendum for tool-neutral paired work where one AI coordinates another AI, peer reviewer, or external executor.
 - Quality gates for docs, code, UI, API, data, security, deployment, and review work.
 - A quality convergence loop for work that needs measured improvement across iterations.
 - Session journaling guidance for resumable local work.
@@ -29,7 +30,7 @@ It is not:
 - A package with a runtime build.
 - A replacement for repo-specific architecture rules.
 - A place to store private delivery workflows or sensitive operational data.
-- A guarantee that every AI tool supports sub-agents, model routing, cache, shell access, or validation execution.
+- A guarantee that every AI tool supports sub-agents, model routing, cache, shell access, validation execution, or access to a second AI membership.
 
 ## Quick Start
 
@@ -116,11 +117,25 @@ The active AI thread should act as the master owner of:
 - Architecture and ambiguity decisions.
 - Task decomposition.
 - Delegated-agent contracts.
+- Cross-agent communication plans when a second AI tool participates.
 - Integration.
 - Final validation truth.
 - Delivery report.
 
 Delegated agents, smaller models, cache, and validation executors are optional harness capabilities. Use them only when the active tool actually supports them and the output can be reviewed.
+
+In Codex environments with model routing, `gpt-5.3-codex-spark` is the default
+bounded worker/explorer tier for low-risk quick or standard subtasks. Route the
+first safe bounded sidecar to Spark when useful and cheap to validate; keep
+architecture, security, data-loss risk, production release gates, ambiguous
+debugging, broad refactors, and final review verdicts in the master thread or
+strongest available reasoning path.
+
+External integrations are also scoped capabilities. Before using MCPs or other
+external tools, confirm they are enabled for the current repo, folder, or
+workflow. Ask before using unrecorded or newly registered MCP servers, and keep
+local repository truth above external convenience when code behavior is the
+question.
 
 ## Repository Layout
 
@@ -137,6 +152,7 @@ Delegated agents, smaller models, cache, and validation executors are optional h
 | `adapters/` | Copyable bootstrap files for specific AI tools. |
 | `SKILLS_CATALOG.md` | Recommended global skills, repo-local skill examples, skill shape, promotion rules, and anti-patterns. |
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
+| `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
 | `HARNESS_STRATEGY.md` | Master/sub-agent routing, model tiers, cache rules, anti-drift rules, escalation, validation, and delivery standards. |
 | `SESSION_JOURNALING.md` | Local execution journal protocol for resumable repository work. |
 | `CONTINUOUS_SKILL_LEARNING.md` | Promotion ladder for turning repeated lessons into rules, skills, templates, or automated gates. |
@@ -172,12 +188,14 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 2. `REPO_AGENTS_TEMPLATE.md` or the adopted repo instruction file
 3. `SKILLS_CATALOG.md`
 4. `AGENT_ORCHESTRATION.md`
-5. `HARNESS_STRATEGY.md`
-6. `ARCHITECTURE_AND_CODE_QUALITY.md`
-7. `QUALITY_GATES.md`
-8. `QUALITY_CONVERGENCE.md` when quality targets require iteration
-9. `TEMPLATES.md` when a structured plan or report is useful
-10. `SESSION_JOURNALING.md` if the repo uses journals
+5. `CROSS_AGENT_COORDINATION.md` when another AI tool, external agent, or peer reviewer may participate
+6. `HARNESS_STRATEGY.md`
+7. `ARCHITECTURE_AND_CODE_QUALITY.md`
+8. `QUALITY_GATES.md`
+9. `QUALITY_CONVERGENCE.md` when quality targets require iteration
+10. `TOKEN_ECONOMY.md` when delegation, cross-agent coordination, prompt compression, or cost control matters
+11. `TEMPLATES.md` when a structured plan or report is useful
+12. `SESSION_JOURNALING.md` if the repo uses journals
 
 ### Debugging Profile
 
@@ -218,9 +236,11 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 
 1. Implementation profile
 2. `AGENT_ORCHESTRATION.md`
-3. `HARNESS_STRATEGY.md`
-4. `QUALITY_GATES.md`
-5. `CONTINUOUS_SKILL_LEARNING.md`
+3. `CROSS_AGENT_COORDINATION.md`
+4. `HARNESS_STRATEGY.md`
+5. `TOKEN_ECONOMY.md`
+6. `QUALITY_GATES.md`
+7. `CONTINUOUS_SKILL_LEARNING.md`
 
 ## Tool Adapters
 
@@ -261,17 +281,58 @@ Capabilities to record:
 - Shell or command execution.
 - Validation execution.
 - Sub-agents or delegation.
+- Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
+- MCP or external integration routing.
 - Network or external tools.
 - Browser or UI verification.
 - Persistent journals.
 
 Fallback rule:
 
-- If sub-agents, model routing, cache, browser verification, or shell execution are unavailable, keep the same lifecycle locally.
+- If sub-agents, cross-agent counterpart access, model routing, cache, browser verification, or shell execution are unavailable, keep the same lifecycle locally.
 - Do not pretend a blocked capability exists.
 - Report the limitation in the plan and close-out.
+
+Codex Spark rule:
+
+- When Codex model routing is available, route the first safe bounded sidecar
+  for quick or standard work to `gpt-5.3-codex-spark` when useful.
+- Before using a stronger Codex tier for delegated work, explicitly ask whether
+  Spark can safely handle the bounded task.
+- Spark delegates should stop on scope expansion, conflicting requirements,
+  repeated validation failure, missing source-of-truth context, or security and
+  data concerns.
+
+Swarm phrase contract:
+
+- If the live user prompt includes the exact phrase `subagents swarm allowed`,
+  treat it as explicit authorization and request wording for sub-agents,
+  parallel delegation, model routing, and cross-agent counterpart routing for
+  that prompt or thread.
+- The phrase enables routing when useful and supported. It does not bypass
+  capability checks, privacy filtering, budget/output caps, stop conditions,
+  anti-drift rules, validation, or the single-agent fallback.
+
+MCP and external integration rule:
+
+- Prefer local repo truth for code behavior. Use MCPs and external integrations
+  when the external system owns the answer or when the user explicitly asks for
+  that system.
+- Keep MCPs scoped by repo, folder, or workflow. On first folder-level use, ask
+  which registered connections are enabled. If a new MCP server appears, ask
+  where it should be enabled before using it.
+- If Replit OAuth returns `invalid_scope` or generates an auth URL without
+  scopes, rerun `codex mcp login --scopes openid,profile,email replit` and use
+  the fresh URL.
+
+Gear-change rule:
+
+- When the user switches workflow, repo, incident, or objective, stop carrying
+  the previous workflow as active context. Leave a compact resume packet when
+  useful, then reload only the relevant instructions, source files, external
+  systems, and validation requirements for the new objective.
 
 ## Standard Workflow
 
@@ -284,7 +345,7 @@ For normal repository work:
 3. Planning.
    - State objective, scope, non-goals, impacted surface, approach, validation, rollback or fallback, breakpoints, and stop conditions.
 4. Harness routing.
-   - Decide what stays local, what can be delegated, what model tier is appropriate, whether cache is safe, and what validation each unit must produce.
+   - Decide what stays local, what can be delegated, whether another AI tool should participate, what model tier is appropriate, whether cache is safe, and what validation each unit must produce.
 5. Implementation or analysis.
    - Keep changes scoped, preserve repo boundaries, and ask when controlling sources conflict.
 6. Integration.
@@ -314,6 +375,8 @@ Small-looking tasks can become `big-change` if they touch security, data, auth, 
 
 Use delegated agents or smaller models only when the work is separable, supported by the active tool, and reviewable.
 
+When another AI tool is available, treat it as a counterpart capability rather than a mandatory dependency. The coordinator may use the counterpart as a peer critic, explorer, bounded executor, verifier, or summarizer, but must first create a communication plan: coordinator and counterpart roles, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
+
 Delegate when:
 
 - Independent questions can be answered in parallel.
@@ -342,6 +405,8 @@ Every delegated task needs:
 - Coordination warning that the worker must not revert unrelated edits.
 
 The master thread must review delegated output before relying on it.
+
+Cross-agent work should produce better results than either tool alone. If the counterpart is unauthenticated, rate-limited, unavailable, too expensive, or not useful for the task, keep the same lifecycle in the coordinator and report the capability gap instead of lowering validation standards.
 
 ## Quality Gates
 
@@ -620,7 +685,7 @@ When distributing the framework:
 4. Exclude `.git/`, local journals, temporary files, credentials, and private overlays.
 5. After creating an archive, list its contents and verify it includes the current README and manifest.
 
-`FRAMEWORK_MANIFEST.md` references `config-kit.zip` as the conventional distributable archive name. Treat that archive as generated distribution output unless your repo intentionally tracks it.
+`FRAMEWORK_MANIFEST.md` references `config-kit.zip` as the conventional distributable archive name. Some older checkouts track `Archive.zip`. Treat archives as generated distribution output unless your repo intentionally tracks one, and do not leave the active archive stale after framework changes.
 
 ## Shareability And Security Checklist
 

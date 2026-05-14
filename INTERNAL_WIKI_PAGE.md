@@ -4,7 +4,7 @@
 
 This framework defines a reusable way to configure AI coding agents across teams.
 
-It standardizes how agents analyze, plan, inspect context, route work through a harness, delegate, journal, learn durable skills, apply architecture standards, run quality gates, and report validation truth.
+It standardizes how agents analyze, plan, inspect context, route work through a harness, coordinate with other AI tools when available, delegate, journal, learn durable skills, apply architecture standards, run quality gates, and report validation truth.
 
 It must not include sensitive details, non-public repository names, internal roadmap facts, private URLs, credentials, or closed-scope domain specifics.
 
@@ -28,16 +28,19 @@ It must not include sensitive details, non-public repository names, internal roa
 5. Harness strategy
    - Use `HARNESS_STRATEGY.md` to define master/sub-agent routing, model tiers, cache rules, anti-drift, escalation, and validation ownership.
 
-6. Quality convergence
+6. Cross-agent coordination
+   - Use `CROSS_AGENT_COORDINATION.md` when one AI tool coordinates another AI tool as peer critic, explorer, bounded executor, verifier, or summarizer.
+
+7. Quality convergence
    - Use `QUALITY_CONVERGENCE.md` when work needs measured iterations, breakpoints, and explicit stop conditions.
 
-7. Repo instruction file
+8. Repo instruction file
    - Use `REPO_AGENTS_TEMPLATE.md` in each repository.
 
-8. Repo-local process docs
+9. Repo-local process docs
    - Add only when the workflow is local to that repository.
 
-9. Optional local journals
+10. Optional local journals
    - Use `SESSION_JOURNALING.md` if the repo needs resumable execution notes.
 
 ## What Belongs Globally
@@ -46,6 +49,7 @@ It must not include sensitive details, non-public repository names, internal roa
 - Analysis and planning.
 - Delegation doctrine.
 - Harness routing and cache discipline.
+- Cross-agent communication plans and single-agent fallback.
 - Framework manifest and readiness standards.
 - Quality convergence standards.
 - Debugging workflow.
@@ -75,7 +79,7 @@ It must not include sensitive details, non-public repository names, internal roa
 - [ ] Add the framework manifest and required file inventory.
 - [ ] Add the adapter for each AI tool the team uses.
 - [ ] Add global skills.
-- [ ] Define harness support for sub-agents, model routing, cache, and validation execution.
+- [ ] Define harness support for sub-agents, cross-agent counterpart access, model routing, cache, and validation execution.
 - [ ] Add repo instruction file.
 - [ ] Define repo source-of-truth order.
 - [ ] Define architecture boundaries.
@@ -102,6 +106,7 @@ State which bootstrap or adapter file you loaded.
 State whether CONFIG_KIT_AI_PROMPT.md was loaded.
 State which framework manifest you loaded.
 State which harness capabilities are available.
+State whether cross-agent counterpart access is available, blocked, unavailable, or not useful.
 State whether session journaling is required.
 State which validation commands are required for code changes.
 Do not edit files.

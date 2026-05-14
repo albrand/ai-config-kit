@@ -27,6 +27,32 @@ Before reviewing:
 - Identify relevant tests.
 - Keep review scoped to the changed surface unless the user requests broader review.
 
+## Interactive Review Mode
+
+Use this mode when repo instructions or the user request an interactive
+section-by-section review instead of a single findings report.
+
+Before starting, ask the user to choose the review depth:
+
+- `1/ BIG CHANGE`: interactive section-by-section review with at most four top
+  issues per section: Architecture, Code Quality, Tests, Performance.
+- `2/ SMALL CHANGE`: interactive review with exactly one question per review
+  section.
+
+Use the platform's structured user-question tool when available. If the
+platform names that tool `AskUserQuestion`, use it for the decision prompt. If
+the active tool exposes a different structured question mechanism, use the
+closest equivalent; otherwise ask a direct textual question and wait.
+
+For each issue or recommendation, provide two or three options and include
+"do nothing" when reasonable. Label options with letters. For each option,
+state implementation effort, risk, impact on other code, and maintenance
+burden. Put the recommended option first in the decision prompt, and include
+both issue number and option letter in each structured option.
+
+Pause after each review section and wait for feedback before moving to the next
+section.
+
 ## Review Criteria
 
 Check:

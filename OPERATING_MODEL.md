@@ -43,7 +43,7 @@ When layers conflict:
 - State objective, scope, non-goals, assumptions, approach, validation, and rollback.
 - State phase gates, breakpoints, and stop conditions for high-risk work.
 - Decide what stays local and what can be delegated.
-- Decide whether model routing, cache, or fresh reasoning applies.
+- Decide whether cross-agent coordination, model routing, cache, or fresh reasoning applies.
 - Keep judgment and escalation ownership in the master thread.
 
 4. Harness routing.
@@ -51,10 +51,18 @@ When layers conflict:
 - Record actual harness capabilities as available, limited, blocked, unavailable, or unknown.
 - Decompose work into small, verifiable units.
 - Route each unit to the smallest capable model or agent.
+- In Codex, prefer `gpt-5.3-codex-spark` for the first safe bounded sidecar on
+  quick or standard work when model routing is available and validation is
+  cheap. Before using a stronger Codex tier for delegated work, ask whether
+  Spark can safely handle the bounded task.
+- When another AI tool participates, create the communication plan before joint work.
 - Pass only the context required for that unit.
 - Define success criteria, allowed outputs, validation, and escalation conditions.
 - Bypass cache when sources changed or the user requested fresh analysis.
 - If a harness capability is unavailable, keep the same lifecycle locally and report the fallback.
+- Before using MCPs or external integrations, verify that the integration is
+  enabled for the current repo, folder, or workflow. Ask before using
+  repo-scoped or conditional integrations with no routing preference.
 
 5. Implementation or analysis.
 
@@ -66,6 +74,7 @@ When layers conflict:
 6. Integration.
 
 - Review changes and delegated work.
+- Review counterpart output before relying on it.
 - Resolve duplicated logic, boundary leaks, and naming drift.
 - Keep unrelated existing changes intact.
 
@@ -90,6 +99,25 @@ When layers conflict:
 - Report the next required workflow step when there is one.
 - Report residual risk.
 - Close or update any local session journal if used.
+
+## Gear-Change Reset
+
+When the user changes workflows, switches repositories, pivots incidents, or
+starts a new objective, reset the active scope instead of carrying stale
+workflow state forward.
+
+Before the pivot, leave a compact resume packet when useful:
+
+- Current phase.
+- Last completed step and evidence.
+- Pending breakpoint.
+- Blocked or skipped validation.
+- Next exact step.
+- Residual risk.
+
+Treat context-window overload warnings as a process signal. Compress active
+state into a small note or journal entry, discard stale assumptions, and resume
+from current source-of-truth evidence.
 
 ## Task Classification
 

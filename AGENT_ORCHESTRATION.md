@@ -6,11 +6,20 @@ This document defines when and how to use multiple agents or delegated subtasks.
 
 The master agent owns judgment, architecture, ambiguity resolution, escalation, integration, final validation truth, and delivery.
 
-Delegated agents own only the bounded work assigned to them. Use `HARNESS_STRATEGY.md` for model-tier routing, cache rules, anti-drift rules, and escalation rules.
+Delegated agents own only the bounded work assigned to them. When a separate AI tool participates as a peer, executor, verifier, or summarizer, use `CROSS_AGENT_COORDINATION.md` for the communication plan and capability gate. Use `HARNESS_STRATEGY.md` for model-tier routing, cache rules, anti-drift rules, and escalation rules.
 
 ## When To Delegate
 
 First verify whether delegation is available in the active tool. Use the capability record in `FRAMEWORK_MANIFEST.md`; do not assume a tool supports sub-agents because this framework describes them.
+
+Also verify whether cross-agent counterpart access is available before planning joint work. A second AI tool may be blocked by missing membership, authentication, permissions, rate limits, cost caps, or output-capture limits.
+
+If the live user prompt includes the exact phrase `subagents swarm allowed`,
+treat it as explicit authorization and request wording for sub-agents,
+parallel delegation, model routing, and cross-agent counterpart routing for the
+current prompt or thread. This satisfies tools that require explicit
+delegation wording, while preserving capability checks, privacy filtering,
+budget/output caps, anti-drift rules, validation, and single-agent fallback.
 
 Delegate when:
 
@@ -18,6 +27,9 @@ Delegate when:
 - Implementation slices have disjoint write scopes.
 - A side investigation can run while the main path continues.
 - Parallel validation can catch risks without blocking immediate progress.
+- In Codex, `gpt-5.3-codex-spark` or an equivalent bounded execution tier can
+  handle the first safe sidecar for quick or standard work while the master
+  keeps architecture, integration, and final validation.
 
 Keep work local when:
 
@@ -55,6 +67,14 @@ Verifier:
 - Runs focused checks or reviews a risky area.
 - Should not duplicate implementation.
 - Reports pass, fail, blocked, skipped, and residual risk.
+
+Counterpart:
+
+- A separate AI tool or session coordinated through an explicit communication plan.
+- May act as peer critic, explorer, worker, verifier, or summarizer.
+- Must receive only the context needed for its role.
+- Must follow the output cap, stop conditions, and evidence contract.
+- Does not override the coordinator's final integration responsibility.
 
 ## Delegation Brief Template
 
@@ -104,7 +124,13 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
 ## Routing Rules
 
 - Use the smallest model or agent that can complete the task with high confidence and validation.
+- For Codex model routing, default bounded low-risk execution to
+  `gpt-5.3-codex-spark` when available. Before using a stronger Codex tier for
+  delegated quick or standard work, ask whether Spark can safely handle the
+  bounded task.
 - Use narrow context for narrow work; do not hand the full repository context to a task that only needs a focused contract.
+- Use a separate AI tool when independent critique, parallel evidence gathering, bounded execution, or verification would improve quality or reduce coordinator context.
+- Do not require cross-agent work when the user or environment does not have the second tool, membership, authentication, or permission needed.
 - Keep architecture, security, data-loss, multi-system, and ambiguous decisions on the strongest available reasoning path.
 - If delegation is unavailable or blocked by tool policy, keep the task local and still decompose, validate, and review.
 - Do not use cached conclusions when source files, source-of-truth docs, prompt policy, or user freshness requirements changed.
@@ -112,10 +138,12 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
 
 ## Concurrency Rules
 
-- Treat agent slots as finite.
+- Treat agent slots and thread capacity as a finite external runtime budget.
 - Reuse agents when context matches.
 - Do not spawn speculative agents.
 - Close idle agents after their output is integrated.
+- If the session hits a thread cap, close stale agents first, then reuse or
+  resume the remaining agents before spawning more.
 - Do not keep agents open between unrelated tasks.
 
 ## Integration Checklist
@@ -126,6 +154,7 @@ After delegated work returns:
 - Check for scope drift.
 - Check for duplicated abstractions.
 - Check for conflict with source-of-truth docs.
+- Reconcile counterpart disagreements explicitly when they affect architecture, security, data, release, validation, or scope.
 - Run or record validation.
 - Close the agent if no longer needed.
 

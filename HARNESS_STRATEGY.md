@@ -56,6 +56,7 @@ Use `FRAMEWORK_MANIFEST.md` for the capability record. At minimum, check:
 - Shell or command execution.
 - Validation execution.
 - Sub-agents or delegation.
+- Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
 - Network or external tools.
@@ -72,6 +73,14 @@ Capability status must be one of:
 
 Do not design a route around an unverified capability. If a capability is blocked or unavailable, choose the local fallback and report the limitation.
 
+If the live user prompt includes the exact phrase `subagents swarm allowed`,
+treat it as explicit authorization and request wording for sub-agents,
+parallel delegation, model routing, and cross-agent counterpart routing for the
+current prompt or thread. The phrase is a routing gate opener, not a validation
+bypass: still verify available capabilities, privacy boundaries, budget and
+output caps, stop conditions, and whether delegation actually improves the
+workflow.
+
 ## Master Agent Responsibilities
 
 The master agent should own:
@@ -79,6 +88,7 @@ The master agent should own:
 - Full user intent.
 - Task decomposition.
 - Model and agent routing.
+- Cross-agent communication plans when another AI tool participates.
 - Global context and source-of-truth order.
 - Ambiguity resolution.
 - Architecture consistency.
@@ -94,7 +104,31 @@ The master agent should avoid low-level work when a narrower validated path is a
 - Mechanical validation.
 - Localized edits with a clear contract.
 
+When a separate AI tool is available, the master may coordinate it as a counterpart for peer critique, parallel exploration, bounded execution, independent verification, or summarization. Use `CROSS_AGENT_COORDINATION.md` to define the communication plan, capability gate, output contract, budget, stop conditions, and single-agent fallback.
+When Claude is the counterpart, use the Claude CLI contract from
+`CROSS_AGENT_COORDINATION.md`: bounded `claude -p`, explicit approval for any
+outside-sandbox route, `--max-budget-usd`, output cap, stop conditions, and
+privacy filtering.
+
 If delegation is unavailable, too expensive to specify, or blocked by platform policy, the master keeps the work local and preserves the same lifecycle.
+
+## Context Economy Before Routing
+
+Before routing work to a model, sub-agent, or external counterpart, reduce the
+context mechanically where possible:
+
+- Start with progressive disclosure: indexes, file lists, metadata, filtered
+  API fields, counts, and compact summaries.
+- Load full files, logs, PR bodies, ticket descriptions, framework docs, and
+  historical transcripts only when the next routing or implementation decision
+  needs them.
+- Use deterministic pre-processing (`rg`, structured API fields, `--json`,
+  `--jq`, sorted lists, focused filters) before asking a model to reason.
+- Preserve exact source-of-truth snippets for diffs, failures, security
+  findings, schema details, identifiers, paths, and conflicting requirements.
+- Compress stale middle history while preserving the original objective,
+  active constraints, recent evidence, current plan, unresolved risks, and
+  validation state.
 
 ## Routing Principle
 
@@ -118,8 +152,40 @@ Routing output should state:
 
 - What stays in the master thread.
 - What can be delegated or run through a narrower model.
+- Whether cross-agent counterpart work is available, useful, blocked, or skipped.
 - What validation each routed unit must produce.
 - Which capabilities are unavailable and which fallback is being used.
+
+## Codex Spark Default Profile
+
+When the active harness is Codex and model choice is available,
+`gpt-5.3-codex-spark` is the default bounded execution tier for low-risk work.
+
+For quick or standard workflows, route the first safe bounded sidecar to Spark
+when it can run in parallel without blocking the critical path. The master
+thread still owns architecture, integration, escalation, and final validation
+truth.
+
+Spark-fit work includes:
+
+- File discovery and narrow codebase questions.
+- Log, check, and noisy output summarization.
+- Formatting, JSON shaping, naming, boilerplate, and deterministic refactors.
+- Small docs edits.
+- Focused test updates.
+- Localized worker patches with disjoint ownership and cheap validation.
+
+Before routing a delegated quick or standard subtask to a stronger Codex tier,
+explicitly ask whether Spark can safely handle the bounded work. Valid reasons
+to use a stronger path include architecture, security or auth risk, data-loss
+risk, dependency strategy, production release gates, ambiguous debugging, broad
+cross-module refactors, final review verdicts, or failures that are expensive
+to detect with focused validation.
+
+Spark delegates must stop and return a concise blocker when scope expands,
+requirements conflict, source-of-truth context is missing, validation fails
+twice, security or data concerns appear, or the next decision requires broad
+context outside the brief.
 
 ## Model Tiers
 
@@ -182,6 +248,38 @@ Every delegated task should include:
 
 Delegated agents should not redesign architecture, introduce dependencies, expand scope, or modify unrelated files unless the master explicitly changes the contract.
 
+## Concurrency And Thread Budget
+
+Subagent concurrency is a finite external runtime budget, not an unlimited
+resource.
+
+- Reuse existing agents when their context matches the next bounded task.
+- Do not spawn speculative agents just because delegation is available.
+- Close idle agents immediately after their output is integrated or no longer
+  needed.
+- If a session hits a thread cap, close stale agents first, then reuse or
+  resume the remaining agents before spawning more.
+- Degrade gracefully to single-agent decomposition when delegation slots are
+  exhausted.
+
+## External Tool And MCP Routing
+
+Treat MCPs and external integrations as scoped capabilities.
+
+- Prefer local repository truth for code behavior. Use an external integration
+  when the external system owns the answer, or when the user explicitly asks
+  for that system.
+- Before using repo-scoped or conditional integrations, check the folder or
+  workflow allow-list for that connection.
+- On first folder-level use with no routing preference, ask which registered
+  MCP connections should be enabled for that folder.
+- If a registered MCP server is not present in the routing preference record,
+  list the known repo folders and ask where the new server should be enabled
+  before using it.
+- If Replit OAuth returns `invalid_scope` or produces an auth URL without
+  scopes, rerun `codex mcp login --scopes openid,profile,email replit` and use
+  the fresh URL.
+
 ## Cache Rules
 
 Cache may be used when all of these are true:
@@ -205,7 +303,9 @@ Bypass cache when the user asks to:
 
 Cache is an optimization layer, not a replacement for reasoning. Fresh source-of-truth evidence beats cached conclusions.
 
-For empirical token-cost recipes — model tier examples, sub-agent prompt compression, output-proxy hooks, and memory hygiene — see `TOKEN_ECONOMY.md`.
+For cross-agent communication planning, counterpart capability gates, and single-agent fallback, see `CROSS_AGENT_COORDINATION.md`.
+
+For empirical token-cost recipes - model tier examples, sub-agent prompt compression, output-proxy hooks, and memory hygiene - see `TOKEN_ECONOMY.md`.
 
 ## Anti-Drift Rules
 

@@ -31,13 +31,79 @@ Use this as the user-level baseline for AI coding agents.
 5. Delegate when useful and allowed.
 
 - Use parallel agents or subtasks only when work is separable and the tool environment allows it.
+- If the live user prompt includes the exact phrase `subagents swarm allowed`,
+  treat it as explicit authorization and request wording for sub-agents,
+  parallel delegation, model routing, and cross-agent counterpart routing for
+  the current prompt or thread. Apply normal capability, privacy, safety, and
+  anti-drift checks; the phrase enables routing when useful, but does not force
+  routing when local execution is cheaper or safer.
+- When another AI tool can participate, use it only through an explicit communication plan: coordinator, counterpart, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
+- Treat Claude as an explicit cross-AI counterpart when useful. Prefer bounded
+  non-interactive `claude -p` calls with explicit approval for outside-sandbox
+  access, budget caps, output caps, stop conditions, and sanitized context by
+  default.
 - Keep urgent blocking work local when waiting would slow progress.
 - Avoid speculative, duplicate, or idle agents.
 - Keep architectural judgment, ambiguity resolution, escalation, and final review in the master thread.
 - Route bounded work to the smallest capable model or agent when model routing is available.
+- For Codex environments with `gpt-5.3-codex-spark`, default bounded,
+  low-risk execution to Spark when model choice is available. For quick or
+  standard work, route the first safe bounded sidecar to Spark when useful,
+  then keep architecture, integration, and final validation in the master
+  thread.
+- Before using a stronger Codex tier for delegated work, explicitly ask
+  whether Spark can safely handle the bounded task. Keep architecture,
+  security, data-loss, dependency strategy, production release gates,
+  ambiguous debugging, broad refactors, and final review verdicts on the
+  strongest available reasoning path.
+- Treat subagent concurrency as a finite external runtime budget. Reuse agents
+  when context matches, close idle agents after their results are integrated,
+  and if the session hits a thread cap, close stale agents first before
+  spawning more.
 - Treat cache as optional; bypass it when the user requests fresh analysis or current evidence.
+- Treat unavailable counterpart tools, missing memberships, auth failures, and uncaptured output as capability gaps, not as reasons to lower validation standards.
+- If a reviewer blocks an external-AI handoff for private-context risk, do not
+  route around the block; fall back to local verification or provide a
+  paste-ready prompt for an approved environment.
 
-6. Verify before completion.
+6. Preserve context economy.
+
+- Use progressive disclosure: start from indexes, file lists, metadata,
+  structured fields, and summaries before loading full artifacts.
+- Use deterministic pre-processing before model reasoning: search, filter,
+  count, sort, and shape data with tools first.
+- Compress stale middle history while preserving the original objective,
+  active constraints, recent evidence, unresolved risks, and validation state.
+
+7. Route external integrations deliberately.
+
+- Prefer local repository truth for code behavior. Use MCPs or external
+  integrations when that external system owns the answer, or when the user
+  explicitly asks for that system.
+- Scope external integrations by repository, folder, or workflow. Do not treat
+  a registered MCP server as globally safe just because it exists.
+- On first folder-level use, if no allow-list or preference record exists, ask
+  which registered MCP connections should be enabled for that folder before
+  using repo-scoped or conditional integrations.
+- If a new MCP server appears and is not recorded in the local routing
+  preferences, list the known repo folders and ask where that server should be
+  enabled before using it.
+- If Replit OAuth returns `invalid_scope` or generates an auth URL without
+  scopes, rerun `codex mcp login --scopes openid,profile,email replit` and use
+  the fresh URL instead of retrying the stale one.
+
+8. Reset context on gear changes.
+
+- When the user changes workflows, switches repos, pivots incidents, or starts
+  a new objective, stop carrying the previous workflow as active context.
+- Before the pivot, leave a compact resume packet when useful: current phase,
+  last evidence, pending breakpoint, blocked or skipped validation, next exact
+  step, and residual risk.
+- Treat context-window overload warnings as a process signal. Compress active
+  state into a small note or journal entry, discard stale assumptions, and
+  continue from current source-of-truth evidence.
+
+9. Verify before completion.
 
 - Run the strongest practical validation for the changed surface.
 - Distinguish passed, failed, blocked, skipped, and not run.

@@ -61,8 +61,10 @@ Harness capabilities:
 - Shell or command execution: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Validation execution: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Sub-agents or delegation: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
+- Cross-agent counterpart access: <available|limited|blocked|unavailable|unknown> - <tool/auth/capture evidence and fallback>
 - Model routing: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Cache or memory: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
+- MCP or external integration routing: <available|limited|blocked|unavailable|unknown> - <repo/folder/workflow allow-list evidence and fallback>
 - Network or external tools: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Browser or UI verification: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Persistent journals: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
@@ -76,6 +78,7 @@ Framework readiness:
 - Files present: <passed|failed> - <gaps or "None identified">
 - Adapter path: <tool and path>
 - Harness capabilities: <summary>
+- Cross-agent counterpart: <available|limited|blocked|unavailable|not useful and fallback>
 - Journaling: <required|optional|disabled and path>
 - Required validation: <commands or "not defined">
 - Closed-scope scan: <passed|failed|not run>
@@ -87,6 +90,31 @@ Gaps:
 
 Next action:
 - <smallest useful next step>
+```
+
+## Cross-Agent Communication Plan
+
+```md
+Cross-agent communication plan:
+- Coordinator: <tool/model and responsibilities>
+- Counterpart: <tool/model and responsibilities, or "unavailable">
+- Goal: <shared outcome>
+- Source of truth:
+  - <files/issues/designs/logs>
+- Work split:
+  - <unit> -> <owner> -> <expected evidence>
+- Context package:
+  - <exact paths, snippets, commands, or constraints passed>
+- Output contract:
+  - <format, max length, required evidence, forbidden content>
+- Budget:
+  - <token, dollar, time, or turn cap>
+- Execution boundary:
+  - <sandboxed|outside-sandbox approved|outside-sandbox unavailable>
+- Stop conditions:
+  - <auth failure, ambiguous architecture, validation failure, scope expansion>
+- Fallback:
+  - <single-agent path if counterpart is unavailable>
 ```
 
 ## Quality Convergence Plan
@@ -134,6 +162,24 @@ Workflow state:
 - Blockers: <blockers or "None">
 - Next exact step: <resume action>
 - Validation state: <passed/failed/blocked/skipped/not run summary>
+```
+
+## Interactive Review Kickoff
+
+```md
+Review mode question:
+- 1/ BIG CHANGE: interactive section-by-section review with at most four top
+  issues per section: Architecture, Code Quality, Tests, Performance.
+- 2/ SMALL CHANGE: interactive review with exactly one question per review
+  section.
+
+Recommended:
+- <1/ BIG CHANGE or 2/ SMALL CHANGE and why>
+
+Decision prompt:
+- Use the platform structured question tool when available. If the tool is
+  named AskUserQuestion, each option should include both issue number and option
+  letter, with the recommended option first.
 ```
 
 ## Source-Of-Truth Conflict Question

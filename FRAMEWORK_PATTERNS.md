@@ -14,6 +14,7 @@ Includes:
 - Plan before implementation.
 - Broad context scan before deciding scope.
 - Multi-agent delegation when useful and allowed.
+- Cross-agent coordination when another AI tool can add independent critique, execution, verification, or summarization.
 - Evidence-backed debugging.
 - Verification before completion.
 - Clear reporting of failures, skipped checks, blocked checks, and residual risk.
@@ -227,7 +228,7 @@ Rules:
 
 - Verify the canonical file set before relying on the framework.
 - Choose a load profile that matches the task.
-- Record actual tool capabilities instead of assuming sub-agents, model routing, cache, validation execution, or journals exist.
+- Record actual tool capabilities instead of assuming sub-agents, cross-agent counterpart access, model routing, cache, validation execution, or journals exist.
 - Treat unavailable capabilities as routing constraints with explicit fallbacks.
 - Run first-session verification after adoption.
 - Rebuild the distributable archive when shared files change.

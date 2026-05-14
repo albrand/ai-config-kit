@@ -67,6 +67,7 @@ Then fill the local harness capability record:
 - File read and edit access.
 - Shell and validation execution.
 - Sub-agents or delegation.
+- Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
 - Network or external tools.
@@ -129,6 +130,7 @@ State which bootstrap or adapter file you loaded.
 State whether `CONFIG_KIT_AI_PROMPT.md` was loaded.
 State which manifest file you loaded.
 State the active harness capability record.
+State whether cross-agent counterpart access is available, blocked, unavailable, or not useful.
 Also state which validation commands are required for code changes.
 Do not edit files.
 ```
@@ -141,6 +143,7 @@ Confirm:
 - The agent loaded the config-kit ingestion prompt when available.
 - The agent loaded the framework manifest.
 - The agent reports unavailable or limited harness capabilities.
+- The agent reports cross-agent counterpart availability and fallback.
 - The agent identifies validation commands.
 - The agent knows when to ask about conflicts.
 - The agent knows whether journals are required.
@@ -157,6 +160,7 @@ Evaluate:
 - Did it use the correct validation?
 - Did it report skipped or blocked checks truthfully?
 - Did it report harness capability gaps truthfully?
+- Did it create a communication plan before using another AI tool, or state why paired work was unavailable or not useful?
 - Did it use a convergence loop when first-pass validation was insufficient?
 - Did it update the journal if required?
 
