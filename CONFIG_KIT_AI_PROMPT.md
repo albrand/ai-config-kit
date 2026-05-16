@@ -82,9 +82,13 @@ Execution rules:
 - When another AI tool participates, the coordinator must create a communication plan first: coordinator and counterpart roles, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
 - Do not assume a user has multiple AI memberships, working authentication, or permission to use another tool. Treat blocked counterpart access as a normal capability gap.
 - If those capabilities are unavailable, keep the same lifecycle locally and report the limitation.
-- Treat subagent concurrency as a finite runtime budget. Reuse agents when
-  context matches, close idle or stale agents after integration, and close
-  stale agents first when a thread cap is reached.
+- Treat subagent concurrency as a finite runtime budget. In Codex environments
+  that expose a thread ceiling, prefer `max_concurrent_threads_per_session = 16`
+  unless local policy sets a stricter limit.
+- Treat sub-agent lifecycle freshness as mandatory: once an agent completes,
+  becomes stale, or belongs to a previous workflow, capture any needed output or
+  resume packet, close it when the tool permits, and open a fresh agent for new
+  delegated work instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. If a new registered MCP server appears,
   ask where it should be enabled before using it. If Replit OAuth returns

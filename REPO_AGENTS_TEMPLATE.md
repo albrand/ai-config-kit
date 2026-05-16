@@ -67,9 +67,12 @@ Defaults:
   bounded sidecar for quick or standard work to Spark when useful. Before using
   a stronger Codex tier for delegated work, ask whether Spark can safely handle
   the bounded task.
-- Treat subagent concurrency as finite. Close idle or stale agents after their
-  results are integrated, and close stale agents first if thread capacity is
-  exhausted.
+- Treat subagent concurrency as finite. In Codex environments that expose a
+  thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
+  policy sets a stricter limit.
+- Close completed, idle, stale, or prior-workflow agents after capturing any
+  needed result or resume packet, and open fresh agents for new delegated work
+  instead of reusing stale context.
 - Use MCPs and external integrations only when enabled for the current repo,
   folder, or workflow, or when the user explicitly asks for that system.
 - Bypass cache when source-of-truth files changed or the user asks for fresh, current, repeated, or from-scratch analysis.

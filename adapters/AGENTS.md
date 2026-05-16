@@ -56,8 +56,12 @@ Replace this section with local rules:
 - In Codex, route the first safe bounded sidecar for quick or standard work to
   `gpt-5.3-codex-spark` when available and useful; ask whether Spark can safely
   handle the bounded task before using a stronger delegated tier.
-- Treat subagent concurrency as finite. Close idle or stale agents after their
-  results are integrated, especially when thread capacity is constrained.
+- Treat subagent concurrency as finite. In Codex environments that expose a
+  thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
+  policy sets a stricter limit.
+- Close completed, idle, stale, or prior-workflow agents after capturing any
+  needed result or resume packet, and open fresh agents for new delegated work
+  instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
 - Reset active context on workflow, repo, incident, or objective changes.

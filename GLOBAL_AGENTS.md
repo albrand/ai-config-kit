@@ -56,10 +56,14 @@ Use this as the user-level baseline for AI coding agents.
   security, data-loss, dependency strategy, production release gates,
   ambiguous debugging, broad refactors, and final review verdicts on the
   strongest available reasoning path.
-- Treat subagent concurrency as a finite external runtime budget. Reuse agents
-  when context matches, close idle agents after their results are integrated,
-  and if the session hits a thread cap, close stale agents first before
-  spawning more.
+- Treat subagent concurrency as a finite external runtime budget. In Codex
+  environments that expose a thread ceiling, prefer
+  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  limit.
+- Treat sub-agent lifecycle freshness as mandatory: once an agent completes,
+  becomes stale, or belongs to a previous workflow, capture any needed result
+  or resume packet, close it when the tool permits, and open a fresh agent for
+  new delegated work instead of reusing stale context.
 - Treat cache as optional; bypass it when the user requests fresh analysis or current evidence.
 - Treat unavailable counterpart tools, missing memberships, auth failures, and uncaptured output as capability gaps, not as reasons to lower validation standards.
 - If a reviewer blocks an external-AI handoff for private-context risk, do not

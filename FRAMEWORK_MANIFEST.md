@@ -148,6 +148,12 @@ Required fields:
 Fallback rule:
 
 - If sub-agents, cross-agent counterpart access, model routing, MCP routing, or cache are unavailable, keep the same lifecycle locally: decompose, execute small slices, validate, self-review, and report capability gaps.
+- If Codex sub-agents are available and the environment exposes a configurable
+  thread ceiling, record whether `max_concurrent_threads_per_session = 16` or a
+  stricter local value is active.
+- When sub-agents are used, verify the lifecycle rule: capture needed output
+  from completed, stale, or prior-workflow agents, close them when the tool
+  permits, and spawn fresh agents for new delegated work.
 
 ## Source-Of-Truth Contract
 
@@ -207,6 +213,10 @@ Run these after changing the kit:
 - Closed-scope scan: search for secrets, private URLs, private account identifiers, and repo-specific facts.
 - Placeholder check: shared templates may contain placeholders, adopted local files should not.
 - Encoding check: keep shared files plain ASCII unless a file has a documented reason for Unicode.
+- Subagent lifecycle check: confirm Codex or compatible installs set an
+  appropriate thread ceiling such as `max_concurrent_threads_per_session = 16`
+  and close completed, stale, or prior-workflow agents before opening fresh
+  delegated contexts.
 - Archive check: rebuild and list `config-kit.zip` when it is the active
   distributable. If the checkout still tracks `Archive.zip`, refresh or replace
   it deliberately and verify that the archive contains current framework files.

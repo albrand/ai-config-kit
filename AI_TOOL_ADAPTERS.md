@@ -121,6 +121,16 @@ Recommended setup:
 - If Codex model routing is available, use `gpt-5.3-codex-spark` as the
   default bounded sidecar tier for quick or standard work when useful and
   cheap to validate.
+- If Codex exposes a configurable thread ceiling, prefer this top-level config
+  unless local policy sets a stricter limit:
+
+  ```toml
+  max_concurrent_threads_per_session = 16
+  ```
+
+- Treat completed, stale, or prior-workflow subagents as consumed context:
+  capture needed output, close them when the tool permits, and open fresh
+  agents for new delegated work.
 - Before using MCPs or external integrations from Codex, apply the local
   repo/folder/workflow routing preferences. If a Replit MCP login returns
   `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`

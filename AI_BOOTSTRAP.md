@@ -47,8 +47,12 @@ If the tool cannot automatically read files, ask the user to provide the relevan
   Before using a stronger Codex tier for delegated work, ask whether Spark can
   safely handle the bounded task.
 - Treat the master thread as the owner of judgment, architecture, escalation, and final review.
-- Treat subagent concurrency as finite. Close idle or stale agents before
-  spawning more when thread capacity is constrained.
+- Treat subagent concurrency as finite. In Codex environments that expose a
+  thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
+  policy sets a stricter limit.
+- Close completed, stale, or prior-workflow agents after capturing any needed
+  result or resume packet, and open fresh agents for new delegated work instead
+  of reusing stale context.
 - Before using MCPs or external integrations, verify that the connection is
   enabled for the current repo, folder, or workflow. If Replit OAuth returns
   `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`

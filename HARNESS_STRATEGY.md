@@ -253,12 +253,13 @@ Delegated agents should not redesign architecture, introduce dependencies, expan
 Subagent concurrency is a finite external runtime budget, not an unlimited
 resource.
 
-- Reuse existing agents when their context matches the next bounded task.
+- In Codex environments that expose a thread ceiling, prefer
+  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  limit.
 - Do not spawn speculative agents just because delegation is available.
-- Close idle agents immediately after their output is integrated or no longer
-  needed.
-- If a session hits a thread cap, close stale agents first, then reuse or
-  resume the remaining agents before spawning more.
+- Close completed, idle, stale, or prior-workflow agents immediately after
+  capturing any needed output or resume packet.
+- Open fresh agents for new delegated work instead of reusing stale context.
 - Degrade gracefully to single-agent decomposition when delegation slots are
   exhausted.
 

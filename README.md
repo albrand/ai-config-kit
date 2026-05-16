@@ -305,6 +305,18 @@ Codex Spark rule:
   repeated validation failure, missing source-of-truth context, or security and
   data concerns.
 
+Codex concurrency and freshness rule:
+
+- When Codex exposes a configurable thread ceiling, prefer:
+
+  ```toml
+  max_concurrent_threads_per_session = 16
+  ```
+
+- Treat completed, stale, or prior-workflow subagents as consumed context:
+  capture any needed output or resume packet, close them when the tool permits,
+  and open fresh agents for new delegated work.
+
 Swarm phrase contract:
 
 - If the live user prompt includes the exact phrase `subagents swarm allowed`,

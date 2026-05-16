@@ -139,11 +139,13 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
 ## Concurrency Rules
 
 - Treat agent slots and thread capacity as a finite external runtime budget.
-- Reuse agents when context matches.
 - Do not spawn speculative agents.
-- Close idle agents after their output is integrated.
-- If the session hits a thread cap, close stale agents first, then reuse or
-  resume the remaining agents before spawning more.
+- In Codex environments that expose a thread ceiling, prefer
+  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  limit.
+- Close completed, idle, stale, or prior-workflow agents after capturing any
+  needed output.
+- Open fresh agents for new delegated work instead of reusing stale context.
 - Do not keep agents open between unrelated tasks.
 
 ## Integration Checklist
