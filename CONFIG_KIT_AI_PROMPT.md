@@ -19,6 +19,7 @@ Load order:
 5. Read the repo-local instruction file if one is provided.
 6. Read the task-relevant framework files:
    - Planning or normal implementation: `REPO_AGENTS_TEMPLATE.md`, `SKILLS_CATALOG.md`, `AGENT_ORCHESTRATION.md`, `HARNESS_STRATEGY.md`, `ARCHITECTURE_AND_CODE_QUALITY.md`, `QUALITY_GATES.md`.
+   - Module delivery planning, roadmap shaping, milestones, or implementation-ticket creation: also read `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md`. Read the Codex or Claude Code entrypoint only when installing or invoking that tool-specific workflow.
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
@@ -43,6 +44,7 @@ After loading the files, build an active instruction model:
   repo, folder, or workflow.
 - Workflow track: quick, standard, big-change, recovery, or review.
 - Required skills or processes.
+- Any task-relevant skillset, including `skillsets/module-delivery/` for module-planning work.
 - Quality gates and quality convergence triggers.
 - Breakpoints where user approval or stronger reasoning is required.
 - Stop conditions.

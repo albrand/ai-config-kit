@@ -25,6 +25,16 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 | `design-to-code` | Design implementation or visual parity work | Design source mapping, affected UI, implementation notes, validation |
 | `api-docs-current` | External API or model guidance that changes over time | Official-source-backed guidance |
 
+## Shared Skillsets
+
+Use shared skillsets when a workflow is broader than one global skill and needs tool-specific entrypoints, shared references, or install instructions.
+
+| Skillset | Use When | Expected Output |
+| --- | --- | --- |
+| `skillsets/module-delivery/` | A user provides a module, capability area, roadmap item, migration target, or project-planning request and wants evidence-backed phases, tickets, resources, risks, owners, and validation gates | A module scope package, project description, simple phases, PR-sized tickets, resource links, open questions, and a validation report |
+
+Shared skillsets must stay separate from the developer runbook unless their workflow directly changes implementation behavior. Prefer AI-runbook instructions first; add executable helpers only when the team explicitly wants maintained automation.
+
 ## Repo-Local Skill Examples
 
 Use repo-local skills when a workflow is valuable but not universal.

@@ -33,6 +33,7 @@ Support files:
 - `AI_TOOL_ADAPTERS.md`: setup guidance for common AI tools.
 - `FRAMEWORK_PATTERNS.md`: neutral reusable configuration patterns.
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
+- `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
@@ -70,6 +71,18 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 10. `TOKEN_ECONOMY.md` when delegating, designing sub-agent prompts, coordinating another AI tool, or evaluating cost
 11. `TEMPLATES.md` when a structured plan or report is useful
 12. `SESSION_JOURNALING.md` if the repo uses journals
+
+### Module Delivery Planning Profile
+
+Use for module-roadmap, project-planning, milestone, ticket-shaping, or migration-planning work:
+
+1. Minimum Profile
+2. `SKILLS_CATALOG.md`
+3. `skillsets/module-delivery/README.md`
+4. `skillsets/module-delivery/references/output-contract.md`
+5. `skillsets/module-delivery/codex/SKILL.md` when installing or using the Codex skill
+6. `skillsets/module-delivery/claude/commands/plan-module-delivery.md` when installing or using the Claude Code slash command
+7. Board, repository, design, PR, and external-source evidence required by the module request
 
 ### Debugging Profile
 

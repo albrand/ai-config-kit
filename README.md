@@ -164,6 +164,7 @@ question.
 | `TEMPLATES.md` | Copyable templates for plans, routing, capability records, readiness reports, convergence, debugging, validation, completion, review findings, PRs, skills, and delegation. |
 | `REPO_ADOPTION_PLAYBOOK.md` | Step-by-step adoption guide for installing the framework into a repo. |
 | `INTERNAL_WIKI_PAGE.md` | Short paste-ready wiki summary for teams that want an internal documentation page. |
+| `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 
 ## Load Profiles
 
@@ -196,6 +197,18 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 10. `TOKEN_ECONOMY.md` when delegation, cross-agent coordination, prompt compression, or cost control matters
 11. `TEMPLATES.md` when a structured plan or report is useful
 12. `SESSION_JOURNALING.md` if the repo uses journals
+
+### Module Delivery Planning Profile
+
+Use for module-roadmap, project-planning, milestone, ticket-shaping, or migration-planning work. This profile is separate from the developer runbook.
+
+1. Minimum profile
+2. `SKILLS_CATALOG.md`
+3. `skillsets/module-delivery/README.md`
+4. `skillsets/module-delivery/references/output-contract.md`
+5. `skillsets/module-delivery/codex/SKILL.md` when installing or using the Codex skill
+6. `skillsets/module-delivery/claude/commands/plan-module-delivery.md` when installing or using the Claude Code slash command
+7. Board, repository, design, PR, and external-source evidence required by the module request
 
 ### Debugging Profile
 
