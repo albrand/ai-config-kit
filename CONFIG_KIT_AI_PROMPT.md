@@ -20,6 +20,7 @@ Load order:
 6. Read the task-relevant framework files:
    - Planning or normal implementation: `REPO_AGENTS_TEMPLATE.md`, `SKILLS_CATALOG.md`, `AGENT_ORCHESTRATION.md`, `HARNESS_STRATEGY.md`, `ARCHITECTURE_AND_CODE_QUALITY.md`, `QUALITY_GATES.md`.
    - Module delivery planning, roadmap shaping, milestones, or implementation-ticket creation: also read `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md`. Read the Codex or Claude Code entrypoint only when installing or invoking that tool-specific workflow.
+   - Roadmap, technical platform, or hardening bootstrap: also read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`. Read the relevant Codex skill or Claude Code command when invoking `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`.
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
@@ -45,6 +46,7 @@ After loading the files, build an active instruction model:
 - Workflow track: quick, standard, big-change, recovery, or review.
 - Required skills or processes.
 - Any task-relevant skillset, including `skillsets/module-delivery/` for module-planning work.
+- Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
 - Quality gates and quality convergence triggers.
 - Breakpoints where user approval or stronger reasoning is required.
 - Stop conditions.

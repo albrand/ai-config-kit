@@ -119,6 +119,14 @@ Good candidates:
 - Security-sensitive debugging.
 - Ticket-first delivery workflow.
 
+Executable shared skillsets should be installed deliberately:
+
+- Share `ECOSYSTEM_TERRAFORM_GUIDE.md` with operators so they understand which command to use and can start from tested prompt samples.
+- Claude Code: copy `skillsets/*/claude/commands/*.md` to the project `.claude/commands/` folder or user `~/.claude/commands/`.
+- Codex: copy the relevant `skillsets/*/codex/*/SKILL.md` into `<CODEX_HOME>/skills/<skill-name>/SKILL.md`.
+- Keep shared references such as `ecosystem-output-contract.md` near the installed framework path so commands can load them.
+- Ask before enabling or running commands that can mutate trackers, cloud resources, repositories, CI settings, or secrets.
+
 ## Phase 7: First Session Verification
 
 Start a fresh agent session and ask:

@@ -24,6 +24,7 @@ Before acting on repository work, load and follow the framework in this order:
 14. `REVIEW_AND_PR_FRAMEWORK.md`
 15. `TEMPLATES.md` when a structured output is needed
 16. `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md` when the task is module delivery planning, roadmap shaping, milestone planning, or implementation-ticket creation
+17. `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when the task is roadmap bootstrap, technical platform bootstrap, project assessment, hardening, QA matrix creation, or one of the Claude Code commands `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`
 
 If the tool cannot automatically read files, ask the user to provide the relevant files before implementation.
 

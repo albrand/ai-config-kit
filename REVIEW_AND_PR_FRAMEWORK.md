@@ -27,6 +27,49 @@ Before reviewing:
 - Identify relevant tests.
 - Keep review scoped to the changed surface unless the user requests broader review.
 
+## High-Signal PR Review Workflow
+
+Use this workflow when reviewing a GitHub PR or equivalent diff where comments may be posted publicly.
+
+1. Preflight before review:
+   - Confirm the PR or diff is open for review.
+   - Stop or ask before continuing if it is closed, draft, obviously automated/trivial, or already reviewed by the same AI reviewer.
+   - Still review AI-generated PRs when the user requests it.
+2. Resolve instruction scope:
+   - Identify root and path-scoped instruction files that apply to changed files, such as `CLAUDE.md`, `AGENTS.md`, Cursor rules, repo docs, or local review rules.
+   - Apply only the instruction files whose path scope covers the changed file.
+3. Summarize intent:
+   - Read the PR title, description, linked issue, and changed-file list before reviewing details.
+   - Keep author intent visible so reviewers do not flag intentional tradeoffs as bugs.
+4. Run independent review passes when the tool supports it:
+   - Two compliance passes for scoped instruction adherence.
+   - One or more bug/security/logic passes focused on introduced code and the diff itself.
+   - Keep style, subjective improvements, and linter-only concerns out unless the repo rules explicitly require them.
+5. Validate candidate issues:
+   - Re-check every candidate bug, logic error, security issue, or instruction violation before reporting it.
+   - Drop findings that are speculative, pre-existing, lint-only, unscoped, or not reproducible from the diff and allowed context.
+6. Report or comment:
+   - Report only high-confidence, high-signal issues.
+   - Deduplicate findings.
+   - Post comments only when the user requested comment mode or repo policy requires it.
+   - Use inline comments for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub.
+   - Use committable suggestion blocks only when the suggestion fully fixes the issue without hidden follow-up work.
+
+High-signal means:
+
+- The code will fail to compile, parse, import, or resolve.
+- The code will definitely produce wrong behavior for the changed path.
+- The change breaks an auth, data, security, runtime, or API contract.
+- The change clearly violates a scoped instruction and the exact rule can be cited.
+
+Do not flag:
+
+- Pedantic style concerns.
+- General code quality suggestions that are not tied to changed behavior.
+- Issues only a linter would catch.
+- Concerns that require unsupported assumptions about future input or state.
+- Pre-existing problems unless the PR makes them materially worse.
+
 ## Interactive Review Mode
 
 Use this mode when repo instructions or the user request an interactive

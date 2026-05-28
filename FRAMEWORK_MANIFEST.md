@@ -33,7 +33,9 @@ Support files:
 - `AI_TOOL_ADAPTERS.md`: setup guidance for common AI tools.
 - `FRAMEWORK_PATTERNS.md`: neutral reusable configuration patterns.
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
+- `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
+- `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
@@ -83,6 +85,28 @@ Use for module-roadmap, project-planning, milestone, ticket-shaping, or migratio
 5. `skillsets/module-delivery/codex/SKILL.md` when installing or using the Codex skill
 6. `skillsets/module-delivery/claude/commands/plan-module-delivery.md` when installing or using the Claude Code slash command
 7. Board, repository, design, PR, and external-source evidence required by the module request
+
+### Ecosystem Terraform Profile
+
+Use for project ecosystem bootstrap, roadmap creation or reconciliation, technical platform bootstrap, legacy assessment, hardening, QA matrix creation from tickets/docs, or Claude Code commands `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`:
+
+1. Minimum Profile
+2. `SKILLS_CATALOG.md`
+3. `QUALITY_GATES.md`
+4. `REVIEW_AND_PR_FRAMEWORK.md` when PR review automation or review gates are part of the ecosystem
+5. `ARCHITECTURE_AND_CODE_QUALITY.md` when assessing or hardening an existing codebase
+6. `ECOSYSTEM_TERRAFORM_GUIDE.md` for command selection, user-facing expectations, and prompt samples
+7. `skillsets/ecosystem-terraform/README.md`
+8. `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
+9. `TEMPLATES.md` when producing roadmap, quality-gate matrix, QA matrix, ticket, or final report artifacts
+10. The relevant Codex skill or Claude Code command:
+   - `skillsets/ecosystem-terraform/codex/roadmap-terraform/SKILL.md`
+   - `skillsets/ecosystem-terraform/codex/tech-terraform/SKILL.md`
+   - `skillsets/ecosystem-terraform/codex/assess-then-harden/SKILL.md`
+   - `skillsets/ecosystem-terraform/claude/commands/roadmap-terraform.md`
+   - `skillsets/ecosystem-terraform/claude/commands/tech-terraform.md`
+   - `skillsets/ecosystem-terraform/claude/commands/assess-then-harden.md`
+11. External source evidence required by the request: docs, repos, boards, designs, PRs, deployments, cloud accounts, QA artifacts, and stakeholder instructions
 
 ### Debugging Profile
 

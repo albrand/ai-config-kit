@@ -282,6 +282,75 @@ Recommendation:
 - <specific fix>
 ```
 
+## Ecosystem Terraform Plan
+
+```md
+Objective:
+- <roadmap|tech|hardening outcome>
+
+Mode:
+- <import existing|transform existing|create new|connect only|local bootstrap|CI/review bootstrap|infrastructure bootstrap|legacy reconcile|assessment only>
+
+Sources to inspect:
+- <docs/repos/designs/boards/PRs/cloud/deployments/tickets>
+
+Questions:
+- <question or "None before discovery">
+
+Capabilities:
+- <repo/tracker/design/cloud/deploy/sub-agent status and approval gates>
+
+Artifacts:
+- <roadmap/docs/tickets/QA matrix/platform plan>
+
+Validation:
+- <reference scan, traceability check, ticket contract check, QA gate, external mutation confirmation>
+
+Stop conditions:
+- <missing access, conflicting sources, mutation approval required, scope expansion>
+```
+
+## Business Logic QA Matrix
+
+```md
+| Requirement | Source | Expected behavior | Test or QA evidence | Owner | Status |
+| --- | --- | --- | --- | --- | --- |
+| <requirement> | <ticket/doc/design> | <observable behavior> | <test/check/manual QA> | <owner or unknown> | <ready|blocked|gap> |
+```
+
+## Technical Quality Layer Matrix
+
+```md
+| Layer | Current evidence | Status | Scaffold or ticket | Blocking behavior | Owner |
+| --- | --- | --- | --- | --- | --- |
+| Local validation | <commands/files> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+| CI/CD validation | <workflows/checks> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+| PR validation | <template/rules/checks> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+| Security validation | <scans/policies/tests> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+| Runtime validation | <health/smoke/observability> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+| AI workstream validation | <instructions/commands/skills> | <present|needs update|missing|not applicable|blocked> | <file/ticket/action> | <blocking|required|advisory|N/A> | <owner or unknown> |
+```
+
+## Ecosystem Terraform Report
+
+```md
+Ecosystem terraform result:
+- Workflow: <roadmap-terraform|tech-terraform|assess-then-harden>
+- Artifacts created: <list or "None">
+- Artifacts updated: <list or "None">
+- Proposed only: <list or "None">
+- External mutations: <performed|blocked|not requested>
+- Questions asked: <answered/deferred/defaulted summary>
+- Capabilities: <verified/blocked/not used>
+- Sources inspected: <summary>
+- Tickets: <created/updated/proposed/canceled/blocked counts>
+- Quality layer matrix: <present/needs update/missing/not applicable/blocked summary, required for tech-terraform>
+- Quality gates: <passed/failed/blocked/skipped/not run>
+- Approval gates remaining: <list or "None">
+- Residual risk: <risk or "None identified">
+- Next action: <smallest useful step>
+```
+
 ## PR Body
 
 ```md

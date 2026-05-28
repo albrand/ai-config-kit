@@ -136,6 +136,16 @@ For API or handler changes:
 - Avoid returning oversized or sensitive payloads.
 - Add contract tests for important paths.
 
+## Business Logic QA Gate
+
+Use when tickets, docs, designs, roadmap items, or stakeholder requirements define expected behavior.
+
+- Build a traceability matrix from requirement to source to expected behavior to QA evidence.
+- Include positive paths, negative paths, permissions, state transitions, edge cases, data lifecycle, integrations, notifications, and reporting expectations when relevant.
+- Treat docs, tickets, designs, and runtime behavior as separate sources. If they conflict, report the conflict before implementation or QA signoff.
+- Do not invent missing requirements. Mark them as gaps, assumptions, or questions.
+- Every generated implementation ticket should name the QA or test evidence that proves the business behavior.
+
 ## Data Gate
 
 For data changes:

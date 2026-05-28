@@ -22,6 +22,11 @@ Before substantial repository work, read:
 
 Also read any repo-specific source-of-truth docs listed below.
 
+For ecosystem bootstrap workflows such as `/roadmap-terraform`,
+`/tech-terraform`, or `/assess-then-harden`, also read
+`docs/agent-framework/ECOSYSTEM_TERRAFORM_GUIDE.md` plus the relevant
+`docs/agent-framework/skillsets/ecosystem-terraform/` files.
+
 ## Repo-Specific Overlay
 
 Replace this section with local rules:

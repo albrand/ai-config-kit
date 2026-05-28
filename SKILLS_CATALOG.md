@@ -22,6 +22,13 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 | `quality-convergence` | High-risk work, repeated validation failures, or user requests for strong confidence | Quality dimensions, target, iterations, evidence, stop reason |
 | `framework-readiness` | Installing, auditing, or changing the agent framework | File inventory, load profile, capability record, gaps, next action |
 | `pr-preparation` | Creating, summarizing, reviewing, or preparing PRs | PR body from real diff and actual validation |
+| `high-signal-pr-review` | Reviewing PRs where false positives are costly | Preflight stop checks, independent issue discovery, validation pass, deduped findings, inline comments only when approved |
+| `domain-grilling` | Requirements, roadmap, architecture, or tickets contain fuzzy terms or unclear decisions | One-question-at-a-time clarification, recommended answers, glossary updates, ADR candidates |
+| `vertical-slice-ticketing` | Turning plans, PRDs, or assessments into executable tickets | One-PR slices with objective, acceptance criteria, validation, dependencies, and resources |
+| `issue-triage-state-machine` | Reviewing incoming issues, bugs, feature requests, or tickets for agent readiness | needs-info, ready-for-agent, ready-for-human, wontfix, or equivalent local state with evidence |
+| `business-logic-qa` | Deriving QA from tickets, docs, designs, and product requirements | Requirement-to-test matrix, negative paths, permissions, state transitions, owner/status |
+| `architecture-deepening` | Legacy hardening, architecture cleanup, or AI navigability improvement | Candidate deepening opportunities, source evidence, testability and locality benefits, decision questions |
+| `handoff` | Work crosses agents, sessions, tools, or context windows | Compact resume packet with source evidence, state, blockers, validation, and next step |
 | `design-to-code` | Design implementation or visual parity work | Design source mapping, affected UI, implementation notes, validation |
 | `api-docs-current` | External API or model guidance that changes over time | Official-source-backed guidance |
 
@@ -32,8 +39,21 @@ Use shared skillsets when a workflow is broader than one global skill and needs 
 | Skillset | Use When | Expected Output |
 | --- | --- | --- |
 | `skillsets/module-delivery/` | A user provides a module, capability area, roadmap item, migration target, or project-planning request and wants evidence-backed phases, tickets, resources, risks, owners, and validation gates | A module scope package, project description, simple phases, PR-sized tickets, resource links, open questions, and a validation report |
+| `skillsets/ecosystem-terraform/` plus `ECOSYSTEM_TERRAFORM_GUIDE.md` | A user wants `/roadmap-terraform`, `/tech-terraform`, `/assess-then-harden`, project ecosystem bootstrap, roadmap/board reconciliation, technology bootstrap, full quality/CI/CD/PR gate scaffolding, QA matrix creation, or legacy hardening from docs, tickets, designs, repos, cloud, and external sources | Command selection, prompt samples, roadmap or technical operating model, capability gate, questions, source map, artifacts, PR-sized tickets, business-logic QA matrix, quality-gate matrix, approval gates, validation report |
 
 Shared skillsets must stay separate from the developer runbook unless their workflow directly changes implementation behavior. Prefer AI-runbook instructions first; add executable helpers only when the team explicitly wants maintained automation.
+
+## Imported Engineering Patterns
+
+The framework should incorporate useful public skill patterns as neutral practices, not as private or vendor-locked copies.
+
+- PR review should use high-signal filtering: stop on closed/draft/trivial/already-reviewed PRs, run independent reviewers when available, validate each candidate issue before reporting, dedupe comments, and avoid comments for lint-only or speculative concerns.
+- Requirements work should use grilling: ask one material question at a time, propose a recommended answer, inspect source evidence before asking, and capture resolved terminology or irreversible decisions.
+- Ticketing should use vertical slices: each ticket should be independently grabbable, demoable or verifiable, and sized for one PR.
+- Issue triage should use explicit states: not enough information, ready for an agent, ready for a human, will not do, or the repo's local equivalents.
+- Implementation workflows should preserve feedback loops: diagnosis before fixes, red-green-refactor when practical, and validation tied to behavior.
+- Architecture hardening should look for shallow modules, scattered concepts, weak test seams, and places where deeper interfaces improve locality and AI navigability.
+- Long work should produce compact handoffs instead of carrying raw transcripts forward.
 
 ## Repo-Local Skill Examples
 

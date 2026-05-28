@@ -20,6 +20,7 @@ Use this for any AI assistant:
    - Cross-agent or multi-tool coordination: `CROSS_AGENT_COORDINATION.md` plus `TOKEN_ECONOMY.md`
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`
+   - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
    - Journaling: `SESSION_JOURNALING.md`
    - Skill creation: `CONTINUOUS_SKILL_LEARNING.md` plus `SKILLS_CATALOG.md`
 6. For repo work, also give the AI the repo's local instruction file.
@@ -94,6 +95,9 @@ Recommended setup:
 - Copy `adapters/CLAUDE.md` to the repo root for project memory.
 - Use imports from `CLAUDE.md` to point to the framework files.
 - Keep local-only preferences out of shared project memory.
+- For executable workflows, copy command files from `skillsets/*/claude/commands/` into `~/.claude/commands/` or the project `.claude/commands/` folder.
+- The ecosystem bootstrap commands are `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`.
+- Give operators `ECOSYSTEM_TERRAFORM_GUIDE.md` so they have command selection guidance and copy-paste prompt samples.
 
 When Claude Code is used alongside another coordinator, the coordinator should pass a compact counterpart brief instead of the full conversation. When Claude Code is the coordinator, it should create the same communication plan before asking another AI tool to critique, explore, execute, verify, or summarize work.
 

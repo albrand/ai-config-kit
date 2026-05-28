@@ -24,6 +24,8 @@ It must not include sensitive details, non-public repository names, internal roa
 
 4. Global skills
    - Use `SKILLS_CATALOG.md` to define reusable workflows.
+   - Use shared skillsets for executable workflows such as module delivery, roadmap terraform, tech terraform, and assess-then-harden.
+   - Use `ECOSYSTEM_TERRAFORM_GUIDE.md` as the operator-facing invitation and prompt-sample guide for the ecosystem terraform commands.
 
 5. Harness strategy
    - Use `HARNESS_STRATEGY.md` to define master/sub-agent routing, model tiers, cache rules, anti-drift, escalation, and validation ownership.
@@ -55,6 +57,7 @@ It must not include sensitive details, non-public repository names, internal roa
 - Debugging workflow.
 - Verification discipline.
 - Review posture.
+- PR-sized ticketing, business-logic QA traceability, roadmap/bootstrap workflows, and high-signal PR review practices.
 - Skill promotion rules.
 - Truthful reporting standards.
 

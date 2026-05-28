@@ -21,7 +21,8 @@ Before implementation:
 9. For validation, read `QUALITY_GATES.md`.
 10. For iterative quality improvement, read `QUALITY_CONVERGENCE.md`.
 11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`.
-12. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
+12. For roadmap, technology, assessment, or hardening bootstrap, read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`.
+13. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
 
 Required behavior:
 

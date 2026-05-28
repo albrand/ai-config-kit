@@ -17,6 +17,12 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
 
+For ecosystem bootstrap workflows such as `/roadmap-terraform`,
+`/tech-terraform`, or `/assess-then-harden`, also read
+@docs/agent-framework/ECOSYSTEM_TERRAFORM_GUIDE.md
+and the relevant files under
+@docs/agent-framework/skillsets/ecosystem-terraform/
+
 ## Repo-Specific Overlay
 
 Replace this section with local rules:

@@ -272,3 +272,53 @@ Output:
 - Inputs passed.
 - Validation required.
 - Escalation condition.
+
+## Pattern 15: High-Signal PR Review
+
+Use when PR feedback may be posted or relied on for readiness.
+
+Rules:
+
+- Run preflight stop checks before reviewing.
+- Identify path-scoped instruction files for changed files.
+- Use independent review passes when supported.
+- Validate candidate issues before reporting.
+- Drop speculative, style-only, linter-only, duplicate, and pre-existing findings.
+- Post inline comments only when requested or policy requires it.
+
+Output:
+
+- Findings ordered by severity.
+- Validation reviewed.
+- Comments posted or withheld.
+- Residual risk.
+
+## Pattern 16: Ecosystem Terraform
+
+Use when the user wants to bootstrap or reconcile the project operating system around the codebase.
+
+Read `ECOSYSTEM_TERRAFORM_GUIDE.md` for command selection and prompt samples before using this pattern with an operator.
+
+Modes:
+
+- Roadmap terraform: requirements, docs, designs, boards, phases, tickets, QA matrix.
+- Tech terraform: stack, repos, local environments, secrets contract, full quality-gate matrix, CI/CD, PR checks, security scans, runtime checks, AI workstream gates, and cloud/deploy gates.
+- Assess then harden: whole-project read, knowledge docs, missing requirements, ticket gaps, hardening plan.
+
+Rules:
+
+- Ask material questions; discover safe answers from sources first.
+- Verify MCP, CLI, repo, cloud, tracker, design, and sub-agent capabilities before relying on them.
+- Ask for approval before external mutations, sub-agent swarms, broad imports, destructive board edits, cloud changes, or secret handling.
+- Prefer updating existing roadmaps, boards, docs, and tickets over duplicates.
+- Tie every ticket and QA recommendation to source evidence.
+
+Output:
+
+- Source map.
+- Capability gate.
+- Created, updated, proposed, and blocked artifacts.
+- PR-sized tickets.
+- Business-logic QA matrix.
+- Technical quality-gate matrix when `/tech-terraform` is used.
+- Approval gates and residual risk.

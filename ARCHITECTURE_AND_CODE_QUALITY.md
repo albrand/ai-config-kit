@@ -38,6 +38,28 @@ Keep responsibilities separate:
 
 If a repo uses different names, use the repo's names, but preserve the separation.
 
+## Architecture Deepening Review
+
+Use when assessing or hardening a legacy codebase, preparing a refactor plan, or improving AI navigability.
+
+Look for:
+
+- Shallow modules whose interface is almost as complex as their implementation.
+- Concepts that require bouncing across many files to understand one behavior.
+- Test seams that exist only on extracted helpers while real bugs hide in orchestration.
+- Pass-through abstractions that do not reduce caller knowledge.
+- Domain terms that appear under several names across code, docs, and tickets.
+- Interfaces with unclear invariants, error modes, ordering, configuration, or ownership.
+
+Prefer hardening candidates that improve:
+
+- Locality: future changes concentrate in fewer places.
+- Leverage: callers get more behavior through a smaller, clearer interface.
+- Testability: important behavior can be tested through the interface that production uses.
+- Domain language: names match the glossary, tickets, docs, and user-visible concepts.
+
+Do not propose new interfaces before confirming the real friction and affected callers. If a proposed hardening direction conflicts with an ADR or current architecture rule, surface the conflict and ask before planning implementation.
+
 ## Code Quality Doctrine
 
 Prefer:

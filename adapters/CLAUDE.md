@@ -37,9 +37,45 @@ Replace this section with local rules:
 - Map the impacted surface.
 - Verify the framework manifest and active harness capabilities.
 - Route work through the harness only when useful and supported.
+- If the live user prompt includes the exact phrase `subagents swarm allowed`,
+  treat it as explicit authorization and request wording for sub-agents,
+  parallel delegation, model routing, and cross-agent counterpart routing when
+  useful and supported, without bypassing capability, privacy, safety, budget,
+  stop-condition, anti-drift, or validation checks.
+- When another AI tool participates, create the communication plan before joint
+  work and keep a single-agent fallback.
+- Route bounded delegated work to the smallest capable Claude Code agent
+  (`Explore` or `Agent(model: "haiku")` for read-only or classification work,
+  `Agent(model: "sonnet")` or `general-purpose` for localized code and tests).
+  Keep architecture, security, data-loss, ambiguity, and final review on the
+  master thread plus `advisor`.
+- Treat subagent concurrency as a finite runtime budget. Do not spawn
+  speculative agents.
+- Close completed, idle, stale, or prior-workflow agents after capturing any
+  needed result or resume packet, and open fresh agents for new delegated work
+  instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
 - Reset active context on workflow, repo, incident, or objective changes.
 - Keep changes scoped.
-- Verify before completion.
-- When coordinating with another AI tool, create the communication plan first: roles, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
+- Run focused validation first.
+- Report passed, failed, blocked, skipped, and not-run checks explicitly. Never
+  imply skipped or unrun checks passed.
+- Verify before completion. Completion requires artifact plus validation
+  evidence; otherwise report the outcome as unverified.
+
+## Optional Claude Code Commands
+
+If this repo installs framework commands, copy command files from
+`docs/agent-framework/skillsets/*/claude/commands/` into `.claude/commands/`
+or `~/.claude/commands/`.
+
+For operator-facing examples, read
+`docs/agent-framework/ECOSYSTEM_TERRAFORM_GUIDE.md`.
+
+Common framework commands:
+
+- `/plan-module-delivery`
+- `/roadmap-terraform`
+- `/tech-terraform`
+- `/assess-then-harden`

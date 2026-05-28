@@ -24,6 +24,7 @@ It provides:
 - Session journaling guidance for resumable local work.
 - Continuous skill learning guidance so repeated lessons become durable rules, skills, or automated gates.
 - Templates for plans, routing records, readiness reports, debugging reports, validation reports, PR bodies, and delegation briefs.
+- Executable Claude Code friendly skillsets for module delivery planning plus roadmap, technology, assessment, and hardening bootstrap.
 
 It is not:
 
@@ -164,7 +165,9 @@ question.
 | `TEMPLATES.md` | Copyable templates for plans, routing, capability records, readiness reports, convergence, debugging, validation, completion, review findings, PRs, skills, and delegation. |
 | `REPO_ADOPTION_PLAYBOOK.md` | Step-by-step adoption guide for installing the framework into a repo. |
 | `INTERNAL_WIKI_PAGE.md` | Short paste-ready wiki summary for teams that want an internal documentation page. |
+| `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
+| `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 
 ## Load Profiles
 
@@ -209,6 +212,22 @@ Use for module-roadmap, project-planning, milestone, ticket-shaping, or migratio
 5. `skillsets/module-delivery/codex/SKILL.md` when installing or using the Codex skill
 6. `skillsets/module-delivery/claude/commands/plan-module-delivery.md` when installing or using the Claude Code slash command
 7. Board, repository, design, PR, and external-source evidence required by the module request
+
+### Ecosystem Terraform Profile
+
+Use for project ecosystem bootstrap, roadmap creation or reconciliation, technical platform bootstrap, legacy assessment, hardening, QA matrix creation from tickets/docs, or Claude Code commands `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`.
+
+1. Minimum profile
+2. `SKILLS_CATALOG.md`
+3. `QUALITY_GATES.md`
+4. `REVIEW_AND_PR_FRAMEWORK.md` when PR review automation or review gates are in scope
+5. `ARCHITECTURE_AND_CODE_QUALITY.md` when assessing or hardening an existing codebase
+6. `ECOSYSTEM_TERRAFORM_GUIDE.md` for command selection, user-facing expectations, and prompt samples
+7. `skillsets/ecosystem-terraform/README.md`
+8. `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
+9. `TEMPLATES.md` when producing roadmap, quality-gate matrix, QA matrix, ticket, or final report artifacts
+10. The relevant Codex skill or Claude Code command file
+11. External evidence required by the request: docs, repos, boards, designs, PRs, deployments, cloud accounts, QA artifacts, and stakeholder instructions
 
 ### Debugging Profile
 
@@ -651,6 +670,34 @@ Base the PR body on:
 - Residual risk.
 
 Do not leave template sections blank. Use `N/A` when a section does not apply.
+
+### Run Ecosystem Terraform
+
+Use `skillsets/ecosystem-terraform/` when the requested output is bigger than one implementation plan.
+
+Claude Code commands:
+
+- `/roadmap-terraform <business prompt, docs, designs, board targets>`
+- `/tech-terraform <stack, repo, infra, quality gates, CI/CD, PR checks, dev workflow prompt>`
+- `/assess-then-harden <project path, external docs/tickets/designs, hardening target>`
+
+Load:
+
+- Ecosystem Terraform profile.
+- `ECOSYSTEM_TERRAFORM_GUIDE.md` for command selection and prompt samples.
+- The relevant command file.
+- `TEMPLATES.md` when a roadmap, QA matrix, quality-gate matrix, ticket set, or final report is needed.
+- Source evidence named by the user.
+
+Then:
+
+1. Verify required capabilities and ask before external mutations.
+2. Ask targeted questions when missing answers affect scope, governance, quality gates, cloud/secret authority, or sub-agent swarming.
+3. Inspect current source evidence before creating new artifacts.
+4. Prefer updating existing roadmaps, boards, docs, and tickets over duplicates.
+5. For tech terraform, assess and scaffold local validations, CI/CD checks, PR checks, security scans, runtime checks, and AI developer workstream gates.
+6. Produce PR-sized tickets plus a business-logic QA matrix or quality-gate matrix.
+7. Report created, updated, proposed, blocked, skipped, and not-run work separately.
 
 ### Install A Tool Adapter
 
