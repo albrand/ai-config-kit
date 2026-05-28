@@ -16,12 +16,18 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/pr-review/README.md
+@docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
 
 For ecosystem bootstrap workflows such as `/roadmap-terraform`,
 `/tech-terraform`, or `/assess-then-harden`, also read
 @docs/agent-framework/ECOSYSTEM_TERRAFORM_GUIDE.md
 and the relevant files under
 @docs/agent-framework/skillsets/ecosystem-terraform/
+
+For high-signal PR review, diff review, merge readiness, or `/code-review`,
+also read the relevant files under
+@docs/agent-framework/skillsets/pr-review/
 
 ## Repo-Specific Overlay
 

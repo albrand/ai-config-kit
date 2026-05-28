@@ -19,6 +19,8 @@ Before substantial repository work, read:
 11. `docs/agent-framework/QUALITY_GATES.md`
 12. `docs/agent-framework/QUALITY_CONVERGENCE.md`
 13. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
+14. `docs/agent-framework/skillsets/pr-review/README.md`
+15. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -26,6 +28,9 @@ For ecosystem bootstrap workflows such as `/roadmap-terraform`,
 `/tech-terraform`, or `/assess-then-harden`, also read
 `docs/agent-framework/ECOSYSTEM_TERRAFORM_GUIDE.md` plus the relevant
 `docs/agent-framework/skillsets/ecosystem-terraform/` files.
+
+For high-signal PR review, diff review, merge readiness, or `/code-review`,
+also read `docs/agent-framework/skillsets/pr-review/` files.
 
 ## Repo-Specific Overlay
 

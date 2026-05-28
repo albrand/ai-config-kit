@@ -16,6 +16,8 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/pr-review/README.md
+@docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
 
 ## Repo-Specific Overlay
 
@@ -79,3 +81,4 @@ Common framework commands:
 - `/roadmap-terraform`
 - `/tech-terraform`
 - `/assess-then-harden`
+- `/code-review`

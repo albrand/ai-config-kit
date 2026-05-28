@@ -146,6 +146,19 @@ Use when tickets, docs, designs, roadmap items, or stakeholder requirements defi
 - Do not invent missing requirements. Mark them as gaps, assumptions, or questions.
 - Every generated implementation ticket should name the QA or test evidence that proves the business behavior.
 
+## PR Review Gate
+
+Use when reviewing a pull request, branch, or diff for merge readiness.
+
+- Preflight the PR or diff before review: open, not draft unless explicitly requested, not trivial automated work, not already reviewed by the same AI reviewer unless asked.
+- Resolve applicable instruction scope before making findings.
+- Read PR title, body, linked issue, changed-file list, and author intent before reviewing details.
+- Validate each candidate finding before reporting it.
+- Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported concerns.
+- Report validation actually reviewed, including missing or misleading validation.
+- Post public comments only when the user requested comment mode or repo policy requires it.
+- Use committable suggestion blocks only when the suggestion fully fixes the issue.
+
 ## Data Gate
 
 For data changes:

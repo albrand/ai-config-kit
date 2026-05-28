@@ -36,6 +36,7 @@ Support files:
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
+- `skillsets/pr-review/`: executable high-signal PR review skillset, including a Codex skill, Claude Code `/code-review` command, and shared output contract.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
@@ -125,7 +126,8 @@ Use for code review, self-review, PR preparation, or readiness decisions:
 2. `REVIEW_AND_PR_FRAMEWORK.md`
 3. `QUALITY_GATES.md`
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
-5. Actual diff, changed files, validation output, and repo PR template
+5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or comment mode
+6. Actual diff, changed files, validation output, and repo PR template
 
 ### Adoption Profile
 

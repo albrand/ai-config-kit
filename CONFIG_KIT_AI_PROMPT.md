@@ -24,7 +24,7 @@ Load order:
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
-   - Review or PR work: also read `REVIEW_AND_PR_FRAMEWORK.md`.
+   - Review or PR work: also read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
    - Journaling: also read `SESSION_JOURNALING.md` if the repo uses journals.
    - Skill or rule maintenance: also read `CONTINUOUS_SKILL_LEARNING.md`.
 7. Read `TEMPLATES.md` when a structured plan, readiness report, validation report, PR body, resume packet, or delegation brief is useful.
@@ -47,6 +47,7 @@ After loading the files, build an active instruction model:
 - Required skills or processes.
 - Any task-relevant skillset, including `skillsets/module-delivery/` for module-planning work.
 - Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
+- Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or comment mode.
 - Quality gates and quality convergence triggers.
 - Breakpoints where user approval or stronger reasoning is required.
 - Stop conditions.

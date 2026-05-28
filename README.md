@@ -168,6 +168,7 @@ question.
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
+| `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
 
 ## Load Profiles
 
@@ -246,7 +247,8 @@ Use for code review, self-review, PR preparation, and readiness decisions:
 2. `REVIEW_AND_PR_FRAMEWORK.md`
 3. `QUALITY_GATES.md`
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
-5. Actual diff, changed files, validation output, and repo PR template
+5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or comment mode
+6. Actual diff, changed files, validation output, and repo PR template
 
 ### Adoption Profile
 

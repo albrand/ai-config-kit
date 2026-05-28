@@ -31,6 +31,12 @@ Before reviewing:
 
 Use this workflow when reviewing a GitHub PR or equivalent diff where comments may be posted publicly.
 
+Executable entrypoints:
+
+- Codex skill: `skillsets/pr-review/codex/high-signal-pr-review/SKILL.md`
+- Claude Code command: `skillsets/pr-review/claude/commands/code-review.md`
+- Output contract: `skillsets/pr-review/references/pr-review-output-contract.md`
+
 1. Preflight before review:
    - Confirm the PR or diff is open for review.
    - Stop or ask before continuing if it is closed, draft, obviously automated/trivial, or already reviewed by the same AI reviewer.
@@ -69,6 +75,17 @@ Do not flag:
 - Issues only a linter would catch.
 - Concerns that require unsupported assumptions about future input or state.
 - Pre-existing problems unless the PR makes them materially worse.
+
+## Engineering Pattern Additions
+
+Use these additions when they are relevant to the changed surface:
+
+- If PR intent, domain language, or acceptance criteria are ambiguous, ask one targeted question or state the assumption before continuing.
+- Use domain glossary files, `CONTEXT.md`, `CONTEXT-MAP.md`, and ADRs when available. Do not re-litigate an ADR unless the diff exposes real friction.
+- For bugfix PRs, look for a reproduced failure and regression protection. A test, script, replay, or smoke path can be enough if it proves the original failure no longer reproduces.
+- Prefer tests that verify behavior through public interfaces. Treat tests coupled to private implementation details as weak evidence unless the repo intentionally tests that layer.
+- When architecture is in scope, look for shallow pass-through modules, scattered concepts, weak test seams, and interfaces whose invariants are unclear. Report only issues tied to changed behavior or merge risk.
+- When follow-up work is requested, split it into vertical slices that are independently grabbable, demoable or verifiable, and sized for one PR.
 
 ## Interactive Review Mode
 

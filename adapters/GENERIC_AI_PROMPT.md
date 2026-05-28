@@ -20,7 +20,7 @@ Before implementation:
 8. For code quality, read `ARCHITECTURE_AND_CODE_QUALITY.md`.
 9. For validation, read `QUALITY_GATES.md`.
 10. For iterative quality improvement, read `QUALITY_CONVERGENCE.md`.
-11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`.
+11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
 12. For roadmap, technology, assessment, or hardening bootstrap, read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`.
 13. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
 
