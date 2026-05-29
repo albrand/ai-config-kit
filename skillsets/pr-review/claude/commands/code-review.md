@@ -1,7 +1,7 @@
 ---
 description: Review a pull request or diff with high-signal filtering, scoped instructions, validated findings, and optional GitHub comments.
 argument-hint: [PR number, URL, branch, diff path, optional --comment]
-allowed-tools: Bash(gh pr view:*), Bash(gh pr diff:*), Bash(gh pr list:*), Bash(gh pr comment:*), Bash(gh issue view:*), Bash(gh search:*), Bash(git diff:*), Bash(git status:*), Bash(git rev-parse:*), mcp__github_inline_comment__create_inline_comment
+allowed-tools: Bash(gh api:*), Bash(gh pr checks:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr edit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh search:*), Bash(git diff:*), Bash(git status:*), Bash(git rev-parse:*), mcp__github_inline_comment__create_inline_comment
 ---
 
 # Code Review
@@ -22,38 +22,35 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - Confirm the PR or diff is open and reviewable.
    - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the same AI reviewer.
    - Still review AI-generated PRs when the user asks for it.
-4. Resolve instruction scope:
+4. If the task involves existing PR comments, fetch live top-level comments, reviews, review comments, review threads, head SHA, review decision, and current checks before editing or replying. Map each comment to fixed, evidence-backed reply, not applicable, or still blocked.
+5. Resolve instruction scope:
    - Root `CLAUDE.md` or `AGENTS.md`.
    - Path-scoped instruction files for changed files.
    - PR template and repo review rules.
-5. Read PR intent before details: title, body, linked issue, changed-file list, and author-stated tradeoffs.
-6. Use independent agents when useful and available:
+6. Read PR intent before details: title, body, linked issue, changed-file list, and author-stated tradeoffs.
+7. Use independent agents when useful and available:
    - One or two instruction-compliance passes.
    - One bug/security/logic pass focused on changed code.
    - One validation/test/architecture pass for risky changes.
    - Tell each agent the PR title, description, changed-file list, scope, and output cap.
-7. Review candidates only against the changed surface and applicable instructions. Flag only:
+8. Review candidates only against the changed surface and applicable instructions. Flag only:
    - Compile, parse, import, type, or runtime breakage.
    - Definitely wrong behavior.
    - Auth, data, security, API, runtime, or environment contract breaks.
    - Required validation missing for risky changed behavior.
    - Clear scoped instruction violations.
-8. Apply engineering checks inspired by Matt Pocock's public skills when relevant:
+9. Apply engineering checks inspired by Matt Pocock's public skills when relevant:
    - Ask one targeted question if intent or domain language is ambiguous.
    - Use domain glossary and ADRs when present.
    - Prefer behavior tests through public interfaces.
    - For bugfix PRs, check for reproduced failure and regression protection.
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Convert follow-ups into vertical-slice tickets only when ticketing is requested.
-9. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
-10. Report findings to the terminal or final response using the output contract.
-11. If `--comment` is not present, stop without posting comments.
-12. If `--comment` is present:
-   - Create a private list of comments first.
-   - Post at most one comment per unique issue.
-   - Prefer inline comments on changed code.
-   - Use a committable suggestion block only when it fully fixes the issue.
-   - If no issues are found and a summary comment is requested, post a short no-issues summary.
+10. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
+11. Report findings to the terminal or final response using the output contract.
+12. If `--comment` is not present and the user did not ask to respond to comments, stop without posting comments.
+13. If `--comment` is present or the user explicitly asked to respond to comments, create a private list first; post at most one comment per unique issue; prefer inline comments on changed code; use a committable suggestion block only when it fully fixes the issue; and post a short no-issues summary only when requested.
+14. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
 
 ## Output
 

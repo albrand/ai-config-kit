@@ -61,6 +61,18 @@ Executable entrypoints:
    - Use inline comments for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub.
    - Use committable suggestion blocks only when the suggestion fully fixes the issue without hidden follow-up work.
 
+## Existing Review Comments And Re-Review
+
+Use this when the user asks to address, respond to, or resolve existing PR comments.
+
+- Refresh live PR state before editing: top-level comments, submitted reviews, review comments, review threads, head SHA, merge or review decision, and current checks.
+- Build a comment action table: fixed, needs evidence-backed reply, not applicable, or still blocked. Do not silently ignore earlier feedback.
+- Patch only the scoped issue unless the comment exposes a broader correctness or safety gap.
+- Reply to each applicable comment or thread after the fix is pushed or the evidence is verified. Prefer thread replies for review threads and a top-level summary only for cross-thread status.
+- Resolve only threads that were actually addressed. Leave unresolved threads open when they need reviewer input, product approval, or broader follow-up work.
+- Re-check checks and deployment status after pushing. Treat older bot comments as historical when a newer check or deployment supersedes them.
+- Re-check review state after every head change. A new commit can invalidate an earlier approval, so request re-review when the platform reports review required.
+
 High-signal means:
 
 - The code will fail to compile, parse, import, or resolve.
@@ -134,9 +146,9 @@ Use:
 
 ```md
 1. <path>:<line>
-<What is wrong and why it matters.>
-Question: <direct question if intent is unclear>
-Recommendation: <specific fix or options>
+   <What is wrong and why it matters.>
+   Question: <direct question if intent is unclear>
+   Recommendation: <specific fix or options>
 ```
 
 Findings should include file references and be ordered by severity.
@@ -204,16 +216,20 @@ Request changes or mark not ready when:
 
 ```md
 Findings:
+
 1. <finding>
 2. <finding>
 
 Open questions:
+
 - <question or "None">
 
 Validation reviewed:
+
 - <command/output reviewed>
 
 Residual risk:
+
 - <risk or "None identified">
 ```
 

@@ -140,6 +140,11 @@ Recommended setup:
   repo/folder/workflow routing preferences. If a Replit MCP login returns
   `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`
   and use the fresh URL.
+- Keep MCP setup docs honest about the boundary between repo readiness and
+  client registration. Prefer native client registration examples over custom
+  helper scripts, keep secrets in env or secret stores, and preserve
+  machine-neutral enabled/disabled integration policy when removing personal
+  paths.
 
 ## Any Other AI Tool
 

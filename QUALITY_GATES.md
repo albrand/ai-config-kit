@@ -158,6 +158,8 @@ Use when reviewing a pull request, branch, or diff for merge readiness.
 - Report validation actually reviewed, including missing or misleading validation.
 - Post public comments only when the user requested comment mode or repo policy requires it.
 - Use committable suggestion blocks only when the suggestion fully fixes the issue.
+- When addressing existing PR comments, inspect live comments, reviews, review threads, current head, checks, and deployment state before editing.
+- Reply to each applicable comment after the fix or evidence lands, resolve only addressed threads, and request re-review if the new head invalidates approval.
 
 ## Data Gate
 
@@ -184,6 +186,7 @@ For security-sensitive changes:
 
 ```md
 Validation:
+
 - <command>: passed
 - <command>: failed - <short reason>
 - <command>: blocked - <blocker>
@@ -191,9 +194,11 @@ Validation:
 - <command>: not run - <why>
 
 Direct behavior checked:
+
 - <what proves the requested outcome>
 
 Residual risk:
+
 - <remaining gap or "None identified">
 ```
 

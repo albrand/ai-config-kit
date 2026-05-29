@@ -13,18 +13,20 @@ Record:
 - Validation output inspected.
 - External systems used or unavailable.
 - Whether comment mode was requested.
+- Existing issue comments, review comments, and review threads inspected when the task is to address or respond to PR feedback.
+- Review state after the latest head change, including whether re-review is required.
 
 ## Preflight
 
 Before reviewing, decide whether to continue:
 
-| Check | Stop Unless User Overrides |
-| --- | --- |
-| PR closed | Yes |
-| PR draft | Yes |
-| Obviously automated or trivial | Yes |
-| Same AI reviewer already commented | Yes |
-| Missing diff access | Yes |
+| Check                                       | Stop Unless User Overrides                              |
+| ------------------------------------------- | ------------------------------------------------------- |
+| PR closed                                   | Yes                                                     |
+| PR draft                                    | Yes                                                     |
+| Obviously automated or trivial              | Yes                                                     |
+| Same AI reviewer already commented          | Yes                                                     |
+| Missing diff access                         | Yes                                                     |
 | Missing repo instructions for changed paths | No, continue with known instructions and report the gap |
 
 Still review AI-generated PRs when the user explicitly requests review.
@@ -85,27 +87,40 @@ If the user requested comments:
 - Include suggestion blocks only for small fixes that fully resolve the issue.
 - If no issues are found and a summary comment is requested, post a short no-issues summary.
 
+If the user requested response or resolution of existing comments:
+
+- Reply to every applicable comment or review thread with the fix, evidence, or explicit reason it remains open.
+- Resolve only review threads that were actually addressed.
+- Re-check unresolved thread count, current checks, deployment state, and review decision after pushing.
+- Request re-review when the current head no longer has a valid approval.
+
 ## Final Report Shape
 
 ```md
 Findings:
+
 1. <path>:<line>
-<issue, impact, and concrete recommendation>
+   <issue, impact, and concrete recommendation>
 
 Open questions:
+
 - <question or "None">
 
 Validation reviewed:
+
 - <command, CI check, artifact, or "None provided">
 
 Review scope:
+
 - Sources inspected: <list>
 - Instructions applied: <list>
 - Comment mode: <yes/no>
 
 Dropped candidates:
+
 - <optional: why candidates were dropped when useful>
 
 Residual risk:
+
 - <risk or "None identified">
 ```

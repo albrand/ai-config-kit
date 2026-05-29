@@ -58,6 +58,10 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- When documenting MCP setup, separate repo-level readiness from client
+  registration. Prefer native client commands over custom helper scripts, keep
+  secrets in env or secret stores, and preserve machine-neutral enabled/disabled
+  integration policy when removing personal paths.
 - Reset active context on workflow, repo, incident, or objective changes.
 - Keep changes scoped.
 - Run focused validation first.
