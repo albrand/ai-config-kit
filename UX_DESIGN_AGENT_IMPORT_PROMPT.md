@@ -2,12 +2,17 @@
 
 Use this prompt when a user wants an AI assistant to import the UX Design Agent skillset from this config kit into Codex and Claude Code.
 
+Canonical source repository: `https://github.com/albrand/ai-config-kit`
+
 This prompt is intentionally generic. Do not add private repository names, private URLs, secrets, credentials, account IDs, or closed-scope operational details.
 
 ## Prompt
 
 ```text
-You are helping me import the UX Design Agent skillset from the provided Agent Configuration Framework bundle into my AI tools.
+You are helping me import the UX Design Agent skillset from the Agent Configuration Framework into my AI tools.
+
+Canonical source repository:
+- `https://github.com/albrand/ai-config-kit`
 
 Goal:
 - Install or update the Codex `ux-design-agent` skill.
@@ -16,7 +21,9 @@ Goal:
 - Verify the installed files before claiming completion.
 
 Source of truth:
-- Use the attached, pasted, current, or archived `agent-config-kit` contents as the source package.
+- First use the attached, pasted, current, or archived `agent-config-kit` contents when I provide them.
+- If no local source package is attached or readable, fetch or clone `https://github.com/albrand/ai-config-kit` if network and git access are available.
+- If you cannot access the repository and I did not provide the package, stop and ask me to attach the repo, paste the files, or provide a readable checkout path.
 - Required source files:
   - `skillsets/ux-design-agent/README.md`
   - `skillsets/ux-design-agent/references/output-contract.md`
@@ -85,5 +92,5 @@ Safety rules:
 Use this when the assistant already has the config kit loaded:
 
 ```text
-Import the UX Design Agent skillset from this config kit. Install the Codex skill from `skillsets/ux-design-agent/codex/ux-design-agent/` into `<CODEX_HOME or ~/.codex>/skills/ux-design-agent/`, including `SKILL.md`, `references/output-contract.md`, and `agents/openai.yaml`. Install the Claude Code command from `skillsets/ux-design-agent/claude/commands/ux-design-agent.md` into `~/.claude/commands/ux-design-agent.md` or the approved project `.claude/commands/` folder. Inspect existing targets before overwriting, ask before replacing customized files, verify installed files against the source, report skipped or blocked steps, and do not mutate Figma, repos, cloud resources, trackers, secrets, or component libraries during import.
+Import the UX Design Agent skillset from `https://github.com/albrand/ai-config-kit` or from the attached/readable local config-kit package if I provided one. Install the Codex skill from `skillsets/ux-design-agent/codex/ux-design-agent/` into `<CODEX_HOME or ~/.codex>/skills/ux-design-agent/`, including `SKILL.md`, `references/output-contract.md`, and `agents/openai.yaml`. Install the Claude Code command from `skillsets/ux-design-agent/claude/commands/ux-design-agent.md` into `~/.claude/commands/ux-design-agent.md` or the approved project `.claude/commands/` folder. Inspect existing targets before overwriting, ask before replacing customized files, verify installed files against the source, report skipped or blocked steps, and do not mutate Figma, repos, cloud resources, trackers, secrets, or component libraries during import.
 ```
