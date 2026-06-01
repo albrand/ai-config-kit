@@ -11,6 +11,7 @@ Core files:
 - `README.md`: overview, layer model, and adoption summary.
 - `AI_BOOTSTRAP.md`: first-read instruction for any AI tool.
 - `CONFIG_KIT_AI_PROMPT.md`: paste-ready prompt for making any AI absorb the config kit.
+- `UX_DESIGN_AGENT_IMPORT_PROMPT.md`: paste-ready prompt for importing the UX Design Agent skillset into Codex and Claude Code.
 - `FRAMEWORK_MANIFEST.md`: required file inventory, load profiles, and readiness checks.
 - `GLOBAL_AGENTS.md`: global collaboration and execution baseline.
 - `OPERATING_MODEL.md`: full task lifecycle and source-of-truth rules.
@@ -154,11 +155,12 @@ Use when installing the framework into a new repo or another AI tool:
 2. `FRAMEWORK_MANIFEST.md`
 3. `AI_BOOTSTRAP.md`
 4. `CONFIG_KIT_AI_PROMPT.md`
-5. `AI_TOOL_ADAPTERS.md`
-6. `REPO_ADOPTION_PLAYBOOK.md`
-7. `REPO_AGENTS_TEMPLATE.md`
-8. `TEMPLATES.md`
-9. The adapter file for the target AI tool
+5. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
+6. `AI_TOOL_ADAPTERS.md`
+7. `REPO_ADOPTION_PLAYBOOK.md`
+8. `REPO_AGENTS_TEMPLATE.md`
+9. `TEMPLATES.md`
+10. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 

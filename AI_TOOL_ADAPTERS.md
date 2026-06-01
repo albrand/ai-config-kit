@@ -27,6 +27,8 @@ Use this for any AI assistant:
 6. For repo work, also give the AI the repo's local instruction file.
 7. Ask the AI to report the active harness capability record before substantial work.
 
+Use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when the task is specifically to import or update the UX Design Agent skillset in Codex or Claude Code from this kit.
+
 If the tool supports repository instruction files, place a copy of `adapters/AGENTS.md` or an equivalent bootstrap file at the repo root and edit the local paths.
 
 ## Generic Chat Assistant
@@ -97,6 +99,7 @@ Recommended setup:
 - Use imports from `CLAUDE.md` to point to the framework files.
 - Keep local-only preferences out of shared project memory.
 - For executable workflows, copy command files from `skillsets/*/claude/commands/` into `~/.claude/commands/` or the project `.claude/commands/` folder.
+- For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should perform the import with overwrite checks and verification.
 - The ecosystem bootstrap commands are `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`.
 - The UX design-agent command is `/ux-design-agent`.
 - For `/ux-design-agent`, Claude Code orchestrates the workflow and Claude Design handles visual design creation or design-file execution when available.
@@ -126,6 +129,7 @@ Recommended setup:
 - Place framework files under a stable path such as `docs/agent-framework/`.
 - Put repo-specific validation commands and architecture rules in the repo `AGENTS.md`.
 - Use nested `AGENTS.md` files only for subtrees with different rules.
+- For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should install the Codex skill files under `<CODEX_HOME>/skills/ux-design-agent/` and verify them.
 - If Codex model routing is available, use `gpt-5.3-codex-spark` as the
   default bounded sidecar tier for quick or standard work when useful and
   cheap to validate.

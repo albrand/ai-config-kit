@@ -122,6 +122,7 @@ Good candidates:
 Executable shared skillsets should be installed deliberately:
 
 - Share `ECOSYSTEM_TERRAFORM_GUIDE.md` with operators so they understand which command to use and can start from tested prompt samples.
+- Share `UX_DESIGN_AGENT_IMPORT_PROMPT.md` with operators who want an assistant to import the UX Design Agent into Codex or Claude Code with overwrite checks and verification.
 - Claude Code: copy `skillsets/*/claude/commands/*.md` to the project `.claude/commands/` folder or user `~/.claude/commands/`.
 - Codex: copy the relevant `skillsets/*/codex/*/SKILL.md` into `<CODEX_HOME>/skills/<skill-name>/SKILL.md`.
 - Keep shared references such as `ecosystem-output-contract.md` near the installed framework path so commands can load them.

@@ -14,6 +14,7 @@ It provides:
 
 - A universal bootstrap contract any AI tool can read.
 - A manifest that lists required files, load profiles, harness capabilities, and readiness checks.
+- A paste-ready UX Design Agent import prompt for installing the Codex skill and Claude Code command.
 - Global agent behavior that can be installed at user or workspace level.
 - Repo-level instruction templates for local architecture, validation, and workflow rules.
 - Tool adapters for AGENTS-compatible tools, Claude Code, Gemini CLI, Cursor, and generic chat assistants.
@@ -89,6 +90,10 @@ Use this path when the AI cannot read files from a repository:
 
 Use `adapters/GENERIC_AI_PROMPT.md` only as a short fallback when the full ingestion prompt is too large.
 
+### Import The UX Design Agent Skillset
+
+Use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when a user wants an assistant to install the newly added Codex `ux-design-agent` skill and Claude Code `/ux-design-agent` command from this kit. The prompt includes target paths, overwrite checks, verification steps, and try-it prompts for both tools.
+
 ## Core Mental Model
 
 The framework separates instructions by scope.
@@ -144,6 +149,7 @@ question.
 | --- | --- |
 | `README.md` | Entry point, quick-start guide, file map, usage recipes, and maintenance overview. |
 | `CONFIG_KIT_AI_PROMPT.md` | Paste-ready prompt that tells any AI how to absorb this kit from files, pasted content, a folder, or an archive. |
+| `UX_DESIGN_AGENT_IMPORT_PROMPT.md` | Paste-ready prompt for importing the UX Design Agent skillset into Codex and Claude Code. |
 | `AI_BOOTSTRAP.md` | First-read instruction for any AI tool; short enough for custom instructions or project rules. |
 | `FRAMEWORK_MANIFEST.md` | Canonical file inventory, load profiles, harness capability record, source-of-truth contract, readiness matrix, and maintenance checks. |
 | `GLOBAL_AGENTS.md` | Global collaboration and execution baseline for agent behavior. |
@@ -275,11 +281,12 @@ Use when installing the framework into a new repository or AI tool:
 2. `FRAMEWORK_MANIFEST.md`
 3. `AI_BOOTSTRAP.md`
 4. `CONFIG_KIT_AI_PROMPT.md`
-5. `AI_TOOL_ADAPTERS.md`
-6. `REPO_ADOPTION_PLAYBOOK.md`
-7. `REPO_AGENTS_TEMPLATE.md`
-8. `TEMPLATES.md`
-9. The adapter file for the target AI tool
+5. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
+6. `AI_TOOL_ADAPTERS.md`
+7. `REPO_ADOPTION_PLAYBOOK.md`
+8. `REPO_AGENTS_TEMPLATE.md`
+9. `TEMPLATES.md`
+10. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 
