@@ -35,6 +35,7 @@ Support files:
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
+- `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
 - `skillsets/pr-review/`: executable high-signal PR review skillset, including a Codex skill, Claude Code `/code-review` command, and shared output contract.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
@@ -108,6 +109,22 @@ Use for project ecosystem bootstrap, roadmap creation or reconciliation, technic
    - `skillsets/ecosystem-terraform/claude/commands/tech-terraform.md`
    - `skillsets/ecosystem-terraform/claude/commands/assess-then-harden.md`
 11. External source evidence required by the request: docs, repos, boards, designs, PRs, deployments, cloud accounts, QA artifacts, and stakeholder instructions
+
+### UX Design Agent Profile
+
+Use for Figma-first UX design workflows, layout creation, product UI shaping, design-system setup, design-token creation or import, component-library guidance, Figma annotation workflows, code-aware design handoff, or the Claude Code command `/ux-design-agent`:
+
+1. Minimum Profile
+2. `SKILLS_CATALOG.md`
+3. `QUALITY_GATES.md`
+4. `ARCHITECTURE_AND_CODE_QUALITY.md` when repo tokens, component architecture, or implementation handoff are in scope
+5. `AI_TOOL_ADAPTERS.md` when installing Codex or Claude entrypoints
+6. `skillsets/ux-design-agent/README.md`
+7. `skillsets/ux-design-agent/references/output-contract.md`
+8. The relevant Codex skill or Claude Code command:
+   - `skillsets/ux-design-agent/codex/ux-design-agent/SKILL.md`
+   - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
+9. External source evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, product docs, and design-tool access
 
 ### Debugging Profile
 

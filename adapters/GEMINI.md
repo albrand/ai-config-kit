@@ -16,6 +16,8 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/ux-design-agent/README.md
+@docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
 @docs/agent-framework/skillsets/pr-review/README.md
 @docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
 
@@ -28,6 +30,11 @@ and the relevant files under
 For high-signal PR review, diff review, merge readiness, or `/code-review`,
 also read the relevant files under
 @docs/agent-framework/skillsets/pr-review/
+
+For Figma-first UX design workflows, design systems, design tokens, component
+library guidance, Figma annotations, design-to-code handoff, or
+`/ux-design-agent`, also read the relevant files under
+@docs/agent-framework/skillsets/ux-design-agent/
 
 ## Repo-Specific Overlay
 

@@ -24,7 +24,7 @@ It provides:
 - Session journaling guidance for resumable local work.
 - Continuous skill learning guidance so repeated lessons become durable rules, skills, or automated gates.
 - Templates for plans, routing records, readiness reports, debugging reports, validation reports, PR bodies, and delegation briefs.
-- Executable Claude Code friendly skillsets for module delivery planning plus roadmap, technology, assessment, and hardening bootstrap.
+- Executable Claude Code friendly skillsets for module delivery planning, UX design-agent workflows, roadmap, technology, assessment, and hardening bootstrap.
 
 It is not:
 
@@ -167,6 +167,7 @@ question.
 | `INTERNAL_WIKI_PAGE.md` | Short paste-ready wiki summary for teams that want an internal documentation page. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
+| `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 | `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
 
@@ -229,6 +230,22 @@ Use for project ecosystem bootstrap, roadmap creation or reconciliation, technic
 9. `TEMPLATES.md` when producing roadmap, quality-gate matrix, QA matrix, ticket, or final report artifacts
 10. The relevant Codex skill or Claude Code command file
 11. External evidence required by the request: docs, repos, boards, designs, PRs, deployments, cloud accounts, QA artifacts, and stakeholder instructions
+
+### UX Design Agent Profile
+
+Use for Figma-first UX design workflows, layout creation, product UI shaping, design-system setup, design-token creation or import, component-library guidance, Figma annotation workflows, code-aware design handoff, or the Claude Code command `/ux-design-agent`.
+
+1. Minimum profile
+2. `SKILLS_CATALOG.md`
+3. `QUALITY_GATES.md`
+4. `ARCHITECTURE_AND_CODE_QUALITY.md` when the workflow touches repo tokens, component architecture, or implementation handoff
+5. `AI_TOOL_ADAPTERS.md` when installing Codex or Claude entrypoints
+6. `skillsets/ux-design-agent/README.md`
+7. `skillsets/ux-design-agent/references/output-contract.md`
+8. The relevant Codex skill or Claude Code command:
+   - `skillsets/ux-design-agent/codex/ux-design-agent/SKILL.md`
+   - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
+9. External evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, and product docs
 
 ### Debugging Profile
 
@@ -700,6 +717,32 @@ Then:
 5. For tech terraform, assess and scaffold local validations, CI/CD checks, PR checks, security scans, runtime checks, and AI developer workstream gates.
 6. Produce PR-sized tickets plus a business-logic QA matrix or quality-gate matrix.
 7. Report created, updated, proposed, blocked, skipped, and not-run work separately.
+
+### Run UX Design Agent
+
+Use `skillsets/ux-design-agent/` when the request is a Figma-first UX design workflow, personal designer agent setup, layout creation, design-system setup, design-token creation or import, component-library guidance, or design-to-code handoff.
+
+Claude Code command:
+
+- `/ux-design-agent <product prompt, Figma link, repo path, design-system goal>`
+
+Load:
+
+- UX Design Agent profile.
+- `skillsets/ux-design-agent/README.md`.
+- `skillsets/ux-design-agent/references/output-contract.md`.
+- The relevant Codex skill or Claude Code command file.
+- Figma files, Figma libraries, repo/design-system evidence, screenshots, brand guidelines, and product docs named by the user.
+
+Then:
+
+1. Verify Figma MCP/tool access, Figma edit permission, repo access, component-library status, and Claude Design availability when using Claude.
+2. Detect whether the target is a new project, an existing project without a system, an existing project with a system, or an external design system import.
+3. Ask focused UX questions with recommended defaults and non-technical explanations when useful.
+4. Decide whether to create a lightweight design system and token set or import an existing system before writing durable artifacts.
+5. Suggest shadcn/ui or another component library only after checking project fit.
+6. Use Figma annotations for tokens, components, responsive behavior, states, accessibility, open questions, and implementation notes.
+7. Report completed, proposed, blocked, skipped, and unverified design and repo work separately.
 
 ### Install A Tool Adapter
 

@@ -1,0 +1,13 @@
+interface:
+  display_name: "UX Design Agent"
+  short_description: "Figma-first UX workflow agent"
+  default_prompt: "Use $ux-design-agent to shape a Figma-first design system and layout workflow for my product."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "figma"
+      description: "Figma MCP server for reading and updating Figma designs, variables, components, and annotations."
+
+policy:
+  allow_implicit_invocation: true

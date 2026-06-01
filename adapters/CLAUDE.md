@@ -16,6 +16,8 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/ux-design-agent/README.md
+@docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
 @docs/agent-framework/skillsets/pr-review/README.md
 @docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
 
@@ -85,4 +87,5 @@ Common framework commands:
 - `/roadmap-terraform`
 - `/tech-terraform`
 - `/assess-then-harden`
+- `/ux-design-agent`
 - `/code-review`

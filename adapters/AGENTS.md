@@ -19,8 +19,10 @@ Before substantial repository work, read:
 11. `docs/agent-framework/QUALITY_GATES.md`
 12. `docs/agent-framework/QUALITY_CONVERGENCE.md`
 13. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
-14. `docs/agent-framework/skillsets/pr-review/README.md`
-15. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
+14. `docs/agent-framework/skillsets/ux-design-agent/README.md`
+15. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
+16. `docs/agent-framework/skillsets/pr-review/README.md`
+17. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -31,6 +33,11 @@ For ecosystem bootstrap workflows such as `/roadmap-terraform`,
 
 For high-signal PR review, diff review, merge readiness, or `/code-review`,
 also read `docs/agent-framework/skillsets/pr-review/` files.
+
+For Figma-first UX design workflows, design systems, design tokens, component
+library guidance, Figma annotations, design-to-code handoff, or
+`/ux-design-agent`, also read
+`docs/agent-framework/skillsets/ux-design-agent/` files.
 
 ## Repo-Specific Overlay
 

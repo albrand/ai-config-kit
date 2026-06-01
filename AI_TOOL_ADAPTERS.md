@@ -21,6 +21,7 @@ Use this for any AI assistant:
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or comment mode also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
+   - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, or design-to-code handoff: `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`
    - Journaling: `SESSION_JOURNALING.md`
    - Skill creation: `CONTINUOUS_SKILL_LEARNING.md` plus `SKILLS_CATALOG.md`
 6. For repo work, also give the AI the repo's local instruction file.
@@ -97,6 +98,8 @@ Recommended setup:
 - Keep local-only preferences out of shared project memory.
 - For executable workflows, copy command files from `skillsets/*/claude/commands/` into `~/.claude/commands/` or the project `.claude/commands/` folder.
 - The ecosystem bootstrap commands are `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`.
+- The UX design-agent command is `/ux-design-agent`.
+- For `/ux-design-agent`, Claude Code orchestrates the workflow and Claude Design handles visual design creation or design-file execution when available.
 - The PR review command is `/code-review`.
 - Give operators `ECOSYSTEM_TERRAFORM_GUIDE.md` so they have command selection guidance and copy-paste prompt samples.
 
