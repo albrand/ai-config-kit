@@ -83,6 +83,7 @@ Framework readiness:
 - Required validation: <commands or "not defined">
 - Closed-scope scan: <passed|failed|not run>
 - First-session check: <passed|failed|not run>
+- Skill library index: <fresh|stale|missing|not applicable|blocked> - <counts or blocker>
 - Archive updated: <yes|no|not applicable>
 
 Gaps:
@@ -90,6 +91,26 @@ Gaps:
 
 Next action:
 - <smallest useful next step>
+```
+
+## Skill Library Index Report
+
+```md
+Skill library index:
+- CODEX_HOME: <path or "not detected">
+- Router installed: <yes|no|blocked>
+- Refresh command: <passed|failed|blocked|not run>
+- Check command: <passed|failed|blocked|not run>
+- Total skills: <number or unknown>
+- Implicit skills: <number or unknown>
+- Explicit-only skills: <number or unknown>
+- Policy changes: <number or "not run">
+- Generated files:
+  - skill-index.json: <present|missing|blocked>
+  - skill-index.md: <present|missing|blocked>
+  - applied-policy-summary.json: <present|missing|blocked>
+- Access rule: <explicit-only skills remain router-accessible|exception>
+- Residual risk: <risk or "None identified">
 ```
 
 ## Cross-Agent Communication Plan

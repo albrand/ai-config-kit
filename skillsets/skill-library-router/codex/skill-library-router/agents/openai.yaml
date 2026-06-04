@@ -1,0 +1,7 @@
+interface:
+  display_name: "Skill Library Router"
+  short_description: "Find skills in large Codex libraries."
+  default_prompt: "Use $skill-library-router to find and load the right skill from my local Codex library."
+
+policy:
+  allow_implicit_invocation: true

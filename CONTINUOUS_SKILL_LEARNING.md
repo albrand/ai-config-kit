@@ -72,7 +72,8 @@ Promote lessons to the narrowest useful place:
 6. Add output expectations.
 7. Check for overlap with existing skills.
 8. Ask for approval before changing shared skills.
-9. Verify a future agent can apply the skill from the file alone.
+9. For Codex skills, refresh the Skill Library Router index when the router is installed, or record why indexing is blocked or not applicable.
+10. Verify a future agent can apply the skill from the file alone.
 
 ## Rule Update Workflow
 

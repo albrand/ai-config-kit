@@ -23,7 +23,8 @@ Before implementation:
 11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
 12. For roadmap, technology, assessment, or hardening bootstrap, read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`.
 13. For Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, Figma annotations, or design-to-code handoff, read `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`.
-14. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
+14. For Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work, read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`.
+15. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
 
 Required behavior:
 
@@ -36,6 +37,9 @@ Required behavior:
 - If another AI tool participates, create a communication plan before joint work and keep a single-agent fallback.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow.
+- For Codex skill or plugin add/update/remove work, refresh the installed
+  `skill-library-router` index and run its `--check` mode, or report the
+  sandbox or permission blocker.
 - Reset active context on workflow, repo, incident, or objective changes.
 - Use quality convergence when first-pass validation is insufficient.
 - Ask when source-of-truth layers conflict.

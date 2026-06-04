@@ -74,6 +74,9 @@ Use this as the user-level baseline for AI coding agents.
 
 - Use progressive disclosure: start from indexes, file lists, metadata,
   structured fields, and summaries before loading full artifacts.
+- In Codex installs with many skills or plugins, use a refreshed
+  `skill-library-router` index for smart skill access instead of disabling
+  skills or bulk-loading skill bodies.
 - Use deterministic pre-processing before model reasoning: search, filter,
   count, sort, and shape data with tools first.
 - Compress stale middle history while preserving the original objective,

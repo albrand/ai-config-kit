@@ -14,6 +14,7 @@ It provides:
 
 - A universal bootstrap contract any AI tool can read.
 - A manifest that lists required files, load profiles, harness capabilities, and readiness checks.
+- A paste-ready Skill Library Router import prompt for keeping large Codex skill libraries indexed and accessible.
 - A paste-ready UX Design Agent import prompt for installing the Codex skill and Claude Code command.
 - Global agent behavior that can be installed at user or workspace level.
 - Repo-level instruction templates for local architecture, validation, and workflow rules.
@@ -25,7 +26,7 @@ It provides:
 - Session journaling guidance for resumable local work.
 - Continuous skill learning guidance so repeated lessons become durable rules, skills, or automated gates.
 - Templates for plans, routing records, readiness reports, debugging reports, validation reports, PR bodies, and delegation briefs.
-- Executable Claude Code friendly skillsets for module delivery planning, UX design-agent workflows, roadmap, technology, assessment, and hardening bootstrap.
+- Executable skillsets for Codex skill-library routing, module delivery planning, UX design-agent workflows, roadmap, technology, assessment, hardening bootstrap, and PR review.
 
 It is not:
 
@@ -73,9 +74,10 @@ Adoption sequence:
 2. Copy the relevant adapter from `adapters/` into the target repo or AI tool settings.
 3. Copy `REPO_AGENTS_TEMPLATE.md` into the repo instruction file and replace placeholders.
 4. Record the real harness capabilities for the active AI tool.
-5. Define local source-of-truth order, architecture boundaries, validation commands, journaling policy, and release rules.
-6. Run the first-session verification prompt from `CONFIG_KIT_AI_PROMPT.md` or `TEMPLATES.md`.
-7. Run a low-risk trial task and check that the AI follows the local rules.
+5. For Codex installs with many skills or plugins, use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and verify the generated skill index.
+6. Define local source-of-truth order, architecture boundaries, validation commands, journaling policy, and release rules.
+7. Run the first-session verification prompt from `CONFIG_KIT_AI_PROMPT.md` or `TEMPLATES.md`.
+8. Run a low-risk trial task and check that the AI follows the local rules.
 
 ### Use The Kit In A Chat-Only AI Tool
 
@@ -89,6 +91,10 @@ Use this path when the AI cannot read files from a repository:
 6. Ask the AI to report missing files, active source-of-truth order, capability gaps, breakpoints, validation plan, and smallest safe next step before implementation.
 
 Use `adapters/GENERIC_AI_PROMPT.md` only as a short fallback when the full ingestion prompt is too large.
+
+### Import The Skill Library Router
+
+Use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when a user wants an assistant to install the Codex `skill-library-router` skill from this kit. The prompt includes target paths, overwrite checks, mandatory index refresh, `--check` verification, and the rule that explicit-only skills remain accessible instead of disabled.
 
 ### Import The UX Design Agent Skillset
 
@@ -149,6 +155,7 @@ question.
 | --- | --- |
 | `README.md` | Entry point, quick-start guide, file map, usage recipes, and maintenance overview. |
 | `CONFIG_KIT_AI_PROMPT.md` | Paste-ready prompt that tells any AI how to absorb this kit from files, pasted content, a folder, or an archive. |
+| `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` | Paste-ready prompt for importing the Codex Skill Library Router and refreshing the local skill index. |
 | `UX_DESIGN_AGENT_IMPORT_PROMPT.md` | Paste-ready prompt for importing the UX Design Agent skillset into Codex and Claude Code. |
 | `AI_BOOTSTRAP.md` | First-read instruction for any AI tool; short enough for custom instructions or project rules. |
 | `FRAMEWORK_MANIFEST.md` | Canonical file inventory, load profiles, harness capability record, source-of-truth contract, readiness matrix, and maintenance checks. |
@@ -172,6 +179,7 @@ question.
 | `REPO_ADOPTION_PLAYBOOK.md` | Step-by-step adoption guide for installing the framework into a repo. |
 | `INTERNAL_WIKI_PAGE.md` | Short paste-ready wiki summary for teams that want an internal documentation page. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
+| `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
@@ -253,6 +261,19 @@ Use for Figma-first UX design workflows, layout creation, product UI shaping, de
    - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
 9. External evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, and product docs
 
+### Skill Library Router Profile
+
+Use for Codex skill library setup, skill context-budget warnings, plugin-heavy installs, skill add/update/remove work, or smart access to explicit-only skills.
+
+1. Minimum profile
+2. `SKILLS_CATALOG.md`
+3. `AI_TOOL_ADAPTERS.md` when installing the Codex entrypoint
+4. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when importing or updating the router
+5. `skillsets/skill-library-router/README.md`
+6. `skillsets/skill-library-router/codex/skill-library-router/SKILL.md`
+7. `skillsets/skill-library-router/codex/skill-library-router/scripts/refresh-skill-index.cjs`
+8. Current Codex skill/plugin inventory, generated index status, and any sandbox permission blockers
+
 ### Debugging Profile
 
 Use for bugs, failing tests, CI failures, deployment failures, environment mismatches, and unexpected runtime behavior:
@@ -281,12 +302,13 @@ Use when installing the framework into a new repository or AI tool:
 2. `FRAMEWORK_MANIFEST.md`
 3. `AI_BOOTSTRAP.md`
 4. `CONFIG_KIT_AI_PROMPT.md`
-5. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
-6. `AI_TOOL_ADAPTERS.md`
-7. `REPO_ADOPTION_PLAYBOOK.md`
-8. `REPO_AGENTS_TEMPLATE.md`
-9. `TEMPLATES.md`
-10. The adapter file for the target AI tool
+5. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when importing the Codex Skill Library Router or adopting Codex with a large skill library
+6. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
+7. `AI_TOOL_ADAPTERS.md`
+8. `REPO_ADOPTION_PLAYBOOK.md`
+9. `REPO_AGENTS_TEMPLATE.md`
+10. `TEMPLATES.md`
+11. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 
@@ -751,6 +773,24 @@ Then:
 6. Use Figma annotations for tokens, components, responsive behavior, states, accessibility, open questions, and implementation notes.
 7. Report completed, proposed, blocked, skipped, and unverified design and repo work separately.
 
+### Refresh The Codex Skill Index
+
+Use this whenever Codex skills or plugins are installed, updated, removed, or made explicit-only.
+
+Load:
+
+- Skill Library Router profile.
+- Current `<CODEX_HOME>` or `~/.codex` skill/plugin inventory.
+
+Then:
+
+1. Install or update `skill-library-router` first if it is missing.
+2. Run `node <CODEX_HOME>/skills/skill-library-router/scripts/refresh-skill-index.cjs`.
+3. Run the same command with `--check`.
+4. Confirm `references/skill-index.json`, `references/skill-index.md`, and `references/applied-policy-summary.json` exist under the installed router skill.
+5. Report total skills, implicit skills, explicit-only skills, policy changes, blocked writes, and any stale index state.
+6. Do not disable skills to save context; keep them explicit-only and router-accessible.
+
 ### Install A Tool Adapter
 
 1. Choose the adapter from `AI_TOOL_ADAPTERS.md`.
@@ -766,6 +806,7 @@ Use:
 - `SKILLS_CATALOG.md`.
 - `CONTINUOUS_SKILL_LEARNING.md`.
 - Skill template from `TEMPLATES.md`.
+- Skill Library Router profile when the target runtime is Codex.
 
 Keep skills:
 
@@ -776,6 +817,8 @@ Keep skills:
 - Free of closed-scope details.
 - Non-overlapping with existing skills.
 
+For Codex skill changes, refresh the Skill Library Router index before closing the task, or report the sandbox or permission blocker that prevented the refresh.
+
 ## Maintenance
 
 After changing this framework, run the strongest practical docs-only checks.
@@ -785,6 +828,7 @@ Recommended checks:
 ```text
 rg --files
 rg -n "docs/agent-framework|AI_BOOTSTRAP.md|FRAMEWORK_MANIFEST.md|CONFIG_KIT_AI_PROMPT.md" .
+rg -n "skill-library-router|skill-index|SKILL_LIBRARY_ROUTER_IMPORT_PROMPT" .
 git diff --check
 ```
 
@@ -794,6 +838,7 @@ Also check:
 - Adapter paths are accurate for the documented install layout.
 - Shared files do not contain secrets, private URLs, private account identifiers, or repo-specific facts.
 - Markdown remains readable.
+- Codex skill-library routing docs still say skills are explicit-only/router-accessible, not disabled.
 - Placeholder text is intentional in templates and adapters.
 - Any distributable archive is rebuilt if it is being used.
 

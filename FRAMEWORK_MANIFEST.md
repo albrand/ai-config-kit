@@ -11,6 +11,7 @@ Core files:
 - `README.md`: overview, layer model, and adoption summary.
 - `AI_BOOTSTRAP.md`: first-read instruction for any AI tool.
 - `CONFIG_KIT_AI_PROMPT.md`: paste-ready prompt for making any AI absorb the config kit.
+- `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`: paste-ready prompt for importing the Codex Skill Library Router and refreshing the local skill index.
 - `UX_DESIGN_AGENT_IMPORT_PROMPT.md`: paste-ready prompt for importing the UX Design Agent skillset into Codex and Claude Code.
 - `FRAMEWORK_MANIFEST.md`: required file inventory, load profiles, and readiness checks.
 - `GLOBAL_AGENTS.md`: global collaboration and execution baseline.
@@ -35,6 +36,7 @@ Support files:
 - `FRAMEWORK_PATTERNS.md`: neutral reusable configuration patterns.
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
+- `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
@@ -127,6 +129,19 @@ Use for Figma-first UX design workflows, layout creation, product UI shaping, de
    - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
 9. External source evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, product docs, and design-tool access
 
+### Skill Library Router Profile
+
+Use for Codex skill library setup, skill context-budget warnings, plugin-heavy installs, skill add/update/remove work, or smart access to explicit-only skills:
+
+1. Minimum Profile
+2. `SKILLS_CATALOG.md`
+3. `AI_TOOL_ADAPTERS.md` when installing the Codex entrypoint
+4. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when importing or updating the router
+5. `skillsets/skill-library-router/README.md`
+6. `skillsets/skill-library-router/codex/skill-library-router/SKILL.md`
+7. `skillsets/skill-library-router/codex/skill-library-router/scripts/refresh-skill-index.cjs`
+8. Current Codex skill/plugin inventory, generated index status, and any sandbox permission blockers
+
 ### Debugging Profile
 
 Use for bugs, failing tests, CI failures, deploy failures, environment mismatches, or unexpected behavior:
@@ -155,12 +170,13 @@ Use when installing the framework into a new repo or another AI tool:
 2. `FRAMEWORK_MANIFEST.md`
 3. `AI_BOOTSTRAP.md`
 4. `CONFIG_KIT_AI_PROMPT.md`
-5. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
-6. `AI_TOOL_ADAPTERS.md`
-7. `REPO_ADOPTION_PLAYBOOK.md`
-8. `REPO_AGENTS_TEMPLATE.md`
-9. `TEMPLATES.md`
-10. The adapter file for the target AI tool
+5. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when importing the Codex Skill Library Router or adopting Codex with a large skill library
+6. `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when importing the UX Design Agent skillset into Codex or Claude Code
+7. `AI_TOOL_ADAPTERS.md`
+8. `REPO_ADOPTION_PLAYBOOK.md`
+9. `REPO_AGENTS_TEMPLATE.md`
+10. `TEMPLATES.md`
+11. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 
@@ -247,7 +263,7 @@ A repo or AI tool has adopted the framework only when each required item is true
 | Journaling | The repo states whether journals are required, optional, local-only, versioned, or disabled. |
 | Quality gates | Required focused, lint, typecheck, test, build, security, and release checks are listed. |
 | Quality convergence | Iteration targets, max iterations, stop conditions, and escalation rules are defined for high-risk work. |
-| Skills | Global and repo-local skills are listed only where they have clear triggers. |
+| Skills | Global and repo-local skills are listed only where they have clear triggers. Codex skill libraries with many skills or plugins have a generated router index or an explicit blocker. |
 | Closed-scope boundary | Shared files contain no secrets, private URLs, private account identifiers, or repo-specific facts. |
 | First-session check | A fresh AI session can summarize loaded layers, capabilities, validation commands, and conflict rules. |
 | Distribution | The shared archive or copied bundle includes the current files. |
@@ -271,6 +287,9 @@ Run these after changing the kit:
 - Closed-scope scan: search for secrets, private URLs, private account identifiers, and repo-specific facts.
 - Placeholder check: shared templates may contain placeholders, adopted local files should not.
 - Encoding check: keep shared files plain ASCII unless a file has a documented reason for Unicode.
+- Skill index check: when Codex skills or plugins changed, run the installed
+  `skill-library-router` refresh command and `--check`, or report the exact
+  sandbox or permission blocker.
 - Subagent lifecycle check: confirm Codex or compatible installs set an
   appropriate thread ceiling such as `max_concurrent_threads_per_session = 16`
   and close completed, stale, or prior-workflow agents before opening fresh

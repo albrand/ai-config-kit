@@ -21,6 +21,7 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 | `verification-before-completion` | Any completed code, docs, config, workflow, or generated artifact change | What changed, what validated it, what was not validated, residual risk |
 | `quality-convergence` | High-risk work, repeated validation failures, or user requests for strong confidence | Quality dimensions, target, iterations, evidence, stop reason |
 | `framework-readiness` | Installing, auditing, or changing the agent framework | File inventory, load profile, capability record, gaps, next action |
+| `skill-library-router` | Codex has a large local skill or plugin library, skill descriptions are shortened or omitted, or a task needs a skill that is explicit-only or not visible in the initial list | Selected skill, generated index status, refreshed counts, missing or stale index state, fallback |
 | `pr-preparation` | Creating, summarizing, reviewing, or preparing PRs | PR body from real diff and actual validation |
 | `high-signal-pr-review` | Reviewing PRs where false positives are costly | Preflight stop checks, independent issue discovery, validation pass, deduped findings, inline comments only when approved |
 | `ux-design-agent` | Figma-first layout, design-system, design-token, component-library, or designer-facing AI workflow work | Capability gate, UX questions with defaults, token/system decision, Figma annotation plan, component-library recommendation, validation |
@@ -40,11 +41,29 @@ Use shared skillsets when a workflow is broader than one global skill and needs 
 | Skillset | Use When | Expected Output |
 | --- | --- | --- |
 | `skillsets/module-delivery/` | A user provides a module, capability area, roadmap item, migration target, or project-planning request and wants evidence-backed phases, tickets, resources, risks, owners, and validation gates | A module scope package, project description, simple phases, PR-sized tickets, resource links, open questions, and a validation report |
+| `skillsets/skill-library-router/` | Codex skill-library setup, skill context-budget warnings, plugin-heavy installs, or skill add/update/remove work where every skill should stay accessible when needed | Installed router skill, refreshed local `skill-index.json`, implicit/explicit counts, policy summary, blocked write report |
 | `skillsets/ux-design-agent/` | A UX designer, founder, or product team wants a personal Figma-first AI design agent for layouts, design tokens, system conventions, component-library guidance such as shadcn/ui, Figma annotations, or design-to-code handoff | Mode detection, Figma/repo capability gate, UX questions with recommended defaults, token and design-system decision, Figma annotation map, component-library recommendation, artifacts changed or proposed, UX validation |
 | `skillsets/ecosystem-terraform/` plus `ECOSYSTEM_TERRAFORM_GUIDE.md` | A user wants `/roadmap-terraform`, `/tech-terraform`, `/assess-then-harden`, project ecosystem bootstrap, roadmap/board reconciliation, technology bootstrap, full quality/CI/CD/PR gate scaffolding, QA matrix creation, or legacy hardening from docs, tickets, designs, repos, cloud, and external sources | Command selection, prompt samples, roadmap or technical operating model, capability gate, questions, source map, artifacts, PR-sized tickets, business-logic QA matrix, quality-gate matrix, approval gates, validation report |
 | `skillsets/pr-review/` | A user wants `/code-review`, high-signal PR review, diff review, merge readiness, public review comments, or AI-generated PR review | Preflight decision, scoped instruction map, validated findings, dropped candidates, comment-mode gate, validation reviewed, and residual risk |
 
 Shared skillsets must stay separate from the developer runbook unless their workflow directly changes implementation behavior. Prefer AI-runbook instructions first; add executable helpers only when the team explicitly wants maintained automation.
+
+## Codex Skill Library Indexing
+
+For Codex installs with many skills or plugins, use `skill-library-router` as
+the lightweight always-on access layer.
+
+Mandates:
+
+- Install or update the router from `skillsets/skill-library-router/`.
+- Keep the router implicit.
+- Do not disable skills to save context.
+- Treat explicit-only skills as router-accessible and directly invokable by
+  `$skill-name`.
+- After adding, updating, or removing Codex skills or plugins, run the installed
+  `refresh-skill-index.cjs` script and then run it with `--check`.
+- Report total skills, implicit skills, explicit-only skills, policy changes,
+  and blocked writes before closing the task.
 
 ## Imported Engineering Patterns
 

@@ -19,10 +19,11 @@ Before substantial repository work, read:
 11. `docs/agent-framework/QUALITY_GATES.md`
 12. `docs/agent-framework/QUALITY_CONVERGENCE.md`
 13. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
-14. `docs/agent-framework/skillsets/ux-design-agent/README.md`
-15. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
-16. `docs/agent-framework/skillsets/pr-review/README.md`
-17. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
+14. `docs/agent-framework/skillsets/skill-library-router/README.md`
+15. `docs/agent-framework/skillsets/ux-design-agent/README.md`
+16. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
+17. `docs/agent-framework/skillsets/pr-review/README.md`
+18. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -38,6 +39,11 @@ For Figma-first UX design workflows, design systems, design tokens, component
 library guidance, Figma annotations, design-to-code handoff, or
 `/ux-design-agent`, also read
 `docs/agent-framework/skillsets/ux-design-agent/` files.
+
+For Codex skill-library setup, context-budget warnings, plugin-heavy installs,
+or skill add/update/remove work, also read
+`docs/agent-framework/SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and
+`docs/agent-framework/skillsets/skill-library-router/` files.
 
 ## Repo-Specific Overlay
 
@@ -81,6 +87,9 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- For Codex skill or plugin add/update/remove work, refresh the installed
+  `skill-library-router` index and run its `--check` mode, or report the
+  sandbox or permission blocker.
 - Reset active context on workflow, repo, incident, or objective changes.
 - Keep changes scoped.
 - Run focused validation first.

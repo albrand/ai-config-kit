@@ -16,6 +16,7 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/skill-library-router/README.md
 @docs/agent-framework/skillsets/ux-design-agent/README.md
 @docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
 @docs/agent-framework/skillsets/pr-review/README.md
@@ -60,6 +61,9 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- For Codex skill or plugin add/update/remove work, refresh the installed
+  `skill-library-router` index and run its `--check` mode, or report the
+  sandbox or permission blocker.
 - When documenting MCP setup, separate repo-level readiness from client
   registration. Prefer native client commands over custom helper scripts, keep
   secrets in env or secret stores, and preserve machine-neutral enabled/disabled

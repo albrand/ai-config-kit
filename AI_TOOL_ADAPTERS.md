@@ -22,10 +22,13 @@ Use this for any AI assistant:
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or comment mode also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, or design-to-code handoff: `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`
+   - Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work: `skillsets/skill-library-router/README.md` and `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`
    - Journaling: `SESSION_JOURNALING.md`
    - Skill creation: `CONTINUOUS_SKILL_LEARNING.md` plus `SKILLS_CATALOG.md`
 6. For repo work, also give the AI the repo's local instruction file.
 7. Ask the AI to report the active harness capability record before substantial work.
+
+Use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when the task is specifically to import or update the Codex Skill Library Router from this kit.
 
 Use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when the task is specifically to import or update the UX Design Agent skillset in Codex or Claude Code from this kit.
 
@@ -129,6 +132,9 @@ Recommended setup:
 - Place framework files under a stable path such as `docs/agent-framework/`.
 - Put repo-specific validation commands and architecture rules in the repo `AGENTS.md`.
 - Use nested `AGENTS.md` files only for subtrees with different rules.
+- For large skill or plugin libraries, use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` to install the Codex `skill-library-router` under `<CODEX_HOME>/skills/skill-library-router/`.
+- After any Codex skill or plugin add, update, or removal, run the installed router's `refresh-skill-index.cjs` script and then run it with `--check`. Treat this as mandatory verification for smart skill access.
+- Do not disable skills to save context; make specialized skills explicit-only and router-accessible.
 - For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should install the Codex skill files under `<CODEX_HOME>/skills/ux-design-agent/` and verify them.
 - If Codex model routing is available, use `gpt-5.3-codex-spark` as the
   default bounded sidecar tier for quick or standard work when useful and

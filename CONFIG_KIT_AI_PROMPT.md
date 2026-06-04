@@ -22,6 +22,7 @@ Load order:
    - Module delivery planning, roadmap shaping, milestones, or implementation-ticket creation: also read `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md`. Read the Codex or Claude Code entrypoint only when installing or invoking that tool-specific workflow.
    - Roadmap, technical platform, or hardening bootstrap: also read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`. Read the relevant Codex skill or Claude Code command when invoking `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`.
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, Figma annotations, or design-to-code handoff: also read `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`. Read the relevant Codex skill or Claude Code command when invoking `/ux-design-agent`.
+   - Codex skill-library setup, skill context-budget warnings, plugin-heavy installs, or skill add/update/remove work: also read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`. Read the Codex router skill and indexer script when installing or updating the router.
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
@@ -46,7 +47,9 @@ After loading the files, build an active instruction model:
   repo, folder, or workflow.
 - Workflow track: quick, standard, big-change, recovery, or review.
 - Required skills or processes.
+- Codex skill-library index status when skills or plugins are in scope.
 - Any task-relevant skillset, including `skillsets/module-delivery/` for module-planning work.
+- Any skill-library router skillset, including `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/` for Codex skill indexing, context-budget reduction, or plugin-heavy skill access.
 - Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
 - Any UX design-agent skillset, including `skillsets/ux-design-agent/` for Figma-first design, design tokens, system conventions, component libraries, annotations, or `/ux-design-agent`.
 - Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or comment mode.
@@ -96,6 +99,9 @@ Execution rules:
   becomes stale, or belongs to a previous workflow, capture any needed output or
   resume packet, close it when the tool permits, and open a fresh agent for new
   delegated work instead of reusing stale context.
+- For Codex skill or plugin add/update/remove work, refresh the installed
+  Skill Library Router index, run the indexer with `--check`, and report counts
+  or blocked write permissions before completion.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. If a new registered MCP server appears,
   ask where it should be enabled before using it. If Replit OAuth returns

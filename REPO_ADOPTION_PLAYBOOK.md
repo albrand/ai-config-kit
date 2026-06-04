@@ -121,10 +121,12 @@ Good candidates:
 
 Executable shared skillsets should be installed deliberately:
 
+- Share `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` with operators who want an assistant to import the Codex Skill Library Router, keep large skill libraries indexed, and verify smart access after skill or plugin changes.
 - Share `ECOSYSTEM_TERRAFORM_GUIDE.md` with operators so they understand which command to use and can start from tested prompt samples.
 - Share `UX_DESIGN_AGENT_IMPORT_PROMPT.md` with operators who want an assistant to import the UX Design Agent into Codex or Claude Code with overwrite checks and verification.
 - Claude Code: copy `skillsets/*/claude/commands/*.md` to the project `.claude/commands/` folder or user `~/.claude/commands/`.
 - Codex: copy the relevant `skillsets/*/codex/*/SKILL.md` into `<CODEX_HOME>/skills/<skill-name>/SKILL.md`.
+- Codex with large skill libraries: install `skillsets/skill-library-router/codex/skill-library-router/`, run its `refresh-skill-index.cjs` script, then run the same script with `--check`.
 - Keep shared references such as `ecosystem-output-contract.md` near the installed framework path so commands can load them.
 - Ask before enabling or running commands that can mutate trackers, cloud resources, repositories, CI settings, or secrets.
 
@@ -196,4 +198,5 @@ A repo has adopted the framework when:
 - It records harness capabilities.
 - It states whether journaling is required.
 - It defines review and PR expectations.
+- If Codex skills or plugins are installed, it has either a fresh Skill Library Router index or an explicit note that indexing is not applicable or blocked.
 - A fresh agent session can correctly summarize the local rules.

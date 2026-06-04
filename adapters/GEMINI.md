@@ -16,6 +16,7 @@ Read the framework before substantial repository work:
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md
 @docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
+@docs/agent-framework/skillsets/skill-library-router/README.md
 @docs/agent-framework/skillsets/ux-design-agent/README.md
 @docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
 @docs/agent-framework/skillsets/pr-review/README.md
@@ -35,6 +36,12 @@ For Figma-first UX design workflows, design systems, design tokens, component
 library guidance, Figma annotations, design-to-code handoff, or
 `/ux-design-agent`, also read the relevant files under
 @docs/agent-framework/skillsets/ux-design-agent/
+
+For Codex skill-library setup, context-budget warnings, plugin-heavy installs,
+or skill add/update/remove work, also read
+@docs/agent-framework/SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md
+and the relevant files under
+@docs/agent-framework/skillsets/skill-library-router/
 
 ## Repo-Specific Overlay
 
@@ -59,6 +66,9 @@ Replace this section with local rules:
 - When another AI tool participates, create the communication plan before joint work and keep a single-agent fallback.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- For Codex skill or plugin add/update/remove work, refresh the installed
+  `skill-library-router` index and run its `--check` mode, or report the
+  sandbox or permission blocker.
 - Reset active context on workflow, repo, incident, or objective changes.
 - Keep changes scoped.
 - Verify before completion.
