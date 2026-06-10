@@ -57,7 +57,15 @@ Mandates:
 
 - Install or update the router from `skillsets/skill-library-router/`.
 - Keep the router implicit.
+- Keep behavioral framework skills explicit-only when their always-on behavior
+  already lives in the root directive (`AGENTS.md` / `GLOBAL_AGENTS.md`):
+  preloading their metadata duplicates the directive, and the router still
+  surfaces the full skill on demand. The indexer lists these in
+  `explicitOnlyUserSkillNames`.
 - Do not disable skills to save context.
+- Skip bundled `upstream/` skill copies (the indexer ignores them) so plugins
+  that ship an upstream `SKILL.md` beside their own do not create
+  duplicate-named, ambiguous router entries.
 - Treat explicit-only skills as router-accessible and directly invokable by
   `$skill-name`.
 - After adding, updating, or removing Codex skills or plugins, run the installed

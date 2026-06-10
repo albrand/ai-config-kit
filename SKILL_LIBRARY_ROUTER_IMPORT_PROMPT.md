@@ -76,6 +76,8 @@ Policy:
 - Do not disable skills to save context.
 - Keep `skill-library-router` implicit.
 - Keep specialized or plugin-heavy skills explicit-only when needed.
+- Keep behavioral framework skills explicit-only when their always-on behavior already lives in the root directive (AGENTS.md / GLOBAL_AGENTS.md); the indexer lists these in `explicitOnlyUserSkillNames` and the router still surfaces them on demand.
+- The indexer skips bundled `upstream/` skill copies so plugins that ship an upstream SKILL.md beside their own do not create duplicate-named router entries.
 - Treat explicit-only as router-accessible, not unavailable.
 - Re-run the index refresh whenever skills or plugins are installed, updated, or removed.
 
