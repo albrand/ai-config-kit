@@ -18,6 +18,14 @@ list is shortened, omitted, or too noisy to route reliably.
 - Keep `skill-library-router` implicit and lightweight.
 - Keep specialized or plugin-heavy skills explicit-only when needed to protect
   the initial context budget.
+- Keep behavioral framework skills explicit-only when their always-on behavior
+  is already encoded in the root directive (`AGENTS.md` / `GLOBAL_AGENTS.md`).
+  Preloading their metadata duplicates the directive; the router still surfaces
+  the full skill on demand. The indexer's `explicitOnlyUserSkillNames` set lists
+  these by default.
+- Skip bundled `upstream/` skill copies (the indexer ignores them) so plugins
+  that ship an upstream `SKILL.md` alongside their own do not create
+  duplicate-named, ambiguous router entries.
 - Do not disable skills to save context. Explicit-only skills remain accessible
   by direct `$skill-name` invocation and through the generated index.
 - Refresh the index immediately after installing, updating, or removing Codex

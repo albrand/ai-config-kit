@@ -14,17 +14,37 @@ const indexMdPath = path.join(referencesDir, 'skill-index.md');
 const policySummaryPath = path.join(referencesDir, 'applied-policy-summary.json');
 
 const explicitOnlyUserSkillNames = new Set([
+  // Specialized / heavy workflows — router-accessible on demand.
   'assess-then-harden',
   'figma',
   'plan-module-delivery',
   'roadmap-terraform',
   'tech-terraform',
   'ux-design-agent',
+  // Behavioral framework skills: their always-on behavior is already encoded in
+  // the root directive (AGENTS.md / GLOBAL_AGENTS.md, loaded every prompt), so
+  // preloading their metadata is redundant. Keep them router-accessible as
+  // detailed expansions. Names not present in a given install are harmless.
+  'always-deep-plan-delegate',
+  'harness-routing',
+  'mcp-routing',
+  'token-efficiency',
+  'big-change-planning',
+  'quality-convergence',
+  'verification-before-completion',
+  'systematic-debugging',
+  'cross-agent-coordination',
+  'high-signal-pr-review',
+  'preparing-prs',
+  'repo-agents-discovery',
+  'repo-session-journal',
 ]);
 
 const explicitOnlySystemSkillNames = new Set(['plugin-creator', 'skill-installer']);
 const pluginImplicitExceptions = new Set(['knowledge-update']);
-const skippedDirectoryNames = new Set(['.git', 'node_modules']);
+// 'upstream' skips the bundled upstream SKILL.md copies some plugins ship
+// (e.g. Vercel) which otherwise create duplicate-named, ambiguous router entries.
+const skippedDirectoryNames = new Set(['.git', 'node_modules', 'upstream']);
 const pluginManifestDirectoryNames = new Set(['.claude-plugin', '.codex-plugin', '.cursor-plugin']);
 
 function ensureDir(dir) {
