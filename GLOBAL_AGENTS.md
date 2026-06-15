@@ -46,16 +46,21 @@ Use this as the user-level baseline for AI coding agents.
 - Avoid speculative, duplicate, or idle agents.
 - Keep architectural judgment, ambiguity resolution, escalation, and final review in the master thread.
 - Route bounded work to the smallest capable model or agent when model routing is available.
-- For Codex environments with `gpt-5.3-codex-spark`, default bounded,
-  low-risk execution to Spark when model choice is available. For quick or
-  standard work, route the first safe bounded sidecar to Spark when useful,
-  then keep architecture, integration, and final validation in the master
-  thread.
-- Before using a stronger Codex tier for delegated work, explicitly ask
-  whether Spark can safely handle the bounded task. Keep architecture,
-  security, data-loss, dependency strategy, production release gates,
-  ambiguous debugging, broad refactors, and final review verdicts on the
-  strongest available reasoning path.
+- Use the local MLX sidecar first for bounded no-tool cognition when it is
+  configured and reachable: classification, extraction, terse summarization,
+  prompt compression, naming, JSON shaping, and first-pass critique over compact
+  evidence. Use `enable_thinking: false`, hard output caps, and short timeouts;
+  never treat the sidecar as source-of-truth.
+- For Codex environments with GPT 5.3 Spark, default bounded, low-risk
+  execution to Spark when model choice is available. When a Codex model slug is
+  required, use `gpt-5.3-codex-spark`. For quick or standard work, route the
+  first safe bounded sidecar to Spark when useful, then keep architecture,
+  integration, and final validation in the master thread.
+- Before using a stronger Codex tier for delegated work, run a Spark-fit check
+  and record the exception reason if Spark is not used. Keep architecture,
+  security, data-loss, dependency strategy, production release gates, ambiguous
+  debugging, broad refactors, and final review verdicts on the strongest
+  available reasoning path.
 - Treat subagent concurrency as a finite external runtime budget. In Codex
   environments that expose a thread ceiling, prefer
   `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
@@ -77,6 +82,13 @@ Use this as the user-level baseline for AI coding agents.
 - In Codex installs with many skills or plugins, use a refreshed
   `skill-library-router` index for smart skill access instead of disabling
   skills or bulk-loading skill bodies.
+- Use the skill router proactively. Before assuming no specialized skill
+  applies, match the task language against the refreshed index's names, aliases,
+  routing terms, search text, plugin/source, and paths; then load the narrowest
+  matching skill directly, even when the user did not name it.
+- Treat explicit-only skills as hidden from the always-on skill list, not
+  unavailable. They remain router-accessible from task language and direct
+  `$skill-name` invocation.
 - Use deterministic pre-processing before model reasoning: search, filter,
   count, sort, and shape data with tools first.
 - Compress stale middle history while preserving the original objective,

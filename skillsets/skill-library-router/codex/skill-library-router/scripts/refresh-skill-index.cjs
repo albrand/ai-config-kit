@@ -46,6 +46,63 @@ const pluginImplicitExceptions = new Set(['knowledge-update']);
 // (e.g. Vercel) which otherwise create duplicate-named, ambiguous router entries.
 const skippedDirectoryNames = new Set(['.git', 'node_modules', 'upstream']);
 const pluginManifestDirectoryNames = new Set(['.claude-plugin', '.codex-plugin', '.cursor-plugin']);
+const routingStopWords = new Set([
+  'a',
+  'about',
+  'after',
+  'all',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'can',
+  'code',
+  'codex',
+  'for',
+  'from',
+  'has',
+  'have',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'of',
+  'on',
+  'or',
+  'that',
+  'the',
+  'this',
+  'to',
+  'use',
+  'when',
+  'with',
+  'work',
+  'working',
+]);
+const routingSynonyms = new Map([
+  ['audit', ['review', 'inspect']],
+  ['build', ['create', 'generate', 'make']],
+  ['create', ['build', 'generate', 'make']],
+  ['debug', ['diagnose', 'fix', 'troubleshoot']],
+  ['deck', ['presentation', 'slide', 'slides']],
+  ['deploy', ['deployment', 'release']],
+  ['diagnose', ['debug', 'fix', 'troubleshoot']],
+  ['fix', ['debug', 'diagnose', 'troubleshoot']],
+  ['generate', ['build', 'create', 'make']],
+  ['make', ['build', 'create', 'generate']],
+  ['powerpoint', ['deck', 'presentation', 'slide', 'slides']],
+  ['pptx', ['deck', 'presentation', 'slide', 'slides']],
+  ['presentation', ['deck', 'slide', 'slides']],
+  ['review', ['audit', 'inspect']],
+  ['slide', ['deck', 'presentation']],
+  ['slides', ['deck', 'presentation']],
+  ['troubleshoot', ['debug', 'diagnose', 'fix']],
+]);
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -163,6 +220,71 @@ function readYamlScalar(frontmatter, key) {
   return raw.replace(/^['"]|['"]$/g, '').trim();
 }
 
+function unique(values) {
+  const seen = new Set();
+  const out = [];
+
+  for (const value of values) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+
+  return out;
+}
+
+function expandWordForms(words) {
+  const out = [];
+
+  for (const word of words) {
+    out.push(word);
+
+    if (!/^[a-z0-9-]+$/.test(word) || word.length <= 3) continue;
+
+    if (word.endsWith('ies') && word.length > 4) {
+      out.push(`${word.slice(0, -3)}y`);
+    } else if (word.endsWith('s') && !/(ss|is|us)$/.test(word)) {
+      out.push(word.slice(0, -1));
+    } else {
+      out.push(`${word}s`);
+    }
+
+    if (word.endsWith('ing') && word.length > 5) {
+      out.push(word.slice(0, -3));
+    }
+
+    out.push(...(routingSynonyms.get(word) || []));
+  }
+
+  return unique(out);
+}
+
+function wordsFrom(value) {
+  return expandWordForms(unique(
+    String(value || '')
+      .toLowerCase()
+      .replace(/[`'"()[\]{}<>]/g, ' ')
+      .split(/[^a-z0-9@$_:.+#-]+/)
+      .map((word) => word.trim().replace(/^[._:+#/-]+|[._:+#/-]+$/g, ''))
+      .filter((word) => word.length > 1)
+      .filter((word) => !routingStopWords.has(word))
+      .filter((word) => !/^v?\d+(\.\d+){0,4}$/.test(word)),
+  ));
+}
+
+function handlesFrom(value) {
+  const handles = [];
+  const matcher = /(^|[\s`'"(])([$@/][A-Za-z0-9][A-Za-z0-9_.:/-]*)/g;
+  let match;
+
+  while ((match = matcher.exec(String(value || ''))) !== null) {
+    handles.push(match[2]);
+  }
+
+  return unique(handles);
+}
+
 function sourceFor(file) {
   if (isInside(file, systemSkillRoot)) return 'system';
   if (isInside(file, pluginCacheRoot)) return 'plugin';
@@ -180,6 +302,62 @@ function pluginFor(file) {
   return `${parts[0]}/${parts[1]}/${parts[2]}`;
 }
 
+function pluginShortName(plugin) {
+  if (!plugin) return null;
+
+  const parts = plugin.split('/').filter(Boolean);
+
+  return parts.length > 1 ? parts[1] : parts[0] || null;
+}
+
+function aliasesFor(name, file, plugin) {
+  const baseNames = unique([name, path.basename(path.dirname(file))]);
+  const pluginName = pluginShortName(plugin);
+  const aliases = [];
+
+  for (const baseName of baseNames) {
+    aliases.push(baseName, `$${baseName}`, `@${baseName}`, `/${baseName}`);
+
+    if (pluginName) {
+      aliases.push(
+        `${pluginName}:${baseName}`,
+        `@${pluginName}:${baseName}`,
+        `${pluginName}/${baseName}`,
+        `@${pluginName}/${baseName}`,
+      );
+    }
+  }
+
+  if (pluginName) aliases.push(pluginName, `@${pluginName}`);
+
+  return unique(aliases);
+}
+
+function routingTermsFor({ aliases, description, file, name, plugin, relativePath, source }) {
+  return unique([
+    ...aliases,
+    ...handlesFrom(description),
+    ...wordsFrom(name),
+    ...wordsFrom(description),
+    ...wordsFrom(source),
+    ...wordsFrom(plugin),
+    ...wordsFrom(relativePath),
+    ...wordsFrom(path.dirname(file).split(path.sep).slice(-3).join(' ')),
+  ]).slice(0, 120);
+}
+
+function searchTextFor({ aliases, description, name, plugin, relativePath, routingTerms, source }) {
+  return unique([
+    ...routingTerms,
+    ...aliases,
+    ...wordsFrom(name),
+    ...wordsFrom(description),
+    ...wordsFrom(plugin),
+    ...wordsFrom(relativePath),
+    source,
+  ]).join(' ');
+}
+
 function readPolicy(skillFile) {
   const policyFile = path.join(path.dirname(skillFile), 'agents', 'openai.yaml');
 
@@ -194,16 +372,41 @@ function readPolicy(skillFile) {
 function skillRecord(file) {
   const text = fs.readFileSync(file, 'utf8');
   const frontmatter = parseFrontmatter(text);
+  const name = readYamlScalar(frontmatter, 'name') || path.basename(path.dirname(file));
   const description = readYamlScalar(frontmatter, 'description');
   const policy = readPolicy(file);
+  const source = sourceFor(file);
+  const plugin = pluginFor(file);
+  const relativePath = path.relative(codexHome, file);
+  const aliases = aliasesFor(name, file, plugin);
+  const routingTerms = routingTermsFor({
+    aliases,
+    description,
+    file,
+    name,
+    plugin,
+    relativePath,
+    source,
+  });
 
   return {
-    name: readYamlScalar(frontmatter, 'name') || path.basename(path.dirname(file)),
+    name,
     description,
     path: file,
-    relativePath: path.relative(codexHome, file),
-    source: sourceFor(file),
-    plugin: pluginFor(file),
+    relativePath,
+    source,
+    plugin,
+    aliases,
+    routingTerms,
+    searchText: searchTextFor({
+      aliases,
+      description,
+      name,
+      plugin,
+      relativePath,
+      routingTerms,
+      source,
+    }),
     implicit: policy.implicit,
     policyPath: policy.policyFile,
     bodyLines: text.split(/\n/).length,

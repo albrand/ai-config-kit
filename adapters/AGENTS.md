@@ -76,9 +76,12 @@ Replace this section with local rules:
   useful and supported, without bypassing capability, privacy, safety, budget,
   stop-condition, anti-drift, or validation checks.
 - When another AI tool participates, create the communication plan before joint work and keep a single-agent fallback.
-- In Codex, route the first safe bounded sidecar for quick or standard work to
-  `gpt-5.3-codex-spark` when available and useful; ask whether Spark can safely
-  handle the bounded task before using a stronger delegated tier.
+- Use a configured local MLX sidecar first for compact no-tool cognition; cap
+  output, use thinking off for routine delegation, and verify before acting.
+- In Codex, route the first safe bounded tool/file sidecar for quick or
+  standard work to GPT 5.3 Spark when available and useful. When a Codex model
+  slug is required, use `gpt-5.3-codex-spark`; record the exception reason
+  before using a stronger delegated tier.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
   policy sets a stricter limit.
@@ -87,6 +90,10 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- Use the skill-library router proactively. Before assuming no specialized skill
+  applies, match task language against the refreshed index's names, aliases,
+  routing terms, search text, plugin/source, and paths; load the narrowest
+  matching skill directly even when the user did not name it.
 - For Codex skill or plugin add/update/remove work, refresh the installed
   `skill-library-router` index and run its `--check` mode, or report the
   sandbox or permission blocker.
