@@ -6,6 +6,9 @@ description: Review pull requests or diffs with a high-signal, low-false-positiv
 # High Signal PR Review
 
 Use this skill for PR review, diff review, merge readiness, and public review comments.
+For GitHub pull requests, treat "review" as analyze and post the review by default.
+Do not split analysis from posting unless the user explicitly asks for draft/no-post mode,
+the target is not a postable PR, or posting is blocked.
 
 ## Workflow
 
@@ -35,13 +38,20 @@ Use this skill for PR review, diff review, merge readiness, and public review co
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Turn follow-up work into vertical-slice tickets only when ticketing is requested.
 9. Validate every candidate finding before reporting. Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported issues.
-10. If comment mode was not requested, report findings only. If comment mode was requested, prepare a private comment plan, dedupe findings, and post only approved high-confidence comments.
+10. For GitHub PRs, prepare a private comment plan, dedupe findings, and post only approved high-confidence review comments by default. Prefer one submitted PR review over loose issue comments.
+    - Start inline review threads on the smallest changed code range that owns the defect.
+    - Include the failing contract/behavior, the runtime impact, and the concrete fix direction.
+    - Include a GitHub suggestion block when the replacement is small, complete, and safe to apply as-is.
+    - If a finding needs broader context than one line can hold, put the full explanation in the review body and leave a concise inline thread on the changed line.
+    - If inline review APIs fail, fall back to a single request-changes or comment review body with file and line references; report the fallback.
+    - If the user explicitly asks for draft/no-post mode, report findings only and mark posting as skipped.
 11. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
 12. Produce the final report using the output contract.
 
 ## Guardrails
 
-- Do not post GitHub comments unless the user requested comment mode or repo policy requires it.
+- For GitHub PRs, post the review unless the user explicitly requests draft/no-post mode or posting is blocked.
+- Do not post loose GitHub issue comments for PR findings when a submitted PR review or inline review thread is possible.
 - Do not use web fetch for private PR content when `gh` or GitHub MCP owns the source of truth.
 - Do not resolve review threads until the fix or evidence has landed and each addressed thread has a response.
 - Do not flag issues the repo linter would catch unless they are blocking by repo policy or cause real behavior failure.

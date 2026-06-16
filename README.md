@@ -136,12 +136,16 @@ The active AI thread should act as the master owner of:
 
 Delegated agents, smaller models, cache, and validation executors are optional harness capabilities. Use them only when the active tool actually supports them and the output can be reviewed.
 
-In Codex environments with model routing, `gpt-5.3-codex-spark` is the default
-bounded worker/explorer tier for low-risk quick or standard subtasks. Route the
-first safe bounded sidecar to Spark when useful and cheap to validate; keep
-architecture, security, data-loss risk, production release gates, ambiguous
-debugging, broad refactors, and final review verdicts in the master thread or
-strongest available reasoning path.
+Use a configured local MLX sidecar first for compact no-tool cognition:
+classification, extraction, terse summaries, prompt compression, naming, JSON
+shaping, and first-pass critique over compact evidence. In Codex environments
+with model routing, GPT 5.3 Spark is the default bounded worker/explorer tier
+for low-risk quick or standard tool/file subtasks. When a Codex model slug is
+required, use `gpt-5.3-codex-spark`. Route the first safe bounded tool/file
+sidecar to Spark when useful and cheap to validate; keep architecture,
+security, data-loss risk, production release gates, ambiguous debugging, broad
+refactors, and final review verdicts in the master thread or strongest
+available reasoning path.
 
 External integrations are also scoped capabilities. Before using MCPs or other
 external tools, confirm they are enabled for the current repo, folder, or
@@ -291,7 +295,7 @@ Use for code review, self-review, PR preparation, and readiness decisions:
 2. `REVIEW_AND_PR_FRAMEWORK.md`
 3. `QUALITY_GATES.md`
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
-5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or comment mode
+5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or posted review workflows
 6. Actual diff, changed files, validation output, and repo PR template
 
 ### Adoption Profile
@@ -375,12 +379,15 @@ Fallback rule:
 - Do not pretend a blocked capability exists.
 - Report the limitation in the plan and close-out.
 
-Codex Spark rule:
+Local MLX and GPT 5.3 Spark rule:
 
-- When Codex model routing is available, route the first safe bounded sidecar
-  for quick or standard work to `gpt-5.3-codex-spark` when useful.
-- Before using a stronger Codex tier for delegated work, explicitly ask whether
-  Spark can safely handle the bounded task.
+- When a configured local MLX sidecar is available, use it first for compact
+  no-tool cognition and prompt compression; cap output and verify before acting.
+- When Codex model routing is available, route the first safe bounded tool/file
+  sidecar for quick or standard work to GPT 5.3 Spark when useful. Use
+  `gpt-5.3-codex-spark` when a Codex model slug is required.
+- Before using a stronger Codex tier for delegated work, run a Spark-fit check
+  and record the exception reason if Spark is not used.
 - Spark delegates should stop on scope expansion, conflicting requirements,
   repeated validation failure, missing source-of-truth context, or security and
   data concerns.

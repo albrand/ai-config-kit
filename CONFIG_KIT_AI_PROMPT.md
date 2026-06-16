@@ -41,8 +41,11 @@ After loading the files, build an active instruction model:
   explicitly authorizes sub-agents, parallel delegation, model routing, and
   cross-agent counterpart routing when useful and supported.
 - Cross-agent counterpart availability and fallback, if another AI tool could participate.
-- Whether model routing exposes a bounded worker tier such as Codex
-  `gpt-5.3-codex-spark`, and whether it can handle the first safe sidecar.
+- Whether a local MLX sidecar is configured and reachable for compact no-tool
+  cognition.
+- Whether model routing exposes GPT 5.3 Spark as a bounded worker tier, and
+  which quick or standard tool/file sidecar it should own. When a Codex model
+  slug is required, use `gpt-5.3-codex-spark`.
 - Which MCP or external integration connections are enabled for the current
   repo, folder, or workflow.
 - Workflow track: quick, standard, big-change, recovery, or review.
@@ -52,7 +55,7 @@ After loading the files, build an active instruction model:
 - Any skill-library router skillset, including `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/` for Codex skill indexing, context-budget reduction, or plugin-heavy skill access.
 - Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
 - Any UX design-agent skillset, including `skillsets/ux-design-agent/` for Figma-first design, design tokens, system conventions, component libraries, annotations, or `/ux-design-agent`.
-- Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or comment mode.
+- Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or posted review workflows.
 - Quality gates and quality convergence triggers.
 - Breakpoints where user approval or stronger reasoning is required.
 - Stop conditions.
@@ -78,11 +81,16 @@ Execution rules:
 - Keep repo-local instructions above generic framework defaults for local architecture, validation, and workflow details.
 - Treat the active thread as the master owner of user intent, architecture, ambiguity, escalation, integration, final validation truth, and delivery.
 - Use sub-agents, model routing, cache, and delegated validation only when the active tool actually supports them and the result can be validated.
-- In Codex, default bounded low-risk delegated execution to
-  `gpt-5.3-codex-spark` when model choice is available. For quick or standard
-  work, route the first safe bounded sidecar to Spark when useful. Before using
-  a stronger Codex tier for delegated work, ask whether Spark can safely handle
-  the bounded task.
+- Use a configured local MLX sidecar first for compact no-tool cognition:
+  classification, extraction, terse summaries, prompt compression, naming, JSON
+  shaping, and first-pass critique. Use thinking off for routine delegation,
+  hard output caps, and short timeouts; verify before acting.
+- In Codex, default bounded low-risk delegated tool/file execution to GPT 5.3
+  Spark when model choice is available. When a Codex model slug is required, use
+  `gpt-5.3-codex-spark`. For quick or standard work, route the first safe
+  bounded tool/file sidecar to Spark when useful. Before using a stronger Codex
+  tier for delegated work, run a Spark-fit check and record the exception
+  reason if Spark is not used.
 - If the live user prompt includes the exact phrase `subagents swarm allowed`,
   treat it as explicit authorization and request wording for sub-agents,
   parallel delegation, model routing, and cross-agent counterpart routing for

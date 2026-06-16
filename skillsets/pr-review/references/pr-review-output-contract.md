@@ -12,7 +12,7 @@ Record:
 - Applicable instruction files and their scope.
 - Validation output inspected.
 - External systems used or unavailable.
-- Whether comment mode was requested.
+- Whether posting is expected, skipped, or blocked.
 - Existing issue comments, review comments, and review threads inspected when the task is to address or respond to PR feedback.
 - Review state after the latest head change, including whether re-review is required.
 
@@ -74,18 +74,37 @@ Use these additions only when relevant to the changed surface:
 - Look for shallow pass-through modules, scattered domain concepts, or weak test seams when the PR touches architecture.
 - Convert follow-up work into vertical-slice tickets, not horizontal chores, when ticketing is requested.
 
-## Comment Mode
+## Posting Mode
 
-Default: report findings in the terminal or final response only.
+Default for GitHub PRs: analyze and submit the review. Do not require a separate
+"post" instruction. Treat "review this PR" as permission to publish the review
+unless the user explicitly asks for draft/no-post mode.
 
-If the user requested comments:
+When posting:
 
 - Prepare a private comment plan first.
 - Post at most one comment per unique issue.
 - Prefer inline comments on changed code.
+- Start review threads on the smallest changed code range that owns the defect.
+- Include the nearby code or exact symbol/endpoint/payload in the comment so the
+  author can act without hunting through the review body.
 - Link to code with a full commit SHA when creating GitHub links.
-- Include suggestion blocks only for small fixes that fully resolve the issue.
-- If no issues are found and a summary comment is requested, post a short no-issues summary.
+- Include suggestion blocks when the edit is small, complete, and safe to apply
+  as-is; otherwise give a concrete fix direction.
+- Use `REQUEST_CHANGES` for validated blockers, `APPROVE` only when merge-ready,
+  and `COMMENT` for non-blocking findings or when approval is unsafe.
+- If inline review APIs fail, fall back to one submitted review body with
+  file/line references and state that inline posting was unavailable.
+- If no issues are found, post approval only when approval is appropriate for the
+  active reviewer and policy; otherwise post a concise no-blockers comment or
+  report why no public review was posted.
+
+When not posting:
+
+- Only skip posting when the user asked for draft/no-post mode, the PR is closed
+  or draft, the head changed mid-review, review access is missing, auth/network is
+  blocked, or approval/commenting would violate reviewer policy.
+- Report the exact skip reason and the next action needed.
 
 If the user requested response or resolution of existing comments:
 
@@ -114,7 +133,7 @@ Review scope:
 
 - Sources inspected: <list>
 - Instructions applied: <list>
-- Comment mode: <yes/no>
+- Posting: <posted/skipped/blocked and why>
 
 Dropped candidates:
 

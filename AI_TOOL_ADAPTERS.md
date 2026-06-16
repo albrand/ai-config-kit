@@ -19,7 +19,7 @@ Use this for any AI assistant:
    - Harness, model routing, cache, or delegation: `AGENT_ORCHESTRATION.md` plus `HARNESS_STRATEGY.md`
    - Cross-agent or multi-tool coordination: `CROSS_AGENT_COORDINATION.md` plus `TOKEN_ECONOMY.md`
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
-   - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or comment mode also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
+   - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or posted review workflows also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, or design-to-code handoff: `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`
    - Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work: `skillsets/skill-library-router/README.md` and `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`
@@ -136,9 +136,11 @@ Recommended setup:
 - After any Codex skill or plugin add, update, or removal, run the installed router's `refresh-skill-index.cjs` script and then run it with `--check`. Treat this as mandatory verification for smart skill access.
 - Do not disable skills to save context; make specialized skills explicit-only and router-accessible.
 - For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should install the Codex skill files under `<CODEX_HOME>/skills/ux-design-agent/` and verify them.
-- If Codex model routing is available, use `gpt-5.3-codex-spark` as the
-  default bounded sidecar tier for quick or standard work when useful and
-  cheap to validate.
+- If a local MLX sidecar is configured, use it first for compact no-tool
+  cognition and prompt compression; cap output and verify its answer.
+- If Codex model routing is available, use GPT 5.3 Spark as the default bounded
+  tool/file sidecar tier for quick or standard work when useful and cheap to
+  validate. When a Codex model slug is required, use `gpt-5.3-codex-spark`.
 - If Codex exposes a configurable thread ceiling, prefer this top-level config
   unless local policy sets a stricter limit:
 
@@ -177,8 +179,9 @@ Ask the AI to confirm:
 List the instruction layers you will follow.
 State which file controls global behavior.
 State which file controls repo-specific behavior.
-State which harness capabilities you can use: sub-agents, model routing, cache, MCP or external integration routing, and validation execution.
-If Codex model routing is available, state whether `gpt-5.3-codex-spark` can handle the first safe bounded sidecar for this task.
+State which harness capabilities you can use: local MLX sidecar, sub-agents, model routing, cache, MCP or external integration routing, and validation execution.
+If local MLX is available, state the compact no-tool task it should handle first.
+If Codex model routing is available, state which first safe bounded tool/file sidecar GPT 5.3 Spark should handle; use `gpt-5.3-codex-spark` when a model slug is needed.
 State whether cross-agent counterpart access is available, blocked, unavailable, or not useful for this task.
 State any missing required framework files.
 State which validation gates apply.

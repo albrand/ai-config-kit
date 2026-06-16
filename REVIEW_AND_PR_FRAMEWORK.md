@@ -54,12 +54,14 @@ Executable entrypoints:
 5. Validate candidate issues:
    - Re-check every candidate bug, logic error, security issue, or instruction violation before reporting it.
    - Drop findings that are speculative, pre-existing, lint-only, unscoped, or not reproducible from the diff and allowed context.
-6. Report or comment:
+6. Report and post:
    - Report only high-confidence, high-signal issues.
    - Deduplicate findings.
-   - Post comments only when the user requested comment mode or repo policy requires it.
-   - Use inline comments for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub.
+   - For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
+   - Use inline review threads for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub.
+   - Include the failing contract or behavior, runtime impact, and concrete fix direction in the review thread.
    - Use committable suggestion blocks only when the suggestion fully fixes the issue without hidden follow-up work.
+   - If inline review APIs fail, fall back to one submitted review body with file/line references and state the fallback.
 
 ## Existing Review Comments And Re-Review
 

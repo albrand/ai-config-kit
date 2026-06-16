@@ -156,7 +156,8 @@ Use when reviewing a pull request, branch, or diff for merge readiness.
 - Validate each candidate finding before reporting it.
 - Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported concerns.
 - Report validation actually reviewed, including missing or misleading validation.
-- Post public comments only when the user requested comment mode or repo policy requires it.
+- For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
+- Prefer inline review threads on changed code over loose issue comments.
 - Use committable suggestion blocks only when the suggestion fully fixes the issue.
 - When addressing existing PR comments, inspect live comments, reviews, review threads, current head, checks, and deployment state before editing.
 - Reply to each applicable comment after the fix or evidence lands, resolve only addressed threads, and request re-review if the new head invalidates approval.

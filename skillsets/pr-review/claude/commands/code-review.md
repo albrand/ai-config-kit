@@ -1,7 +1,7 @@
 ---
-description: Review a pull request or diff with high-signal filtering, scoped instructions, validated findings, and optional GitHub comments.
-argument-hint: [PR number, URL, branch, diff path, optional --comment]
-allowed-tools: Bash(gh api:*), Bash(gh pr checks:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr edit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh search:*), Bash(git diff:*), Bash(git status:*), Bash(git rev-parse:*), mcp__github_inline_comment__create_inline_comment
+description: Review a pull request or diff with high-signal filtering, scoped instructions, validated findings, and default submitted GitHub reviews.
+argument-hint: [PR number, URL, branch, diff path, optional --no-post]
+allowed-tools: Bash(gh api:*), Bash(gh pr checks:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr edit:*), Bash(gh pr list:*), Bash(gh pr review:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh search:*), Bash(git diff:*), Bash(git status:*), Bash(git rev-parse:*), mcp__github_inline_comment__create_inline_comment
 ---
 
 # Code Review
@@ -12,7 +12,7 @@ User input:
 
 `$ARGUMENTS`
 
-Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR truth. Do not post comments unless `--comment` is included or the user explicitly requested comment mode.
+Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR truth. For GitHub PRs, treat review as analyze and submit the review by default. Do not split analysis from posting unless `--no-post` is included, the target is not a postable PR, or posting is blocked.
 
 ## Workflow
 
@@ -47,9 +47,9 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Convert follow-ups into vertical-slice tickets only when ticketing is requested.
 10. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
-11. Report findings to the terminal or final response using the output contract.
-12. If `--comment` is not present and the user did not ask to respond to comments, stop without posting comments.
-13. If `--comment` is present or the user explicitly asked to respond to comments, create a private list first; post at most one comment per unique issue; prefer inline comments on changed code; use a committable suggestion block only when it fully fixes the issue; and post a short no-issues summary only when requested.
+11. Create a private comment plan before posting; dedupe findings; prefer one submitted PR review over loose issue comments.
+12. For GitHub PRs, post approved high-confidence review comments by default unless `--no-post` is present or posting is blocked.
+13. Prefer inline review threads on the smallest changed code range that owns the defect. Include the failing contract or behavior, runtime impact, concrete fix direction, and a committable suggestion block only when it fully fixes the issue. If inline review APIs fail, fall back to one submitted request-changes/comment review body with file/line references and state the fallback.
 14. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
 
 ## Output

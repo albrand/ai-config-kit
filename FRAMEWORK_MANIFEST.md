@@ -159,7 +159,7 @@ Use for code review, self-review, PR preparation, or readiness decisions:
 2. `REVIEW_AND_PR_FRAMEWORK.md`
 3. `QUALITY_GATES.md`
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
-5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or comment mode
+5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or posted review workflows
 6. Actual diff, changed files, validation output, and repo PR template
 
 ### Adoption Profile
