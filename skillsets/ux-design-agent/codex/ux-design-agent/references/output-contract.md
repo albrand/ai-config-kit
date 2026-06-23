@@ -1,16 +1,28 @@
 # UX Design Agent Output Contract
 
-Use this checklist for substantial UX design-agent work, especially when Figma, design tokens, system conventions, or repo implementation are in scope.
+Use this checklist for substantial UX design-agent work, especially when a live mockup, design signoff, Figma propagation, board/ticket handoff, design tokens, system conventions, or repo implementation are in scope.
+
+## Design-Maker Detection
+
+- Whether the prompt was read as design-making and announced as such, or deferred (with reason).
 
 ## Capability Report
 
 - Figma MCP/tool access: available, blocked, unavailable, or not needed.
 - Figma edit access and target file/library.
+- Board MCP access: Linear, Jira, or none.
+- Vercel/preview-deploy tooling access.
 - Repo read/write access.
 - Component-library status.
 - Token and design-system evidence inspected.
 - Claude Design status when running through Claude.
 - Browser, screenshot, or visual validation status.
+
+## Source Of Truth
+
+- Chosen SoT location: Figma, Confluence/Notion, Google Doc, repo docs, or none yet.
+- Whether a SoT was enforced before signoff/propagation.
+- Whether the SoT was kept current with the mockup changes.
 
 ## Intake Summary
 
@@ -87,6 +99,32 @@ Include:
 - Annotation coverage: decisions, tokens, states, responsive behavior, accessibility, open questions, and implementation notes.
 - Navigation aids for the UX designer: page/frame names, section labels, links, or ordered review path.
 
+## Live Mockup And Preview
+
+- Mockup framework and project (e.g. Next.js).
+- Preview deploy status and shareable preview URL (and the deploy/commit it reflects).
+- Whether the mockup was built from tokens/components and kept in step with the SoT.
+
+## Design Signoff
+
+State one: approved, pending approval, or not reached.
+
+Per signed-off surface, confirm coverage of:
+
+- How it looks: layout, hierarchy, tokens, typography.
+- How it behaves: actions, navigation, interactions, transitions, and states.
+- Responsive behavior and accessibility.
+- Components used and their granularity.
+- Open questions and non-goals.
+
+## Board Propagation
+
+- Board tool: Linear, Jira, or none.
+- New project/tickets: structure and ticket format proposed; classification (Feature, Bug Fix, Chore, Spike); created or proposed only.
+- Existing tickets: which ticket owns the UI piece, updated with the new UI version (Figma + preview links refreshed).
+- Revision comment posted recording that the change was made (`save_comment` / `addCommentToJiraIssue`).
+- Approval status for every board write.
+
 ## UX Validation
 
 Check:
@@ -107,12 +145,17 @@ Use this shape:
 ```md
 **UX Design Agent Result**
 
+Detection: design-making (announced) / deferred
 Personal profile: ...
 Mode: ...
 Capabilities: ...
+Source of truth: ...
 Decisions: ...
+Live mockup + preview: ...
+Signoff: approved / pending — coverage ...
+Figma (or SoT) propagation: ...
+Board propagation: tool, tickets created/updated, comments posted ...
 Artifacts: ...
-Figma annotations: ...
 Validation: ...
 Blocked or unverified: ...
 Next step: ...

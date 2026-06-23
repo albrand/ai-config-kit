@@ -76,7 +76,7 @@ Verification:
 5. Confirm no unrelated files were changed.
 
 After import, give me these try-it prompts:
-- Codex: `Use $ux-design-agent to shape a Figma-first design system and layout workflow for my product.`
+- Codex: `Use $ux-design-agent to design in my live mockup, keep one source of truth, run a design signoff, and propagate the signed-off UI to Figma and my ticket board.`
 - Claude Code: `/ux-design-agent <product, Figma, repo, or design-system prompt>`
 
 Safety rules:
