@@ -136,7 +136,7 @@ The active AI thread should act as the master owner of:
 
 Delegated agents, smaller models, cache, and validation executors are optional harness capabilities. Use them only when the active tool actually supports them and the output can be reviewed.
 
-Use a configured local MLX sidecar first for compact no-tool cognition:
+Use a configured local sidecar first for compact no-tool cognition:
 classification, extraction, terse summaries, prompt compression, naming, JSON
 shaping, and first-pass critique over compact evidence. In Codex environments
 with model routing, GPT 5.3 Spark is the default bounded worker/explorer tier
@@ -379,10 +379,13 @@ Fallback rule:
 - Do not pretend a blocked capability exists.
 - Report the limitation in the plan and close-out.
 
-Local MLX and GPT 5.3 Spark rule:
+Local sidecar and GPT 5.3 Spark rule:
 
-- When a configured local MLX sidecar is available, use it first for compact
+- When a configured local sidecar is available, use it first for compact
   no-tool cognition and prompt compression; cap output and verify before acting.
+- When local-sidecar delegation is required, make multiple independent
+  no-tool delegations and reconcile their outputs before implementation or
+  final judgment.
 - When Codex model routing is available, route the first safe bounded tool/file
   sidecar for quick or standard work to GPT 5.3 Spark when useful. Use
   `gpt-5.3-codex-spark` when a Codex model slug is required.

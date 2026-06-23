@@ -136,8 +136,11 @@ Recommended setup:
 - After any Codex skill or plugin add, update, or removal, run the installed router's `refresh-skill-index.cjs` script and then run it with `--check`. Treat this as mandatory verification for smart skill access.
 - Do not disable skills to save context; make specialized skills explicit-only and router-accessible.
 - For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should install the Codex skill files under `<CODEX_HOME>/skills/ux-design-agent/` and verify them.
-- If a local MLX sidecar is configured, use it first for compact no-tool
+- If a local sidecar is configured, use it first for compact no-tool
   cognition and prompt compression; cap output and verify its answer.
+- If local-sidecar delegation is required, make multiple independent no-tool
+  delegations and reconcile their outputs before implementation or final
+  judgment.
 - If Codex model routing is available, use GPT 5.3 Spark as the default bounded
   tool/file sidecar tier for quick or standard work when useful and cheap to
   validate. When a Codex model slug is required, use `gpt-5.3-codex-spark`.
@@ -179,8 +182,8 @@ Ask the AI to confirm:
 List the instruction layers you will follow.
 State which file controls global behavior.
 State which file controls repo-specific behavior.
-State which harness capabilities you can use: local MLX sidecar, sub-agents, model routing, cache, MCP or external integration routing, and validation execution.
-If local MLX is available, state the compact no-tool task it should handle first.
+State which harness capabilities you can use: local sidecar, sub-agents, model routing, cache, MCP or external integration routing, and validation execution.
+If a local sidecar is available, state the compact no-tool task it should handle first.
 If Codex model routing is available, state which first safe bounded tool/file sidecar GPT 5.3 Spark should handle; use `gpt-5.3-codex-spark` when a model slug is needed.
 State whether cross-agent counterpart access is available, blocked, unavailable, or not useful for this task.
 State any missing required framework files.

@@ -51,10 +51,14 @@ When layers conflict:
 - Record actual harness capabilities as available, limited, blocked, unavailable, or unknown.
 - Decompose work into small, verifiable units.
 - Route each unit to the smallest capable model or agent.
-- In Codex, prefer `gpt-5.3-codex-spark` for the first safe bounded sidecar on
-  quick or standard work when model routing is available and validation is
-  cheap. Before using a stronger Codex tier for delegated work, ask whether
-  Spark can safely handle the bounded task.
+- Use a configured local sidecar first for compact no-tool cognition.
+- If local-sidecar delegation is required, ask multiple bounded no-tool
+  sidecar passes and reconcile them before implementation or final judgment.
+- In Codex, prefer GPT 5.3 Spark for the first safe bounded tool/file sidecar
+  on quick or standard work when model routing is available and validation is
+  cheap. When a Codex model slug is required, use `gpt-5.3-codex-spark`. Before
+  using a stronger Codex tier for delegated work, run a Spark-fit check and
+  record the exception reason if Spark is not used.
 - When another AI tool participates, create the communication plan before joint work.
 - Pass only the context required for that unit.
 - Define success criteria, allowed outputs, validation, and escalation conditions.

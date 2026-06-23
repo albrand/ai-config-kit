@@ -63,10 +63,16 @@ Defaults:
 - Delegated agents own only bounded execution slices with explicit validation.
 - When another AI tool participates, create a communication plan first: coordinator, counterpart, source-of-truth package, work split, output contract, budget, stop conditions, and single-agent fallback.
 - Use the smallest capable model or agent only when the result can be validated.
-- In Codex environments with `gpt-5.3-codex-spark`, route the first safe
-  bounded sidecar for quick or standard work to Spark when useful. Before using
-  a stronger Codex tier for delegated work, ask whether Spark can safely handle
-  the bounded task.
+- Use a configured local sidecar first for compact no-tool cognition; cap
+  output, use tool-free system instructions, and verify before acting.
+- When local-sidecar delegation is required, make multiple independent
+  no-tool delegations and reconcile their outputs before implementation or
+  final judgment.
+- In Codex environments with GPT 5.3 Spark, route the first safe bounded
+  tool/file sidecar for quick or standard work to Spark when useful. When a
+  Codex model slug is required, use `gpt-5.3-codex-spark`. Before using a
+  stronger Codex tier for delegated work, run a Spark-fit check and record the
+  exception reason if Spark is not used.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
   policy sets a stricter limit.

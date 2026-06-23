@@ -29,18 +29,46 @@ harness.
 
 | Tier | When | Claude Code examples | Mixed-provider examples |
 |------|------|---------------------|-------------------------|
-| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | `Agent(subagent_type: "Explore")`, `Agent(model: "haiku")` | Gemini Flash Lite, local Qwen3 4B, Minimax M2.7 |
+| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | `Agent(subagent_type: "Explore")`, `Agent(model: "haiku")` | Local OpenAI-compatible sidecar, Gemini Flash Lite, Minimax M2.7 |
 | Medium | Localized code, component implementation, test generation, doc drafting, API integration, mapping requirements to files | `Agent(model: "sonnet")`, `Agent(subagent_type: "general-purpose")`, `Agent(subagent_type: "Plan")` | Claude Sonnet, GPT-5.4 Mini |
 | Large / frontier | Architecture, ambiguous debugging, security-sensitive work, data-loss risk, multi-system planning, final pre-merge review, prompt or harness redesign | Master thread (Opus 4.7), `advisor` | Claude Opus, GPT-5.4, Hermes flagship |
 
 Anti-pattern: routing all work to the strongest tier "to be safe". Frontier
 should own judgment; mechanical work goes a tier or two down.
 
-## Codex Spark Routing
+## Local Sidecar Routing
 
-When Codex exposes model choice, treat `gpt-5.3-codex-spark` as the first-choice
+When a local OpenAI-compatible sidecar is configured, use it before hosted
+models for bounded no-tool cognition:
+
+- Classification, extraction, naming, JSON shaping, prompt compression, and
+  noisy-output summaries.
+- First-pass critique when the source-of-truth evidence is already compact.
+- Rewriting verbose context into a smaller brief for Spark or another worker.
+
+Operational constraints:
+
+- Keep prompts small and explicit; do not paste whole framework files or raw
+  transcript history.
+- Use tool-free system instructions, hard output caps, and a short timeout.
+- Do not send secrets, credentials, or broad private context.
+- Treat output as advisory. The master verifies before acting.
+- If the sidecar is unavailable, times out, or needs tools, route to GPT 5.3
+  Spark or keep the work in the master thread.
+
+When the user or repo declares local-sidecar delegation required, make at least
+two independent no-tool delegations before implementation or final judgment:
+one planner/decomposer pass and one critic/verifier pass. For harness, prompt,
+routing, or process changes, add a third operator pass that turns the output
+into a concrete operating contract. Reconcile the outputs instead of copying
+them verbatim.
+
+## GPT 5.3 Spark Routing
+
+When Codex exposes model choice, treat GPT 5.3 Spark as the first-choice
 bounded worker or explorer tier for quick and standard subtasks that are
-reviewable and cheap to validate.
+reviewable and cheap to validate. When a Codex model slug is required, use
+`gpt-5.3-codex-spark`.
 
 Use Spark for file discovery, scoped codebase questions, log or test-output
 summaries, PR or check metadata extraction, formatting, JSON shaping,
@@ -54,10 +82,10 @@ be expensive to detect. Keep those decisions in the master thread or strongest
 available reasoning path.
 
 Before escalating delegated quick or standard work to a stronger Codex tier,
-ask whether Spark can safely handle the bounded task. Spark delegates should
-stop and escalate with a concise blocker when requirements conflict, scope
-expands, validation fails twice, security or data concerns appear, or broad
-context is needed.
+run a Spark-fit check and record the exception reason if Spark is not used.
+Spark delegates should stop and escalate with a concise blocker when
+requirements conflict, scope expands, validation fails twice, security or data
+concerns appear, or broad context is needed.
 
 ## Swarm Authorization Phrase
 

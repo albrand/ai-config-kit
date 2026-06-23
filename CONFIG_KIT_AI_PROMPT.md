@@ -41,7 +41,7 @@ After loading the files, build an active instruction model:
   explicitly authorizes sub-agents, parallel delegation, model routing, and
   cross-agent counterpart routing when useful and supported.
 - Cross-agent counterpart availability and fallback, if another AI tool could participate.
-- Whether a local MLX sidecar is configured and reachable for compact no-tool
+- Whether a local sidecar is configured and reachable for compact no-tool
   cognition.
 - Whether model routing exposes GPT 5.3 Spark as a bounded worker tier, and
   which quick or standard tool/file sidecar it should own. When a Codex model
@@ -81,10 +81,13 @@ Execution rules:
 - Keep repo-local instructions above generic framework defaults for local architecture, validation, and workflow details.
 - Treat the active thread as the master owner of user intent, architecture, ambiguity, escalation, integration, final validation truth, and delivery.
 - Use sub-agents, model routing, cache, and delegated validation only when the active tool actually supports them and the result can be validated.
-- Use a configured local MLX sidecar first for compact no-tool cognition:
+- Use a configured local sidecar first for compact no-tool cognition:
   classification, extraction, terse summaries, prompt compression, naming, JSON
-  shaping, and first-pass critique. Use thinking off for routine delegation,
-  hard output caps, and short timeouts; verify before acting.
+  shaping, and first-pass critique. Use tool-free system instructions, hard
+  output caps, and short timeouts; verify before acting.
+- When local-sidecar delegation is required, make multiple independent no-tool
+  delegations and reconcile their outputs before implementation or final
+  judgment.
 - In Codex, default bounded low-risk delegated tool/file execution to GPT 5.3
   Spark when model choice is available. When a Codex model slug is required, use
   `gpt-5.3-codex-spark`. For quick or standard work, route the first safe

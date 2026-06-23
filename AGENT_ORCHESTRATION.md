@@ -124,10 +124,17 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
 ## Routing Rules
 
 - Use the smallest model or agent that can complete the task with high confidence and validation.
-- For Codex model routing, default bounded low-risk execution to
-  `gpt-5.3-codex-spark` when available. Before using a stronger Codex tier for
-  delegated quick or standard work, ask whether Spark can safely handle the
-  bounded task.
+- Use a configured local sidecar first for compact no-tool cognition:
+  classification, extraction, terse summaries, prompt compression, naming,
+  JSON shaping, and first-pass critique over compact evidence.
+- When local-sidecar delegation is required, make multiple independent
+  no-tool delegations before implementation or final judgment and reconcile
+  the outputs against source-of-truth evidence.
+- For Codex model routing, default bounded low-risk tool/file execution to
+  GPT 5.3 Spark when available. When a Codex model slug is required, use
+  `gpt-5.3-codex-spark`. Before using a stronger Codex tier for delegated quick
+  or standard work, run a Spark-fit check and record the exception reason if
+  Spark is not used.
 - Use narrow context for narrow work; do not hand the full repository context to a task that only needs a focused contract.
 - Use a separate AI tool when independent critique, parallel evidence gathering, bounded execution, or verification would improve quality or reduce coordinator context.
 - Do not require cross-agent work when the user or environment does not have the second tool, membership, authentication, or permission needed.

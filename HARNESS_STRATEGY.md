@@ -148,6 +148,55 @@ Routing must consider:
 
 Do not route only by apparent task size. A small-looking change can need frontier reasoning when it affects security, architecture, data, or multiple systems.
 
+## Cost-First Routing Order
+
+Apply this order before choosing a frontier path:
+
+1. **Configured local sidecar first** for bounded no-tool cognition:
+   classification, extraction, concise summarization, noisy-output
+   condensation, naming, prompt compression, and first-pass critique when the
+   needed context can fit in a small explicit prompt.
+2. **GPT 5.3 Spark second** for bounded Codex worker or explorer tasks that
+   need file, shell, repo, or validation access and can be checked by the master
+   thread. When a Codex model slug is required, use `gpt-5.3-codex-spark`.
+3. **Master/frontier last** for architecture, security, auth, data-loss,
+   production release, dependency strategy, broad refactor, ambiguous debugging,
+   final review, and any conclusion whose failure is expensive to detect.
+
+The local sidecar is not a source-of-truth agent. It has no tool access and
+must not receive secrets or large private context. Use short prompts, hard
+output caps, tool-free system instructions, and a timeout. If it is
+unavailable, slow, or inconclusive, fall back to GPT 5.3 Spark for bounded tool
+work or to the master thread for judgment.
+
+## Local Sidecar Delegation Gate
+
+When a configured local OpenAI-compatible sidecar is reachable and the current
+workflow declares local-sidecar delegation required, the coordinator must make
+multiple bounded no-tool delegations before implementation or final judgment.
+
+Minimum required delegations:
+
+- `planner`: decompose the task, evidence, validation, and stop conditions.
+- `critic`: identify gaps, false assumptions, enforcement weaknesses, and
+  validation blind spots.
+- `operator` for harness, prompt, routing, or process changes: convert the plan
+  into an operating contract.
+
+The coordinator must reconcile the outputs explicitly:
+
+- State which sidecar recommendations were adopted, modified, or rejected.
+- Verify every source-of-truth claim locally before acting on it.
+- Re-delegate once with a refined brief when confidence is low or the output
+  fails the requested format.
+- Block or fall back when the sidecar is unreachable, repeatedly invalid, or
+  would require secrets, broad private context, tools, or architecture
+  authority.
+
+This gate changes who performs bounded cognition; it does not transfer final
+ownership. The master thread still owns evidence gathering, edits, integration,
+validation, escalation, and final user-facing claims.
+
 Routing output should state:
 
 - What stays in the master thread.
@@ -156,10 +205,11 @@ Routing output should state:
 - What validation each routed unit must produce.
 - Which capabilities are unavailable and which fallback is being used.
 
-## Codex Spark Default Profile
+## GPT 5.3 Spark Default Profile
 
 When the active harness is Codex and model choice is available,
-`gpt-5.3-codex-spark` is the default bounded execution tier for low-risk work.
+GPT 5.3 Spark is the default bounded execution tier for low-risk work. When a
+Codex model slug is required, use `gpt-5.3-codex-spark`.
 
 For quick or standard workflows, route the first safe bounded sidecar to Spark
 when it can run in parallel without blocking the critical path. The master
@@ -176,8 +226,8 @@ Spark-fit work includes:
 - Localized worker patches with disjoint ownership and cheap validation.
 
 Before routing a delegated quick or standard subtask to a stronger Codex tier,
-explicitly ask whether Spark can safely handle the bounded work. Valid reasons
-to use a stronger path include architecture, security or auth risk, data-loss
+run a Spark-fit check and record the exception reason if Spark is not used.
+Valid exception reasons include architecture, security or auth risk, data-loss
 risk, dependency strategy, production release gates, ambiguous debugging, broad
 cross-module refactors, final review verdicts, or failures that are expensive
 to detect with focused validation.
@@ -204,6 +254,10 @@ Use for cheap, bounded cognition:
 - Boilerplate generation.
 - Simple deterministic refactors.
 - Detecting whether cache is safe.
+
+Prefer the configured local sidecar for these no-tool tasks when it is
+reachable and the prompt can stay compact. It should return bounded evidence,
+not final decisions.
 
 ### Medium Model
 

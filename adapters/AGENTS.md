@@ -76,8 +76,11 @@ Replace this section with local rules:
   useful and supported, without bypassing capability, privacy, safety, budget,
   stop-condition, anti-drift, or validation checks.
 - When another AI tool participates, create the communication plan before joint work and keep a single-agent fallback.
-- Use a configured local MLX sidecar first for compact no-tool cognition; cap
-  output, use thinking off for routine delegation, and verify before acting.
+- Use a configured local sidecar first for compact no-tool cognition; cap
+  output, use tool-free system instructions, and verify before acting.
+- When local-sidecar delegation is required, make multiple independent
+  no-tool delegations and reconcile their outputs before implementation or
+  final judgment.
 - In Codex, route the first safe bounded tool/file sidecar for quick or
   standard work to GPT 5.3 Spark when available and useful. When a Codex model
   slug is required, use `gpt-5.3-codex-spark`; record the exception reason

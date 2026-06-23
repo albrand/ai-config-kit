@@ -47,10 +47,17 @@ If the tool cannot automatically read files, ask the user to provide the relevan
   usefulness before routing; the phrase enables routing but does not force it.
 - When another AI tool participates, create a communication plan first and keep a single-agent fallback.
 - Route work to the smallest capable model or agent when the tool supports it.
-- In Codex, route the first safe bounded sidecar for quick or standard work to
-  `gpt-5.3-codex-spark` when model choice is available and validation is cheap.
-  Before using a stronger Codex tier for delegated work, ask whether Spark can
-  safely handle the bounded task.
+- Use the configured local sidecar first for compact no-tool cognition when it is
+  configured and reachable; keep prompts capped, use tool-free system
+  instructions, and verify its output.
+- When local-sidecar delegation is required, make multiple independent
+  no-tool delegations and reconcile their outputs before implementation or
+  final judgment.
+- In Codex, route bounded quick or standard tool/file work to GPT 5.3 Spark
+  when model choice is available and validation is cheap. When a Codex model
+  slug is required, use `gpt-5.3-codex-spark`. Before using a stronger Codex
+  tier for delegated work, run a Spark-fit check and record the exception
+  reason if Spark is not used.
 - Treat the master thread as the owner of judgment, architecture, escalation, and final review.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local

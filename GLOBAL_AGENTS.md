@@ -28,6 +28,38 @@ Use this as the user-level baseline for AI coding agents.
 - Tie root-cause claims to code, logs, test output, payloads, config, or runtime state.
 - State uncertainty clearly when evidence is incomplete.
 
+## Board-Backed Regression Protection
+
+This rule applies to every repository and every implementation, review,
+release, or skill/agent workflow.
+
+- Treat already working, accepted, QA-approved, Done, released, or otherwise
+  board-backed behavior as protected scope. A task is incomplete if it
+  implements the current change while regressing behavior that was already
+  working.
+- Before implementation, PR review, quality-gate, readiness, or release
+  claims, ask imperatively for access to the authoritative ticket board. For
+  Jira-backed projects, require Jira board access; for non-Jira projects, use
+  the configured equivalent board. If access is unavailable, request access or a
+  current board export and report the work as `board regression gate blocked`.
+- Build an inventory of all visible tickets on the board, not only the current
+  ticket: key, title, type, status, sprint/release, component/area, acceptance
+  criteria, linked PR/release evidence, and QA/Done evidence when present. Use
+  metadata first for scale, then open the current ticket plus every adjacent,
+  completed, QA, Done, released, or otherwise impacted ticket in detail.
+- Check the code, diff, tests, docs, migrations, config, and release notes
+  against the entire ticket inventory. Identify overlaps, contradictions,
+  duplicate scope, missing acceptance criteria, and any changed files/routes/
+  contracts that can affect previously completed tickets.
+- Treat a plausible regression against protected ticket behavior as a
+  **Blocker** until disproven with repo evidence and targeted validation. Treat
+  missing board access, incomplete ticket inventory, or missing PR-to-ticket
+  traceability as **Blocked / NOT READY**, never as a pass.
+- Every final implementation, review, or readiness answer must state which
+  board was checked, the inventory size/scope/date, the tickets matched to the
+  change, the protected behavior checked for regression, and any gaps or
+  blockers.
+
 5. Delegate when useful and allowed.
 
 - Use parallel agents or subtasks only when work is separable and the tool environment allows it.
@@ -46,11 +78,14 @@ Use this as the user-level baseline for AI coding agents.
 - Avoid speculative, duplicate, or idle agents.
 - Keep architectural judgment, ambiguity resolution, escalation, and final review in the master thread.
 - Route bounded work to the smallest capable model or agent when model routing is available.
-- Use the local MLX sidecar first for bounded no-tool cognition when it is
+- Use the configured local sidecar first for bounded no-tool cognition when it is
   configured and reachable: classification, extraction, terse summarization,
   prompt compression, naming, JSON shaping, and first-pass critique over compact
-  evidence. Use `enable_thinking: false`, hard output caps, and short timeouts;
-  never treat the sidecar as source-of-truth.
+  evidence. Use tool-free system instructions, hard output caps, and short
+  timeouts; never treat the sidecar as source-of-truth.
+- When local-sidecar delegation is required, make multiple independent no-tool
+  delegations and reconcile their outputs before implementation or final
+  judgment.
 - For Codex environments with GPT 5.3 Spark, default bounded, low-risk
   execution to Spark when model choice is available. When a Codex model slug is
   required, use `gpt-5.3-codex-spark`. For quick or standard work, route the
