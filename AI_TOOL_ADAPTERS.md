@@ -114,10 +114,32 @@ Recommended setup:
 
 Claude Code uses `CLAUDE.md` memory files at several levels, including user-level and project-level memory. It supports imports with `@path` syntax.
 
+Pick one install profile per repo or tool:
+
+- **Eager full import (default).** Copy `adapters/CLAUDE.md` to the repo root.
+  Every framework file in its import list loads each session.
+- **Lightweight core + router (optional).** Import `CORE.md` from `CLAUDE.md`
+  (`@docs/agent-framework/CORE.md`) and install
+  `adapters/claude-agent-framework-skill/SKILL.md` as the `agent-framework`
+  skill at `~/.claude/skills/agent-framework/SKILL.md` or
+  `.claude/skills/agent-framework/SKILL.md`. Deeper docs load on demand through
+  the skill's task map. See `adapters/claude-agent-framework-skill/README.md`.
+
+Do not combine the two: the eager adapter already loads the deeper docs.
+
+Verify the lightweight profile before treating it as adopted. In a fresh
+session, the AI must name the active install profile, state the source-of-truth
+order from `CORE.md`, and list the files it would load for a security review
+(`SECURITY_AND_PENTEST.md` plus `skillsets/security-review/README.md`) and for
+work that uses an adopted context accelerator (`CONTEXT_ACCELERATION.md`,
+`skillsets/context-acceleration/README.md`, and the repo-local operator
+documentation package). A profile that cannot route those is not adopted.
+
 Recommended setup:
 
 - Put personal global preferences in the user-level memory file.
-- Copy `adapters/CLAUDE.md` to the repo root for project memory.
+- Copy `adapters/CLAUDE.md` to the repo root for project memory, or install the
+  lightweight core + router pair described above.
 - Use imports from `CLAUDE.md` to point to the framework files.
 - Keep local-only preferences out of shared project memory.
 - For executable workflows, copy command files from `skillsets/*/claude/commands/` into `~/.claude/commands/` or the project `.claude/commands/` folder.

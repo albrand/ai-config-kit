@@ -14,6 +14,7 @@ concept quickly.
 | I need to... | Start here |
 | --- | --- |
 | Install the framework in a repository | [Use The Kit In Another Repository](#use-the-kit-in-another-repository), then `REPO_ADOPTION_PLAYBOOK.md` |
+| Install a small always-on core with on-demand depth (Claude Code) | [Use The Lightweight Core And Router Path](#use-the-lightweight-core-and-router-path), then `adapters/claude-agent-framework-skill/README.md` |
 | Install it for a chat-only assistant | [Use The Kit In A Chat-Only AI Tool](#use-the-kit-in-a-chat-only-ai-tool) |
 | Install the Codex skill index/router | [Import The Skill Library Router](#import-the-skill-library-router), then `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` |
 | Install the UX design agent | [Import The UX Design Agent Skillset](#import-the-ux-design-agent-skillset), then `UX_DESIGN_AGENT_IMPORT_PROMPT.md` |
@@ -116,6 +117,34 @@ Adoption sequence:
 8. Run the first-session verification prompt from `CONFIG_KIT_AI_PROMPT.md` or `TEMPLATES.md`.
 9. Run a low-risk trial task and check that the AI follows the local rules.
 
+### Use The Lightweight Core And Router Path
+
+Use this optional profile when an eager full-import adapter costs too much
+context per turn. It is supported for Claude Code today. It changes when files
+are read, not which contracts apply.
+
+1. Copy the framework files into the target repo as usual, usually
+   `docs/agent-framework/`.
+2. Import `CORE.md` from the tool instruction file instead of the eager import
+   list in `adapters/CLAUDE.md`:
+
+   ```md
+   @docs/agent-framework/CORE.md
+   ```
+
+3. Install `adapters/claude-agent-framework-skill/SKILL.md` as the
+   `agent-framework` skill at `~/.claude/skills/agent-framework/SKILL.md` (user
+   level) or `.claude/skills/agent-framework/SKILL.md` (repo level).
+4. Update the skill's framework path and task map if the framework does not live
+   at `docs/agent-framework/`.
+5. Verify: ask a fresh session to name the active install profile, quote the
+   source-of-truth order from `CORE.md`, and state which files it would load for
+   a security review and for a task that uses an adopted context accelerator. If
+   it cannot route those two, the install is incomplete.
+
+Choose one path per tool. Do not import the full adapter list and the core at
+the same time — the eager adapter already loads the deeper docs.
+
 ### Use The Kit In A Chat-Only AI Tool
 
 Use this path when the AI cannot read files from a repository:
@@ -207,6 +236,7 @@ question.
 | Path | Purpose |
 | --- | --- |
 | `README.md` | Entry point, quick-start guide, file map, usage recipes, and maintenance overview. |
+| `CORE.md` | Always-on distillation of the non-negotiables for the optional Lightweight Core + Router install profile; names the mandatory security and context-accelerator routes and defers everything else to the router. |
 | `CONFIG_KIT_AI_PROMPT.md` | Paste-ready prompt that tells any AI how to absorb this kit from files, pasted content, a folder, or an archive. |
 | `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` | Paste-ready prompt for importing the Codex Skill Library Router and refreshing the local skill index. |
 | `UX_DESIGN_AGENT_IMPORT_PROMPT.md` | Paste-ready prompt for importing the UX Design Agent skillset into Codex and Claude Code. |
@@ -218,6 +248,7 @@ question.
 | `REPO_AGENTS_TEMPLATE.md` | Repo-root instruction template with placeholders for local rules. |
 | `AI_TOOL_ADAPTERS.md` | Setup guide for generic assistants, AGENTS-compatible tools, Cursor, Gemini CLI, Claude Code, Codex, and other tools. |
 | `adapters/` | Copyable bootstrap files for specific AI tools. |
+| `adapters/claude-agent-framework-skill/` | Optional Claude Code install path: the `agent-framework` router skill (task-to-file map plus load profiles) paired with an always-on `CORE.md` import, for progressive disclosure instead of eager full-import. |
 | `SKILLS_CATALOG.md` | Recommended global skills, repo-local skill examples, skill shape, promotion rules, and anti-patterns. |
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
@@ -452,7 +483,8 @@ Adapters should be short bootstrap files. They should point to the framework, no
 | --- | --- | --- |
 | AGENTS-compatible tools | `adapters/AGENTS.md` | Target repo root as `AGENTS.md` |
 | Codex-style repo instructions | `adapters/AGENTS.md` | Target repo root as `AGENTS.md` |
-| Claude Code | `adapters/CLAUDE.md` | Target repo root as `CLAUDE.md` |
+| Claude Code (eager full import) | `adapters/CLAUDE.md` | Target repo root as `CLAUDE.md` |
+| Claude Code (lightweight core + router) | `CORE.md` plus `adapters/claude-agent-framework-skill/SKILL.md` | `@docs/agent-framework/CORE.md` in `CLAUDE.md`; skill at `~/.claude/skills/agent-framework/SKILL.md` or `.claude/skills/agent-framework/SKILL.md` |
 | Gemini CLI | `adapters/GEMINI.md` | Target repo root as `GEMINI.md` |
 | Cursor | `adapters/cursor-agent-framework.mdc` | Target repo `.cursor/rules/agent-framework.mdc` |
 | Generic chat assistant | `CONFIG_KIT_AI_PROMPT.md` | Paste into chat before attaching files |

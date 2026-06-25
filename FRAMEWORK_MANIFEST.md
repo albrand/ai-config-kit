@@ -9,6 +9,7 @@ The manifest does not replace the framework files. It tells an AI agent which fi
 Core files:
 
 - `README.md`: overview, layer model, and adoption summary.
+- `CORE.md`: always-on distillation of the non-negotiables (source-of-truth order, directive challenge, lifecycle, scope control, protected scope, delegation and cost, context economy, verification, and the mandatory security / context-accelerator routes). Required only for the optional Lightweight Core + Router install profile; the eager full-import adapter path does not use it.
 - `AI_BOOTSTRAP.md`: first-read instruction for any AI tool.
 - `CONFIG_KIT_AI_PROMPT.md`: paste-ready prompt for making any AI absorb the config kit.
 - `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`: paste-ready prompt for importing the Codex Skill Library Router and refreshing the local skill index.
@@ -59,6 +60,7 @@ Support files:
 - `skillsets/native-agent-surfaces/`: portable, capability-first skillset for discovering and using native host surfaces (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses), with an explicit-only Codex skill (`native-agent-surface`), a host-neutral adapter contract, a stdlib-only detector that never serializes env values or socket capabilities, a reuse-first workspace resolver (`resolve-workspace.py`), project-setup / browser-E2E / agent-session-coordination / session-start-health references, a report-only Claude session-start hook doctor (`claude-session-hook-doctor.py`), a versioned model-neutral `bundle-manifest.json`, and a preference-aware model-agnostic global installer (`scripts/install.py`) with offline tests.
 - `skillsets/orca-browser-safety/`: portable Codex skill for Orca-embedded-only interactive browsing, isolated workspace-scoped profiles, explicit worktree/page targeting, and ownership-safe page cleanup; install the complete `codex/orca-browser-safety/` directory.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
+- `adapters/claude-agent-framework-skill/`: optional Claude Code install path — the `agent-framework` router skill (task-to-file map plus load profiles) that pairs with an always-on `CORE.md` import. Alternative to the eager `adapters/CLAUDE.md` import list, not a replacement for it.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
   checkouts. Rebuild the active archive after framework changes, and do not
@@ -80,6 +82,26 @@ Use for short answers, paste-only mode, or first-session checks:
 6. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when planning,
    architecture, anti-bias, or cross-project pattern reuse is material
 7. Repo-local instructions, if any
+
+### Lightweight Core + Router Profile (Optional)
+
+Use instead of an eager full-import adapter when the operator wants a small
+always-on surface and on-demand depth. Supported for Claude Code today through
+`adapters/claude-agent-framework-skill/`.
+
+1. `CORE.md`, force-loaded every session by the tool's instruction file
+2. `adapters/claude-agent-framework-skill/SKILL.md` installed as the
+   `agent-framework` skill so deeper docs are routable
+3. Repo-local instructions, if any
+4. The task-specific files the router maps, loaded on demand
+
+This profile changes when files are read, not which contracts apply. The router
+must map every task intent the eager adapter loads eagerly — including
+`SECURITY_AND_PENTEST.md` plus `skillsets/security-review/README.md` for
+security work, and `CONTEXT_ACCELERATION.md` plus
+`skillsets/context-acceleration/README.md` and the repo-local operator
+documentation package for adopted accelerators. A route the router omits is a
+contract the install silently drops.
 
 ### Implementation Profile
 
@@ -404,6 +426,8 @@ A repo or AI tool has adopted the framework only when each required item is true
 | --- | --- |
 | File inventory | Required framework files are present at the documented path. |
 | Adapter path | The AI tool can find `CONFIG_KIT_AI_PROMPT.md`, `AI_BOOTSTRAP.md`, and `FRAMEWORK_MANIFEST.md`. |
+| Install profile | The repo or tool records which install profile is active: eager full-import adapter, or the optional Lightweight Core + Router profile. |
+| Lightweight Core + Router (optional) | If that profile is active: `CORE.md` is imported by the tool's instruction file, the `agent-framework` skill is installed and discoverable, its paths resolve to the installed framework directory, and its task map covers the security and context-acceleration routes. |
 | Repo instructions | The repo has an adopted instruction file with placeholders replaced. |
 | Source-of-truth order | Local instructions state which docs, issues, runtime contracts, and code conventions control. |
 | Harness capabilities | Capabilities are recorded as available, limited, blocked, unavailable, or unknown. |
@@ -448,6 +472,10 @@ Run these after changing the kit:
   appropriate thread ceiling such as `max_concurrent_threads_per_session = 16`
   and close completed, stale, or prior-workflow agents before opening fresh
   delegated contexts.
+- Router coverage check: when framework files are added, removed, or renamed,
+  confirm `adapters/claude-agent-framework-skill/SKILL.md` still maps every
+  routable task intent and that each mapped file exists. Confirm `CORE.md`
+  still names the mandatory security and context-accelerator routes.
 - Archive check: rebuild and list `config-kit.zip` when it is the active
   distributable. If the checkout still tracks `Archive.zip`, refresh or replace
   it deliberately and verify that the archive contains current framework files.
