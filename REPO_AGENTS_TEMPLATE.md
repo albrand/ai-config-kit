@@ -132,8 +132,11 @@ Fill in repo-specific boundaries:
 - Keep changes minimal and scoped.
 - Prefer existing repo patterns over new abstractions.
 - If implementation shape is uncertain and this repo lacks enough evidence,
-  scan sibling projects under `/Users/alexandrebrandizzi/projects`
-  metadata-first for candidate patterns, then verify fit before adopting.
+  scan sibling projects only under configured workspace roots (repo adoption
+  settings, harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or
+  explicit user-provided roots) metadata-first for candidate patterns, then
+  verify fit before adopting. Do not hardcode an operator's personal
+  `~/projects` path as framework truth.
 - Keep modules small and single-purpose.
 - Separate orchestration, data shaping, side effects, and presentation.
 - Prefer explicit names, guard clauses, and simple control flow.

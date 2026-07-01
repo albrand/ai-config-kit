@@ -17,11 +17,14 @@ Before acting on repository work, load and follow the framework in this order:
 7. `CROSS_AGENT_COORDINATION.md` when another AI tool may participate
 8. `HARNESS_STRATEGY.md`
 9. `TOKEN_ECONOMY.md` when routing, delegation, or cost control matters
-10. `SESSION_JOURNALING.md` if the repo uses journals
-11. `ARCHITECTURE_AND_CODE_QUALITY.md`
-12. `QUALITY_GATES.md`
-13. `QUALITY_CONVERGENCE.md` when work needs iterative improvement
-14. `REVIEW_AND_PR_FRAMEWORK.md`
+10. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when anti-bias,
+    causal-overfitting, confounder control, or cross-project pattern reuse is
+    material
+11. `SESSION_JOURNALING.md` if the repo uses journals
+12. `ARCHITECTURE_AND_CODE_QUALITY.md`
+13. `QUALITY_GATES.md`
+14. `QUALITY_CONVERGENCE.md` when work needs iterative improvement
+15. `REVIEW_AND_PR_FRAMEWORK.md`
 15. `TEMPLATES.md` when a structured output is needed
 16. `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md` when the task is module delivery planning, roadmap shaping, milestone planning, or implementation-ticket creation
 17. `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when the task is roadmap bootstrap, technical platform bootstrap, project assessment, hardening, QA matrix creation, or one of the Claude Code commands `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`
@@ -102,9 +105,12 @@ If the tool cannot automatically read files, ask the user to provide the relevan
   authorizes sidecar/counterpart model use for directive and architecture
   challenges for this run." Do not add it to trivial briefs.
 - When implementation shape is uncertain and repo-local evidence is
-  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
-  for candidate high-quality patterns. Keep scans metadata-first and budgeted,
-  send no secrets, and verify a candidate fits the current repo before adopting.
+  insufficient, scan sibling projects only under configured workspace roots:
+  repo adoption settings, harness-provided workspace roots,
+  `AGENT_WORKSPACE_ROOTS`, or explicit user-provided roots. Do not hardcode an
+  operator's personal `~/projects` path as framework truth. Keep scans
+  metadata-first and budgeted, send no secrets, and verify a candidate fits the
+  current repo before adopting.
 - Industry-quality standards win over agent-convenience or model-preference bias.
   Reuse existing project patterns when they match the current stack and
   constraints; otherwise challenge them.

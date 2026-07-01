@@ -16,6 +16,9 @@ Core files:
 - `FRAMEWORK_MANIFEST.md`: required file inventory, load profiles, and readiness checks.
 - `GLOBAL_AGENTS.md`: global collaboration and execution baseline.
 - `OPERATING_MODEL.md`: full task lifecycle and source-of-truth rules.
+- `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`: rationale, examples, and gains
+  for challenging directives, memories, journals, cached conclusions, and prior
+  patterns as evidence rather than authority.
 - `REPO_AGENTS_TEMPLATE.md`: repo-root instruction template.
 - `SKILLS_CATALOG.md`: global and repo-local skill design rules.
 - `AGENT_ORCHESTRATION.md`: delegated-agent roles, contracts, and cleanup.
@@ -60,7 +63,9 @@ Use for short answers, paste-only mode, or first-session checks:
 3. `FRAMEWORK_MANIFEST.md`
 4. `GLOBAL_AGENTS.md`
 5. `OPERATING_MODEL.md`
-6. Repo-local instructions, if any
+6. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when planning,
+   architecture, anti-bias, or cross-project pattern reuse is material
+7. Repo-local instructions, if any
 
 ### Implementation Profile
 
@@ -175,8 +180,9 @@ Use when installing the framework into a new repo or another AI tool:
 7. `AI_TOOL_ADAPTERS.md`
 8. `REPO_ADOPTION_PLAYBOOK.md`
 9. `REPO_AGENTS_TEMPLATE.md`
-10. `TEMPLATES.md`
-11. The adapter file for the target AI tool
+10. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`
+11. `TEMPLATES.md`
+12. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 
@@ -267,9 +273,12 @@ Rules:
   authorizes sidecar/counterpart model use for directive and architecture
   challenges for this run." Do not add it to trivial briefs.
 - When implementation shape is uncertain and repo-local evidence is
-  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
-  for candidate high-quality patterns. Keep scans metadata-first and budgeted,
-  send no secrets, and verify a candidate fits the current repo before adopting.
+  insufficient, scan sibling projects only under configured workspace roots:
+  repo adoption settings, harness-provided workspace roots,
+  `AGENT_WORKSPACE_ROOTS`, or explicit user-provided roots. Do not hardcode an
+  operator's personal `~/projects` path as framework truth. Keep scans
+  metadata-first and budgeted, send no secrets, and verify a candidate fits the
+  current repo before adopting.
 - Industry-quality standards win over agent-convenience or model-preference
   bias. Reuse existing project patterns when they match the current stack and
   constraints; otherwise challenge them.

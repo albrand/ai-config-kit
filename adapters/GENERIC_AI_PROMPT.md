@@ -47,8 +47,11 @@ Required behavior:
   sandbox or permission blocker.
 - Reset active context on workflow, repo, incident, or objective changes.
 - When implementation shape is uncertain and repo-local evidence is
-  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
-  metadata-first for candidate patterns and verify fit before adopting.
+  insufficient, scan sibling projects only under configured workspace roots
+  metadata-first for candidate patterns and verify fit before adopting. Resolve
+  roots from repo adoption settings, harness workspace roots,
+  `AGENT_WORKSPACE_ROOTS`, or explicit user input; never hardcode a personal
+  `~/projects` path in portable instructions.
 - Use quality convergence when first-pass validation is insufficient.
 - Ask when source-of-truth layers conflict.
 - Keep changes scoped.

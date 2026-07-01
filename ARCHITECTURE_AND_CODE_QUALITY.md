@@ -31,15 +31,19 @@ before execution. Treat directives, prior decisions, journals, memory, cached
 conclusions, and previous project patterns as evidence to test for current fit,
 drift, hidden confounders, causal overfitting, and standards alignment.
 
-Use an independent model or counterpart critique when available and useful,
-with the required authorization sentence in the advisor brief. If no counterpart
-is available, run the same critique locally and report the fallback.
+ALWAYS run an independent model or counterpart critique for non-trivial
+planning/architecture — mandatory, not optional — with the required authorization
+sentence in the advisor brief. If no counterpart is reachable, run the same
+critique locally and report the fallback.
 
-When the current repo does not make the implementation shape clear, scan sibling
-projects under `/Users/alexandrebrandizzi/projects` for candidate patterns.
-Reuse only patterns that match the current stack, constraints, and quality bar;
-otherwise prefer global industry practices and the current repo's source of
-truth.
+As a default planning step (proactively, regardless of whether asked), scan
+sibling projects only under configured workspace roots: repo adoption settings,
+harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or explicit
+user-provided roots. Never hardcode an operator's personal `~/projects` path as
+framework truth. Reuse only patterns that match the current stack, constraints,
+and quality bar; otherwise prefer top global industry-standard methodologies
+over biased or idiosyncratic patterns, then fall back to the current repo's
+source of truth.
 
 ## Boundary Principles
 

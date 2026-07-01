@@ -34,8 +34,12 @@ Decide which layers the repo will use:
 - Local process docs.
 - Local session journals.
 - Automated gates.
+- Configured workspace roots for optional sibling-project pattern scans.
 
 Record the chosen framework path, for example `docs/agent-framework/`, and keep adapter imports aligned with that path.
+Record workspace roots through repo adoption settings, harness configuration,
+`AGENT_WORKSPACE_ROOTS`, or explicit operator instructions. Do not hardcode one
+operator's personal projects folder into shared repo instructions.
 
 ## Phase 3: Create Repo Instructions
 
@@ -52,6 +56,7 @@ Fill in:
 - Validation commands.
 - Optional invokable processes.
 - Completion report requirements.
+- Workspace-root policy for optional cross-project pattern scans.
 
 Also choose one adapter path:
 

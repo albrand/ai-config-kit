@@ -119,18 +119,23 @@ evidence.
 
 Sequence:
 
-1. Search sibling projects under `/Users/alexandrebrandizzi/projects`
-   metadata-first.
-2. Identify candidate patterns by stack, file names, tests, and docs before
+1. Resolve configured workspace roots from repo adoption settings,
+   harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or explicit
+   user-provided roots. If no root is configured, ask or skip broad sibling
+   scanning.
+2. Search sibling projects under those roots metadata-first.
+3. Identify candidate patterns by stack, file names, tests, and docs before
    opening code.
-3. Exclude patterns that depend on secrets, private context, incompatible
+4. Exclude patterns that depend on secrets, private context, incompatible
    stacks, or different product constraints.
-4. Adopt only the pattern parts that fit the current repo's source of truth and
+5. Adopt only the pattern parts that fit the current repo's source of truth and
    quality gates.
 
 Guardrail:
 
 - A sibling project pattern is candidate evidence, not authority.
+- Never treat an operator-specific `~/projects` path as portable framework
+  truth.
 
 ## Pattern 6: Architecture And Code Quality
 

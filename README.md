@@ -6,6 +6,25 @@ It tells an AI assistant how to discover instructions, analyze before acting, pl
 
 The kit is intentionally generic. Do not add secrets, private URLs, non-public repository names, internal roadmap facts, credentials, private account identifiers, or domain-specific operating details to the shared files.
 
+## Get Started Index
+
+Use this index when you are installing the framework or trying to find the right
+concept quickly.
+
+| I need to... | Start here |
+| --- | --- |
+| Install the framework in a repository | [Use The Kit In Another Repository](#use-the-kit-in-another-repository), then `REPO_ADOPTION_PLAYBOOK.md` |
+| Install it for a chat-only assistant | [Use The Kit In A Chat-Only AI Tool](#use-the-kit-in-a-chat-only-ai-tool) |
+| Install the Codex skill index/router | [Import The Skill Library Router](#import-the-skill-library-router), then `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` |
+| Install the UX design agent | [Import The UX Design Agent Skillset](#import-the-ux-design-agent-skillset), then `UX_DESIGN_AGENT_IMPORT_PROMPT.md` |
+| Understand instruction precedence | [Core Mental Model](#core-mental-model), then `FRAMEWORK_MANIFEST.md` |
+| Understand anti-bias and causal-overfitting controls | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
+| Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
+| Plan implementation work | [Load Profiles](#load-profiles), then `OPERATING_MODEL.md` |
+| Review PRs | [Review And PR Profile](#review-and-pr-profile), then `skillsets/pr-review/` |
+| Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
+| Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
+
 ## What This Repository Is
 
 Use this repository as a portable instruction kit for AI-assisted software work.
@@ -74,10 +93,14 @@ Adoption sequence:
 2. Copy the relevant adapter from `adapters/` into the target repo or AI tool settings.
 3. Copy `REPO_AGENTS_TEMPLATE.md` into the repo instruction file and replace placeholders.
 4. Record the real harness capabilities for the active AI tool.
-5. For Codex installs with many skills or plugins, use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and verify the generated skill index.
-6. Define local source-of-truth order, architecture boundaries, validation commands, journaling policy, and release rules.
-7. Run the first-session verification prompt from `CONFIG_KIT_AI_PROMPT.md` or `TEMPLATES.md`.
-8. Run a low-risk trial task and check that the AI follows the local rules.
+5. Configure workspace roots for optional sibling-project pattern scans through
+   repo adoption settings, harness configuration, `AGENT_WORKSPACE_ROOTS`, or
+   explicit operator instructions. Do not bake one user's personal projects path
+   into shared repo instructions.
+6. For Codex installs with many skills or plugins, use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and verify the generated skill index.
+7. Define local source-of-truth order, architecture boundaries, validation commands, journaling policy, and release rules.
+8. Run the first-session verification prompt from `CONFIG_KIT_AI_PROMPT.md` or `TEMPLATES.md`.
+9. Run a low-risk trial task and check that the AI follows the local rules.
 
 ### Use The Kit In A Chat-Only AI Tool
 
@@ -128,9 +151,11 @@ fit, drift, hidden confounders, causal overfitting, and current-task relevance
 without weakening the precedence order above. For non-trivial planning or
 architecture, use an independent model/counterpart critique when available and
 include the framework authorization sentence in advisor briefs. When repo-local
-evidence is insufficient, scan sibling projects under
-`/Users/alexandrebrandizzi/projects` metadata-first for candidate patterns and
-verify fit before adopting them.
+evidence is insufficient, scan sibling projects under configured workspace roots
+metadata-first for candidate patterns and verify fit before adopting them.
+Workspace roots must come from repo adoption settings, harness-provided
+workspace roots, `AGENT_WORKSPACE_ROOTS`, or explicit user-provided roots; never
+bake a personal `~/projects` path into portable framework instructions.
 
 The active AI thread should act as the master owner of:
 
@@ -175,6 +200,7 @@ question.
 | `FRAMEWORK_MANIFEST.md` | Canonical file inventory, load profiles, harness capability record, source-of-truth contract, readiness matrix, and maintenance checks. |
 | `GLOBAL_AGENTS.md` | Global collaboration and execution baseline for agent behavior. |
 | `OPERATING_MODEL.md` | Full lifecycle for intake, discovery, planning, routing, implementation, integration, self-review, validation, and close-out. |
+| `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` | Discursive rationale, examples, and gains for challenging directives, journals, memories, cached conclusions, and prior patterns as evidence rather than authority. |
 | `REPO_AGENTS_TEMPLATE.md` | Repo-root instruction template with placeholders for local rules. |
 | `AI_TOOL_ADAPTERS.md` | Setup guide for generic assistants, AGENTS-compatible tools, Cursor, Gemini CLI, Claude Code, Codex, and other tools. |
 | `adapters/` | Copyable bootstrap files for specific AI tools. |
@@ -212,7 +238,9 @@ Use for short answers, first-session checks, and paste-only mode:
 3. `FRAMEWORK_MANIFEST.md`
 4. `GLOBAL_AGENTS.md`
 5. `OPERATING_MODEL.md`
-6. Repo-local instructions, if any
+6. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when planning,
+   architecture, anti-bias, or cross-project pattern reuse is material
+7. Repo-local instructions, if any
 
 ### Implementation Profile
 
@@ -321,8 +349,9 @@ Use when installing the framework into a new repository or AI tool:
 7. `AI_TOOL_ADAPTERS.md`
 8. `REPO_ADOPTION_PLAYBOOK.md`
 9. `REPO_AGENTS_TEMPLATE.md`
-10. `TEMPLATES.md`
-11. The adapter file for the target AI tool
+10. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`
+11. `TEMPLATES.md`
+12. The adapter file for the target AI tool
 
 ### Harness Redesign Profile
 

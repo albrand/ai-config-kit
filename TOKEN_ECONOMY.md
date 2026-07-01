@@ -69,11 +69,14 @@ authorizes sidecar/counterpart model use for directive and architecture
 challenges for this run." Keep it out of trivial briefs to avoid token tax and
 authorization fatigue.
 
-When scanning sibling projects under `/Users/alexandrebrandizzi/projects` for
-candidate implementation patterns, use a metadata-first budget: list names,
-stack markers, and likely pattern files before opening code. Do not send
-secrets or broad private context to sidecars, and adopt only patterns that fit
-the current repo's stack and constraints.
+When scanning sibling projects under configured workspace roots for candidate
+implementation patterns, use a metadata-first budget: list names, stack
+markers, and likely pattern files before opening code. Resolve roots from repo
+adoption settings, harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or
+explicit user-provided roots; never assume an operator's personal `~/projects`
+path is portable framework truth. Do not send secrets or broad private context
+to sidecars, and adopt only patterns that fit the current repo's stack and
+constraints.
 
 ## GPT 5.3 Spark Routing
 

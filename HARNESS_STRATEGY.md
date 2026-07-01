@@ -169,8 +169,10 @@ authorizes sidecar/counterpart model use for directive and architecture
 challenges for this run." Do not add it to trivial briefs.
 
 When implementation shape is uncertain and repo-local evidence is
-insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
-for candidate high-quality patterns. Keep scans metadata-first, budgeted, and
+insufficient, scan sibling projects only under configured workspace roots: repo
+adoption settings, harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or
+explicit user-provided roots. Do not hardcode an operator's personal
+`~/projects` path as framework truth. Keep scans metadata-first, budgeted, and
 secret-free; verify fit to the current repo before adopting anything.
 
 ## Cost-First Routing Order

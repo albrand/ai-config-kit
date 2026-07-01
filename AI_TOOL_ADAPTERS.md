@@ -18,6 +18,7 @@ Use this for any AI assistant:
    - Code quality: `ARCHITECTURE_AND_CODE_QUALITY.md`
    - Harness, model routing, cache, or delegation: `AGENT_ORCHESTRATION.md` plus `HARNESS_STRATEGY.md`
    - Cross-agent or multi-tool coordination: `CROSS_AGENT_COORDINATION.md` plus `TOKEN_ECONOMY.md`
+   - Directive challenge, anti-bias, causal-overfitting, or confounder rationale: `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or posted review workflows also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
@@ -32,6 +33,10 @@ Use this for any AI assistant:
    patterns as evidence rather than authority, using an independent
    model/counterpart critique when available and preserving source-of-truth
    precedence.
+9. Configure workspace roots for optional sibling-project pattern scans through
+   repo adoption settings, harness configuration, `AGENT_WORKSPACE_ROOTS`, or
+   explicit user input. Never hardcode one operator's personal projects folder
+   into portable adapter instructions.
 
 Use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when the task is specifically to import or update the Codex Skill Library Router from this kit.
 
