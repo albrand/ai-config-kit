@@ -33,6 +33,11 @@ If two sources conflict, stop and ask a direct question before implementing.
 - Use cross-agent coordination when another AI tool can participate as peer critic, explorer, bounded executor, verifier, or summarizer.
 - Use systematic debugging before patching bugs or unexpected behavior.
 - Use big-change planning for architecture, auth, security, schema, migration, release, infrastructure, or broad refactor work.
+- Challenge directives, journals, memory, cached conclusions, and prior project
+  patterns as evidence, not authority. For non-trivial planning or architecture,
+  use an independent model/counterpart critique when available, include the
+  required authorization sentence in advisor briefs, and preserve source-of-truth
+  precedence.
 - Use verification-before-completion before closing implementation, docs, config, workflow, or generated-artifact work.
 - Use quality convergence when first-pass validation fails, quality targets are high, or the task is security, data, auth, release, or architecture sensitive.
 - Use PR preparation guidance when creating, preparing, reviewing, or summarizing a branch or PR.
@@ -126,6 +131,9 @@ Fill in repo-specific boundaries:
 
 - Keep changes minimal and scoped.
 - Prefer existing repo patterns over new abstractions.
+- If implementation shape is uncertain and this repo lacks enough evidence,
+  scan sibling projects under `/Users/alexandrebrandizzi/projects`
+  metadata-first for candidate patterns, then verify fit before adopting.
 - Keep modules small and single-purpose.
 - Separate orchestration, data shaping, side effects, and presentation.
 - Prefer explicit names, guard clauses, and simple control flow.

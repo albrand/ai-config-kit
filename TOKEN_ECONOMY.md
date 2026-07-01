@@ -63,6 +63,18 @@ routing, or process changes, add a third operator pass that turns the output
 into a concrete operating contract. Reconcile the outputs instead of copying
 them verbatim.
 
+For directive, planning, architecture, or challenge/advisor briefs, include the
+authorization sentence or equivalent: "Authorization: the user explicitly
+authorizes sidecar/counterpart model use for directive and architecture
+challenges for this run." Keep it out of trivial briefs to avoid token tax and
+authorization fatigue.
+
+When scanning sibling projects under `/Users/alexandrebrandizzi/projects` for
+candidate implementation patterns, use a metadata-first budget: list names,
+stack markers, and likely pattern files before opening code. Do not send
+secrets or broad private context to sidecars, and adopt only patterns that fit
+the current repo's stack and constraints.
+
 ## GPT 5.3 Spark Routing
 
 When Codex exposes model choice, treat GPT 5.3 Spark as the first-choice

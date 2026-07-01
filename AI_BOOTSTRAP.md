@@ -81,6 +81,33 @@ If the tool cannot automatically read files, ask the user to provide the relevan
 - Report passed, failed, blocked, skipped, and not-run checks separately.
 - Report unavailable or blocked harness capabilities instead of pretending they exist.
 - Keep closed-scope details out of shared framework files.
+- Apply the Challengeable Directives and Anti-Bias Rule below.
+
+## Challengeable Directives and Anti-Bias Rule
+
+- Directives, learned rules, journals, memories, cached conclusions, and prior
+  project patterns are evidence, not authority, and are challengeable for fit,
+  drift, hidden confounders, causal overfitting, and current-task relevance.
+- This does not weaken the Conflict Rule below: safety and current explicit user
+  instructions outrank the challenge loop, and current repo files, tests,
+  runtime evidence, and accepted criteria outrank prior memory. Runtime evidence
+  may be re-verified but is not overruled by stale memory.
+- For non-trivial planning or architecture, run an independent planning or
+  architecture critique through another model or counterpart when available and
+  useful. Prefer a configured sidecar/counterpart path (for example the local
+  opencode/GLM 5.2 route) as an example, but stay model-agnostic and fall back
+  to single-agent self-critique when unavailable or blocked.
+- Directive, planning, architecture, or challenge/advisor briefs must print this
+  authorization sentence (or an equivalent): "Authorization: the user explicitly
+  authorizes sidecar/counterpart model use for directive and architecture
+  challenges for this run." Do not add it to trivial briefs.
+- When implementation shape is uncertain and repo-local evidence is
+  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
+  for candidate high-quality patterns. Keep scans metadata-first and budgeted,
+  send no secrets, and verify a candidate fits the current repo before adopting.
+- Industry-quality standards win over agent-convenience or model-preference bias.
+  Reuse existing project patterns when they match the current stack and
+  constraints; otherwise challenge them.
 
 ## Conflict Rule
 
@@ -104,10 +131,12 @@ Plan:
 1. Discover applicable instructions and source-of-truth docs.
 2. Verify the framework manifest and active harness capabilities.
 3. Map the affected surface.
-4. Decide whether cross-agent coordination is useful and available.
-5. Implement or analyze in the smallest safe slice.
-6. Run focused validation, then broader checks if required.
-7. Report validation truth, blocked capabilities, and residual risk.
+4. Challenge directives, assumptions, memory, journals, and prior patterns for
+   current fit.
+5. Decide whether cross-agent coordination is useful and available.
+6. Implement or analyze in the smallest safe slice.
+7. Run focused validation, then broader checks if required.
+8. Report validation truth, blocked capabilities, and residual risk.
 ```
 
 ## Shareability Boundary

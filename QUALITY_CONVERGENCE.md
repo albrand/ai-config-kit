@@ -36,6 +36,9 @@ Default dimensions:
 - Performance and scalability.
 - UX or accessibility when applicable.
 - Operational readiness when applicable.
+- Directive and pattern fit: whether prior rules, journals, memories, cached
+  conclusions, and sibling-project patterns still fit current evidence without
+  hidden confounders or causal overfitting.
 
 For each dimension, state:
 
@@ -57,6 +60,8 @@ Each iteration must produce:
 - Artifact: code, docs, config, report, or generated output.
 - Evidence: command output, test result, review finding, metric, screenshot, payload, log, or direct behavior check.
 - Feedback: concrete changes needed for the next iteration.
+- Challenge result when applicable: independent advisor output or
+  single-agent self-critique, including adopted and rejected recommendations.
 
 The next iteration should use the previous feedback directly. Do not restart from vague intent after validation has produced specific evidence.
 

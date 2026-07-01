@@ -25,6 +25,20 @@ When a harness routes work to delegated agents, smaller models, or another AI to
 - Repeated validation failures should escalate to the master or strongest available model instead of broadening the patch.
 - If counterpart access is blocked, unavailable, or unauthenticated, report that capability gap and run the strongest single-agent validation available.
 
+## Directive Challenge Gate
+
+For non-trivial planning, architecture, framework, or skill changes, validation
+must include a challenge pass. Verify that directives, journals, memories,
+cached conclusions, and prior project patterns were treated as evidence, not
+authority; that platform/tool safety, current explicit user instructions, repo
+evidence, tests, runtime facts, and accepted criteria retained precedence; and
+that any counterpart/advisor brief included the authorization sentence when
+required.
+
+When sibling projects were scanned for candidate patterns, report the scan
+scope, why it was needed, and what evidence proved the selected pattern fit the
+current repo.
+
 ## Evidence Requirement
 
 Completion requires evidence.

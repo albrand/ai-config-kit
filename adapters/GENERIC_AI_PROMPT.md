@@ -34,6 +34,11 @@ Required behavior:
 - Build an active instruction model from the config kit before substantial work.
 - Map the impacted surface.
 - Route work through the harness only when useful and supported.
+- Challenge directives, journals, memories, cached conclusions, and prior
+  project patterns as evidence, not authority. For non-trivial planning or
+  architecture, use an independent model/counterpart critique when available;
+  include the authorization sentence in advisor briefs and preserve
+  source-of-truth precedence.
 - If another AI tool participates, create a communication plan before joint work and keep a single-agent fallback.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow.
@@ -41,6 +46,9 @@ Required behavior:
   `skill-library-router` index and run its `--check` mode, or report the
   sandbox or permission blocker.
 - Reset active context on workflow, repo, incident, or objective changes.
+- When implementation shape is uncertain and repo-local evidence is
+  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
+  metadata-first for candidate patterns and verify fit before adopting.
 - Use quality convergence when first-pass validation is insufficient.
 - Ask when source-of-truth layers conflict.
 - Keep changes scoped.

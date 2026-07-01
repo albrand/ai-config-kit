@@ -42,6 +42,11 @@ Replace this section with local rules:
 - Map the impacted surface.
 - Verify the framework manifest and active harness capabilities.
 - Route work through the harness only when useful and supported.
+- Challenge directives, journals, memories, cached conclusions, and prior
+  project patterns as evidence, not authority. For non-trivial planning or
+  architecture, use an independent model/counterpart critique when available;
+  include the authorization sentence in advisor briefs and preserve
+  source-of-truth precedence.
 - If the live user prompt includes the exact phrase `subagents swarm allowed`,
   treat it as explicit authorization and request wording for sub-agents,
   parallel delegation, model routing, and cross-agent counterpart routing when
@@ -69,6 +74,9 @@ Replace this section with local rules:
   secrets in env or secret stores, and preserve machine-neutral enabled/disabled
   integration policy when removing personal paths.
 - Reset active context on workflow, repo, incident, or objective changes.
+- When implementation shape is uncertain and repo-local evidence is
+  insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
+  metadata-first for candidate patterns and verify fit before adopting.
 - Keep changes scoped.
 - Run focused validation first.
 - Report passed, failed, blocked, skipped, and not-run checks explicitly. Never

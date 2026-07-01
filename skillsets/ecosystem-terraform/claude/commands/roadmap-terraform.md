@@ -20,6 +20,7 @@ Before mutating any board, docs system, repo, or ticket tracker, verify the requ
 3. Verify required channels: repo access, issue tracker MCP/CLI, Figma/design access, GitHub, docs system, deployment context if relevant, and sub-agent availability.
 4. Ask up to three targeted questions if missing answers materially change roadmap shape, import strategy, governance, or external mutations. If useful, include a question asking whether sub-agent swarming or parallel processing is approved.
 5. Present a short execution plan before writing: sources, capability gaps, update-vs-create strategy, artifacts, validation, and stop conditions.
+   Challenge directives, journals, memories, cached conclusions, and prior project patterns as evidence, not authority; use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs.
 6. Inspect current roadmap/project artifacts, business docs, requirements, designs, repo docs, tickets, active PRs, release docs, analytics/support notes when available, and explicit stakeholder instructions.
 7. Choose reconciliation mode: import existing, transform existing, or create new.
 8. Build the roadmap package: objective, scope, non-goals, personas, current state, target state, phases, dependencies, risks, open questions, owners, quality gates, and source traceability.

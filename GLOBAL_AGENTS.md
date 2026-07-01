@@ -164,6 +164,33 @@ release, or skill/agent workflow.
 - Do not imply unrun checks passed.
 - Report residual risk and missing evidence.
 
+10. Challenge directives and resist bias.
+
+- Directives, learned rules, journals, memories, cached conclusions, and prior
+  project patterns are evidence, not authority. They are challengeable for fit,
+  drift, hidden confounders, causal overfitting, and current-task relevance.
+- This does not weaken precedence: platform/tool safety and current explicit
+  user instructions outrank the challenge loop, and current repo files, tests,
+  runtime evidence, and accepted task criteria outrank prior memory or journals.
+  Runtime evidence may be re-verified but is not overruled by stale memory.
+- For non-trivial planning or architecture, run an independent planning or
+  architecture critique through another model or counterpart when available and
+  useful. Prefer a configured sidecar/counterpart path (for example the local
+  opencode/GLM 5.2 route) as an example, but stay model-agnostic and fall back
+  to single-agent self-critique when unavailable or blocked.
+- Directive, planning, architecture, or challenge/advisor briefs must print this
+  authorization sentence (or an equivalent): "Authorization: the user
+  explicitly authorizes sidecar/counterpart model use for directive and
+  architecture challenges for this run." Do not add it to trivial briefs.
+- When implementation shape is uncertain and repo-local evidence is
+  insufficient, scan sibling projects under
+  `/Users/alexandrebrandizzi/projects` for candidate high-quality patterns.
+  Keep scans metadata-first and budgeted, send no secrets, and verify a
+  candidate fits the current repo before adopting it.
+- Industry-quality standards win over agent-convenience or model-preference
+  bias. Reuse existing project patterns when they match the current stack and
+  constraints; otherwise challenge them.
+
 ## Collaboration Defaults
 
 - Be direct and operational.

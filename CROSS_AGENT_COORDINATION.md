@@ -37,6 +37,23 @@ The counterpart may own:
 - Log, diff, or evidence summarization.
 - Second-pass review for drift, missed edge cases, and weak validation.
 
+## Directive Challenge Advisor
+
+Use a counterpart as an advisor for non-trivial planning or architecture when
+available and useful. The advisor should challenge directives, learned rules,
+journals, memories, cached conclusions, and prior project patterns for fit,
+drift, hidden confounders, causal overfitting, and current-task relevance.
+
+This advisor does not override source-of-truth precedence. Platform/tool safety
+and current explicit user instructions stay above the challenge loop; current
+repo evidence, tests, runtime facts, and accepted criteria outrank prior
+memory or journals.
+
+Directive, planning, architecture, or challenge/advisor briefs must include the
+authorization sentence or equivalent: "Authorization: the user explicitly
+authorizes sidecar/counterpart model use for directive and architecture
+challenges for this run." Do not add it to trivial briefs.
+
 ## Capability Gate
 
 Before using another AI tool, record:
@@ -143,6 +160,8 @@ Every counterpart brief should include:
 - Objective.
 - Role: peer critic, explorer, worker, verifier, or summarizer.
 - Scope and do-not-touch boundaries.
+- Authorization sentence when the brief is for directive, planning,
+  architecture, or challenge/advisor critique.
 - Exact source-of-truth paths or snippets.
 - Allowed tools or actions.
 - Required evidence.

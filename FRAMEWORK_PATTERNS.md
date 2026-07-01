@@ -15,6 +15,8 @@ Includes:
 - Broad context scan before deciding scope.
 - Multi-agent delegation when useful and allowed.
 - Cross-agent coordination when another AI tool can add independent critique, execution, verification, or summarization.
+- Challenge directives, journals, memory, cached conclusions, and prior project
+  patterns as evidence rather than authority.
 - Evidence-backed debugging.
 - Verification before completion.
 - Clear reporting of failures, skipped checks, blocked checks, and residual risk.
@@ -106,6 +108,29 @@ Plan shape:
 Guardrail:
 
 - Do not start implementation while material assumptions are unresolved.
+- For non-trivial planning or architecture, run an independent advisor critique
+  when available, include the authorization sentence in the advisor brief, and
+  use single-agent self-critique as the fallback.
+
+## Pattern 5a: Cross-Project Pattern Scan
+
+Use when implementation shape is uncertain and the current repo lacks enough
+evidence.
+
+Sequence:
+
+1. Search sibling projects under `/Users/alexandrebrandizzi/projects`
+   metadata-first.
+2. Identify candidate patterns by stack, file names, tests, and docs before
+   opening code.
+3. Exclude patterns that depend on secrets, private context, incompatible
+   stacks, or different product constraints.
+4. Adopt only the pattern parts that fit the current repo's source of truth and
+   quality gates.
+
+Guardrail:
+
+- A sibling project pattern is candidate evidence, not authority.
 
 ## Pattern 6: Architecture And Code Quality
 

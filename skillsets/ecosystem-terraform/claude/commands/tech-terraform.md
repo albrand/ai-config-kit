@@ -20,6 +20,7 @@ Before mutating cloud resources, repositories, CI settings, branch protections, 
 3. Verify required channels: repo write access, GitHub, package manager, cloud CLI/MCP, deployment MCP/CLI, secret manager, CI provider, docs/design systems, and sub-agent availability.
 4. Ask up to three targeted questions when missing answers affect stack choice, infrastructure authority, secret handling, environment shape, quality gates, or automation behavior. Include swarm/parallel approval if useful.
 5. Present a short execution plan before writes: discovery, capability gaps, stack assumptions, artifacts, quality layers to assess, validation, rollback/fallback, and approval gates.
+   Challenge directives, journals, memories, cached conclusions, prior project patterns, and stack defaults as evidence, not authority; use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs.
 6. Inspect existing repo docs, package/build config, infra config, CI workflows, env schemas, deployment docs, secrets documentation, observability/runbooks, PR templates, review rules, branch protection expectations, and agent instructions.
 7. Choose bootstrap mode: connect only, local bootstrap, CI/review bootstrap, infrastructure bootstrap, or legacy reconcile.
 8. Assess and scaffold the full quality system:

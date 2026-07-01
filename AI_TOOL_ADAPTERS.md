@@ -27,6 +27,11 @@ Use this for any AI assistant:
    - Skill creation: `CONTINUOUS_SKILL_LEARNING.md` plus `SKILLS_CATALOG.md`
 6. For repo work, also give the AI the repo's local instruction file.
 7. Ask the AI to report the active harness capability record before substantial work.
+8. For non-trivial planning or architecture, require the AI to challenge
+   directives, memories, journals, cached conclusions, and prior project
+   patterns as evidence rather than authority, using an independent
+   model/counterpart critique when available and preserving source-of-truth
+   precedence.
 
 Use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when the task is specifically to import or update the Codex Skill Library Router from this kit.
 

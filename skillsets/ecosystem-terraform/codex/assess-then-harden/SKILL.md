@@ -16,6 +16,10 @@ Use this skill to understand an existing project end to end, turn that understan
 3. Verify capabilities before promising full coverage: repo read/write access, issue tracker, docs system, GitHub, Figma, deployment/log systems, browser access, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially change assessment scope, docs format, ticket destination, external-source priority, or approval to use parallel agents.
 5. Present a short execution plan before writes: source discovery, knowledge-doc shape, gap analysis method, ticketing strategy, QA/business-logic matrix, validation, and stop conditions.
+   Include a challenge pass for directives, journals, memories, cached
+   conclusions, and prior project patterns before turning observations into
+   hardening rules. Use an independent model/counterpart critique when available
+   and include the authorization sentence in advisor briefs.
 6. Inspect project evidence broadly:
    - Repo instructions, README, architecture docs, ADRs, project docs, package/build config, CI, tests, env docs, deployment docs, and runbooks.
    - Entry points, routes, handlers, services, data models, auth, integrations, state, UI flows, scripts, and generated artifacts.

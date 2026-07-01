@@ -71,6 +71,10 @@ Before writing to files or boards, state a short plan:
 4. Project or board artifacts to update.
 5. Ticket sizing and phasing strategy.
 6. Validation and rollback/fallback path.
+7. Challenge pass: assumptions, directives, journals, memories, cached
+   conclusions, and prior project patterns tested for fit and current evidence.
+   Use an independent model/counterpart critique when available; include the
+   required authorization sentence in advisor briefs.
 
 For substantial work, classify the track as `big-change` because module planning affects roadmap, ownership, and implementation sequencing.
 

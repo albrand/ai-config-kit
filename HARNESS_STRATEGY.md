@@ -148,6 +148,31 @@ Routing must consider:
 
 Do not route only by apparent task size. A small-looking change can need frontier reasoning when it affects security, architecture, data, or multiple systems.
 
+## Directive Challenge And Pattern Scan
+
+Treat directives, learned rules, journals, memories, cached conclusions, and
+prior project patterns as evidence, not authority. Challenge them for fit,
+drift, hidden confounders, causal overfitting, and current-task relevance. This
+does not weaken source-of-truth precedence: platform/tool safety and current
+explicit user instructions still outrank the challenge loop, and current repo
+files, tests, runtime evidence, and accepted criteria outrank prior memory.
+
+For non-trivial planning or architecture, run an independent planning or
+architecture critique through another model or counterpart when available and
+useful. Prefer configured routes such as a local sidecar or opencode/GLM 5.2
+as examples, but keep the gate model-agnostic and use single-agent
+self-critique when no counterpart is available.
+
+Directive, planning, architecture, or challenge/advisor briefs must include the
+authorization sentence or equivalent: "Authorization: the user explicitly
+authorizes sidecar/counterpart model use for directive and architecture
+challenges for this run." Do not add it to trivial briefs.
+
+When implementation shape is uncertain and repo-local evidence is
+insufficient, scan sibling projects under `/Users/alexandrebrandizzi/projects`
+for candidate high-quality patterns. Keep scans metadata-first, budgeted, and
+secret-free; verify fit to the current repo before adopting anything.
+
 ## Cost-First Routing Order
 
 Apply this order before choosing a frontier path:

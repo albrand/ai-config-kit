@@ -24,6 +24,23 @@ State:
 - What abstraction, if any, is justified.
 - What validation proves the change.
 
+## Architecture Challenge Gate
+
+For non-trivial architecture or implementation planning, challenge the plan
+before execution. Treat directives, prior decisions, journals, memory, cached
+conclusions, and previous project patterns as evidence to test for current fit,
+drift, hidden confounders, causal overfitting, and standards alignment.
+
+Use an independent model or counterpart critique when available and useful,
+with the required authorization sentence in the advisor brief. If no counterpart
+is available, run the same critique locally and report the fallback.
+
+When the current repo does not make the implementation shape clear, scan sibling
+projects under `/Users/alexandrebrandizzi/projects` for candidate patterns.
+Reuse only patterns that match the current stack, constraints, and quality bar;
+otherwise prefer global industry practices and the current repo's source of
+truth.
+
 ## Boundary Principles
 
 Keep responsibilities separate:

@@ -18,6 +18,7 @@ User input:
 1. Extract the module name, functional boundary, business outcome, target users, known source repos/docs/designs/boards, current experience to migrate, non-goals, and constraints.
 2. If a missing answer would materially change scope or ticket shape, ask at most three concise questions. If the answer can be discovered from source evidence, inspect first.
 3. Present a short plan before writing or updating artifacts: sources to inspect, required capabilities and missing setup, ambiguity handling, project/board artifacts, ticket sizing/phasing, and validation.
+   Challenge directives, journals, memories, cached conclusions, and prior project patterns as evidence, not authority; use an independent model/counterpart critique for non-trivial planning when available and include the authorization sentence in advisor briefs.
 4. Inspect source-of-truth artifacts in order: architecture docs, module docs, ADRs, current product code paths, target app boundaries, board/project state, active PRs, and explicit external references.
 5. Synthesize strict module scope: objective, in scope, out of scope, current baseline, target experience, dependencies, risks with mitigation/owner, open questions, and safe suggested defaults.
 6. Create or update the project description with plain-language summary, technical boundary, source links, phases, planning-estimate language for any dates, resolved decisions, open questions, resource links, and one-ticket-per-PR sizing policy.

@@ -4,6 +4,14 @@ Session journals are local execution logs for repository work. They make long-ru
 
 Journals should not contain secrets, credentials, sensitive data, private URLs, or closed-scope facts that do not belong in local working notes.
 
+## Journal Challenge Rule
+
+Journals are a fallback training base for future work, not authority. On resume
+or when deriving durable lessons, challenge journal entries for drift, hidden
+confounders, causal overfitting, and current-task relevance. Re-open current
+source files, tests, runtime evidence, boards, and docs before relying on a
+journal conclusion.
+
 ## When To Use Journals
 
 Use a journal when:

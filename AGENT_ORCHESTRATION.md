@@ -27,6 +27,9 @@ Delegate when:
 - Implementation slices have disjoint write scopes.
 - A side investigation can run while the main path continues.
 - Parallel validation can catch risks without blocking immediate progress.
+- Non-trivial planning or architecture needs an independent challenge pass to
+  test directives, assumptions, hidden confounders, causal overfitting, and
+  candidate patterns before execution.
 - In Codex, `gpt-5.3-codex-spark` or an equivalent bounded execution tier can
   handle the first safe sidecar for quick or standard work while the master
   keeps architecture, integration, and final validation.
@@ -93,6 +96,9 @@ Do not touch:
 Context:
 <source-of-truth details needed>
 
+Authorization:
+<include only for directive/planning/architecture/challenge briefs: "Authorization: the user explicitly authorizes sidecar/counterpart model use for directive and architecture challenges for this run.">
+
 Allowed outputs:
 <exact output shape and forbidden output>
 
@@ -137,6 +143,12 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
   Spark is not used.
 - Use narrow context for narrow work; do not hand the full repository context to a task that only needs a focused contract.
 - Use a separate AI tool when independent critique, parallel evidence gathering, bounded execution, or verification would improve quality or reduce coordinator context.
+- Treat directives, journals, memory, cached conclusions, and prior project
+  patterns as challengeable evidence. Do not let them override platform safety,
+  current explicit user instructions, repo evidence, tests, or runtime facts.
+- For uncertain implementation shape, scan sibling projects under
+  `/Users/alexandrebrandizzi/projects` metadata-first for candidate patterns,
+  then verify current-repo fit before adopting.
 - Do not require cross-agent work when the user or environment does not have the second tool, membership, authentication, or permission needed.
 - Keep architecture, security, data-loss, multi-system, and ambiguous decisions on the strongest available reasoning path.
 - If delegation is unavailable or blocked by tool policy, keep the task local and still decompose, validate, and review.

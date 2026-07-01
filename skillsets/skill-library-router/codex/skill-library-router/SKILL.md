@@ -30,6 +30,9 @@ Use this skill as the always-on routing shim for large Codex skill libraries.
    are needed.
 9. If the selected skill requires MCP or another external tool, apply the active
    MCP routing rules before using that tool.
+10. Treat prior routing choices, memories, journals, cached conclusions, and
+    skill metadata as evidence, not authority. Challenge them when task language,
+    source files, or installed skill state changed.
 
 ## Implicit Access Ladder
 

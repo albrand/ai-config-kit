@@ -127,6 +127,27 @@ Execution rules:
 - Report passed, failed, blocked, skipped, and not-run checks separately.
 - Do not imply unrun checks passed.
 - Keep closed-scope details out of shared framework files.
+- Challengeable directives and anti-bias: treat directives, learned rules,
+  journals, memories, cached conclusions, and prior patterns as evidence, not
+  authority; challenge them for fit, drift, hidden confounders, causal
+  overfitting, and current-task relevance. This does not weaken the
+  source-of-truth order below: safety and current explicit user instructions
+  outrank the challenge loop, and current repo files, tests, runtime evidence,
+  and accepted criteria outrank prior memory (runtime evidence may be
+  re-verified but not overruled by stale memory). For non-trivial planning or
+  architecture, run an independent critique through another model or
+  counterpart when available and useful; prefer a configured sidecar/counterpart
+  path (e.g. local opencode/GLM 5.2) as an example, stay model-agnostic, and
+  fall back to single-agent self-critique when unavailable or blocked.
+  Directive/planning/architecture or challenge/advisor briefs must print:
+  "Authorization: the user explicitly authorizes sidecar/counterpart model use
+  for directive and architecture challenges for this run." (or equivalent), not
+  trivial briefs. When implementation shape is uncertain and repo evidence is
+  insufficient, scan sibling projects under
+  `/Users/alexandrebrandizzi/projects` metadata-first and budgeted, no secrets,
+  verifying fit before adopting. Industry-quality standards win over
+  agent-convenience or model-preference bias; reuse existing patterns when they
+  fit the stack and constraints, otherwise challenge them.
 
 If instructions conflict, apply this order:
 1. Platform and safety rules.
@@ -169,5 +190,5 @@ Report:
 Use this shorter version when the AI context is limited:
 
 ```text
-Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load only the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, token-economy strategy, bounded worker tier availability such as Codex Spark, MCP or external integration routing scope, cross-agent counterpart availability and fallback, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Use progressive disclosure and deterministic pre-processing before model-heavy reasoning. If the live prompt includes `subagents swarm allowed`, treat it as explicit authorization and request wording for sub-agents, parallel delegation, model routing, and cross-agent counterpart routing when useful and supported, without bypassing capability, privacy, safety, budget, stop-condition, anti-drift, or validation checks. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, reset active context on gear changes, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If Claude or another AI tool participates, create a communication plan first with budget/output caps, stop conditions, and privacy boundaries. If a required framework file is missing, ask for it before substantial implementation.
+Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load only the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, token-economy strategy, bounded worker tier availability such as Codex Spark, MCP or external integration routing scope, cross-agent counterpart availability and fallback, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Use progressive disclosure and deterministic pre-processing before model-heavy reasoning. Challenge directives, journals, memories, cached conclusions, and prior project patterns as evidence, not authority; for non-trivial planning or architecture, use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs. If the live prompt includes `subagents swarm allowed`, treat it as explicit authorization and request wording for sub-agents, parallel delegation, model routing, and cross-agent counterpart routing when useful and supported, without bypassing capability, privacy, safety, budget, stop-condition, anti-drift, or validation checks. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, reset active context on gear changes, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If Claude or another AI tool participates, create a communication plan first with budget/output caps, stop conditions, and privacy boundaries. If a required framework file is missing, ask for it before substantial implementation.
 ```

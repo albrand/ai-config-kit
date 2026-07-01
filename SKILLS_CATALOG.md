@@ -10,6 +10,7 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 | --- | --- | --- |
 | `analysis-plan-delegate` | Every non-trivial request; also when the prompt says `subagents swarm allowed` | Analysis, plan, context expansion, delegation decision, validation report |
 | `harness-routing` | Work that can use model tiers, sub-agents, cache, delegated validation, or the prompt phrase `subagents swarm allowed` | Routing plan, model choice, cache decision, escalation triggers |
+| `directive-challenge` | Non-trivial planning, architecture, framework, skill, or cross-project pattern decisions | Challenge pass over directives, journals, memory, cached conclusions, hidden confounders, causal overfitting, advisor route or fallback, and adopted/rejected recommendations |
 | `token-efficiency` | Delegating to sub-agents, choosing model tiers, coordinating another AI, shaping long prompts, or controlling noisy output | Smallest capable tier, compressed brief, output cap, preserved exact evidence |
 | `cross-agent-coordination` | Work can benefit from another AI tool acting as peer critic, explorer, executor, verifier, or summarizer; also when the prompt says `subagents swarm allowed` and a counterpart may be useful | Communication plan, counterpart capability gate, output contract, fallback |
 | `mcp-routing` | Before using MCPs or external integrations, or when a new registered MCP server appears | Repo/folder/workflow allow-list decision, ask-before-use prompt, external-system fallback |
@@ -84,6 +85,9 @@ The framework should incorporate useful public skill patterns as neutral practic
 - Implementation workflows should preserve feedback loops: diagnosis before fixes, red-green-refactor when practical, and validation tied to behavior.
 - Architecture hardening should look for shallow modules, scattered concepts, weak test seams, and places where deeper interfaces improve locality and AI navigability.
 - Long work should produce compact handoffs instead of carrying raw transcripts forward.
+- Directive and pattern learning should challenge journals, memories, cached
+  conclusions, and prior project patterns for fit, drift, hidden confounders,
+  causal overfitting, and current evidence before promotion or reuse.
 
 ## Repo-Local Skill Examples
 

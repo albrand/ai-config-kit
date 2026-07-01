@@ -20,6 +20,9 @@ Impacted surface:
 Approach:
 - <steps>
 
+Directive challenge:
+- <independent advisor or self-critique used, assumptions challenged, and adopted/rejected changes>
+
 Validation:
 - <checks>
 
@@ -38,6 +41,11 @@ Constraints:
 
 Risks:
 - <architecture, security, data, validation, or scope risks>
+
+Directive challenge:
+- <advisor route or single-agent fallback>
+- <authorization sentence included for directive/planning/architecture/challenge briefs: yes|no|not applicable>
+- <memory/journal/cached/project-pattern assumptions challenged>
 
 Subtasks:
 - <unit of work> -> <master/local/small/medium/large/delegated role> because <reason>
@@ -120,6 +128,7 @@ Cross-agent communication plan:
 - Coordinator: <tool/model and responsibilities>
 - Counterpart: <tool/model and responsibilities, or "unavailable">
 - Goal: <shared outcome>
+- Authorization: <include for directive/planning/architecture/challenge briefs>
 - Source of truth:
   - <files/issues/designs/logs>
 - Work split:
@@ -481,6 +490,9 @@ Do not touch:
 
 Context:
 <source-of-truth details needed>
+
+Authorization:
+<include only for directive/planning/architecture/challenge briefs>
 
 Allowed outputs:
 <exact output shape and forbidden output>

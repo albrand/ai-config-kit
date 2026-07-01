@@ -122,6 +122,16 @@ When layers conflict:
 - Global framework files provide defaults.
 - If a conflict affects behavior, security, data handling, validation, release, or scope, ask before implementing.
 
+Directives, learned rules, journals, memories, cached conclusions, and prior
+project patterns are evidence, not final authority. Challenge them for
+fit, drift, hidden confounders, causal overfitting, and current-task relevance
+without weakening the precedence order above. For non-trivial planning or
+architecture, use an independent model/counterpart critique when available and
+include the framework authorization sentence in advisor briefs. When repo-local
+evidence is insufficient, scan sibling projects under
+`/Users/alexandrebrandizzi/projects` metadata-first for candidate patterns and
+verify fit before adopting them.
+
 The active AI thread should act as the master owner of:
 
 - User intent.

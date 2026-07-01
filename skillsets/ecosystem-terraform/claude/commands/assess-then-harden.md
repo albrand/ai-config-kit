@@ -20,6 +20,7 @@ Before mutating docs, issue trackers, repositories, cloud/deployment systems, or
 3. Verify required channels: repo read/write access, issue tracker, docs system, GitHub, Figma/design access, deployment/log systems, browser access, and sub-agent availability.
 4. Ask up to three targeted questions when missing answers materially change scope, docs format, ticket destination, external-source priority, or approval to use parallel agents.
 5. Present a short execution plan before writes: source discovery, knowledge-doc shape, gap analysis method, ticketing strategy, QA/business-logic matrix, validation, and stop conditions.
+   Challenge directives, journals, memories, cached conclusions, and prior project patterns before turning observations into hardening rules; use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs.
 6. Inspect repo instructions, README, architecture docs, ADRs, package/build config, CI, tests, env docs, deployment docs, runbooks, entry points, routes, handlers, services, data models, auth, integrations, state, UI flows, scripts, and generated artifacts.
 7. Inspect external source evidence: existing tickets, roadmap artifacts, PRs, review comments, designs, specs, support notes, and explicit requirements.
 8. Produce or refresh knowledge docs: current architecture, domain glossary, source-of-truth map, runtime boundaries, integration map, quality gates, and known risks.

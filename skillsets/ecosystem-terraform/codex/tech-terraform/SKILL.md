@@ -16,6 +16,10 @@ Use this skill to create or reconcile the technical operating system for a proje
 3. Verify capabilities before promising setup: repo write access, GitHub, package manager, cloud CLI/MCP, Vercel/deployment tools, secret manager, CI provider, design/documentation systems, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially change stack, infrastructure authority, secret handling, environment shape, quality gates, or automation behavior. Ask for approval before any cloud mutation, repo creation, CI mutation, secret handling, or sub-agent swarm.
 5. Present a short execution plan before writes: discovery sources, capability gaps, stack assumptions, artifacts to create/update, quality layers to assess, validation, rollback/fallback, and approval gates.
+   Include a challenge pass for directives, journals, memories, cached
+   conclusions, prior project patterns, and stack defaults. Use an independent
+   model/counterpart critique when available and include the authorization
+   sentence in advisor briefs.
 6. Inspect source evidence in order: existing repo docs, package/build config, infra config, CI workflows, environment schemas, deployment docs, secrets documentation, observability/runbooks, PR templates, review rules, branch protection expectations, and existing agent instructions.
 7. Decide the technical bootstrap mode:
    - `Connect only`: connect to providers to understand constraints and build local/dev workflow without mutating remote resources.

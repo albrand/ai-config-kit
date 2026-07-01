@@ -16,6 +16,14 @@ Consider updating the framework when:
 - A repo pattern is stable enough to document.
 - A manual checklist becomes reliable enough to automate.
 
+## Challenge Before Promotion
+
+Before promoting any lesson into a directive, skill, template, or automation,
+challenge it for hidden confounders, causal overfitting, drift, current
+source-of-truth fit, and industry-quality alignment. Journals, memories, cached
+conclusions, and prior project patterns are evidence to test, not authority to
+copy. Promote the narrowest rule that survives current evidence.
+
 ## Promotion Ladder
 
 Promote lessons to the narrowest useful place:

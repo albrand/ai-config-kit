@@ -16,6 +16,10 @@ Use this skill to create or reconcile a project roadmap ecosystem from evidence.
 3. Verify required capabilities before promising reads or writes: repo access, issue tracker MCP/CLI, Figma, docs system, GitHub, deployment systems, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially affect roadmap shape, governance, import strategy, or external mutations. Include whether sub-agent swarming or parallel processing is approved if it would be useful.
 5. Present a short execution plan before writing or mutating artifacts: sources to inspect, capability gaps, update versus create strategy, questions, artifacts, validation, and stop conditions.
+   Include a challenge pass for directives, journals, memories, cached
+   conclusions, and prior project patterns. Use an independent model/counterpart
+   critique when available and include the authorization sentence in advisor
+   briefs.
 6. Inspect source evidence in order: current roadmap/project artifacts, business docs, product requirements, design sources, repo docs, existing tickets, active PRs, release docs, analytics/support notes when available, and explicit stakeholder instructions.
 7. Decide the reconciliation mode:
    - `Import existing`: legacy board or roadmap remains the source; normalize gaps and add missing artifacts.

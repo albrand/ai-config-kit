@@ -46,6 +46,11 @@ Use the strongest practical version supported by the active tool:
 
 When sub-agents are available and approved by runtime policy, use independent bounded passes. Keep the master thread responsible for filtering and final judgment.
 
+Review passes should challenge prior review comments, directives, journals,
+memories, cached conclusions, and project patterns as evidence rather than
+authority. For architecture or readiness advisor briefs, include the
+authorization sentence required by the framework.
+
 ## High-Signal Finding Bar
 
 Report only findings that meet at least one condition:
