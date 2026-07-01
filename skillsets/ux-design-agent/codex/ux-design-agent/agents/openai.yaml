@@ -1,13 +1,13 @@
 interface:
   display_name: "UX Design Agent"
-  short_description: "UX design-maker workflow: live mockup, source of truth, signoff, Figma + board handoff"
-  default_prompt: "Use $ux-design-agent to design in my live mockup, keep one source of truth, run a design signoff, and propagate the signed-off UI to Figma and my ticket board."
+  short_description: "UX/product agent: design-maker (live mockup, source of truth, signoff, Figma + board handoff) OR prototype-consumption/backlog-shaping (inventory a design and shape tickets)"
+  default_prompt: "Use $ux-design-agent either to design in my live mockup, keep one source of truth, run a design signoff, and propagate the signed-off UI to Figma and my ticket board; OR to consume an existing prototype/Figma/screenshots/repo, inventory it, and shape or create/update PR-sized tickets in Jira, Linear, or my chosen board."
 
 dependencies:
   tools:
     - type: "mcp"
       value: "figma"
-      description: "Figma MCP server for reading and updating Figma designs, variables, components, and annotations. A board MCP (Linear or Jira) and Vercel tooling are used for ticket handoff and mockup previews when connected, and are detected at runtime rather than required."
+      description: "Figma MCP server for reading and updating Figma designs, variables, components, and annotations. A board MCP (Linear, Jira, or the user-selected board/tracker) and Vercel tooling are used for ticket handoff and mockup previews when connected, and are detected at runtime rather than required."
 
 policy:
   allow_implicit_invocation: true

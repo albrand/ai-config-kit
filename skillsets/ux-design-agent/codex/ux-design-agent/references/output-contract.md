@@ -1,6 +1,11 @@
 # UX Design Agent Output Contract
 
-Use this checklist for substantial UX design-agent work, especially when a live mockup, design signoff, Figma propagation, board/ticket handoff, design tokens, system conventions, or repo implementation are in scope.
+Use this checklist for substantial UX design-agent work in either mode: design-maker (live mockup, design signoff, Figma propagation) or prototype-consumption/backlog-shaping (PO) mode (inventory an existing design and shape a board-ready backlog). Also use it for board/ticket handoff, design tokens, system conventions, or repo implementation.
+
+## Skill Mode
+
+- Which mode was detected and announced: design-maker or prototype-consumption/backlog-shaping (PO).
+- If ambiguous, which clarifying question was asked and which mode leads.
 
 ## Design-Maker Detection
 
@@ -10,7 +15,7 @@ Use this checklist for substantial UX design-agent work, especially when a live 
 
 - Figma MCP/tool access: available, blocked, unavailable, or not needed.
 - Figma edit access and target file/library.
-- Board MCP access: Linear, Jira, or none.
+- Board MCP access: Linear, Jira, another connected board/tracker, or none.
 - Vercel/preview-deploy tooling access.
 - Repo read/write access.
 - Component-library status.
@@ -117,12 +122,23 @@ Per signed-off surface, confirm coverage of:
 - Components used and their granularity.
 - Open questions and non-goals.
 
+## Prototype Consumption And Backlog Shaping (PO Mode)
+
+Report when PO mode is active:
+
+- Design source inspected: prototype URL, Figma file/link, screenshots, repo, docs — and what was readable vs. blocked.
+- Design inventory: screens/flows, components, tokens, typography, states, responsive behavior, accessibility signals, design-system conventions — each tied to evidence, with gaps marked unknown.
+- Open questions and implementation dependencies, ranked by scope/sequencing impact.
+- Ticket set: hierarchy (initiative/epic → feature → PR-sized vertical slice), each with type, user job, acceptance criteria, validation, design-evidence links, and dependencies (tokens, components, states, APIs, permissions).
+- Ticket status: PROPOSED vs. CREATED for each. Never blur the two.
+- Whether the user selected a board/tracker other than Jira or Linear, and whether it was honored.
+
 ## Board Propagation
 
-- Board tool: Linear, Jira, or none.
+- Board tool: Linear, Jira, the user-selected board/tracker, or none.
 - New project/tickets: structure and ticket format proposed; classification (Feature, Bug Fix, Chore, Spike); created or proposed only.
-- Existing tickets: which ticket owns the UI piece, updated with the new UI version (Figma + preview links refreshed).
-- Revision comment posted recording that the change was made (`save_comment` / `addCommentToJiraIssue`).
+- Existing tickets: which ticket owns the UI piece (or which inventory item maps to it in PO mode), updated with the new UI version (Figma + preview links refreshed) or the proposed link/AC/dependency updates.
+- Revision comment posted recording that the change was made (`save_comment` for Linear, `addCommentToJiraIssue` for Jira, or the chosen board's equivalent).
 - Approval status for every board write.
 
 ## UX Validation
@@ -145,14 +161,18 @@ Use this shape:
 ```md
 **UX Design Agent Result**
 
+Skill mode: design-maker / prototype-consumption+backlog-shaping
 Detection: design-making (announced) / deferred
 Personal profile: ...
-Mode: ...
+Project mode: ...
 Capabilities: ...
 Source of truth: ...
 Decisions: ...
 Live mockup + preview: ...
 Signoff: approved / pending — coverage ...
+Design inventory (PO): screens/flows, components, tokens, typography, states, responsive, accessibility — evidence + gaps
+Open questions + dependencies (PO): ...
+Ticket set (PO): hierarchy, PR-sized slices with AC + design evidence; status PROPOSED vs. CREATED
 Figma (or SoT) propagation: ...
 Board propagation: tool, tickets created/updated, comments posted ...
 Artifacts: ...
