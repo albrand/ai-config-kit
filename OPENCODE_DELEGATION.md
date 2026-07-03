@@ -100,14 +100,43 @@ opencode run "<architected execution brief>" \
   --auto \
   --dir "<repo absolute path>" \
   -m zai-coding-plan/glm-5.2 \
-  --agent general
+  --agent build
 ```
 
 - `--format json` — structured events for flawless machine consumption.
 - `--dir` — pin the working directory.
 - `-m zai-coding-plan/glm-5.2` — pin the model.
-- `--agent general` — multi-step executor (`explore` for read-only steps).
+- `--agent build` — primary multi-step executor for implementation.
 - Attach the plan + context with `-f <file>` (repeatable).
+
+Do not pass `--agent general` to current opencode installs. In opencode 1.17.x
+`general` is a subagent name, not a primary runnable agent, and the CLI falls
+back to the default agent after printing a warning. That fallback makes timeout
+diagnosis ambiguous. Use `--agent build` for execution or omit `--agent` when
+the default primary executor is intended. If a future opencode version exposes a
+different primary agent name, verify it with a tiny probe before updating this
+contract.
+
+For read-only advisor / critique passes, prefer a precomputed evidence packet
+over a live repo-bound agent:
+
+```sh
+opencode run "<bounded advisor brief; do not use tools>" \
+  --format json \
+  --auto \
+  --pure \
+  --dir "/tmp" \
+  -m zai-coding-plan/glm-5.2 \
+  -f "<compressed-evidence.md>"
+```
+
+The orchestrator should gather source-of-truth evidence itself, compress it, and
+attach only the relevant packet. Do not ask opencode to load broad skills, walk
+the repo, fetch PR metadata, or inspect whole diffs for advisor passes unless
+the purpose is specifically to benchmark opencode. On this machine, even a tiny
+GLM 5.2 call carries a fixed opencode prompt/runtime footprint, while
+repo-bound build-agent calls can quickly grow into tens of thousands of input
+tokens plus many tool-loop turns.
 
 ## Context package (what the orchestrator sends)
 
@@ -125,6 +154,20 @@ The orchestrator sends the **architected plan** plus execution context:
 - `escalation` — when to stop and return `blocked`.
 
 Send only what execution needs; sanitize secrets.
+
+For timeout control, prefer many narrow packets over one broad prompt:
+
+- Keep advisor packets to the smallest self-contained evidence set. Include the
+  business rule, exact changed symbols or file excerpts, validation facts, and
+  the specific question to challenge. Avoid full PR diffs when a conflict,
+  failing check, or targeted code path already decides the outcome.
+- Give the advisor an output cap and a stop rule, for example
+  `Return only blockers; if none, say no blockers; do not inspect files`.
+- For execution, split plans into disjoint file scopes and attach the plan as a
+  file instead of embedding large transcript context in the command line.
+- When a call times out, classify it as `blocked` with the partial JSON/events
+  and do not keep waiting if the master thread already has sufficient evidence
+  to make the decision.
 
 ## Output contract (what opencode returns)
 
