@@ -182,6 +182,10 @@ Use when reviewing a pull request, branch, or diff for merge readiness.
   command-by-command pass lists, `git diff --check passed`,
   `git merge-tree succeeded`, `no checks reported`, or board-access caveats in
   PR comments or PR bodies.
+- Keep PR bodies minimal: `Summary`, `Changes and value`, and `Ticket` only when
+  a ticket applies. Do not add approach, validation, deployment, risk,
+  follow-up, checklist, rollback, residual-risk, testing, or command-log
+  sections.
 - Do not add AI attribution or generated-by signatures to PR surfaces.
 - When addressing existing PR comments, inspect live comments, reviews, review threads, current head, checks, and deployment state before editing.
 - Reply to each applicable comment after the fix or evidence lands, resolve only addressed threads, and request re-review if the new head invalidates approval.

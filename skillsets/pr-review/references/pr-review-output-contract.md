@@ -14,6 +14,42 @@ separate and may record exact validation evidence for the user.
 Never add AI attribution on PR surfaces: no model names, no "Generated with..."
 footer, no "Claude Code" signature, no AI disclaimer, and no watermark.
 
+## PR Body Contract
+
+When preparing, editing, or replacing a PR body, use only this shape:
+
+```md
+## Summary
+
+<what was done>
+
+## Changes and value
+
+<what changed, why it changed, and what value it adds to the app>
+
+## Ticket
+
+<ticket reference>
+```
+
+Omit `## Ticket` when no ticket applies. Do not add sections named
+`Approach`, `Validation`, `Deployment Notes`, `Deployment / Operations`,
+`Risks`, `Follow-ups`, `Checklist`, `Rollback`, `Residual Risk`, `Testing`, or
+similar operator-log headings. Do not paste command lists, validation
+transcripts, deployment logs, checklists, board-access caveats, or AI
+signatures into the PR body. Keep exact validation, rollout, risk, and follow-up
+details in the operator close-out unless the user explicitly asks to put a
+specific item in the PR body.
+
+The `Changes and value` section should not repeat the summary. Use it to name
+the concrete product/code details that matter to reviewers: notable flows,
+runtime behaviors, persistence/audit improvements, admin/customer UX, delivery
+paths, or other implementation details that explain why the app is better after
+the PR.
+
+If a repository template demands broader sections, treat that template as stale
+for AI-authored PR bodies unless the current user explicitly asks to follow it.
+
 ## Source Evidence
 
 Record:

@@ -26,7 +26,9 @@ Before mutating cloud resources, repositories, CI settings, branch protections, 
 8. Assess and scaffold the full quality system:
    - Local validation: format, lint, typecheck, unit, integration, e2e or smoke tests, build, codegen/schema, migration, seed, and docs checks.
    - CI/CD validation: install/cache, changed-surface checks, full-suite checks, build artifacts, preview/deploy checks, environment validation, migration dry runs, rollback checks, and release promotion gates.
-   - PR validation: PR template, required checks, CODEOWNERS or reviewers, branch protection, status naming, high-signal AI review automation, stale/duplicate review prevention, and required evidence in PR bodies.
+   - PR validation: minimal app-value PR body contract, required checks,
+     CODEOWNERS or reviewers, branch protection, status naming, high-signal AI
+     review automation, and stale/duplicate review prevention.
    - Security validation: dependency audit, license checks, secret scanning, SAST, container or image scans, IaC scans, auth/data boundary tests, environment schema checks, and least-privilege review.
    - Runtime validation: health checks, smoke tests, observability hooks, logging policy, alerting, incident notes, backup/restore checks, and post-deploy verification.
    - AI workstream validation: repo instructions, Claude Code commands, Codex skills, handoff format, review prompts, QA matrix prompts, and framework adoption checks.

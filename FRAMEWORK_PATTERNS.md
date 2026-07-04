@@ -171,14 +171,16 @@ Check:
 - Tests exercise behavior at the right layer.
 - Missing evidence is reported explicitly.
 
-PR body should include:
+PR body should include only:
 
-- Problem.
-- Approach.
-- Concise validation summary without review-transcript blocks.
-- Deployment or operational impact.
-- Rollback path.
-- Residual risk.
+- Summary of what was done.
+- Specific, non-repetitive details about what changed, why, and what value it
+  adds to the app.
+- Ticket reference, only when one applies.
+
+Validation, deployment, rollback, risks, follow-ups, and checklists belong in
+operator close-outs unless the current user explicitly asks to place a specific
+item in the PR body.
 
 ## Pattern 8: Repo-Local Delivery Workflow
 

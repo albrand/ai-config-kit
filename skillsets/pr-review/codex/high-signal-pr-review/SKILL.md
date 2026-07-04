@@ -91,6 +91,11 @@ the target is not a postable PR, or posting is blocked.
 - Do not leave developers with only product-level options when the defect is code-owned; add code-level recommendations, snippets, or safe suggestion blocks that make the intended fix mechanically clear.
 - Do not post monolithic review bodies when inline review threads can be created.
 - Do not copy validation transcript blocks into PR comments or PR bodies.
+- When preparing or editing PR bodies, use only `Summary`, `Changes and value`,
+  and `Ticket` when applicable. Keep the value section specific and
+  non-repetitive, and do not add approach, validation, deployment, risk,
+  follow-up, checklist, rollback, residual-risk, testing, or command-log
+  sections.
 - Do not add AI attribution or generated-by signatures to PR surfaces.
 - Do not claim tests or CI passed unless you ran them or inspected their actual output.
 - Do not approve a PR with unresolved security, data, runtime, or required-validation uncertainty.

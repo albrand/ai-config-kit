@@ -96,7 +96,8 @@ Stack preference:
 Please assess and scaffold everything useful:
 - Local validation commands: format, lint, typecheck, tests, build, codegen/schema, migrations, docs.
 - CI/CD checks: install/cache, changed-surface checks, full suite, build artifacts, preview/deploy checks, environment validation, rollback and release gates.
-- PR checks: PR template, required checks, CODEOWNERS/reviewers, branch protection, high-signal AI review, required PR evidence.
+- PR checks: minimal app-value PR body contract, required checks,
+  CODEOWNERS/reviewers, branch protection, and high-signal AI review.
 - Security checks: dependency audit, license policy, secret scanning, SAST, container/IaC scanning where relevant, auth/data boundary checks.
 - Runtime checks: health, smoke, observability, logging, alerts, post-deploy verification.
 - AI workstreams: repo instructions, Claude Code commands, Codex skills, handoff format, review prompts, QA matrix prompts.

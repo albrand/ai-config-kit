@@ -7,7 +7,8 @@ Use it when the user asks for a PR review, diff review, merge-readiness review, 
 The shared output contract is mandatory for every PR review and PR body produced
 through this skillset. It is the canonical rule for inline review threads,
 root-cause commentary, practical failure examples, safe GitHub suggestion
-blocks, transcript-free public surfaces, and no AI signatures.
+blocks, concise PR bodies, transcript-free public surfaces, and no AI
+signatures.
 
 ## Entry Points
 

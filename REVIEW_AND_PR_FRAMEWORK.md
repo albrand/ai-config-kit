@@ -188,27 +188,21 @@ Read:
 
 - Actual diff.
 - Changed files.
-- Tests and validation output.
-- Repo PR template.
-- Release or deployment docs when relevant.
+- App-value details that reviewers should understand.
+- Linked ticket, when present.
+- Tests, validation output, release docs, and deployment docs only for the
+  operator close-out, not for PR body sections.
 
-PR body should include:
+PR body must include only:
 
-- Problem.
-- Approach.
-- Important tradeoffs.
-- Files or areas changed.
-- Validation run.
-- Deployment or operational impact.
-- Rollback path.
-- Residual risk.
+- Summary of what was done.
+- What the PR changes, why it changes that, and what value it adds to the app;
+  this must add concrete, non-repetitive details beyond the summary.
+- Ticket reference, only when one applies.
 
-Do not paste review-validation transcript blocks into PR bodies. Keep validation
-outcome-oriented and concise; reserve exact command transcripts, board-access
-gaps, and reviewer close-out evidence for the operator response unless the
-repository template explicitly requires a brief validation section.
-
-Do not leave template sections blank. Use `N/A` if a section does not apply.
+Do not add sections for approach, validation, deployment notes, risks,
+follow-ups, checklists, rollback, residual risk, testing, or command logs. Keep
+that operator evidence in the close-out to the user, not in the PR body.
 
 ## Approval Standard
 
@@ -254,31 +248,15 @@ Residual risk:
 ## PR Body Template
 
 ```md
-## Problem
+## Summary
 
-<What gap or defect this change addresses.>
+<what was done>
 
-## Approach
+## Changes and value
 
-<What changed and why this approach.>
+<what changed, why, and what value it adds to the app>
 
-## Changed Surface
+## Ticket
 
-- <area/file>
-
-## Validation
-
-<concise outcome-oriented validation summary; no review-transcript block>
-
-## Deployment / Operations
-
-<Impact, migration, env, monitoring, or N/A.>
-
-## Rollback
-
-<How to revert or contain.>
-
-## Residual Risk
-
-<Known gaps or "None identified".>
+<ticket reference; omit this section when none applies>
 ```

@@ -88,6 +88,10 @@ If the tool cannot automatically read files, ask the user to provide the relevan
 - Do not add AI attribution, generated-by footers, model signatures, or
   watermarks to code, docs, PR bodies, comments, commits, or review surfaces
   unless the user explicitly asks for that attribution.
+- PR bodies must stay minimal: `Summary`, `Changes and value`, and `Ticket`
+  only when applicable. The value section must add concrete, non-repetitive app
+  value details; do not add approach, validation, deployment, risk, follow-up,
+  checklist, rollback, residual-risk, testing, or command-log sections.
 - Apply the Challengeable Directives and Anti-Bias Rule below.
 
 ## Challengeable Directives and Anti-Bias Rule

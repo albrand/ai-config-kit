@@ -83,7 +83,9 @@ At minimum, evaluate:
 
 - Local developer validation: format, lint, typecheck, unit tests, integration tests, e2e or smoke tests, build, codegen/schema checks, migration checks, seed checks, and docs checks.
 - CI/CD checks: install/cache strategy, changed-surface checks, full-suite checks, build artifacts, preview/deploy checks, environment validation, migration dry runs, rollback checks, and release promotion gates.
-- PR checks: PR template, required checks, CODEOWNERS or reviewers, branch protection, status naming, review automation, high-signal AI review, stale or duplicate review prevention, and required evidence in PR bodies.
+- PR checks: minimal app-value PR body contract, required checks, CODEOWNERS or
+  reviewers, branch protection, status naming, review automation, high-signal AI
+  review, and stale or duplicate review prevention.
 - Security and compliance: dependency audit, license policy, secret scanning, SAST where available, container/image scanning, IaC scanning, auth/data boundary tests, environment variable schema checks, and least-privilege review.
 - Runtime confidence: health checks, smoke tests, observability hooks, logging policy, alerting, error budget or incident notes, backup/restore checks, and post-deploy verification.
 - AI developer workstreams: repo instructions, Claude Code commands, Codex skills, agent handoff format, review prompts, QA matrix prompts, and framework adoption checks.

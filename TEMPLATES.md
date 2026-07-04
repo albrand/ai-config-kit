@@ -384,33 +384,17 @@ Ecosystem terraform result:
 ## PR Body
 
 ```md
-## Problem
+## Summary
 
-<what this change addresses>
+<what was done>
 
-## Approach
+## Changes and value
 
-<what changed and why>
+<specific, non-repetitive details about what changed, why, and what value it adds to the app>
 
-## Changed Surface
+## Ticket
 
-- <area/file>
-
-## Validation
-
-<concise outcome-oriented validation summary; no review-transcript block>
-
-## Deployment / Operations
-
-<impact, migration, env, monitoring, or N/A>
-
-## Rollback
-
-<how to revert or contain>
-
-## Residual Risk
-
-<known gaps or "None identified">
+<ticket reference; omit this section when none applies>
 ```
 
 ## Skill Template

@@ -189,12 +189,12 @@ Use for code review, self-review, PR preparation, or readiness decisions:
 3. `QUALITY_GATES.md`
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
 5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or posted review workflows
-6. Actual diff, changed files, validation output, and repo PR template
+6. Actual diff, changed files, app-value details, and linked ticket if applicable
 
 The PR review output contract is mandatory for public review comments,
 merge-readiness comments, and PR bodies. It controls inline thread shape,
 root-cause commentary, practical failure examples, safe suggestion blocks,
-transcript-free PR surfaces, and no AI attribution.
+minimal PR body shape, transcript-free PR surfaces, and no AI attribution.
 
 ### Adoption Profile
 

@@ -774,16 +774,20 @@ Base the PR body on:
 
 - Real diff.
 - Changed files.
-- Actual validation.
-- Deployment or operational impact.
-- Rollback path.
-- Residual risk.
+- The user-visible value of the change.
+- A linked ticket only when one applies.
 
-Keep the PR body transcript-free. Do not include `Validation reviewed` blocks,
-command-by-command pass lists, board-access caveats, AI attribution, or
-generated-by signatures.
+The PR body must contain only:
 
-Do not leave template sections blank. Use `N/A` when a section does not apply.
+- `Summary`: what was done.
+- `Changes and value`: specific, non-repetitive details about what changed,
+  why, and what value it adds to the app.
+- `Ticket`: ticket reference, omitted when no ticket applies.
+
+Keep the PR body free of operator-log sections. Do not include `Approach`,
+`Validation`, `Deployment Notes`, `Risks`, `Follow-ups`, `Checklist`,
+`Rollback`, `Residual Risk`, `Testing`, command-by-command pass lists,
+board-access caveats, AI attribution, or generated-by signatures.
 
 ### Run Ecosystem Terraform
 

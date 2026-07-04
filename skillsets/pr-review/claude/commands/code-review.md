@@ -75,6 +75,11 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    Do not add AI attribution or signatures such as `Generated with Claude Code`, model names, AI disclaimers, or watermarks.
    If inline review APIs fail, fall back to one submitted request-changes/comment review body with file/line references and state the fallback.
 15. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
+16. When preparing or editing a PR body, use only `Summary`, `Changes and value`,
+    and `Ticket` when applicable. Keep the value section specific and
+    non-repetitive, and do not add approach, validation, deployment, risk,
+    follow-up, checklist, rollback, residual-risk, testing, or command-log
+    sections.
 
 ## Output
 

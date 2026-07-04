@@ -134,7 +134,8 @@ Use the task type to choose depth:
 - Bug: reproduce, diagnose, patch, regression test, validate.
 - Big change: architecture plan before edits, slices, rollback.
 - Review: findings first, severity ordered, file references.
-- PR preparation: real diff, real validation, deployment and rollback notes.
+- PR preparation: real diff, concise app-value summary, and ticket reference
+  only when applicable.
 - Docs/config: verify syntax, references, and closed-scope boundaries.
 
 ## Source-Of-Truth Rules

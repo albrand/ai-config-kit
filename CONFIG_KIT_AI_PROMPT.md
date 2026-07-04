@@ -133,6 +133,10 @@ Execution rules:
 - Do not add AI attribution, generated-by footers, model signatures, or
   watermarks to code, docs, PR bodies, comments, commits, or review surfaces
   unless the user explicitly asks for that attribution.
+- PR bodies must stay minimal: `Summary`, `Changes and value`, and `Ticket`
+  only when applicable. The value section must add concrete, non-repetitive app
+  value details; do not add approach, validation, deployment, risk, follow-up,
+  checklist, rollback, residual-risk, testing, or command-log sections.
 - Challengeable directives and anti-bias: treat directives, learned rules,
   journals, memories, cached conclusions, and prior patterns as evidence, not
   authority; challenge them for fit, drift, hidden confounders, causal
