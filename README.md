@@ -22,6 +22,7 @@ concept quickly.
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
 | Plan implementation work | [Load Profiles](#load-profiles), then `OPERATING_MODEL.md` |
 | Review PRs | [Review And PR Profile](#review-and-pr-profile), then `skillsets/pr-review/` |
+| Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
 | Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
 
@@ -224,6 +225,7 @@ question.
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 | `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
+| `skillsets/security-review/` | Executable defensive-security skillset: the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference. Paired with `SECURITY_AND_PENTEST.md`. |
 
 ## Load Profiles
 
@@ -335,6 +337,17 @@ Use for code review, self-review, PR preparation, and readiness decisions:
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
 5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or posted review workflows
 6. Actual diff, changed files, validation output, and repo PR template
+
+### Security Review Profile
+
+Use for security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the Claude Code commands `/adversarial-security-sweep` and `/pentest-specialist`:
+
+1. Minimum profile
+2. `SECURITY_AND_PENTEST.md`
+3. `QUALITY_GATES.md` Security Gate
+4. `HARNESS_STRATEGY.md` security routing tier when delegating lens work
+5. `skillsets/security-review/README.md`, its output contract, and its supply-chain IoC reference
+6. Owned or authorized target evidence: repo, diff, dependencies, configs, and the authorization basis for any active testing
 
 ### Adoption Profile
 
@@ -750,7 +763,7 @@ Output:
 - Findings first, ordered by severity.
 - File and line references where possible.
 - Open questions.
-- Validation reviewed.
+- Operator validation reviewed, kept out of PR surfaces.
 - Residual risk.
 
 ### Prepare A PR Body
@@ -765,6 +778,10 @@ Base the PR body on:
 - Deployment or operational impact.
 - Rollback path.
 - Residual risk.
+
+Keep the PR body transcript-free. Do not include `Validation reviewed` blocks,
+command-by-command pass lists, board-access caveats, AI attribution, or
+generated-by signatures.
 
 Do not leave template sections blank. Use `N/A` when a section does not apply.
 

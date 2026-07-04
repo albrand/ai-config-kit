@@ -69,6 +69,53 @@ The directive challenge has five parts.
    current stack, architecture boundaries, data model, auth model, tests, quality
    gates, and acceptance criteria before use.
 
+## Causal Inference Protocol
+
+An agent reasoning about a root cause is not running an estimator over a
+dataset. It has no folds, no sample, and no orthogonalized regression. So the
+framework does not ask the agent to "do double machine learning" — writing
+estimator math into a directive produces impressive-sounding output that fails
+this document's own "evidence, not authority" test. Instead it borrows three
+*principles* from causal inference and turns each into a checkable reasoning
+step. Use this protocol whenever a conclusion attributes an effect to a cause:
+a bug's root cause, a regression's origin, a vulnerability's exploitability, a
+performance change, or a claim that "pattern X fixed problem Y".
+
+1. Residualize before attributing (the double-machine-learning idea).
+   Partial out the obvious, high-probability explanations first, then check
+   whether the favored cause still explains what is left over. Credit a cause
+   only on the residual — the part no simpler explanation already accounts for.
+   - Debugging: before blaming your preferred subsystem, subtract known-noisy
+     causes (recent deploy, flaky test, cache, env drift). Does the symptom
+     survive?
+   - Security: a scanner flags an issue. Subtract existing mitigations
+     (server-side authz, tenant isolation, WAF, network policy, framework
+     escaping). Is it still exploitable *after* those controls? Rate severity on
+     the residual exposure, not the raw finding.
+
+2. Cross-fit the hypothesis.
+   Form the hypothesis on one piece of evidence, then confirm it on a different,
+   independent piece. Never validate a root cause on the same observation that
+   generated it — that is the reasoning equivalent of testing on your training
+   fold, and it is how a plausible-but-wrong story survives. A reproducer you
+   wrote to match your theory is not independent confirmation; a failing case you
+   did not design for, a second log source, or an orthogonal test is.
+
+3. Run a sensitivity check.
+   Ask how strong an unobserved confounder would have to be to overturn the
+   attribution. If a single plausible alternative (a different proxy, a
+   mitigating control, a second changed variable) would flip the conclusion, the
+   attribution is fragile — label it a hypothesis, not a root cause, and gather
+   more evidence before acting on it.
+
+This protocol is the formal justification for two things the framework already
+values. First, the independent architecture critique in rule 3 above: an outside
+model is an independent fold. Second, multi-pass adversarial review (see
+`SECURITY_AND_PENTEST.md` and the Security Gate in `QUALITY_GATES.md`): running
+several *blind, independent* passes and only trusting findings that survive
+cross-checking is cross-fitting applied to detection. Independent passes reduce
+the chance that one pass's bias becomes the accepted answer.
+
 ## Examples
 
 ### Prior Journal Confounder

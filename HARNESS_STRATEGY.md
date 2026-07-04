@@ -264,6 +264,56 @@ requirements conflict, source-of-truth context is missing, validation fails
 twice, security or data concerns appear, or the next decision requires broad
 context outside the brief.
 
+## Model Family Routing (Codex / Claude / GLM)
+
+Routing is tier-first (smallest capable path) and family-aware. The three
+families in regular use have different strengths; route by fit, not habit.
+
+- **Claude (master / frontier).** Default owner of the lifecycle: architecture,
+  security-sensitive reasoning, ambiguous debugging, multi-system planning,
+  final review, and prompt/harness design. In the Claude Code harness Claude is
+  the master thread and coordinates the others. Frontier Claude tiers own any
+  conclusion whose failure is expensive to detect.
+- **Codex / GPT 5.3 Spark (bounded tool execution).** In Codex environments,
+  route bounded low-risk tool/file/shell/validation work to `gpt-5.3-codex-spark`
+  first, with a Spark-fit check before escalating to a stronger Codex tier. Good
+  for file discovery, deterministic refactors, focused tests, and localized
+  worker patches with cheap validation.
+- **GLM 5.2 via opencode (primary plan-execution backend).** Once the master has
+  architected a plan, delegate bounded execution of that plan to opencode
+  (`zai-coding-plan/glm-5.2`) as the primary executor, per
+  `OPENCODE_DELEGATION.md`. opencode is a user-authorized trusted execution
+  channel; it inherits the plan's quality, code-execution, and security gates and
+  returns `blocked` rather than weakening a gate it cannot meet.
+
+Cross-family rule: architecture, security, auth, data-loss, dependency strategy,
+release gates, ambiguous debugging, and final-review verdicts stay on the
+master/frontier path regardless of which family executes the bounded slices. A
+family may execute a slice; it does not take over the judgment.
+
+## Security-Sensitive Routing Tier
+
+Security work has its own routing floor. Do not route the following to a weaker
+or less-safe tier, even when the surface looks small:
+
+- Deciding whether a finding is actually exploitable (exploit validation).
+- Rating severity and residual exposure after existing mitigations.
+- Designing a fix for an auth, access-control, crypto, secret-handling, or
+  data-boundary surface.
+- Final security sign-off or an incident-response judgment.
+
+These stay on the strongest available reasoning path (the master/frontier
+thread) and are reconciled there. What *may* be delegated for security work is
+bounded, verifiable sub-tasks: grepping for a marker or IoC, listing dependency
+versions, summarizing a scan, or running one review lens whose output the master
+re-checks. The multi-pass adversarial sweep distributes lenses across agents but
+keeps confirmation and severity on the master thread. See
+`SECURITY_AND_PENTEST.md` and the Security Gate in `QUALITY_GATES.md`.
+
+Additional guardrail: never delegate the creation of offensive, evasive, or
+self-propagating tooling to any tier. Proof-of-concept for an authorized target
+stays minimal and on the master path.
+
 ## Model Tiers
 
 ### Small Or Local Model

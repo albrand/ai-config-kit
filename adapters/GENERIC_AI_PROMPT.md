@@ -20,7 +20,8 @@ Before implementation:
 8. For code quality, read `ARCHITECTURE_AND_CODE_QUALITY.md`.
 9. For validation, read `QUALITY_GATES.md`.
 10. For iterative quality improvement, read `QUALITY_CONVERGENCE.md`.
-11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
+11. For reviews or PRs, read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, public review comments, or PR bodies, also read and obey `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` as the mandatory public review and PR-body contract.
+11a. For security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or `/adversarial-security-sweep` and `/pentest-specialist`, read `SECURITY_AND_PENTEST.md` and `skillsets/security-review/README.md`.
 12. For roadmap, technology, assessment, or hardening bootstrap, read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`.
 13. For Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, Figma annotations, or design-to-code handoff, read `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`.
 14. For Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work, read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`.
@@ -57,5 +58,8 @@ Required behavior:
 - Keep changes scoped.
 - Validate before completion.
 - Report passed, failed, blocked, skipped, and not-run checks separately.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.
 
 If you cannot access one of these files, ask the user to provide it before substantial implementation.

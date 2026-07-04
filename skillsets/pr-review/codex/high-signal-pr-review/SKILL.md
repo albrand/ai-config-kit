@@ -1,6 +1,6 @@
 ---
 name: high-signal-pr-review
-description: Review pull requests or diffs with a business-rule-first, high-signal, low-false-positive workflow, inline code threads, and a board-backed regression gate. Use when the user asks Codex to review a PR, inspect a diff for merge readiness, prepare review comments, check a branch before merge, evaluate AI-generated code, or improve developer-facing PR feedback.
+description: Review pull requests or diffs with a business-rule-first, high-signal, low-false-positive workflow, mandatory PR review output contract loading, inline code threads, root-cause commentary, practical failure examples, GitHub suggestion blocks when safe, no monolithic review bodies, no validation-transcript boilerplate in PR surfaces, no AI signatures, and a board-backed regression gate. Use when the user asks Codex to review a PR, inspect a diff for merge readiness, prepare review comments, check a branch before merge, evaluate AI-generated code, improve developer-facing PR feedback, or draft PR bodies.
 ---
 
 # High Signal PR Review
@@ -12,7 +12,7 @@ the target is not a postable PR, or posting is blocked.
 
 ## Workflow
 
-1. Read `references/pr-review-output-contract.md` when available. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
+1. Read and obey `references/pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
 2. Preflight the PR or diff:
    - Confirm it is open and reviewable.
    - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the same AI reviewer.
@@ -56,9 +56,9 @@ the target is not a postable PR, or posting is blocked.
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Turn follow-up work into vertical-slice tickets only when ticketing is requested.
 10. Validate every candidate finding before reporting. Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported issues.
-11. For GitHub PRs, prepare a private comment plan, dedupe findings, and post only approved high-confidence review comments by default. Prefer one submitted PR review over loose issue comments.
-    - Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Use the review body only for summary, cross-cutting context, or findings that cannot be attached to a changed line.
-    - Each thread must explain: the business rule or contract being violated, what the code does now, the negative impact of keeping the change as-is, and a concrete next step for the developer.
+11. For GitHub PRs, prepare a private comment plan, dedupe findings, run the contract's pre-post self-check, and post only approved high-confidence review comments by default. Prefer one submitted PR review over loose issue comments.
+    - Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Do not collapse findings into one giant review body.
+    - Each substantive thread must explain: the business rule or contract being violated, the root cause in the changed code, what the code does now, a practical failure example, the negative impact of keeping the change as-is, and a concrete next step for the developer.
     - Do not limit recommendations to business decisions. When the issue is code-owned, include the exact code-level direction needed to fix it: name the function, route, payload, guard, test, migration, or component that should change, and explain why that code change solves the failing behavior.
     - Use short code snippets when they make the fix unambiguous. Prefer snippets that contrast the bad behavior with the corrected behavior, for example: "current code sends users to `/documents` without a route; replacing it with an existing route or adding the route file prevents the 404." Keep snippets scoped and do not invent full implementations when the required business decision is still unknown.
     - Use this thread shape unless repo convention requires another format:
@@ -68,8 +68,10 @@ the target is not a postable PR, or posting is blocked.
       `Suggested next step: ...`
       `Code-level recommendation: ...` when useful or when the developer would otherwise need to infer the implementation.
     - If the finding spans multiple files, thread the primary changed line and name the companion files or tests needed to complete the fix.
-    - Include a GitHub suggestion block when the replacement is small, complete, and safe to apply as-is. If a suggestion block is not safe because the correct business choice is unknown, still provide a concrete code sketch or example alternatives that show what the bad code does versus what the proposed code would solve.
-    - If a finding needs broader context than one line can hold, put the full explanation in the review body and leave a concise inline thread on the changed line.
+    - Include a GitHub suggestion block when the replacement is small, complete, and safe to apply as-is. If a suggestion block is not safe because the correct business choice is unknown or the fix spans multiple files, still provide a concrete code sketch or example alternatives that show what the bad code does versus what the proposed code would solve. Never fabricate a suggestion block.
+    - If a finding needs broader context than one line can hold, keep the detailed root cause and failure example in the inline thread, and use the review body only for a short transcript-free summary that points to the thread.
+    - Do not include validation transcript blocks on PR surfaces. Avoid `Validation reviewed`, command-by-command pass lists, `git diff --check passed`, `git merge-tree succeeded`, `no checks reported`, or board-access caveats in PR review comments or PR bodies. Keep exact validation evidence in the operator close-out.
+    - Do not add AI attribution or signatures such as `Generated with Claude Code`, model names, AI disclaimers, or watermarks.
     - If inline review APIs fail, fall back to a single request-changes or comment review body with file and line references; report the fallback.
     - If the user explicitly asks for draft/no-post mode, report findings only and mark posting as skipped.
 12. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
@@ -87,6 +89,9 @@ the target is not a postable PR, or posting is blocked.
 - Do not review PRs as generic code diffs when the stated goal is business behavior. First identify the business rules and acceptance criteria the PR claims to satisfy, then review the code against those rules.
 - Do not leave must-change feedback only in the summary when a changed code line owns the issue; create an inline thread with reason, negative impact, and suggested next step.
 - Do not leave developers with only product-level options when the defect is code-owned; add code-level recommendations, snippets, or safe suggestion blocks that make the intended fix mechanically clear.
+- Do not post monolithic review bodies when inline review threads can be created.
+- Do not copy validation transcript blocks into PR comments or PR bodies.
+- Do not add AI attribution or generated-by signatures to PR surfaces.
 - Do not claim tests or CI passed unless you ran them or inspected their actual output.
 - Do not approve a PR with unresolved security, data, runtime, or required-validation uncertainty.
 - Do not approve or mark a PR ready when the board-backed regression gate is blocked, incomplete, or shows a plausible regression.
@@ -98,7 +103,7 @@ Return findings first, ordered by severity. Include:
 - Findings with file and line references.
 - Business rules checked, their sources, and whether the PR satisfies them.
 - Open questions.
-- Validation reviewed.
+- Operator validation reviewed.
 - Board checked, inventory scope/date, matched tickets, and protected behavior checked.
 - Review scope and instructions applied.
 - Dropped candidates when useful.

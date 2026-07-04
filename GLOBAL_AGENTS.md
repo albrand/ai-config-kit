@@ -193,6 +193,36 @@ release, or skill/agent workflow.
   bias. Reuse existing project patterns when they match the current stack and
   constraints; otherwise challenge them.
 
+## Security-First Defaults
+
+This rule is always on. It does not require the user to ask for security work.
+
+- When a change touches authentication, authorization, account/tenant isolation,
+  secrets, cryptography, external input, file handling, outbound requests,
+  dependencies, or build/config files, apply the Security Gate in
+  `QUALITY_GATES.md` and the doctrine in `SECURITY_AND_PENTEST.md` as part of
+  normal validation — not as an optional extra.
+- Weight supply-chain and build-config compromise first. It is the demonstrated
+  real-world failure mode: obfuscated payloads appended to config files,
+  malicious dependency bumps, dynamic execution in config, and zero-width
+  Unicode. Treat unexplained code in build/config files as a high-priority
+  signal, not noise.
+- Rate findings on residual exposure after existing mitigations, not on raw
+  scanner labels (residualize — see
+  `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`).
+- For high-stakes or broad security review, use multi-pass reinforcement:
+  several independent, blind, multi-lens finder passes plus an adversarial refute
+  pass, trusting only findings that survive. A single pass is not a security
+  sign-off. The executable form is `skillsets/security-review/`.
+- Security work is authorized-and-defensive only: find → validate → fix →
+  regress on owned or authorized targets. Establish authorization before any
+  active testing; otherwise stay static. Do not build offensive,
+  self-propagating, evasive, or mass-targeting tooling, even for an owned target;
+  keep proof-of-concept minimal and convert it into a fix plus a regression test.
+- Keep exploit-validation, severity, and fix-design judgment on the strongest
+  available reasoning path; delegate only bounded, verifiable security sub-tasks
+  (see the security routing tier in `HARNESS_STRATEGY.md`).
+
 ## Collaboration Defaults
 
 - Be direct and operational.
@@ -201,6 +231,9 @@ release, or skill/agent workflow.
 - Provide paste-ready prompts when asked for prompts.
 - Ask a direct question when source-of-truth layers conflict.
 - Prefer durable workflow improvements over one-off reminders.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.
 
 ## Scope Boundaries
 

@@ -24,6 +24,8 @@ Before substantial repository work, read:
 16. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
 17. `docs/agent-framework/skillsets/pr-review/README.md`
 18. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
+19. `docs/agent-framework/SECURITY_AND_PENTEST.md`
+20. `docs/agent-framework/skillsets/security-review/README.md`
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -33,7 +35,14 @@ For ecosystem bootstrap workflows such as `/roadmap-terraform`,
 `docs/agent-framework/skillsets/ecosystem-terraform/` files.
 
 For high-signal PR review, diff review, merge readiness, or `/code-review`,
-also read `docs/agent-framework/skillsets/pr-review/` files.
+also read `docs/agent-framework/skillsets/pr-review/` files and follow
+`docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
+as the mandatory public review and PR-body contract.
+
+For security review, hardening, vulnerability discovery, threat modeling,
+supply-chain/dependency risk, or `/adversarial-security-sweep` and
+`/pentest-specialist`, also read `docs/agent-framework/SECURITY_AND_PENTEST.md`
+and `docs/agent-framework/skillsets/security-review/` files.
 
 For Figma-first UX design workflows, design systems, design tokens, component
 library guidance, Figma annotations, design-to-code handoff, or
@@ -115,3 +124,6 @@ Replace this section with local rules:
 - Keep changes scoped.
 - Run focused validation first.
 - Report failed, blocked, skipped, and not-run checks explicitly.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.

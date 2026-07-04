@@ -37,6 +37,10 @@ Executable entrypoints:
 - Claude Code command: `skillsets/pr-review/claude/commands/code-review.md`
 - Output contract: `skillsets/pr-review/references/pr-review-output-contract.md`
 
+The output contract is mandatory and canonical for PR reviews, merge-readiness
+comments, public review comments, and PR bodies. Tool-specific entrypoints must
+load it instead of restating or weakening the public review surface rules.
+
 1. Preflight before review:
    - Confirm the PR or diff is open for review.
    - Stop or ask before continuing if it is closed, draft, obviously automated/trivial, or already reviewed by the same AI reviewer.
@@ -58,9 +62,11 @@ Executable entrypoints:
    - Report only high-confidence, high-signal issues.
    - Deduplicate findings.
    - For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
-   - Use inline review threads for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub.
-   - Include the failing contract or behavior, runtime impact, and concrete fix direction in the review thread.
-   - Use committable suggestion blocks only when the suggestion fully fixes the issue without hidden follow-up work.
+   - Use inline review threads for changed code when possible, with exact file/line context and links using the full commit SHA when linking to GitHub. Do not replace threadable findings with one giant review body.
+   - Include the failing contract or behavior, root cause in the changed code, a practical failure example, runtime impact, and concrete fix direction in each substantive review thread.
+   - Use committable suggestion blocks when the replacement is small, complete, and safe to apply as-is. Do not fabricate suggestion blocks for findings that need broader design or multi-file work.
+   - Keep PR review comments and PR bodies transcript-free: no `Validation reviewed` blocks, command-by-command pass lists, `git diff --check passed`, `git merge-tree succeeded`, `no checks reported`, or board-access caveats. Exact validation evidence belongs in the operator close-out.
+   - Do not add AI attribution or generated-by signatures to PR surfaces.
    - If inline review APIs fail, fall back to one submitted review body with file/line references and state the fallback.
 
 ## Existing Review Comments And Re-Review
@@ -155,6 +161,11 @@ Use:
 
 Findings should include file references and be ordered by severity.
 
+For public PR review comments, use the stricter inline thread shape in
+`skillsets/pr-review/references/pr-review-output-contract.md`: root cause,
+practical failure example, impact, and suggestion-if-applicable on the smallest
+owning changed range.
+
 ## Self-Review Before Completion
 
 After editing, review your own diff:
@@ -192,6 +203,11 @@ PR body should include:
 - Rollback path.
 - Residual risk.
 
+Do not paste review-validation transcript blocks into PR bodies. Keep validation
+outcome-oriented and concise; reserve exact command transcripts, board-access
+gaps, and reviewer close-out evidence for the operator response unless the
+repository template explicitly requires a brief validation section.
+
 Do not leave template sections blank. Use `N/A` if a section does not apply.
 
 ## Approval Standard
@@ -226,9 +242,9 @@ Open questions:
 
 - <question or "None">
 
-Validation reviewed:
+Operator validation:
 
-- <command/output reviewed>
+- <command/output reviewed; do not copy this block into PR surfaces>
 
 Residual risk:
 
@@ -252,7 +268,7 @@ Residual risk:
 
 ## Validation
 
-- <command>: <status>
+<concise outcome-oriented validation summary; no review-transcript block>
 
 ## Deployment / Operations
 

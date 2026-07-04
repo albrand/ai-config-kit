@@ -30,7 +30,8 @@ Before acting on repository work, load and follow the framework in this order:
 17. `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when the task is roadmap bootstrap, technical platform bootstrap, project assessment, hardening, QA matrix creation, or one of the Claude Code commands `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`
 18. `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md` when the task is Figma-first UX design work, layout creation, design-system or design-token setup, component-library guidance, Figma annotations, design-to-code handoff, or the Claude Code command `/ux-design-agent`
 19. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when the task is PR review, diff review, merge-readiness review, public review comments, or the Claude Code command `/code-review`
-20. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md` when the task is Codex skill-library setup, skill context-budget reduction, plugin-heavy installs, or skill add/update/remove work
+20. `SECURITY_AND_PENTEST.md` and `skillsets/security-review/README.md` when the task is security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the Claude Code commands `/adversarial-security-sweep` or `/pentest-specialist`
+21. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md` when the task is Codex skill-library setup, skill context-budget reduction, plugin-heavy installs, or skill add/update/remove work
 
 If the tool cannot automatically read files, ask the user to provide the relevant files before implementation.
 
@@ -84,6 +85,9 @@ If the tool cannot automatically read files, ask the user to provide the relevan
 - Report passed, failed, blocked, skipped, and not-run checks separately.
 - Report unavailable or blocked harness capabilities instead of pretending they exist.
 - Keep closed-scope details out of shared framework files.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.
 - Apply the Challengeable Directives and Anti-Bias Rule below.
 
 ## Challengeable Directives and Anti-Bias Rule

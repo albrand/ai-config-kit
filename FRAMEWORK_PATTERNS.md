@@ -175,7 +175,7 @@ PR body should include:
 
 - Problem.
 - Approach.
-- Validation run.
+- Concise validation summary without review-transcript blocks.
 - Deployment or operational impact.
 - Rollback path.
 - Residual risk.
@@ -319,7 +319,7 @@ Rules:
 Output:
 
 - Findings ordered by severity.
-- Validation reviewed.
+- Operator validation reviewed, kept out of PR surfaces.
 - Comments posted or withheld.
 - Residual risk.
 

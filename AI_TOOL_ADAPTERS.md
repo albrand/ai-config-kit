@@ -21,6 +21,7 @@ Use this for any AI assistant:
    - Directive challenge, anti-bias, causal-overfitting, or confounder rationale: `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`
    - Quality convergence: `QUALITY_CONVERGENCE.md` plus `QUALITY_GATES.md`
    - Review or PR: `REVIEW_AND_PR_FRAMEWORK.md`; for high-signal PR review or posted review workflows also load `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`
+   - Security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or `/adversarial-security-sweep` and `/pentest-specialist`: `SECURITY_AND_PENTEST.md`, `skillsets/security-review/README.md`, and `skillsets/security-review/references/security-review-contract.md`
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, or design-to-code handoff: `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`
    - Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work: `skillsets/skill-library-router/README.md` and `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`
@@ -37,6 +38,9 @@ Use this for any AI assistant:
    repo adoption settings, harness configuration, `AGENT_WORKSPACE_ROOTS`, or
    explicit user input. Never hardcode one operator's personal projects folder
    into portable adapter instructions.
+10. Do not add AI attribution, generated-by footers, model signatures, or
+   watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+   unless the user explicitly asks for that attribution.
 
 Use `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` when the task is specifically to import or update the Codex Skill Library Router from this kit.
 

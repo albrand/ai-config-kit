@@ -1,5 +1,5 @@
 ---
-description: Review a pull request or diff with business-rule-first analysis, high-signal filtering, scoped instructions, validated findings, inline code threads, and default submitted GitHub reviews.
+description: Review a pull request or diff with business-rule-first analysis, high-signal filtering, scoped instructions, validated findings, mandatory output-contract loading, inline code threads, root-cause commentary, practical failure examples, GitHub suggestion blocks when safe, no monolithic review bodies, no validation-transcript boilerplate in PR surfaces, no AI signatures, and default submitted GitHub reviews.
 argument-hint: [PR number, URL, branch, diff path, optional --no-post]
 allowed-tools: Bash(gh api:*), Bash(gh pr checks:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr edit:*), Bash(gh pr list:*), Bash(gh pr review:*), Bash(gh pr view:*), Bash(gh issue view:*), Bash(gh search:*), Bash(git diff:*), Bash(git status:*), Bash(git rev-parse:*), mcp__github_inline_comment__create_inline_comment
 ---
@@ -16,7 +16,7 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
 
 ## Workflow
 
-1. Load `~/.claude/pr-review-output-contract.md` when available. If running inside a repo that vendors `agent-config-kit`, also load `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, `ARCHITECTURE_AND_CODE_QUALITY.md`, and `skillsets/pr-review/references/pr-review-output-contract.md`.
+1. Load and obey `~/.claude/pr-review-output-contract.md` when available before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also load `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, `ARCHITECTURE_AND_CODE_QUALITY.md`, and `skillsets/pr-review/references/pr-review-output-contract.md`.
 2. Create a todo list before starting.
 3. Preflight:
    - Confirm the PR or diff is open and reviewable.
@@ -59,18 +59,23 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Convert follow-ups into vertical-slice tickets only when ticketing is requested.
 11. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
-12. Create a private comment plan before posting; dedupe findings; prefer one submitted PR review over loose issue comments.
+12. Create a private comment plan before posting; dedupe findings; run the output contract's pre-post self-check; prefer one submitted PR review over loose issue comments.
 13. For GitHub PRs, post approved high-confidence review comments by default unless `--no-post` is present or posting is blocked.
 14. Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Each thread must include:
    - `Business rule / contract:` the source rule being violated.
+   - `Root cause:` the changed code path, state, assumption, or missing guard that creates the problem.
    - `Issue:` what the code does now.
+   - `Practical failure example:` how this fails for a user, workflow, test, data path, security boundary, or operation.
    - `Impact:` the negative user, business, data, security, or operational effect.
    - `Suggested next step:` what the developer should do next.
    - `Code-level recommendation:` when the finding is code-owned, name the exact route, function, component, payload, guard, test, migration, or config that should change and explain why that code change solves the failing behavior.
-   Do not limit recommendations to business decisions. Use compact code snippets when they make the problem concrete, especially to show what the bad code does versus what the proposed code would solve. Use a GitHub suggestion block only when the replacement is small, complete, and safe to apply as-is; otherwise provide a scoped code sketch or implementation direction.
+   Do not limit recommendations to business decisions. Use compact code snippets when they make the problem concrete, especially to show what the bad code does versus what the proposed code would solve. Use a GitHub suggestion block only when the replacement is small, complete, and safe to apply as-is; otherwise provide a scoped code sketch or implementation direction. Never fabricate a suggestion block.
+   Do not collapse findings into one giant review body. Use the review body only for a short transcript-free summary and thread links when needed.
+   Do not include validation transcript blocks on PR surfaces. Avoid `Validation reviewed`, command-by-command pass lists, `git diff --check passed`, `git merge-tree succeeded`, `no checks reported`, or board-access caveats in PR review comments or PR bodies. Keep exact validation evidence in the operator close-out.
+   Do not add AI attribution or signatures such as `Generated with Claude Code`, model names, AI disclaimers, or watermarks.
    If inline review APIs fail, fall back to one submitted request-changes/comment review body with file/line references and state the fallback.
 15. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
 
 ## Output
 
-Use the final report shape from `pr-review-output-contract.md`. Findings first, then open questions, validation reviewed, review scope, dropped candidates when useful, and residual risk.
+Use the operator close-out shape from `pr-review-output-contract.md`. Findings first, then open questions, operator validation, review scope, dropped candidates when useful, and residual risk. Do not copy operator validation into PR surfaces.

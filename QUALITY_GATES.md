@@ -171,8 +171,18 @@ Use when reviewing a pull request, branch, or diff for merge readiness.
 - Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported concerns.
 - Report validation actually reviewed, including missing or misleading validation.
 - For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
-- Prefer inline review threads on changed code over loose issue comments.
-- Use committable suggestion blocks only when the suggestion fully fixes the issue.
+- Prefer inline review threads on changed code over loose issue comments. Do not
+  use one giant review body when changed lines can own the findings.
+- Each substantive inline thread must include root cause, practical failure
+  example, impact, and concrete code-level next step.
+- Use committable suggestion blocks when the replacement is small, complete, and
+  safe to apply as-is. Do not fabricate suggestion blocks for broad or uncertain
+  fixes.
+- Keep public PR surfaces transcript-free: no `Validation reviewed` blocks,
+  command-by-command pass lists, `git diff --check passed`,
+  `git merge-tree succeeded`, `no checks reported`, or board-access caveats in
+  PR comments or PR bodies.
+- Do not add AI attribution or generated-by signatures to PR surfaces.
 - When addressing existing PR comments, inspect live comments, reviews, review threads, current head, checks, and deployment state before editing.
 - Reply to each applicable comment after the fix or evidence lands, resolve only addressed threads, and request re-review if the new head invalidates approval.
 
@@ -188,14 +198,48 @@ For data changes:
 
 ## Security Gate
 
-For security-sensitive changes:
+For security-sensitive changes. This gate is the checklist; `SECURITY_AND_PENTEST.md`
+is the full doctrine, and the security-review skillset is the executable form.
 
-- Check authorization on server-side boundaries.
-- Check account or workspace isolation.
-- Check secret handling.
-- Check logging and public error responses.
-- Check webhook or callback verification.
-- Include negative tests where practical.
+Coverage (examine the categories that apply; do not report a category clean
+unless it was actually examined):
+
+- Broken access control: server-side authorization on every boundary, account /
+  workspace / tenant isolation, no client-trusted authz, no IDOR.
+- Injection: SQL/NoSQL, command, template, header, and path injection;
+  parameterization and context-correct escaping.
+- Authentication & session: credential handling, session fixation, token
+  lifetime and rotation.
+- Cryptographic & secret handling: no secrets in code/logs/config, no weak or
+  homemade crypto, encryption in transit and at rest where required.
+- SSRF and unsafe outbound requests: user-controlled URLs, metadata-endpoint
+  reachability, allow-listing.
+- Supply-chain & malicious dependencies (weight first — the demonstrated
+  real-world failure mode): review dependency/lockfile changes against the code
+  change; scan build/config files for appended code, obfuscation markers,
+  `child_process`/`eval` in config, dynamic `require` added to ESM, and
+  zero-width Unicode; check lifecycle scripts. Use
+  `skillsets/security-review/references/supply-chain-iocs.md`.
+- Security misconfiguration: default creds, verbose errors, permissive CORS,
+  missing security headers, exposed admin surfaces.
+- Logging & monitoring: no secrets in logs, no sensitive data in public error
+  responses, adequate security audit trail.
+
+Validation requirements:
+
+- Rate severity on **residual** exposure after existing mitigations, not on the
+  raw scanner label (residualize — see the causal protocol in
+  `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`).
+- For high-stakes or broad security review, use **multi-pass reinforcement**:
+  several independent, blind finder passes with different lenses, then an
+  adversarial refute pass that only confirms findings surviving cross-checking,
+  looping until dry. A single pass is not sufficient for a security sign-off.
+- Include negative tests where practical, and add a regression test or CI guard
+  for each confirmed finding.
+- For active testing against a running target, the authorization gate in
+  `SECURITY_AND_PENTEST.md` must pass first; otherwise stay static.
+- Keep exploit-validation, severity, and fix-design judgment on the strongest
+  reasoning path (see the security routing tier in `HARNESS_STRATEGY.md`).
 
 ## Validation Report Template
 

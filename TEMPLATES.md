@@ -398,7 +398,7 @@ Ecosystem terraform result:
 
 ## Validation
 
-- <command>: <status>
+<concise outcome-oriented validation summary; no review-transcript block>
 
 ## Deployment / Operations
 

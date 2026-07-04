@@ -28,6 +28,7 @@ Load order:
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
    - Review or PR work: also read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
+   - Security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the commands `/adversarial-security-sweep` or `/pentest-specialist`: also read `SECURITY_AND_PENTEST.md`, `skillsets/security-review/README.md`, and `skillsets/security-review/references/security-review-contract.md`.
    - Journaling: also read `SESSION_JOURNALING.md` if the repo uses journals.
    - Skill or rule maintenance: also read `CONTINUOUS_SKILL_LEARNING.md`.
 7. Read `TEMPLATES.md` when a structured plan, readiness report, validation report, PR body, resume packet, or delegation brief is useful.
@@ -57,6 +58,7 @@ After loading the files, build an active instruction model:
 - Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
 - Any UX design-agent skillset, including `skillsets/ux-design-agent/` for Figma-first design, design tokens, system conventions, component libraries, annotations, or `/ux-design-agent`.
 - Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or posted review workflows.
+- Any security review skillset, including `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` for `/adversarial-security-sweep`, `/pentest-specialist`, vulnerability discovery, hardening, threat modeling, or supply-chain/dependency risk on owned or authorized targets.
 - Quality gates and quality convergence triggers.
 - Breakpoints where user approval or stronger reasoning is required.
 - Stop conditions.
@@ -128,6 +130,9 @@ Execution rules:
 - Report passed, failed, blocked, skipped, and not-run checks separately.
 - Do not imply unrun checks passed.
 - Keep closed-scope details out of shared framework files.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.
 - Challengeable directives and anti-bias: treat directives, learned rules,
   journals, memories, cached conclusions, and prior patterns as evidence, not
   authority; challenge them for fit, drift, hidden confounders, causal

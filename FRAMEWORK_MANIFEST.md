@@ -28,6 +28,7 @@ Core files:
 - `CONTINUOUS_SKILL_LEARNING.md`: promotion of repeated lessons into durable rules.
 - `ARCHITECTURE_AND_CODE_QUALITY.md`: architecture, security, state, data, and quality review doctrine.
 - `QUALITY_GATES.md`: validation levels and truth-reporting rules.
+- `SECURITY_AND_PENTEST.md`: authorized defensive-security doctrine — supply-chain hardening, threat modeling, vulnerability lifecycle, multi-pass reinforcement, authorization gate, dual-use guardrails, and security routing.
 - `QUALITY_CONVERGENCE.md`: iterative targets, scoring, feedback loops, breakpoints, and stop conditions.
 - `REVIEW_AND_PR_FRAMEWORK.md`: review posture and PR evidence requirements.
 - `TOKEN_ECONOMY.md`: empirical token-cost recipes (model tier mapping, prompt compression, output filtering, memory hygiene). Complements `HARNESS_STRATEGY.md`.
@@ -44,6 +45,7 @@ Support files:
 - `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
 - `skillsets/pr-review/`: executable high-signal PR review skillset, including a Codex skill, Claude Code `/code-review` command, and shared output contract.
+- `skillsets/security-review/`: executable defensive-security skillset — the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
@@ -79,6 +81,7 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 6. `HARNESS_STRATEGY.md`
 7. `ARCHITECTURE_AND_CODE_QUALITY.md`
 8. `QUALITY_GATES.md`
+8a. `SECURITY_AND_PENTEST.md` when the change touches auth, access control, secrets, crypto, external input, outbound requests, dependencies, or build/config files
 9. `QUALITY_CONVERGENCE.md` when quality targets require iteration
 10. `TOKEN_ECONOMY.md` when delegating, designing sub-agent prompts, coordinating another AI tool, or evaluating cost
 11. `TEMPLATES.md` when a structured plan or report is useful
@@ -156,6 +159,27 @@ Use for bugs, failing tests, CI failures, deploy failures, environment mismatche
 3. `TEMPLATES.md` debugging and validation reports
 4. Any repo-specific logs, reproduction steps, contracts, or environment docs
 
+### Security Review Profile
+
+Use for security review, hardening, vulnerability discovery, threat modeling,
+supply-chain/dependency risk, or the Claude Code commands
+`/adversarial-security-sweep` and `/pentest-specialist`:
+
+1. Minimum Profile
+2. `SECURITY_AND_PENTEST.md`
+3. `QUALITY_GATES.md` Security Gate
+4. `HARNESS_STRATEGY.md` security routing tier when delegating lens work
+5. `skillsets/security-review/README.md`
+6. `skillsets/security-review/references/security-review-contract.md`
+7. `skillsets/security-review/references/supply-chain-iocs.md`
+8. The relevant Codex skill or Claude Code command:
+   - `skillsets/security-review/codex/adversarial-security-sweep/SKILL.md`
+   - `skillsets/security-review/codex/pentest-specialist/SKILL.md`
+   - `skillsets/security-review/claude/commands/adversarial-security-sweep.md`
+   - `skillsets/security-review/claude/commands/pentest-specialist.md`
+9. The owned or authorized target evidence: repo, diff, dependencies, configs,
+   and authorization basis for any active testing
+
 ### Review And PR Profile
 
 Use for code review, self-review, PR preparation, or readiness decisions:
@@ -166,6 +190,11 @@ Use for code review, self-review, PR preparation, or readiness decisions:
 4. `ARCHITECTURE_AND_CODE_QUALITY.md`
 5. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when performing high-signal PR review or posted review workflows
 6. Actual diff, changed files, validation output, and repo PR template
+
+The PR review output contract is mandatory for public review comments,
+merge-readiness comments, and PR bodies. It controls inline thread shape,
+root-cause commentary, practical failure examples, safe suggestion blocks,
+transcript-free PR surfaces, and no AI attribution.
 
 ### Adoption Profile
 

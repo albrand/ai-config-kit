@@ -4,6 +4,11 @@ This skillset turns the shared review doctrine into executable Codex and Claude 
 
 Use it when the user asks for a PR review, diff review, merge-readiness review, AI reviewer setup, or high-signal review comments.
 
+The shared output contract is mandatory for every PR review and PR body produced
+through this skillset. It is the canonical rule for inline review threads,
+root-cause commentary, practical failure examples, safe GitHub suggestion
+blocks, transcript-free public surfaces, and no AI signatures.
+
 ## Entry Points
 
 - Codex: `skillsets/pr-review/codex/high-signal-pr-review/SKILL.md`
@@ -22,8 +27,11 @@ Do not clone public skills wholesale into project repos. Keep the local workflow
 ## Safety
 
 - For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
-- Prefer inline review threads over loose issue comments, and fall back to a single review body only when inline posting is unavailable.
+- Prefer inline review threads over loose issue comments, and fall back to a single review body only when inline posting is unavailable. Do not use one giant review body when changed lines can own the findings.
+- Include root cause, practical failure example, impact, and a code-level next step in each substantive inline thread.
 - Do not review closed, draft, trivial automated, or already-reviewed PRs unless the user explicitly asks.
 - Do not flag speculative, lint-only, style-only, pre-existing, or unscoped issues.
-- Do not use committable suggestion blocks unless the suggestion fully fixes the issue.
+- Use committable suggestion blocks when the replacement is small, complete, and safe to apply as-is. Do not fabricate suggestion blocks when no safe replacement exists.
+- Do not include validation transcript blocks such as `Validation reviewed`, command-by-command pass lists, or board-access caveats in PR review comments or PR bodies.
+- Do not add AI attribution, generated-by signatures, model names, or AI watermarks to PR surfaces.
 - Do not claim validation passed unless it was actually run or inspected.

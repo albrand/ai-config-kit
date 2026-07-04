@@ -21,6 +21,13 @@ Read the framework before substantial repository work:
 @docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
 @docs/agent-framework/skillsets/pr-review/README.md
 @docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
+@docs/agent-framework/SECURITY_AND_PENTEST.md
+@docs/agent-framework/skillsets/security-review/README.md
+
+For high-signal PR review, diff review, merge readiness, `/code-review`, public
+review comments, or PR bodies, obey
+@docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
+as the mandatory public review and PR-body contract.
 
 ## Repo-Specific Overlay
 
@@ -86,6 +93,9 @@ Replace this section with local rules:
   imply skipped or unrun checks passed.
 - Verify before completion. Completion requires artifact plus validation
   evidence; otherwise report the outcome as unverified.
+- Do not add AI attribution, generated-by footers, model signatures, or
+  watermarks to code, docs, PR bodies, comments, commits, or review surfaces
+  unless the user explicitly asks for that attribution.
 
 ## Optional Claude Code Commands
 
