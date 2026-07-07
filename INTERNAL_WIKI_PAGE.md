@@ -30,19 +30,31 @@ It must not include sensitive details, non-public repository names, internal roa
 5. Harness strategy
    - Use `HARNESS_STRATEGY.md` to define master/sub-agent routing, model tiers, cache rules, anti-drift, escalation, and validation ownership.
 
-6. Cross-agent coordination
+6. Context acceleration, optional
+   - Use `CONTEXT_ACCELERATION.md` and `skillsets/context-acceleration/` only
+     when the team chooses a graph, generated wiki, symbol index, code-review
+     graph, or similar accelerator.
+   - Require an operator documentation package that explains artifact paths,
+     graph/wiki vocabulary, query and prompt examples, common workflows,
+     refresh commands, freshness, privacy/ignore policy, troubleshooting, and
+     token-impact measurement.
+   - Treat accelerator output as advisory orientation until source files,
+     tickets or board state, tests, runtime, config, and accepted criteria
+     verify load-bearing claims.
+
+7. Cross-agent coordination
    - Use `CROSS_AGENT_COORDINATION.md` when one AI tool coordinates another AI tool as peer critic, explorer, bounded executor, verifier, or summarizer.
 
-7. Quality convergence
+8. Quality convergence
    - Use `QUALITY_CONVERGENCE.md` when work needs measured iterations, breakpoints, and explicit stop conditions.
 
-8. Repo instruction file
+9. Repo instruction file
    - Use `REPO_AGENTS_TEMPLATE.md` in each repository.
 
-9. Repo-local process docs
+10. Repo-local process docs
    - Add only when the workflow is local to that repository.
 
-10. Optional local journals
+11. Optional local journals
    - Use `SESSION_JOURNALING.md` if the repo needs resumable execution notes.
 
 ## What Belongs Globally
@@ -83,6 +95,9 @@ It must not include sensitive details, non-public repository names, internal roa
 - [ ] Add the adapter for each AI tool the team uses.
 - [ ] Add global skills.
 - [ ] Define harness support for sub-agents, cross-agent counterpart access, model routing, cache, and validation execution.
+- [ ] If adopting a context accelerator, document its artifacts, vocabulary,
+      usage examples, refresh commands, freshness, privacy policy,
+      troubleshooting, token impact, and verification boundary.
 - [ ] Add repo instruction file.
 - [ ] Define repo source-of-truth order.
 - [ ] Define architecture boundaries.

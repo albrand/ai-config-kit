@@ -252,6 +252,31 @@ Rules:
 - Pass only the context needed for the subtask.
 - Bypass cache when source-of-truth files changed or the user asks for fresh, current, repeated, or from-scratch analysis.
 
+## Pattern 12a: Optional Context Acceleration
+
+Use when a team chooses a Graphify-compatible graph, OpenWiki-compatible
+generated wiki, symbol index, code-review graph, or similar accelerator.
+
+Rules:
+
+- Treat the accelerator as optional advisory orientation, not a default
+  dependency or source of truth.
+- Record artifact paths, freshness, scope, supported modes, trust, privacy
+  boundary, artifact policy, and the operator documentation package.
+- Require practical docs for queries/prompts, graph or wiki vocabulary, common
+  workflows, refresh commands, troubleshooting, verification boundaries, and
+  token-impact measurement.
+- Use the selected tool at full useful capability for orientation, scope
+  mapping, blast-radius analysis, business-rule discovery, and compact
+  delegation briefs.
+- Verify every load-bearing claim against source files, tickets or board state,
+  tests, runtime, config, and accepted criteria.
+
+Guardrail:
+
+- A barely understandable graph or generated wiki is `limited` or `blocked`,
+  not an adopted capability.
+
 ## Pattern 13: Framework Manifest And Readiness
 
 Use when installing, auditing, or changing the framework itself.

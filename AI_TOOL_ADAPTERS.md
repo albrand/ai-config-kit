@@ -25,6 +25,7 @@ Use this for any AI assistant:
    - Roadmap, technology, assessment, or hardening bootstrap: `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, or design-to-code handoff: `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`
    - Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work: `skillsets/skill-library-router/README.md` and `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md`
+   - Optional context acceleration with a chosen graph, wiki, symbol index, or code-review graph: `CONTEXT_ACCELERATION.md`, `skillsets/context-acceleration/`, the selected tool's operator documentation package, `HARNESS_STRATEGY.md`, and `TOKEN_ECONOMY.md`
    - Journaling: `SESSION_JOURNALING.md`
    - Skill creation: `CONTINUOUS_SKILL_LEARNING.md` plus `SKILLS_CATALOG.md`
 6. For repo work, also give the AI the repo's local instruction file.

@@ -72,10 +72,46 @@ Harness capabilities:
 - Cross-agent counterpart access: <available|limited|blocked|unavailable|unknown> - <tool/auth/capture evidence and fallback>
 - Model routing: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Cache or memory: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
+- Context accelerator: <available|limited|blocked|unavailable|unknown> - <tool/artifact, documentation package, scope, freshness, supported modes, privacy boundary, artifact policy, and fallback>
 - MCP or external integration routing: <available|limited|blocked|unavailable|unknown> - <repo/folder/workflow allow-list evidence and fallback>
 - Network or external tools: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Browser or UI verification: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
 - Persistent journals: <available|limited|blocked|unavailable|unknown> - <evidence and fallback>
+```
+
+## Context Acceleration Record
+
+```md
+Context accelerator (optional):
+- Adopted: <none|graph|wiki|graph+wiki> - <tool class, vendor-neutral>
+- Artifact path: <local path or "none">
+- Documentation package: <path|missing|stale|too thin> - <usage/vocabulary/refresh/privacy/verification/troubleshooting/token impact covered yes|no>
+- Freshness: <generated-at|stale|unknown> - <source state it covers>
+- Scope: <paths/modules/languages covered>
+- Supported modes: <graph query/path/explain/summary/report/MCP | wiki quickstart/source-map/update-metadata>
+- Trust: <authorized run|untrusted> - <secret exclusion and ignore policy applied yes|no>
+- Advisory boundary: <load-bearing claims verified against source yes|no>
+- Status: <available|limited|blocked|unavailable|unknown>
+- Fallback: <progressive disclosure + focused rg + stated gap>
+```
+
+## Accelerator Documentation Package
+
+```md
+Accelerator documentation package:
+- Purpose and coverage: <why it exists; covered repos/paths/languages/docs/schemas/tickets; exclusions>
+- Artifacts and access: <graph paths, wiki root, metadata, reports, MCP config, ignored outputs>
+- Vocabulary: <node types, edge types, labels, confidence markers, wiki taxonomy, inferred/semantic markers>
+- Usage examples:
+  - Orientation: <query/prompt/call and expected shape>
+  - Scope mapping: <query/prompt/call and expected shape>
+  - Blast radius: <query/prompt/call and expected shape>
+  - Business rules: <query/prompt/call and expected shape>
+- Refresh and freshness: <commands, source revision metadata, update cadence, stale symptoms, failure handling>
+- Privacy and artifact policy: <secret exclusion, ignore policy, local vs committed, CI opt-in, private endpoint handling>
+- Verification boundary: <claims that are advisory; primary sources required before decisions>
+- Troubleshooting: <empty/stale/partial/noisy/misleading output symptoms and fallback>
+- Token impact ledger: <measured|vendor-reported|estimate-only savings, maintenance cost, direct-read fallback>
 ```
 
 ## Framework Readiness Report
@@ -92,6 +128,7 @@ Framework readiness:
 - Closed-scope scan: <passed|failed|not run>
 - First-session check: <passed|failed|not run>
 - Skill library index: <fresh|stale|missing|not applicable|blocked> - <counts or blocker>
+- Context accelerator: <available|not used|stale|blocked> - <tool/artifact, documentation package, scope, freshness, artifact policy, and verification boundary>
 - Archive updated: <yes|no|not applicable>
 
 Gaps:

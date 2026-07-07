@@ -114,6 +114,14 @@ release, or skill/agent workflow.
 
 - Use progressive disclosure: start from indexes, file lists, metadata,
   structured fields, and summaries before loading full artifacts.
+- When a user or repo has selected a context accelerator such as a
+  Graphify-compatible graph, OpenWiki-compatible generated wiki, symbol index,
+  or code-review graph, verify scope and freshness, then use it at full useful
+  capability for broad orientation before raw source sweeps. Treat generated or
+  inferred claims as advisory until primary sources verify them. Require a
+  practical operator documentation package for usage, vocabulary, refresh,
+  privacy, verification, troubleshooting, and token impact. Load
+  `CONTEXT_ACCELERATION.md` for the full gate and reporting contract.
 - In Codex installs with many skills or plugins, use a refreshed
   `skill-library-router` index for smart skill access instead of disabling
   skills or bulk-loading skill bodies.

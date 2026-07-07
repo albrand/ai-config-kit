@@ -24,8 +24,9 @@ Before implementation:
 11a. For security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or `/adversarial-security-sweep` and `/pentest-specialist`, read `SECURITY_AND_PENTEST.md` and `skillsets/security-review/README.md`.
 12. For roadmap, technology, assessment, or hardening bootstrap, read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`.
 13. For Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, Figma annotations, or design-to-code handoff, read `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`.
-14. For Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work, read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`.
-15. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
+14. For optional context acceleration with a chosen graph, generated wiki, symbol index, code-review graph, or similar accelerator, read `CONTEXT_ACCELERATION.md`, `skillsets/context-acceleration/README.md`, and the repo-local operator documentation package for the selected tool.
+15. For Codex skill-library setup, context-budget warnings, plugin-heavy installs, or skill add/update/remove work, read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`.
+16. If `CONFIG_KIT_AI_PROMPT.md` is available, read it and use it as the ingestion contract.
 
 Required behavior:
 
@@ -43,6 +44,11 @@ Required behavior:
 - If another AI tool participates, create a communication plan before joint work and keep a single-agent fallback.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow.
+- If the repo adopts a context accelerator, verify freshness, scope, supported
+  modes, trust, operator documentation package, privacy boundary, and artifact
+  policy before using it. Use it at full useful capability for orientation and
+  scoping, but treat generated claims as advisory until primary sources verify
+  them.
 - For Codex skill or plugin add/update/remove work, refresh the installed
   `skill-library-router` index and run its `--check` mode, or report the
   sandbox or permission blocker.

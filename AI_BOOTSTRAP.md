@@ -17,21 +17,25 @@ Before acting on repository work, load and follow the framework in this order:
 7. `CROSS_AGENT_COORDINATION.md` when another AI tool may participate
 8. `HARNESS_STRATEGY.md`
 9. `TOKEN_ECONOMY.md` when routing, delegation, or cost control matters
-10. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when anti-bias,
+10. `CONTEXT_ACCELERATION.md` and
+    `skillsets/context-acceleration/README.md` when the user or repo opts into
+    a graph, generated wiki, symbol index, code-review graph, or similar
+    context accelerator
+11. `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when anti-bias,
     causal-overfitting, confounder control, or cross-project pattern reuse is
     material
-11. `SESSION_JOURNALING.md` if the repo uses journals
-12. `ARCHITECTURE_AND_CODE_QUALITY.md`
-13. `QUALITY_GATES.md`
-14. `QUALITY_CONVERGENCE.md` when work needs iterative improvement
-15. `REVIEW_AND_PR_FRAMEWORK.md`
-15. `TEMPLATES.md` when a structured output is needed
-16. `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md` when the task is module delivery planning, roadmap shaping, milestone planning, or implementation-ticket creation
-17. `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when the task is roadmap bootstrap, technical platform bootstrap, project assessment, hardening, QA matrix creation, or one of the Claude Code commands `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`
-18. `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md` when the task is Figma-first UX design work, layout creation, design-system or design-token setup, component-library guidance, Figma annotations, design-to-code handoff, or the Claude Code command `/ux-design-agent`
-19. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when the task is PR review, diff review, merge-readiness review, public review comments, or the Claude Code command `/code-review`
-20. `SECURITY_AND_PENTEST.md` and `skillsets/security-review/README.md` when the task is security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the Claude Code commands `/adversarial-security-sweep` or `/pentest-specialist`
-21. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md` when the task is Codex skill-library setup, skill context-budget reduction, plugin-heavy installs, or skill add/update/remove work
+12. `SESSION_JOURNALING.md` if the repo uses journals
+13. `ARCHITECTURE_AND_CODE_QUALITY.md`
+14. `QUALITY_GATES.md`
+15. `QUALITY_CONVERGENCE.md` when work needs iterative improvement
+16. `REVIEW_AND_PR_FRAMEWORK.md`
+17. `TEMPLATES.md` when a structured output is needed
+18. `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md` when the task is module delivery planning, roadmap shaping, milestone planning, or implementation-ticket creation
+19. `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when the task is roadmap bootstrap, technical platform bootstrap, project assessment, hardening, QA matrix creation, or one of the Claude Code commands `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`
+20. `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md` when the task is Figma-first UX design work, layout creation, design-system or design-token setup, component-library guidance, Figma annotations, design-to-code handoff, or the Claude Code command `/ux-design-agent`
+21. `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md` when the task is PR review, diff review, merge-readiness review, public review comments, or the Claude Code command `/code-review`
+22. `SECURITY_AND_PENTEST.md` and `skillsets/security-review/README.md` when the task is security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the Claude Code commands `/adversarial-security-sweep` or `/pentest-specialist`
+23. `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md` when the task is Codex skill-library setup, skill context-budget reduction, plugin-heavy installs, or skill add/update/remove work
 
 If the tool cannot automatically read files, ask the user to provide the relevant files before implementation.
 
@@ -74,6 +78,11 @@ If the tool cannot automatically read files, ask the user to provide the relevan
   `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`
   and use the fresh URL.
 - Use cache only for deterministic unchanged inputs, and bypass it when fresh reasoning or current evidence is requested.
+- When a user or repo has adopted a context accelerator, verify freshness,
+  scope, supported modes, trust, and the operator documentation package before
+  relying on it. Use the selected graph/wiki/index at full useful capability
+  for orientation and scoping, but treat generated claims as advisory until
+  primary sources verify them.
 - Reset active context on repo, workflow, incident, or objective changes. Leave
   a compact resume packet for the previous workflow when useful.
 - Preserve repo-local rules over generic defaults.

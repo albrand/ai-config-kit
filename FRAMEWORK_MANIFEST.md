@@ -36,10 +36,12 @@ Core files:
 
 Support files:
 
+- `CONTEXT_ACCELERATION.md`: optional directives for using a chosen Graphify-compatible knowledge graph/context map or OpenWiki-compatible generated agent wiki as advisory orientation, including the required operator documentation package; not a default dependency or source of truth.
 - `AI_TOOL_ADAPTERS.md`: setup guidance for common AI tools.
 - `FRAMEWORK_PATTERNS.md`: neutral reusable configuration patterns.
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
+- `skillsets/context-acceleration/`: optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability.
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
@@ -225,6 +227,32 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 6. `QUALITY_GATES.md`
 7. `CONTINUOUS_SKILL_LEARNING.md`
 
+### Context Acceleration Profile (Optional)
+
+Use when the user or repo opts into a Graphify-compatible knowledge
+graph/context map, OpenWiki-compatible generated agent wiki, local symbol index,
+code-review graph, or another tool that precomputes repository context.
+
+Load additively with the active workflow profile:
+
+1. Active workflow profile
+2. `HARNESS_STRATEGY.md`
+3. `TOKEN_ECONOMY.md`
+4. `SKILLS_CATALOG.md`
+5. `CONTEXT_ACCELERATION.md`
+6. `skillsets/context-acceleration/codex/context-acceleration/SKILL.md` when
+   installing or using the Codex skill
+7. The selected tool's graph report, graph metadata, generated wiki quickstart,
+   update metadata, MCP config, operator documentation package, repo-local
+   skill, or equivalent capability evidence
+
+Use the selected tool at full useful capability for orientation, scope mapping,
+blast-radius discovery, business-rule discovery, and delegation context. It is
+advisory only, not a default dependency or source of truth. Record accelerator
+availability, documentation-package status, scope, freshness, provenance,
+privacy boundary, and artifact policy in the harness capability record. If no
+accelerator is adopted, skip this profile.
+
 ## Harness Capability Record
 
 Before substantial work, record the actual capabilities available in the active tool. Do not assume a capability exists because the framework mentions it.
@@ -253,6 +281,7 @@ Required fields:
 | Network or external tools | `[available/limited/blocked/unavailable/unknown]` | `[how verified]` | `[local-only path]` |
 | Browser or UI verification | `[available/limited/blocked/unavailable/unknown]` | `[how verified]` | `[alternate verification]` |
 | Persistent journals | `[available/limited/blocked/unavailable/unknown]` | `[how verified]` | `[manual notes or disabled]` |
+| Context accelerator (optional) | `[available/limited/blocked/unavailable/unknown]` | `[tool/artifact, documentation package, scope, freshness, provenance, privacy boundary, artifact policy]` | `[progressive disclosure + focused rg]` |
 
 Fallback rule:
 
@@ -325,6 +354,7 @@ A repo or AI tool has adopted the framework only when each required item is true
 | Harness capabilities | Capabilities are recorded as available, limited, blocked, unavailable, or unknown. |
 | Cross-agent coordination | Counterpart access is recorded, and paired work has a communication plan plus single-agent fallback. |
 | External integrations | MCPs and external tools are scoped by repo, folder, or workflow, with ask-before-use behavior for unrecorded connections. |
+| Context acceleration (optional) | If the team adopts a graph or wiki accelerator, availability, operator documentation package, freshness, provenance, privacy boundary, artifact policy, opt-in state, and advisory boundary are recorded per `CONTEXT_ACCELERATION.md`. |
 | Journaling | The repo states whether journals are required, optional, local-only, versioned, or disabled. |
 | Quality gates | Required focused, lint, typecheck, test, build, security, and release checks are listed. |
 | Quality convergence | Iteration targets, max iterations, stop conditions, and escalation rules are defined for high-risk work. |

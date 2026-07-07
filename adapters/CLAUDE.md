@@ -24,6 +24,12 @@ Read the framework before substantial repository work:
 @docs/agent-framework/SECURITY_AND_PENTEST.md
 @docs/agent-framework/skillsets/security-review/README.md
 
+When a repo adopts a context accelerator, also read
+@docs/agent-framework/CONTEXT_ACCELERATION.md
+@docs/agent-framework/skillsets/context-acceleration/README.md
+and the repo-local operator documentation package for the selected graph,
+generated wiki, symbol index, or code-review graph.
+
 For high-signal PR review, diff review, merge readiness, `/code-review`, public
 review comments, or PR bodies, obey
 @docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
@@ -38,6 +44,7 @@ Replace this section with local rules:
 - Required validation commands: `[fill in]`
 - Harness capabilities: `[sub-agents/cross-agent counterpart/model routing/cache/validation executor availability]`
 - MCP and external integration routing: `[repo/folder/workflow allow-list or disabled]`
+- Context accelerator: `[none/adopted tool, artifact path, operator docs, freshness, scope, supported modes, artifact policy, verification boundary]`
 - Framework path and manifest: `[fill in]`
 - Journaling requirement: `[enabled/disabled and path]`
 - Release or deployment rules: `[fill in]`
@@ -73,6 +80,11 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- If the repo adopts a context accelerator, verify freshness, scope, supported
+  modes, trust, operator documentation package, privacy boundary, and artifact
+  policy before using it. Use it at full useful capability for orientation and
+  scoping, but treat generated claims as advisory until primary sources verify
+  them.
 - For Codex skill or plugin add/update/remove work, refresh the installed
   `skill-library-router` index and run its `--check` mode, or report the
   sandbox or permission blocker.

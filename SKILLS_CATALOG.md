@@ -12,6 +12,7 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 | `harness-routing` | Work that can use model tiers, sub-agents, cache, delegated validation, or the prompt phrase `subagents swarm allowed` | Routing plan, model choice, cache decision, escalation triggers |
 | `directive-challenge` | Non-trivial planning, architecture, framework, skill, or cross-project pattern decisions | Challenge pass over directives, journals, memory, cached conclusions, hidden confounders, causal overfitting, advisor route or fallback, and adopted/rejected recommendations |
 | `token-efficiency` | Delegating to sub-agents, choosing model tiers, coordinating another AI, shaping long prompts, or controlling noisy output | Smallest capable tier, compressed brief, output cap, preserved exact evidence |
+| `context-acceleration` | A user or repo opts into a Graphify-compatible graph, OpenWiki-compatible generated wiki, local symbol index, code-review graph, or similar accelerator | Capability and freshness gate, operator documentation package status, full-strength tool usage plan, source-verification plan, artifact policy, and measured or clearly labeled token-impact claim |
 | `cross-agent-coordination` | Work can benefit from another AI tool acting as peer critic, explorer, executor, verifier, or summarizer; also when the prompt says `subagents swarm allowed` and a counterpart may be useful | Communication plan, counterpart capability gate, output contract, fallback |
 | `mcp-routing` | Before using MCPs or external integrations, or when a new registered MCP server appears | Repo/folder/workflow allow-list decision, ask-before-use prompt, external-system fallback |
 | `context-reset` | User changes workflow, repo, incident, objective, or the context window is overloaded | Resume packet for previous work and a clean active scope for the new task |
@@ -43,6 +44,7 @@ Use shared skillsets when a workflow is broader than one global skill and needs 
 
 | Skillset | Use When | Expected Output |
 | --- | --- | --- |
+| `skillsets/context-acceleration/` | A user or repo opts into or evaluates a graph, generated wiki, symbol index, code-review graph, or similar context accelerator for token savings, scoping, blast-radius mapping, business-rule discovery, or delegation briefs | Capability and freshness gate, operator documentation package, full-strength accelerator usage plan, targeted source-verification plan, artifact policy, and measured or clearly labeled token/developer-experience impact |
 | `skillsets/module-delivery/` | A user provides a module, capability area, roadmap item, migration target, or project-planning request and wants evidence-backed phases, tickets, resources, risks, owners, and validation gates | A module scope package, project description, simple phases, PR-sized tickets, resource links, open questions, and a validation report |
 | `skillsets/skill-library-router/` | Codex skill-library setup, skill context-budget warnings, plugin-heavy installs, or skill add/update/remove work where every skill should stay accessible when needed | Installed router skill, refreshed local `skill-index.json`, implicit/explicit counts, policy summary, blocked write report |
 | `skillsets/ux-design-agent/` | A design-maker (UX designer, founder, or product team) wants a personal AI design agent that designs in a live mockup (e.g. Next.js on Vercel), enforces one source of truth, runs a design signoff, and propagates signed-off UI to Figma and a ticket board; OR a product owner, stakeholder, or implementation lead wants to consume an existing prototype/Figma/screenshots/repo, inventory it (screens, components, tokens, typography, states, responsive/accessibility behavior, design-system conventions), and shape or create/update PR-sized tickets. Covers layouts, design tokens, typography, system conventions, component-library guidance such as shadcn/ui, Figma annotations, or design-to-code handoff | Mode detection (design-maker vs PO), source-of-truth gate, project mode detection, Figma/board/Vercel capability gate, UX questions with recommended defaults, live mockup + preview URL, token and design-system decision, design signoff, propagation to Figma (or chosen SoT) and to tickets (Jira, Linear, or the chosen board) with a revision comment, design inventory + ranked open questions/dependencies + board-agnostic ticket set (PROPOSED vs CREATED), artifacts changed or proposed, UX validation |
@@ -102,6 +104,7 @@ Use repo-local skills when a workflow is valuable but not universal.
 - `design-contract-review`: review changed UI against approved designs and runtime contracts.
 - `ticket-first-delivery`: issue-tracker workflow for status, acceptance criteria, evidence, and follow-ups.
 - `release-readiness`: deployment, rollback, environment, migration, and monitoring readiness.
+- `context-acceleration`: repo-local rules for an adopted graph or wiki accelerator - generation, freshness gate, ignore policy, and advisory boundary.
 
 ## Skill Shape
 
@@ -148,6 +151,11 @@ Report...
   include the exact phrase in the trigger description and define what it
   authorizes, what it does not force, and which safety, privacy, budget, and
   validation checks still apply.
+- If a skill wraps a context accelerator, keep it tool-specific and repo-local
+  unless the behavior is broadly portable. Define the freshness gate, generated
+  artifact policy, operator documentation package, secret exclusion, allowed
+  commands, and the rule that graph or wiki claims are advisory until verified
+  against primary sources.
 - Workflow steps should be ordered.
 - Guardrails should describe what the agent must not do.
 - Output requirements should be easy to check.

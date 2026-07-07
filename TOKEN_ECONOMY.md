@@ -149,6 +149,45 @@ mechanical reduction before the model reasons.
   diffs, failures, and security findings.
 - Prefer "script output as context": scripts fetch, diff, count, or classify;
   the agent reasons over the compact result.
+- When a trusted context accelerator is adopted (see
+  `CONTEXT_ACCELERATION.md`), prefer its graph or wiki orientation calls for
+  the first pass of scope mapping and blast-radius estimation; they collapse
+  broad exploration into a compact advisory result before you load full files.
+  Verify load-bearing claims against source.
+
+## Context Acceleration Economics
+
+Graph and generated-wiki accelerators save tokens only when their maintenance
+cost is lower than repeated source exploration. Treat them as optional and
+measure or label estimates honestly.
+
+Good fit:
+
+- Medium or large repos with repeated architecture, ownership, impact, or
+  business-rule questions.
+- Mixed corpora where source, docs, schemas, ADRs, tickets, diagrams, or
+  operations notes must be correlated.
+- Multi-agent workflows where a compact source map prevents every worker from
+  rediscovering the same surface.
+
+Weak fit:
+
+- Tiny repos or narrow changes where direct reads are cheaper.
+- Fresh incidents where generated artifacts are stale.
+- Security, auth, data, or release decisions unless every load-bearing claim is
+  checked against primary sources.
+
+Usage rule:
+
+- Use graph/query/path/explain/wiki/source-map outputs to choose targeted reads.
+- Do not paste whole graph JSON, generated wiki trees, or large reports into a
+  prompt when a scoped query or summary can answer the routing question.
+- Do not claim savings from vendor examples as measured local savings. Say
+  "vendor-reported" or "estimate-only" unless the run produced a local token or
+  cost ledger.
+- Keep the token-impact ledger in the accelerator documentation package so
+  future agents can see when the graph or wiki saved context and when direct
+  source reads were cheaper.
 
 ## Trajectory-Style Compression
 

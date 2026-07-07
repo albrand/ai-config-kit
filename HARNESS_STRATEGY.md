@@ -59,6 +59,8 @@ Use `FRAMEWORK_MANIFEST.md` for the capability record. At minimum, check:
 - Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
+- Context accelerators such as repo knowledge graphs, generated agent wikis,
+  symbol indexes, or code-review graphs.
 - Network or external tools.
 - Browser or UI verification.
 - Persistent journals.
@@ -129,6 +131,13 @@ context mechanically where possible:
 - Compress stale middle history while preserving the original objective,
   active constraints, recent evidence, current plan, unresolved risks, and
   validation state.
+- When the team has adopted a trusted context accelerator (see
+  `CONTEXT_ACCELERATION.md`), use its graph query/path/explain/summary/report
+  or wiki quickstart/source-map calls for broad orientation, scope mapping,
+  blast radius, and business-rule discovery before falling back to raw broad
+  grep. Require an operator documentation package that explains usage,
+  vocabulary, refresh, privacy, verification, troubleshooting, and token impact.
+  Treat its output as advisory and verify load-bearing claims against source.
 
 ## Routing Principle
 
@@ -411,6 +420,11 @@ Treat MCPs and external integrations as scoped capabilities.
 - If Replit OAuth returns `invalid_scope` or produces an auth URL without
   scopes, rerun `codex mcp login --scopes openid,profile,email replit` and use
   the fresh URL.
+- A context accelerator (see `CONTEXT_ACCELERATION.md`) is an opt-in scoped
+  capability, not a default integration. Apply its freshness gate, ignore
+  policy, operator documentation package, and opt-in rules before using it; fall
+  back to progressive disclosure and focused `rg` when it is stale, missing,
+  undocumented, or untrusted.
 
 ## Cache Rules
 

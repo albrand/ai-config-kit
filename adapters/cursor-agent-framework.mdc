@@ -14,6 +14,9 @@ Before substantial repository work, read and follow:
 - `docs/agent-framework/OPERATING_MODEL.md`
 - `docs/agent-framework/AGENT_ORCHESTRATION.md`
 - `docs/agent-framework/HARNESS_STRATEGY.md`
+- `docs/agent-framework/TOKEN_ECONOMY.md`
+- `docs/agent-framework/CONTEXT_ACCELERATION.md` when the repo adopts a graph,
+  generated wiki, symbol index, code-review graph, or similar accelerator
 - `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
 - `docs/agent-framework/QUALITY_GATES.md`
 - `docs/agent-framework/QUALITY_CONVERGENCE.md`
@@ -51,6 +54,12 @@ or skill add/update/remove work, also read
 `docs/agent-framework/SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and files under
 `docs/agent-framework/skillsets/skill-library-router/`.
 
+For optional context acceleration with a chosen graph, generated wiki, symbol
+index, code-review graph, or similar accelerator, also read
+`docs/agent-framework/CONTEXT_ACCELERATION.md`,
+`docs/agent-framework/skillsets/context-acceleration/`, and the repo-local
+operator documentation package for the selected tool.
+
 Required behavior:
 
 - Analyze before acting.
@@ -58,6 +67,11 @@ Required behavior:
 - Map the impacted surface.
 - Verify the framework manifest and active harness capabilities.
 - Route work through the harness only when useful and supported.
+- If the repo adopts a context accelerator, verify freshness, scope, supported
+  modes, trust, operator documentation package, privacy boundary, and artifact
+  policy before using it. Use it at full useful capability for orientation and
+  scoping, but treat generated claims as advisory until primary sources verify
+  them.
 - Challenge directives, journals, memories, cached conclusions, and prior
   project patterns as evidence, not authority. For non-trivial planning or
   architecture, use an independent model/counterpart critique when available;

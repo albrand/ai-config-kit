@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Acceleration"
+  short_description: "Use optional graph or wiki context accelerators"
+  default_prompt: "Use $context-acceleration to gate and use the selected graph or wiki accelerator for repo orientation."

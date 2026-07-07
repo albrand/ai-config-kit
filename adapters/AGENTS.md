@@ -15,17 +15,22 @@ Before substantial repository work, read:
 7. `docs/agent-framework/CROSS_AGENT_COORDINATION.md`
 8. `docs/agent-framework/HARNESS_STRATEGY.md`
 9. `docs/agent-framework/TOKEN_ECONOMY.md`
-10. `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
-11. `docs/agent-framework/QUALITY_GATES.md`
-12. `docs/agent-framework/QUALITY_CONVERGENCE.md`
-13. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
-14. `docs/agent-framework/skillsets/skill-library-router/README.md`
-15. `docs/agent-framework/skillsets/ux-design-agent/README.md`
-16. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
-17. `docs/agent-framework/skillsets/pr-review/README.md`
-18. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
-19. `docs/agent-framework/SECURITY_AND_PENTEST.md`
-20. `docs/agent-framework/skillsets/security-review/README.md`
+10. `docs/agent-framework/CONTEXT_ACCELERATION.md` when the repo adopts a
+    graph, generated wiki, symbol index, code-review graph, or similar
+    accelerator
+11. `docs/agent-framework/skillsets/context-acceleration/README.md` when that
+    optional strategy applies
+12. `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
+13. `docs/agent-framework/QUALITY_GATES.md`
+14. `docs/agent-framework/QUALITY_CONVERGENCE.md`
+15. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
+16. `docs/agent-framework/skillsets/skill-library-router/README.md`
+17. `docs/agent-framework/skillsets/ux-design-agent/README.md`
+18. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
+19. `docs/agent-framework/skillsets/pr-review/README.md`
+20. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
+21. `docs/agent-framework/SECURITY_AND_PENTEST.md`
+22. `docs/agent-framework/skillsets/security-review/README.md`
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -54,6 +59,12 @@ or skill add/update/remove work, also read
 `docs/agent-framework/SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and
 `docs/agent-framework/skillsets/skill-library-router/` files.
 
+For optional context acceleration with a chosen graph, generated wiki, symbol
+index, code-review graph, or similar accelerator, also read
+`docs/agent-framework/CONTEXT_ACCELERATION.md`,
+`docs/agent-framework/skillsets/context-acceleration/`, and the repo-local
+operator documentation package for the selected tool.
+
 ## Repo-Specific Overlay
 
 Replace this section with local rules:
@@ -68,6 +79,7 @@ Replace this section with local rules:
 - Required validation commands: `[fill in]`
 - Harness capabilities: `[sub-agents/cross-agent counterpart/model routing/cache/validation executor availability]`
 - MCP and external integration routing: `[repo/folder/workflow allow-list or disabled]`
+- Context accelerator: `[none/adopted tool, artifact path, operator docs, freshness, scope, supported modes, artifact policy, verification boundary]`
 - Framework path and manifest: `[fill in]`
 - Journaling requirement: `[enabled/disabled and path]`
 - Release or deployment rules: `[fill in]`
@@ -107,6 +119,11 @@ Replace this section with local rules:
   instead of reusing stale context.
 - Before using MCPs or external integrations, confirm they are enabled for the
   current repo, folder, or workflow. Ask before using unrecorded connections.
+- If the repo adopts a context accelerator, verify freshness, scope, supported
+  modes, trust, operator documentation package, privacy boundary, and artifact
+  policy before using it. Use it at full useful capability for orientation and
+  scoping, but treat generated claims as advisory until primary sources verify
+  them.
 - Use the skill-library router proactively. Before assuming no specialized skill
   applies, match task language against the refreshed index's names, aliases,
   routing terms, search text, plugin/source, and paths; load the narrowest

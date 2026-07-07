@@ -35,6 +35,8 @@ Decide which layers the repo will use:
 - Local session journals.
 - Automated gates.
 - Configured workspace roots for optional sibling-project pattern scans.
+- Optional context accelerator strategy: graph, generated wiki, symbol index,
+  code-review graph, or none.
 
 Record the chosen framework path, for example `docs/agent-framework/`, and keep adapter imports aligned with that path.
 Record workspace roots through repo adoption settings, harness configuration,
@@ -75,6 +77,9 @@ Then fill the local harness capability record:
 - Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
+- Context accelerator: adopted tool, artifact paths, operator documentation
+  package, scope, freshness, supported modes, privacy boundary, artifact policy,
+  and fallback.
 - Network or external tools.
 - Browser or UI verification.
 - Journal persistence.
@@ -100,6 +105,9 @@ Define:
 - Build command.
 - Security or policy checks.
 - Generated artifact checks.
+- Context accelerator checks when adopted: freshness, operator documentation
+  package, privacy/ignore policy, token-impact ledger, and source-verification
+  boundary.
 - Release readiness checks.
 - Quality convergence targets and iteration limits for high-risk work.
 
@@ -123,12 +131,18 @@ Good candidates:
 - Data migration review.
 - Security-sensitive debugging.
 - Ticket-first delivery workflow.
+- Context acceleration workflow for a chosen graph, generated wiki, symbol
+  index, or code-review graph, including generation, refresh, vocabulary,
+  operator documentation, and verification rules.
 
 Executable shared skillsets should be installed deliberately:
 
 - Share `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` with operators who want an assistant to import the Codex Skill Library Router, keep large skill libraries indexed, and verify smart access after skill or plugin changes.
 - Share `ECOSYSTEM_TERRAFORM_GUIDE.md` with operators so they understand which command to use and can start from tested prompt samples.
 - Share `UX_DESIGN_AGENT_IMPORT_PROMPT.md` with operators who want an assistant to import the UX Design Agent into Codex or Claude Code with overwrite checks and verification.
+- Share `CONTEXT_ACCELERATION.md` and `skillsets/context-acceleration/` with
+  operators who want an assistant to evaluate, adopt, document, or use a chosen
+  graph/wiki/index accelerator without making it a default dependency.
 - Claude Code: copy `skillsets/*/claude/commands/*.md` to the project `.claude/commands/` folder or user `~/.claude/commands/`.
 - Codex: copy the relevant `skillsets/*/codex/*/SKILL.md` into `<CODEX_HOME>/skills/<skill-name>/SKILL.md`.
 - Codex with large skill libraries: install `skillsets/skill-library-router/codex/skill-library-router/`, run its `refresh-skill-index.cjs` script, then run the same script with `--check`.
@@ -147,6 +161,9 @@ State whether `CONFIG_KIT_AI_PROMPT.md` was loaded.
 State which manifest file you loaded.
 State the active harness capability record.
 State whether cross-agent counterpart access is available, blocked, unavailable, or not useful.
+State whether a context accelerator is adopted, and if so its artifact path,
+operator documentation package, freshness, scope, supported modes, artifact
+policy, and verification boundary.
 Also state which validation commands are required for code changes.
 Do not edit files.
 ```
@@ -160,6 +177,8 @@ Confirm:
 - The agent loaded the framework manifest.
 - The agent reports unavailable or limited harness capabilities.
 - The agent reports cross-agent counterpart availability and fallback.
+- The agent reports context accelerator status as unavailable, not adopted,
+  limited, blocked, or available instead of assuming one exists.
 - The agent identifies validation commands.
 - The agent knows when to ask about conflicts.
 - The agent knows whether journals are required.
@@ -176,6 +195,8 @@ Evaluate:
 - Did it use the correct validation?
 - Did it report skipped or blocked checks truthfully?
 - Did it report harness capability gaps truthfully?
+- If a context accelerator is adopted, did it use the graph/wiki/index at full
+  useful capability while verifying load-bearing claims against primary sources?
 - Did it create a communication plan before using another AI tool, or state why paired work was unavailable or not useful?
 - Did it use a convergence loop when first-pass validation was insufficient?
 - Did it update the journal if required?
@@ -188,6 +209,9 @@ Review the repo setup periodically:
 - Promote repeated lessons to skills.
 - Move enforceable rules into lint, tests, CI, or scripts.
 - Keep validation commands current.
+- Keep adopted context accelerator docs current: usage examples, vocabulary,
+  refresh commands, freshness metadata, privacy policy, troubleshooting, and
+  token-impact ledger.
 - Keep closed-scope details local.
 
 ## Adoption Definition Of Done
@@ -201,6 +225,9 @@ A repo has adopted the framework when:
 - It defines architecture boundaries.
 - It defines required validation.
 - It records harness capabilities.
+- If it adopts a context accelerator, it records the operator documentation
+  package, freshness, scope, supported modes, privacy boundary, artifact policy,
+  and advisory verification boundary.
 - It states whether journaling is required.
 - It defines review and PR expectations.
 - If Codex skills or plugins are installed, it has either a fresh Skill Library Router index or an explicit note that indexing is not applicable or blocked.

@@ -25,6 +25,7 @@ concept quickly.
 | Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
 | Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
+| Use a chosen context accelerator (knowledge graph / agent wiki) | `CONTEXT_ACCELERATION.md` and `skillsets/context-acceleration/` |
 
 ## What This Repository Is
 
@@ -40,6 +41,9 @@ It provides:
 - Repo-level instruction templates for local architecture, validation, and workflow rules.
 - Tool adapters for AGENTS-compatible tools, Claude Code, Gemini CLI, Cursor, and generic chat assistants.
 - A harness model for master-thread ownership, delegated-agent routing, cache decisions, validation, and escalation.
+- An optional context acceleration doctrine for using user-selected graph,
+  generated-wiki, symbol-index, or code-review graph tools at full useful
+  capability without treating generated output as source-of-truth.
 - A cross-agent coordination addendum for tool-neutral paired work where one AI coordinates another AI, peer reviewer, or external executor.
 - Quality gates for docs, code, UI, API, data, security, deployment, and review work.
 - A quality convergence loop for work that needs measured improvement across iterations.
@@ -219,7 +223,9 @@ question.
 | `TEMPLATES.md` | Copyable templates for plans, routing, capability records, readiness reports, convergence, debugging, validation, completion, review findings, PRs, skills, and delegation. |
 | `REPO_ADOPTION_PLAYBOOK.md` | Step-by-step adoption guide for installing the framework into a repo. |
 | `INTERNAL_WIKI_PAGE.md` | Short paste-ready wiki summary for teams that want an internal documentation page. |
+| `CONTEXT_ACCELERATION.md` | Optional directives for using a chosen Graphify-compatible knowledge graph/context map or OpenWiki-compatible generated agent wiki as advisory orientation, including the required operator documentation package; not a default dependency or source of truth. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
+| `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
@@ -378,6 +384,45 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 6. `QUALITY_GATES.md`
 7. `CONTINUOUS_SKILL_LEARNING.md`
 
+### Context Acceleration Profile
+
+Use when a user or repo opts into a Graphify-compatible graph,
+OpenWiki-compatible generated agent wiki, symbol index, code-review graph, or
+another context accelerator.
+
+Load:
+
+1. Minimum profile.
+2. `HARNESS_STRATEGY.md`.
+3. `TOKEN_ECONOMY.md`.
+4. `SKILLS_CATALOG.md`.
+5. `CONTEXT_ACCELERATION.md`.
+6. `skillsets/context-acceleration/codex/context-acceleration/SKILL.md` when
+   installing or using the Codex skill.
+7. The selected tool's graph report, graph metadata, generated wiki quickstart,
+   update metadata, MCP config, operator documentation package, repo-local
+   skill, or equivalent capability evidence.
+
+Then:
+
+1. Record scope, freshness, provenance, operator documentation package,
+   privacy boundary, and artifact policy.
+2. Use the selected tool at full useful capability: graph query, path, explain,
+   summary, report, MCP, wiki quickstart, source maps, or update metadata when
+   available and relevant.
+3. Use graph/wiki/index output to choose targeted source reads, not to avoid
+   source reads.
+4. Verify load-bearing claims against primary source files, tests, schemas,
+   runtime evidence, tickets, board criteria, and accepted docs.
+5. Require a practical operator documentation package covering purpose,
+   artifact paths, graph or wiki vocabulary, query/prompt examples, common
+   workflows, refresh commands, privacy policy, verification boundary,
+   troubleshooting, and token-impact measurement.
+6. Keep generated artifacts local and ignored by default; commit or schedule
+   updates only after team opt-in.
+7. Report which claims remain inferred, semantic, generated, stale, or
+   unverified.
+
 ## Tool Adapters
 
 Adapters should be short bootstrap files. They should point to the framework, not fork the whole framework into every tool-specific file.
@@ -420,6 +465,8 @@ Capabilities to record:
 - Cross-agent counterpart access.
 - Model routing.
 - Cache or memory.
+- Context accelerators such as repo graphs, generated agent wikis, symbol
+  indexes, or code-review graphs.
 - MCP or external integration routing.
 - Network or external tools.
 - Browser or UI verification.
@@ -899,6 +946,7 @@ Recommended checks:
 rg --files
 rg -n "docs/agent-framework|AI_BOOTSTRAP.md|FRAMEWORK_MANIFEST.md|CONFIG_KIT_AI_PROMPT.md" .
 rg -n "skill-library-router|skill-index|SKILL_LIBRARY_ROUTER_IMPORT_PROMPT" .
+rg -n "CONTEXT_ACCELERATION.md|skillsets/context-acceleration" .
 git diff --check
 ```
 

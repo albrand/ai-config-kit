@@ -36,6 +36,9 @@ When layers conflict:
 - Load `FRAMEWORK_MANIFEST.md` and verify the relevant framework files are present.
 - Inspect repository state.
 - Read task-relevant source-of-truth docs.
+- When a repo has adopted a context accelerator, read its operator
+  documentation package and record artifact freshness, scope, supported modes,
+  trust, privacy boundary, artifact policy, and advisory verification boundary.
 - Map impacted surfaces.
 
 3. Planning.
@@ -69,6 +72,9 @@ When layers conflict:
 - Before using MCPs or external integrations, verify that the integration is
   enabled for the current repo, folder, or workflow. Ask before using
   repo-scoped or conditional integrations with no routing preference.
+- Before using a context accelerator, verify that it is adopted for the repo and
+  that its operator documentation package explains usage, vocabulary, refresh,
+  privacy, troubleshooting, token impact, and verification boundaries.
 
 5. Implementation or analysis.
 

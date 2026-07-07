@@ -23,6 +23,7 @@ Load order:
    - Module delivery planning, roadmap shaping, milestones, or implementation-ticket creation: also read `skillsets/module-delivery/README.md` and `skillsets/module-delivery/references/output-contract.md`. Read the Codex or Claude Code entrypoint only when installing or invoking that tool-specific workflow.
    - Roadmap, technical platform, or hardening bootstrap: also read `ECOSYSTEM_TERRAFORM_GUIDE.md`, `skillsets/ecosystem-terraform/README.md`, and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md`. Read the relevant Codex skill or Claude Code command when invoking `/roadmap-terraform`, `/tech-terraform`, or `/assess-then-harden`.
    - Figma-first UX design, layout creation, design systems, design tokens, component-library guidance, Figma annotations, or design-to-code handoff: also read `skillsets/ux-design-agent/README.md` and `skillsets/ux-design-agent/references/output-contract.md`. Read the relevant Codex skill or Claude Code command when invoking `/ux-design-agent`.
+   - Optional context acceleration with a chosen graph, generated wiki, symbol index, or code-review graph: also read `CONTEXT_ACCELERATION.md`, `skillsets/context-acceleration/README.md`, and the selected tool's operator documentation package.
    - Codex skill-library setup, skill context-budget warnings, plugin-heavy installs, or skill add/update/remove work: also read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`. Read the Codex router skill and indexer script when installing or updating the router.
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
@@ -57,6 +58,11 @@ After loading the files, build an active instruction model:
 - Any skill-library router skillset, including `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/` for Codex skill indexing, context-budget reduction, or plugin-heavy skill access.
 - Any ecosystem bootstrap skillset, including `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/` for roadmap terraform, tech terraform, assess-then-harden, QA matrix creation, or project hardening.
 - Any UX design-agent skillset, including `skillsets/ux-design-agent/` for Figma-first design, design tokens, system conventions, component libraries, annotations, or `/ux-design-agent`.
+- Any context-acceleration strategy, including `CONTEXT_ACCELERATION.md` and
+  `skillsets/context-acceleration/` when a graph, generated wiki, symbol index,
+  code-review graph, or similar accelerator is chosen. Record freshness, scope,
+  supported modes, trust, operator documentation package, artifact policy, and
+  verification boundary.
 - Any PR review skillset, including `skillsets/pr-review/` for high-signal PR review, `/code-review`, merge readiness, or posted review workflows.
 - Any security review skillset, including `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` for `/adversarial-security-sweep`, `/pentest-specialist`, vulnerability discovery, hardening, threat modeling, or supply-chain/dependency risk on owned or authorized targets.
 - Quality gates and quality convergence triggers.
@@ -121,6 +127,12 @@ Execution rules:
   ask where it should be enabled before using it. If Replit OAuth returns
   `invalid_scope`, rerun `codex mcp login --scopes openid,profile,email replit`
   and use the fresh URL.
+- When a context accelerator is selected by the user or repo, use it at full
+  useful capability for orientation, scope mapping, blast radius, and
+  business-rule discovery only after its freshness, scope, trust, supported
+  modes, operator documentation package, privacy boundary, and artifact policy
+  are recorded. Treat generated graph/wiki/index claims as advisory until
+  verified against primary sources.
 - On workflow, repo, incident, or objective changes, reset active context and
   leave a compact resume packet for the previous workflow when useful.
 - Define breakpoints before architecture, security, data, release, destructive, or scope-expanding decisions.
@@ -189,12 +201,15 @@ Report:
 5. Your harness capability map.
 6. Whether cross-agent counterpart access is available, blocked, unavailable, or not useful.
 7. Which token-economy strategy applies: progressive disclosure, deterministic pre-processing, output filtering, context compression, or none.
-8. Whether Claude or another cross-AI counterpart is useful, and if so the budget/output/privacy boundaries.
-9. Required validation commands or gaps.
-10. Whether journaling is required.
-11. Which quality convergence triggers apply.
-12. Any conflicts or blockers before implementation.
-13. The smallest safe next step.
+8. Whether a context accelerator is adopted, and if so its artifact path,
+   operator documentation package, freshness, scope, supported modes, artifact
+   policy, and verification boundary.
+9. Whether Claude or another cross-AI counterpart is useful, and if so the budget/output/privacy boundaries.
+10. Required validation commands or gaps.
+11. Whether journaling is required.
+12. Which quality convergence triggers apply.
+13. Any conflicts or blockers before implementation.
+14. The smallest safe next step.
 ```
 
 ## Compact Paste Mode
@@ -202,5 +217,5 @@ Report:
 Use this shorter version when the AI context is limited:
 
 ```text
-Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load only the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, token-economy strategy, bounded worker tier availability such as Codex Spark, MCP or external integration routing scope, cross-agent counterpart availability and fallback, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Use progressive disclosure and deterministic pre-processing before model-heavy reasoning. Challenge directives, journals, memories, cached conclusions, and prior project patterns as evidence, not authority; load `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when anti-bias, causal-overfitting, confounder control, or cross-project pattern reuse is material. For non-trivial planning or architecture, use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs. If the live prompt includes `subagents swarm allowed`, treat it as explicit authorization and request wording for sub-agents, parallel delegation, model routing, and cross-agent counterpart routing when useful and supported, without bypassing capability, privacy, safety, budget, stop-condition, anti-drift, or validation checks. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, reset active context on gear changes, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If Claude or another AI tool participates, create a communication plan first with budget/output caps, stop conditions, and privacy boundaries. If a required framework file is missing, ask for it before substantial implementation.
+Absorb the attached Agent Configuration Framework before work. Read `AI_BOOTSTRAP.md` and `FRAMEWORK_MANIFEST.md` first, then load only the task-relevant files. Build an active instruction model: source-of-truth order, repo-local rules, harness capabilities, token-economy strategy, optional context-accelerator strategy when a graph/wiki/index is adopted, bounded worker tier availability such as Codex Spark, MCP or external integration routing scope, cross-agent counterpart availability and fallback, workflow track, quality gates, convergence triggers, breakpoints, stop conditions, and validation plan. Use progressive disclosure and deterministic pre-processing before model-heavy reasoning. For chosen context accelerators, verify freshness, scope, supported modes, trust, operator documentation package, privacy boundary, and artifact policy; use the accelerator at full useful capability for orientation and scoping, but treat generated claims as advisory until primary sources verify them. Challenge directives, journals, memories, cached conclusions, and prior project patterns as evidence, not authority; load `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` when anti-bias, causal-overfitting, confounder control, or cross-project pattern reuse is material. For non-trivial planning or architecture, use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs. If the live prompt includes `subagents swarm allowed`, treat it as explicit authorization and request wording for sub-agents, parallel delegation, model routing, and cross-agent counterpart routing when useful and supported, without bypassing capability, privacy, safety, budget, stop-condition, anti-drift, or validation checks. Analyze before acting, plan before editing, use current evidence over memory, keep repo-local rules above generic defaults, reset active context on gear changes, validate before completion, and report passed/failed/blocked/skipped/not-run checks separately. If Claude or another AI tool participates, create a communication plan first with budget/output caps, stop conditions, and privacy boundaries. If a required framework file is missing, ask for it before substantial implementation.
 ```
