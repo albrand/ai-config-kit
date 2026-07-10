@@ -43,7 +43,7 @@ load it instead of restating or weakening the public review surface rules.
 
 1. Preflight before review:
    - Confirm the PR or diff is open for review.
-   - Stop or ask before continuing if it is closed, draft, obviously automated/trivial, or already reviewed by the same AI reviewer.
+   - Stop or ask before continuing if it is closed, draft, or obviously automated/trivial. The prior-review stop is observable: stop only when the same authenticated reviewer already reviewed the current head with no author reply and no head change since; re-review after an author reply or a new head.
    - Still review AI-generated PRs when the user requests it.
 2. Resolve instruction scope:
    - Identify root and path-scoped instruction files that apply to changed files, such as `CLAUDE.md`, `AGENTS.md`, Cursor rules, repo docs, or local review rules.

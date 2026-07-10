@@ -30,7 +30,8 @@ Do not clone public skills wholesale into project repos. Keep the local workflow
 - For GitHub PRs, post a submitted review by default unless the user explicitly requested draft/no-post mode or posting is blocked.
 - Prefer inline review threads over loose issue comments, and fall back to a single review body only when inline posting is unavailable. Do not use one giant review body when changed lines can own the findings.
 - Include root cause, practical failure example, impact, and a code-level next step in each substantive inline thread.
-- Do not review closed, draft, trivial automated, or already-reviewed PRs unless the user explicitly asks.
+- Do not review closed, draft, or trivial automated PRs unless the user explicitly asks. The prior-review stop is precise: skip only when the same authenticated reviewer already reviewed the current head with no author reply and no head change since; re-review after an author reply or a new head.
+- Missing board access may block approval/merge-readiness (Board regression gate blocked / NOT READY) but must not suppress useful, validated code findings. Scope the board inventory to linked plus demonstrably impacted tickets when no broader board source exists.
 - Do not flag speculative, lint-only, style-only, pre-existing, or unscoped issues.
 - Use committable suggestion blocks when the replacement is small, complete, and safe to apply as-is. Do not fabricate suggestion blocks when no safe replacement exists.
 - Do not include validation transcript blocks such as `Validation reviewed`, command-by-command pass lists, or board-access caveats in PR review comments or PR bodies.

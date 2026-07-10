@@ -20,7 +20,7 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
 2. Create a todo list before starting.
 3. Preflight:
    - Confirm the PR or diff is open and reviewable.
-   - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the same AI reviewer.
+   - Stop or ask before continuing if it is closed, draft, or obviously automated or trivial. The prior-review stop is observable and precise: stop only when the same authenticated reviewer identity already reviewed the current head and no author reply or head change has occurred since; re-review after an author reply or a new head. Do not stop merely because an earlier review exists.
    - Still review AI-generated PRs when the user asks for it.
 4. If the task involves existing PR comments, fetch live top-level comments, reviews, review comments, review threads, head SHA, review decision, and current checks before editing or replying. Map each comment to fixed, evidence-backed reply, not applicable, or still blocked.
 5. Resolve instruction scope:
@@ -36,7 +36,7 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - For Jira-backed repositories, ask imperatively for Jira board access; for non-Jira repositories, ask for the configured board or a current board export.
    - Inventory all visible board tickets, not only the PR's linked issue.
    - Check the diff against current, adjacent, QA, Done, released, and previously working tickets that share files, routes, contracts, data, permissions, or user workflows with the PR.
-   - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY**. Do not approve or call the PR regression-safe.
+    - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY** for approval/merge-readiness — but it does not suppress validated code findings, which are still reported. Scope the inventory to all visible board tickets when a board source is available; when none exists, scope to the linked ticket plus demonstrably impacted tickets (shared files, routes, contracts, data, permissions, or user workflows) and state the narrower scope.
 8. Use independent agents when useful and available:
    - One or two instruction-compliance passes.
    - One business-rule coverage pass.
@@ -59,14 +59,17 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Convert follow-ups into vertical-slice tickets only when ticketing is requested.
 11. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
-12. Create a private comment plan before posting; dedupe findings; run the output contract's pre-post self-check; prefer one submitted PR review over loose issue comments.
+12. Create a private comment plan before posting; dedupe findings; run the output contract's pre-post freshness check and pre-post self-check; prefer one submitted PR review over loose issue comments.
+    - Immediately before submitting, re-fetch the current head SHA, confirm the authenticated reviewer identity that will own the post, re-count unresolved threads, and re-check mergeability. Abort and re-review from the top if the head or reviewer identity changed; update the verdict if only thread count or mergeability shifted.
 13. For GitHub PRs, post approved high-confidence review comments by default unless `--no-post` is present or posting is blocked.
 14. Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Each thread must include:
    - `Business rule / contract:` the source rule being violated.
    - `Root cause:` the changed code path, state, assumption, or missing guard that creates the problem.
    - `Issue:` what the code does now.
-   - `Practical failure example:` how this fails for a user, workflow, test, data path, security boundary, or operation.
-   - `Impact:` the negative user, business, data, security, or operational effect.
+    - `Practical failure example:` how this fails for a user, workflow, test, data path, security boundary, or operation.
+    - `Validation / falsification:` how the claim was checked (reproducer, type check, contract trace, runtime path) and what would refute it.
+    - `Severity / confidence:` blocker/high/medium with a one-line basis.
+    - `Impact:` the negative user, business, data, security, or operational effect.
    - `Suggested next step:` what the developer should do next.
    - `Code-level recommendation:` when the finding is code-owned, name the exact route, function, component, payload, guard, test, migration, or config that should change and explain why that code change solves the failing behavior.
    Do not limit recommendations to business decisions. Use compact code snippets when they make the problem concrete, especially to show what the bad code does versus what the proposed code would solve. Use a GitHub suggestion block only when the replacement is small, complete, and safe to apply as-is; otherwise provide a scoped code sketch or implementation direction. Never fabricate a suggestion block.

@@ -47,8 +47,11 @@ runtime behaviors, persistence/audit improvements, admin/customer UX, delivery
 paths, or other implementation details that explain why the app is better after
 the PR.
 
-If a repository template demands broader sections, treat that template as stale
-for AI-authored PR bodies unless the current user explicitly asks to follow it.
+Repo-local PR templates take precedence. When a repository template defines
+required sections, honor those required project sections while keeping each
+section transcript-free: no command logs, validation transcripts, board-access
+caveats, or AI attribution. The minimal-body rule above applies only to sections
+the template does not mandate.
 
 ## Source Evidence
 
@@ -74,11 +77,18 @@ Before reviewing, decide whether to continue:
 | PR closed                                   | Yes                                                     |
 | PR draft                                    | Yes                                                     |
 | Obviously automated or trivial              | Yes                                                     |
-| Same AI reviewer already commented          | Yes                                                     |
+| Same authenticated reviewer already reviewed the current head | Stop only if no author reply and no head change since that review; re-review after an author reply or a new head |
 | Missing diff access                         | Yes                                                     |
 | Missing repo instructions for changed paths | No, continue with known instructions and report the gap |
 
 Still review AI-generated PRs when the user explicitly requests review.
+
+The prior-review stop is observable and precise: do not stop merely because an
+earlier review exists. Stop only when the same authenticated reviewer identity
+already reviewed the current head SHA and no author activity or head change has
+occurred since. Re-review when the author replies to a review/change-request
+thread or when a new head commit lands. When no same-reviewer same-head review
+exists, proceed and review the current head.
 
 ## Review Passes
 
@@ -120,6 +130,15 @@ Drop:
 - Business concerns that cannot be tied to a source, changed behavior, or a specific acceptance rule.
 - Findings that require unsupported assumptions.
 
+Every reported finding must carry, on its own: the source rule or acceptance
+criterion it violates; changed-code causality (the exact changed path/state/guard
+that causes the failure); a practical failure example; validation or
+falsification (how the claim was checked and what would refute it); the owning
+changed range it is posted on; severity and confidence with a one-line basis;
+and a concrete fix direction. Findings missing any of these, or that are
+unsupported, speculative, or merely pre-existing without being made materially
+worse, are dropped before posting.
+
 ## Business Rule Review Matrix
 
 Before finalizing the review, build and use a compact matrix:
@@ -132,6 +151,27 @@ controllers/DTOs, API schemas, screenshots, existing tests, and current code as
 sources. If a source is unavailable and the gap affects readiness, mark the
 review `NEEDS DISCUSSION` or `Board regression gate blocked / NOT READY`; do not
 approve based on generic code quality.
+
+## Code Findings vs. Board-Backed Readiness
+
+Keep these two outputs separate:
+
+- **Code findings** — compile/runtime breakage, wrong changed-path behavior,
+  broken auth/data/security/API/env contracts, missing required validation, and
+  scoped-instruction violations validated from the diff. These are reported
+  regardless of board access. Missing board access must never suppress a useful,
+  validated code finding.
+- **Board-backed merge/approval-readiness** — requires ticket-board evidence.
+  Missing board access, a stale export, an incomplete inventory, or missing
+  PR-to-ticket traceability blocks approval, merge, and any "ready/regression-safe"
+  verdict, but it does not block reporting the code findings above.
+
+Board inventory scope: inventory all visible board tickets when a board source is
+available. When no broader board source exists, scope the inventory to the linked
+ticket plus demonstrably impacted tickets (shared files, routes, contracts, data,
+permissions, or user workflows) and state that narrower scope. Always report
+board name/scope/date, the tickets matched to the change, and the protected
+behavior checked for regression.
 
 ## Matt-Inspired Review Additions
 
@@ -167,8 +207,12 @@ When posting:
   - What the code currently does.
   - A practical failure example that shows how the issue would affect users,
     data, security, operations, tests, or maintainers.
+  - Validation or falsification: how the claim was checked (reproducer, type
+    check, contract trace, runtime path) and what would refute it.
+  - Severity and confidence (e.g. blocker/high/medium) with a one-line basis.
   - The negative impact of keeping the change as-is.
-  - A concrete suggested next step.
+  - A concrete suggested next step (the fix direction naming the route,
+    function, guard, test, migration, or config that should change).
 - Link to code with a full commit SHA when creating GitHub links.
 - Include a GitHub `suggestion` block when the edit is small, complete, and safe
   to apply as-is. If no complete replacement exists for the selected range,
@@ -194,6 +238,13 @@ When posting:
   blocks such as `Validation reviewed`, `git diff --check passed`,
   `git merge-tree succeeded`, `no checks reported`, or `board unavailable`.
   Keep exact command output and board-access caveats in the operator close-out.
+- Run an immediate pre-post freshness check right before submitting: re-fetch
+  the current head SHA, confirm the authenticated reviewer identity that will own
+  the post, re-count unresolved threads, and re-check mergeability. If the head
+  SHA changed since analysis or the reviewer identity is not the one expected,
+  abort the post, re-review the new head from the top, and restart. If only
+  unresolved-thread count or mergeability shifted, update the verdict accordingly
+  before posting.
 - Before posting, run a pre-post self-check: every substantive comment is an
   inline thread on a real changed range; each has root cause, practical failure
   example, impact, and suggestion-if-applicable; no monolithic review body; no

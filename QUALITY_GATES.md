@@ -164,7 +164,7 @@ Use when tickets, docs, designs, roadmap items, or stakeholder requirements defi
 
 Use when reviewing a pull request, branch, or diff for merge readiness.
 
-- Preflight the PR or diff before review: open, not draft unless explicitly requested, not trivial automated work, not already reviewed by the same AI reviewer unless asked.
+- Preflight the PR or diff before review: open, not draft unless explicitly requested, not trivial automated work. The prior-review stop is precise: skip only when the same authenticated reviewer already reviewed the current head with no author reply and no head change since; re-review after an author reply or a new head.
 - Resolve applicable instruction scope before making findings.
 - Read PR title, body, linked issue, changed-file list, and author intent before reviewing details.
 - Validate each candidate finding before reporting it.
@@ -175,6 +175,10 @@ Use when reviewing a pull request, branch, or diff for merge readiness.
   use one giant review body when changed lines can own the findings.
 - Each substantive inline thread must include root cause, practical failure
   example, impact, and concrete code-level next step.
+- Separate code findings from board-backed readiness: report validated code
+  findings regardless of board access; missing board access blocks
+  approval/merge-readiness only. Scope the board inventory to linked plus
+  demonstrably impacted tickets when no broader board source exists.
 - Use committable suggestion blocks when the replacement is small, complete, and
   safe to apply as-is. Do not fabricate suggestion blocks for broad or uncertain
   fixes.

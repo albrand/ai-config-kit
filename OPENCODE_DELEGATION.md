@@ -140,6 +140,16 @@ tokens plus many tool-loop turns.
 
 ## Context package (what the orchestrator sends)
 
+### Fast-path requirements
+
+The context package is the execution cache. A conforming executor skips global
+bootstrap rediscovery and works only inside the listed scope. Prefer one narrow
+packet per independent file scope. Default budgets are 8 pre-edit tool calls, 2
+validation calls, and a 1200-word close-out; advisors use `ADVISOR_PACKET_V1`,
+`--dir /tmp`, no tools, and a 500-word cap. `--pure` disables external plugins,
+not native tools, so read-only behavior must be enforced by agent permissions,
+not prose alone.
+
 The orchestrator sends the **architected plan** plus execution context:
 
 - `objective` — one line.
@@ -168,6 +178,43 @@ For timeout control, prefer many narrow packets over one broad prompt:
 - When a call times out, classify it as `blocked` with the partial JSON/events
   and do not keep waiting if the master thread already has sufficient evidence
   to make the decision.
+
+## Context garbage collection
+
+Treat context as leased, not permanent. At the end of every execution, retain
+only the close-out, changed paths, failed gates, residual risk, and next step as
+a compact resume packet. Do not carry raw tool logs, duplicate file contents,
+stale plans, or completed-agent transcripts into the next call. Start a fresh
+opencode session for a new plan step; reuse a session only for the same step.
+Invoke opencode through `scripts/run-managed.mjs`. It streams JSON events,
+captures the session ID, enforces a timeout, and deletes a successful
+orchestrator-owned session after the close-out is consumed. Use
+`--retain-session` only for an intentional same-step continuation. Failed or
+timed-out sessions remain available for diagnosis. Run `scripts/context-gc.mjs`
+at boundaries to audit the whole opencode store, live agent RSS, and stale temp
+packets; deletion remains limited to the dedicated temp directory. Never point
+it at a repository, source tree, active session store, or journals.
+
+## GPT orchestration and quality feedback loop
+
+GPT remains the architect and quality owner; GLM 5.2 is the focused executor.
+Before every call, GPT automatically runs the deterministic
+`classify-call.mjs` router over the packet. Never ask the user or GLM to choose
+the mode. Classify every call as `execute`, `advisor`, or `repair`, and send compact
+evidence packets instead of raw conversation history. Record elapsed time,
+input/output tokens, tool-call count, and final status from JSON events.
+
+Mark a run `slow` after 8 pre-edit tool calls, 2 validation calls, or timeout;
+`insufficient` for missing close-out fields, failed gates, partial/blocked
+status, or unmet acceptance criteria; and `drift` for out-of-scope reads,
+edits, or new architecture. For slow or insufficient runs, issue one smaller
+repair packet containing the partial evidence, failed gate, and exact pending
+step. For drift, discard the result and restart with reduced scope. Never
+blindly replay the original broad prompt; escalate to GPT after one repair.
+
+Maintain local rolling telemetry (task class, packet size, elapsed time, tools,
+tokens, status, repair reason). It tunes routing and packet size but is not a
+replacement for source-of-truth validation or model training data.
 
 ## Output contract (what opencode returns)
 

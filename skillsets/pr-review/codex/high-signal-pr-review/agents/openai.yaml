@@ -1,0 +1,7 @@
+interface:
+  display_name: "High Signal PR Review"
+  short_description: "Business-rule PR reviews with root-cause inline threads."
+  default_prompt: "Use $high-signal-pr-review to review this PR, branch, or diff against its business rules and acceptance criteria, validate every finding, and post inline review threads on changed code with root cause, practical failure example, impact, and a safe GitHub suggestion block when applicable. Do not add validation-transcript boilerplate or AI signatures to PR surfaces."
+
+policy:
+  allow_implicit_invocation: false
