@@ -1,0 +1,50 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zai-coding-plan/glm-5.2",
+  "small_model": "zai-coding-plan/glm-5-turbo",
+  "default_agent": "glm-advisor",
+  "share": "disabled",
+  "provider": {
+    "zai-coding-plan": {
+      "whitelist": ["glm-5.2", "glm-5-turbo"],
+      "options": { "timeout": 300000, "chunkTimeout": 60000 }
+    }
+  },
+  "agent": {
+    "glm-advisor": {
+      "description": "One-pass tool-free critique over a compact evidence packet",
+      "mode": "primary",
+      "model": "zai-coding-plan/glm-5.2",
+      "temperature": 0.1,
+      "steps": 2,
+      "permission": "deny"
+    },
+    "glm-fast": {
+      "description": "Tool-assisted read-only discovery and extraction",
+      "mode": "primary",
+      "model": "zai-coding-plan/glm-5-turbo",
+      "temperature": 0.1,
+      "steps": 8,
+      "permission": { "*": "deny", "read": "allow", "glob": "allow", "grep": "allow", "list": "allow", "lsp": "allow" }
+    },
+    "glm-audit": {
+      "description": "Read-only repository analysis and verification",
+      "mode": "primary",
+      "model": "zai-coding-plan/glm-5.2",
+      "temperature": 0.1,
+      "steps": 24,
+      "permission": { "*": "deny", "read": "allow", "glob": "allow", "grep": "allow", "list": "allow", "lsp": "allow" }
+    },
+    "glm-quality": {
+      "description": "Bounded implementation under a parent-owned plan",
+      "mode": "primary",
+      "model": "zai-coding-plan/glm-5.2",
+      "temperature": 0.2,
+      "steps": 80,
+      "permission": { "*": "allow", "task": "deny", "external_directory": "deny", "webfetch": "deny", "websearch": "deny" }
+    }
+  },
+  "compaction": { "auto": true, "prune": false, "reserved": 20000 },
+  "watcher": { "ignore": [".git/**", "node_modules/**", "dist/**", "build/**", "coverage/**", ".next/**", ".turbo/**"] },
+  "mcp": {}
+}

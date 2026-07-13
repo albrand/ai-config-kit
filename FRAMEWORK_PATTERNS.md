@@ -277,6 +277,24 @@ Guardrail:
 - A barely understandable graph or generated wiki is `limited` or `blocked`,
   not an adopted capability.
 
+## Pattern 12b: Adaptive Multi-Model Orchestration
+
+Use when the harness exposes multiple model families or reasoning efforts.
+
+Rules:
+
+- Adopt `single-agent`, `adaptive`, or `always-on-two-family` explicitly.
+- Discover the live model, effort, and agent catalog; do not make example names
+  portable requirements.
+- Assign fast, balanced, deep, and delegating-deep roles by capability and risk.
+- Treat normal strong effort as sufficient when validation is decisive; reserve
+  max for the hardest single reasoning path and ultra for hard decomposable work.
+- Keep external sidecars acyclic, bounded, sanitized, and independently
+  revalidated by the coordinator.
+- Report unavailable lanes as capability gaps without lowering quality gates.
+
+See `ADAPTIVE_MODEL_ORCHESTRATION.md` and `OPENCODE_DELEGATION.md`.
+
 ## Pattern 13: Framework Manifest And Readiness
 
 Use when installing, auditing, or changing the framework itself.

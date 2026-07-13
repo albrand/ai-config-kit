@@ -108,9 +108,8 @@ Replace this section with local rules:
   no-tool delegations and reconcile their outputs before implementation or
   final judgment.
 - In Codex, route the first safe bounded tool/file sidecar for quick or
-  standard work to GPT 5.3 Spark when available and useful. When a Codex model
-  slug is required, use `gpt-5.3-codex-spark`; record the exception reason
-  before using a stronger delegated tier.
+  standard work to the fastest capable model verified in the live catalog;
+  record the exception reason before using a stronger delegated tier.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
   policy sets a stricter limit.

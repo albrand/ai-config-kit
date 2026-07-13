@@ -11,7 +11,7 @@ Use this skill to create or reconcile a project roadmap ecosystem from evidence.
 
 ## Workflow
 
-1. Read `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when available.
+1. Read `references/ecosystem-output-contract.md`. Read the repository's `ECOSYSTEM_TERRAFORM_GUIDE.md` too when the full framework checkout is available.
 2. Extract the project boundary, target users, business outcomes, project size, legacy or greenfield status, source docs, designs, boards, quality gates, and desired output.
 3. Verify required capabilities before promising reads or writes: repo access, issue tracker MCP/CLI, Figma, docs system, GitHub, deployment systems, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially affect roadmap shape, governance, import strategy, or external mutations. Include whether sub-agent swarming or parallel processing is approved if it would be useful.

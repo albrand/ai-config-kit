@@ -11,7 +11,7 @@ Use this skill to create or reconcile the technical operating system for a proje
 
 ## Workflow
 
-1. Read `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when available.
+1. Read `references/ecosystem-output-contract.md`. Read the repository's `ECOSYSTEM_TERRAFORM_GUIDE.md` too when the full framework checkout is available.
 2. Extract target stacks, current repos, legacy constraints, cloud/provider preferences, runtime environments, deployment model, CI/CD requirements, PR review expectations, agent tooling, compliance needs, and desired write scope.
 3. Verify capabilities before promising setup: repo write access, GitHub, package manager, cloud CLI/MCP, Vercel/deployment tools, secret manager, CI provider, design/documentation systems, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially change stack, infrastructure authority, secret handling, environment shape, quality gates, or automation behavior. Ask for approval before any cloud mutation, repo creation, CI mutation, secret handling, or sub-agent swarm.

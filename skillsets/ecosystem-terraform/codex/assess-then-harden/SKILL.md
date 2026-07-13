@@ -11,7 +11,7 @@ Use this skill to understand an existing project end to end, turn that understan
 
 ## Workflow
 
-1. Read `ECOSYSTEM_TERRAFORM_GUIDE.md` and `skillsets/ecosystem-terraform/references/ecosystem-output-contract.md` when available.
+1. Read `references/ecosystem-output-contract.md`. Read the repository's `ECOSYSTEM_TERRAFORM_GUIDE.md` too when the full framework checkout is available.
 2. Extract project path, external sources, expected docs location, issue tracker, target audience, hardening goals, known risks, and whether the user expects writes or only an assessment.
 3. Verify capabilities before promising full coverage: repo read/write access, issue tracker, docs system, GitHub, Figma, deployment/log systems, browser access, and sub-agent or parallel processing.
 4. Ask targeted questions when missing answers materially change assessment scope, docs format, ticket destination, external-source priority, or approval to use parallel agents.

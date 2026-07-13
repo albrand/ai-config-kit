@@ -1,22 +1,15 @@
 ---
 name: ux-design-agent
 description: >-
-  UX/product agent for two audiences: design-makers (UX designers, product
-  designers, founders, product teams) and consumers of an existing design
-  (product owners, stakeholders, implementation leads). MAKING or REVISING mode:
-  mockups, screens, layouts, flows, prototypes, design tokens, typography,
-  components, design systems, a live design preview (e.g. a Next.js mockup on
-  Vercel for review), design signoff, and handoff to Figma and the board.
-  CONSUMING or BACKLOG-SHAPING mode: take an existing prototype, Figma file,
-  screenshots, repo, or design source; inventory screens, flows, components,
-  design tokens, typography, states, responsive and accessibility behavior, and
-  design-system conventions; identify open questions and implementation
-  dependencies; then shape, create, or update backlog tickets (initiative/epic,
-  PR-sized vertical slices with acceptance criteria and design-evidence links)
-  in Jira, Linear, or the chosen board/tracker. The skill detects the active
-  mode and announces it, enforces one design source of truth, verifies tool
-  access before live writes, keeps all external writes approval-gated, and
-  communicates in product language.
+  UX/product workflow for design-makers and consumers of existing designs. Use
+  for making or revising mockups, screens, layouts, flows, prototypes, tokens,
+  typography, components, design systems, live design previews, signoff, and
+  Figma or board handoff. Also use to consume a prototype, Figma file,
+  screenshots, or UI repo; inventory screens, flows, components, tokens,
+  states, responsive and accessibility behavior; identify open questions and
+  dependencies; and shape PR-sized backlog tickets in Jira, Linear, or another
+  tracker. Detect and announce design-maker or backlog-shaping mode, keep one
+  design source of truth, verify tool access, and approval-gate external writes.
 ---
 
 # UX Design Agent

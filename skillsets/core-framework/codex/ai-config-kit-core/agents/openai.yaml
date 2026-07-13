@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI Config Kit Core"
+  short_description: "Load the relevant ai-config-kit operating doctrine"
+  default_prompt: "Use $ai-config-kit-core to load the narrowest framework profile that applies to this task."
+
+policy:
+  allow_implicit_invocation: false

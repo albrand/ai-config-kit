@@ -42,6 +42,12 @@ Constraints:
 Risks:
 - <architecture, security, data, validation, or scope risks>
 
+Adaptive reasoning gate:
+- Profile: <single-agent|adaptive|always-on-two-family>
+- Fast/balanced/deep/delegating-deep lanes: <live capability mapping>
+- Normal strong vs max/ultra: <decision and evidence>
+- External-family authorization: <approved|not approved|not needed>
+
 Directive challenge:
 - <advisor route or single-agent fallback>
 - <authorization sentence included for directive/planning/architecture/challenge briefs: yes|no|not applicable>

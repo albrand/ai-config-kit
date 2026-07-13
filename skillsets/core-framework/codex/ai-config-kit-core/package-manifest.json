@@ -1,0 +1,32 @@
+{
+  "name": "ai-config-kit-core",
+  "version": 1,
+  "required": [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/README.md",
+    "references/CONFIG_KIT_AI_PROMPT.md",
+    "references/GLOBAL_AGENTS.md",
+    "references/AI_TOOL_ADAPTERS.md",
+    "references/AI_BOOTSTRAP.md",
+    "references/FRAMEWORK_MANIFEST.md",
+    "references/OPERATING_MODEL.md",
+    "references/ADAPTIVE_MODEL_ORCHESTRATION.md",
+    "references/AGENT_ORCHESTRATION.md",
+    "references/ARCHITECTURE_AND_CODE_QUALITY.md",
+    "references/CONTEXT_ACCELERATION.md",
+    "references/CONTINUOUS_SKILL_LEARNING.md",
+    "references/CROSS_AGENT_COORDINATION.md",
+    "references/HARNESS_STRATEGY.md",
+    "references/QUALITY_CONVERGENCE.md",
+    "references/QUALITY_GATES.md",
+    "references/REPO_ADOPTION_PLAYBOOK.md",
+    "references/REPO_AGENTS_TEMPLATE.md",
+    "references/REVIEW_AND_PR_FRAMEWORK.md",
+    "references/SECURITY_AND_PENTEST.md",
+    "references/SESSION_JOURNALING.md",
+    "references/SKILLS_CATALOG.md",
+    "references/TOKEN_ECONOMY.md"
+  ],
+  "executable": []
+}

@@ -15,6 +15,8 @@ const policySummaryPath = path.join(referencesDir, 'applied-policy-summary.json'
 
 const explicitOnlyUserSkillNames = new Set([
   // Specialized / heavy workflows — router-accessible on demand.
+  'adaptive-model-orchestrator',
+  'ai-config-kit-core',
   'assess-then-harden',
   'figma',
   'plan-module-delivery',

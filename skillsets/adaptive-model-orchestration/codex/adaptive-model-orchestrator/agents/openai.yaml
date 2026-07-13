@@ -1,0 +1,7 @@
+interface:
+  display_name: "Adaptive Model Orchestrator"
+  short_description: "Route GLM and Codex peers by risk and effort"
+  default_prompt: "Use $adaptive-model-orchestrator to choose the smallest capable GLM and Codex peer lanes, then reconcile them against source evidence."
+
+policy:
+  allow_implicit_invocation: false
