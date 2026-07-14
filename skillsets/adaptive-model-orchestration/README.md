@@ -10,6 +10,8 @@ Copy the whole directory below, preserving executable modes:
 ```text
 codex/adaptive-model-orchestrator/
   -> <CODEX_HOME>/skills/adaptive-model-orchestrator/
+codex/opencode-fast-execution/
+  -> <CODEX_HOME>/skills/opencode-fast-execution/
 ```
 
 Do not copy only `SKILL.md`. The skill requires its bundled references, scripts,
@@ -44,6 +46,17 @@ The bundled executor modes fail closed. They require
 the workdir root. Use that marker only in a dedicated isolated worktree whose
 entire contents are authorized for modification. The default OpenCode agent is
 read-only.
+
+The wrapper uses the managed runner by default. It records exact stop reasons,
+signals the full owned process group on cancellation, waits for process-tree
+quiescence, and deletes only newly created root sessions whose output satisfies
+the selected success contract. It intentionally has no default outer wall
+deadline. `OPENCODE_RUN_DEADLINE_MS` is opt-in; OpenCode provider timeout,
+stream chunk timeout, and agent steps retain their native meanings.
+
+Use `OPENCODE_RETAIN_SESSION=1` with `OPENCODE_SESSION_ID=<id>` to continue the
+same plan step. Interrupted, timed-out, continued, failed, partial, or ambiguous
+sessions remain available for diagnosis and repair.
 
 ## Adoption
 

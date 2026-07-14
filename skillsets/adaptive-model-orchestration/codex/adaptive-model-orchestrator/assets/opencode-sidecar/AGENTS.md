@@ -8,6 +8,10 @@ Act only as the bounded counterpart described by the parent brief.
 - Executor mode follows the supplied architecture and owns only its bounded
   file scope. Run it only in an explicitly marked isolated worktree whose whole
   root is authorized for modification.
+- Keep executor reasoning in bounded, tool-backed cycles. After the supplied
+  plan and enough source evidence are understood, implement in small slices and
+  validate each slice instead of spending one provider request re-deriving the
+  whole plan or composing the entire change in silence.
 - Stop as blocked for new architecture, dependency, destructive, production,
   security, data, or scope decisions.
 - Report checks as pass, fail, blocked, skipped, or not run. Never infer a pass.

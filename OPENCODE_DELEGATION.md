@@ -89,6 +89,37 @@ For advisor calls, prefer precomputed evidence over asking a live repo-bound
 agent to rediscover the entire task. For execution, split plans into disjoint
 file scopes and attach the plan rather than embedding a large transcript.
 
+The bundled wrapper invokes `run-managed.mjs` and streams OpenCode's JSON
+unchanged. The runner has no default outer deadline. An operator may declare an
+explicit deadline with `OPENCODE_RUN_DEADLINE_MS`; an undeclared wall-clock or
+idle limit must not be invented during a run. Same-step continuation requires
+`OPENCODE_RETAIN_SESSION=1` plus `OPENCODE_SESSION_ID` or
+`OPENCODE_CONTINUE=1`.
+
+## Liveness And Stop Authority
+
+Keep these controls distinct:
+
+- OpenCode provider `timeout` limits an individual provider/model request.
+- OpenCode `chunkTimeout` limits the wait between streamed provider chunks.
+- agent `steps` limits agentic iterations and requests a summary at the limit.
+- tool calls, pre-edit reads, validation calls, elapsed time, and outer JSON
+  silence are coordinator telemetry only.
+
+The official definitions live in the OpenCode configuration and agent docs:
+<https://opencode.ai/docs/config/> and <https://opencode.ai/docs/agents/>.
+
+Never interrupt a live run because a telemetry count crossed an expectation.
+Stop only for a verified scope, security, or destructive-action violation; a
+provider or fatal protocol error; a caller cancellation signal; or a
+predeclared explicit wall deadline. Scope drift remains an immediate hard stop.
+
+On cancellation, signal the entire owned process group, wait for it to close,
+and use bounded escalation only if the group remains alive. Do not edit,
+validate, or reassign the worktree until the managed runner reports the process
+tree absent and the coordinator confirms the worktree is stable. A signal being
+sent is not evidence that the process is quiescent.
+
 ## Executor Output
 
 Require:
@@ -109,14 +140,27 @@ residual_risk: <short>
 next_step: <short or null>
 ```
 
+Deletion-eligible executor output must include at least one validation entry
+with `result: pass`, no failed/blocked/skipped/not-run result, and the exact
+affirmative value `gates_preserved: yes`. Empty or ambiguous validation remains
+available for diagnosis but is never auto-deleted.
+
 The coordinator re-reads changes, verifies load-bearing claims, reruns the
 important checks, and resolves disagreements. OpenCode output is execution or
 advisory evidence, never final release truth.
 
 ## Recovery
 
-Retry once only for a clearly transient failure. On timeout, retain partial
-structured output and decide whether local evidence is already sufficient.
-Return `blocked` rather than expanding scope, choosing new architecture,
-adding dependencies, weakening gates, or taking a destructive action not
-authorized by the brief.
+A still-running process is not an insufficient result. After a run has actually
+completed with failed gates, missing close-out, or partial/blocked status, issue
+at most one compact repair packet for the same plan step. Retain the session for
+that continuation. After the one repair, escalate to the coordinator instead of
+replaying a broad prompt.
+
+On provider timeout or another hard stop, retain partial structured output and
+the OpenCode session. Return `blocked` rather than expanding scope, choosing new
+architecture, adding dependencies, weakening gates, or taking a destructive
+action not authorized by the brief. Delete only newly created root sessions
+that the runner observed finish successfully under the selected output
+contract; retain interrupted, timed-out, continued, partial, failed, and
+ambiguous sessions.

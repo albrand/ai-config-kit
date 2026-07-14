@@ -1,0 +1,21 @@
+{
+  "name": "opencode-fast-execution",
+  "version": 1,
+  "dependencies": ["adaptive-model-orchestrator"],
+  "required": [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "scripts/classify-call.mjs",
+    "scripts/classify-run-progress.mjs",
+    "scripts/context-gc.mjs",
+    "scripts/context-tools.test.mjs",
+    "scripts/run-managed.mjs"
+  ],
+  "executable": [
+    "scripts/classify-call.mjs",
+    "scripts/classify-run-progress.mjs",
+    "scripts/context-gc.mjs",
+    "scripts/context-tools.test.mjs",
+    "scripts/run-managed.mjs"
+  ]
+}

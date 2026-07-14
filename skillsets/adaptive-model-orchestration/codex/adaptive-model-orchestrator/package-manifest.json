@@ -6,12 +6,16 @@
     "agents/openai.yaml",
     "references/ADAPTIVE_MODEL_ORCHESTRATION.md",
     "references/OPENCODE_DELEGATION.md",
+    "scripts/run-managed.mjs",
+    "scripts/run-managed.test.mjs",
     "scripts/run-opencode-sidecar.sh",
     "scripts/run-codex-peer.sh",
     "assets/opencode-sidecar/AGENTS.md",
     "assets/opencode-sidecar/opencode.json"
   ],
   "executable": [
+    "scripts/run-managed.mjs",
+    "scripts/run-managed.test.mjs",
     "scripts/run-opencode-sidecar.sh",
     "scripts/run-codex-peer.sh"
   ]

@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenCode Fast Execution
+  short_description: Manage GLM runs without false-positive liveness stops
+  default_prompt: Audit or execute a bounded OpenCode lane using evidence-based stop conditions.
+policy:
+  allow_implicit_invocation: false

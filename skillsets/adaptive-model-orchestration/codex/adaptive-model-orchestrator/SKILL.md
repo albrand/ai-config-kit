@@ -79,10 +79,25 @@ Both wrappers are examples and fail closed when a capability is missing. Use
 environment overrides documented in the scripts rather than editing credentials
 or machine paths into the package.
 
+OpenCode calls run through the bundled managed runner. It has no default
+wall-clock deadline: provider request timeout, stream chunk timeout, agent step
+ceiling, tool counts, and outer JSON silence are distinct signals. Set
+`OPENCODE_RUN_DEADLINE_MS` only when the handoff declares an explicit wall
+deadline. To resume the same plan step, set `OPENCODE_RETAIN_SESSION=1` together
+with `OPENCODE_SESSION_ID` (or `OPENCODE_CONTINUE=1`); do not reuse sessions
+across unrelated work.
+
 Executor modes additionally require `OPENCODE_ALLOW_WRITES=1` and a marker file
 named `.ai-config-kit-sidecar-write-scope` at the workdir root. Create the marker
 only in a dedicated isolated worktree whose entire contents are safe for the
 sidecar to modify; prompt-level file scopes are not an enforcement boundary.
+
+Never interrupt a healthy run solely because it exceeded an expected read,
+tool, validation, elapsed-time, or outer-silence count. Stop only for verified
+scope/security/destructive drift, a provider or fatal protocol error, caller
+cancellation, or a predeclared wall deadline. After a stop, wait for managed
+runner quiescence evidence and confirm the worktree is stable before editing or
+reassigning it.
 
 ## Integrate
 

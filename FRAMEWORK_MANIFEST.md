@@ -43,7 +43,7 @@ Support files:
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/context-acceleration/`: optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability.
-- `skillsets/adaptive-model-orchestration/`: portable Codex skill, OpenCode/GLM example profile, peer wrappers, package manifest, and offline-install guidance.
+- `skillsets/adaptive-model-orchestration/`: portable Codex orchestration and OpenCode execution skills, GLM example profile, managed liveness/session runner, peer wrappers, package manifests, and offline-install guidance.
 - `skillsets/core-framework/`: self-contained explicit-only Codex entrypoint with bundled framework references.
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
@@ -244,7 +244,8 @@ OpenCode/GLM, Codex fast/balanced/deep peers, or max/ultra effort selection:
 5. `TOKEN_ECONOMY.md`
 6. `CROSS_AGENT_COORDINATION.md`
 7. `skillsets/adaptive-model-orchestration/README.md`
-8. The live executable/model/effort/agent capability record and privacy authorization
+8. `skillsets/adaptive-model-orchestration/codex/opencode-fast-execution/SKILL.md` for execution, repair, liveness, or context GC
+9. The live executable/model/effort/agent capability record and privacy authorization
 
 ### Context Acceleration Profile (Optional)
 
