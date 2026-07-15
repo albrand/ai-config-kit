@@ -158,6 +158,21 @@ Recommended setup:
 - For adaptive GLM plus Codex-peer routing, install the complete
   `skillsets/adaptive-model-orchestration/codex/adaptive-model-orchestrator/`
   directory and follow its README. Keep provider credentials outside the kit.
+- For cmux (local UI/session transport) plus Hermes (remote provider router on a
+  Tailscale-only VPS), install the complete
+  `skillsets/cmux-hermes-orchestration/codex/cmux-hermes-orchestrator/` and
+  `skillsets/cmux-hermes-orchestration/codex/plan-arbiter/` skills and follow
+  `CMUX_HERMES_ORCHESTRATION.md`. Keep both skills explicit-only. Confirm the
+  configured SSH alias can noninteractively transition to user `hermes` and that
+  Tailscale is up before any bounded step. Never forward secrets or the full environment.
+- For portable, capability-first discovery of the host software an agent runs in
+  or through (cmux first adapter; also tmux, zellij, generic agentic
+  shells/harnesses), install the complete
+  `skillsets/native-agent-surfaces/codex/native-agent-surface/` skill and follow
+  `NATIVE_AGENT_SURFACES.md`. Keep the skill explicit-only. Run the detector to
+  get a JSON surface report and route on declared capabilities, not tool names.
+  The detector never serializes env values, `CMUX_SOCKET_CAPABILITY`, or any
+  `CMUX_*` value.
 - For on-demand access to shared framework doctrine, install the complete
   `skillsets/core-framework/codex/ai-config-kit-core/` directory.
 - If a local sidecar is configured, use it first for compact no-tool

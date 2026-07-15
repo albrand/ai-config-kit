@@ -229,6 +229,12 @@ This rule is always on. It does not require the user to ask for security work.
 - Keep exploit-validation, severity, and fix-design judgment on the strongest
   available reasoning path; delegate only bounded, verifiable security sub-tasks
   (see the security routing tier in `HARNESS_STRATEGY.md`).
+- When using the cmux + Hermes surface, honor its hard boundary: SSH is Mac → VPS
+  only (Tailscale-only), no reverse SSH or listening daemon, prompt content over
+  stdin only, no full-environment forwarding, and never serialize
+  `CMUX_SOCKET_CAPABILITY` or `CMUX_*`. Delegation is default-off with one
+  worktree writer per task. See `CMUX_HERMES_ORCHESTRATION.md` and
+  `skillsets/cmux-hermes-orchestration/`.
 
 ## Collaboration Defaults
 

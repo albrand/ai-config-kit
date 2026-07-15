@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+umask 077
+
+while :; do
+  if ! /usr/bin/tmux has-session -t cmux-hermes-master 2>/dev/null; then
+    /usr/bin/tmux new-session -d -s cmux-hermes-master -c /var/lib/hermes \
+      /opt/hermes/agent/venv/bin/hermes chat --cli
+  fi
+  /usr/bin/sleep 15
+done

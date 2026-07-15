@@ -1,0 +1,7 @@
+interface:
+  display_name: "cmux + Hermes Orchestrator"
+  short_description: "Bounded, default-off orchestration between cmux (local UI/session transport and lifecycle) and Hermes (provider router, plan/delegation brain, fallback, usage ledger on a Tailscale-only VPS) via a local deterministic broker. One writer per task, no reverse SSH, prompt-over-stdin, report-only cleanup."
+  default_prompt: "Use $cmux-hermes-orchestrator to run a bounded cmux + Hermes orchestration step: run the token-free doctor, create a write-isolated lane, explain the fail-closed noninteractive advisor, reuse the persistent Hermes master, send to explicit cmux UUIDs, report exact session usage, or cancel/close while preserving worktrees."
+
+policy:
+  allow_implicit_invocation: false

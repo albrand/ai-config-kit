@@ -1,0 +1,7 @@
+interface:
+  display_name: "Native Agent Surface"
+  short_description: "Discover and use host software an agent runs in or through (cmux, tmux, zellij, generic agentic shells/harnesses) via a capability-first, host-neutral adapter contract. cmux is one adapter, not the universal surface; never serializes env values or socket capabilities."
+  default_prompt: "Use $native-agent-surface to discover which native host surfaces are present, read their declared capabilities, route on capabilities instead of hard-coding one tool, and safely target discovered surfaces with full identifiers while never serializing environment values or socket capabilities."
+
+policy:
+  allow_implicit_invocation: false

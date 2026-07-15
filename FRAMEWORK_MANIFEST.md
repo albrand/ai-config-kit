@@ -25,6 +25,9 @@ Core files:
 - `CROSS_AGENT_COORDINATION.md`: addendum for coordinating multiple AI tools, counterpart capability gates, communication plans, and single-agent fallback.
 - `HARNESS_STRATEGY.md`: model routing, cache, validation ownership, and escalation.
 - `ADAPTIVE_MODEL_ORCHESTRATION.md`: canonical adoption profiles, capability-first role and effort routing, max/ultra gate, verified example profile, and reconciliation contract.
+- `CMUX_HERMES_ORCHESTRATION.md`: bounded, default-off orchestration between cmux (local UI/session transport and lifecycle) and Hermes (provider router, plan/delegation brain, fallback, and usage ledger on a Tailscale-only VPS) via a local deterministic broker; hard network boundary, worktree write isolation, and report-only cleanup.
+- `NATIVE_AGENT_SURFACES.md`: capability-first, host-neutral doctrine for discovering and using native host software an agent runs in or through (cmux first adapter; also tmux, zellij, and generic agentic shells/harnesses); never serializes env values or socket capabilities.
+- `SECOND_MAC_BOOTSTRAP.md`: git-based second-Mac install from the public repo with explicit copy/install commands; configures its own SSH/Tailscale and never copies credentials.
 - `SESSION_JOURNALING.md`: local journal protocol.
 - `CONTINUOUS_SKILL_LEARNING.md`: promotion of repeated lessons into durable rules.
 - `ARCHITECTURE_AND_CODE_QUALITY.md`: architecture, security, state, data, and quality review doctrine.
@@ -51,6 +54,8 @@ Support files:
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
 - `skillsets/pr-review/`: executable high-signal PR review skillset, including a Codex skill, Claude Code `/code-review` command, and shared output contract.
 - `skillsets/security-review/`: executable defensive-security skillset — the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference.
+- `skillsets/cmux-hermes-orchestration/`: executable, default-off orchestration skillset for cmux (local) + Hermes (remote router on a Tailscale-only VPS), with a stdlib-only deterministic broker, two explicit-only Codex skills (`cmux-hermes-orchestrator`, `plan-arbiter`), Claude Code commands, shared references, durable Hermes work journals, a no-secrets remote `AGENTS.md` template, and Builder.io MIT provenance.
+- `skillsets/native-agent-surfaces/`: portable, capability-first skillset for discovering and using native host surfaces (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses), with an explicit-only Codex skill (`native-agent-surface`), a host-neutral adapter contract, and a stdlib-only detector that never serializes env values or socket capabilities.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some
@@ -184,6 +189,34 @@ supply-chain/dependency risk, or the Claude Code commands
    - `skillsets/security-review/claude/commands/pentest-specialist.md`
 9. The owned or authorized target evidence: repo, diff, dependencies, configs,
    and authorization basis for any active testing
+
+### cmux + Hermes Orchestration Profile
+
+Use when an operator has adopted cmux as the local UI/session surface and Hermes
+as the remote provider router (Tailscale-only VPS), and wants bounded,
+one-writer-per-task delegation, persistent master sessions, exact usage, or
+plan arbitration:
+
+1. Minimum Profile
+2. `CMUX_HERMES_ORCHESTRATION.md`
+3. `AGENT_ORCHESTRATION.md` for delegated-agent roles and contracts
+4. `ADAPTIVE_MODEL_ORCHESTRATION.md` when model-tier/effort routing is in scope
+5. `QUALITY_GATES.md` validation and security gates
+6. `skillsets/cmux-hermes-orchestration/README.md`
+7. `skillsets/cmux-hermes-orchestration/references/HERMES_PROTOCOL.md`
+8. `skillsets/cmux-hermes-orchestration/references/CMUX_SURFACES.md`
+9. `skillsets/cmux-hermes-orchestration/references/WORKTREE_OWNERSHIP.md`
+10. `skillsets/cmux-hermes-orchestration/references/BUILDERIO_PROVENANCE.md`
+11. The relevant Codex skill or Claude Code command:
+    - `skillsets/cmux-hermes-orchestration/codex/cmux-hermes-orchestrator/SKILL.md`
+    - `skillsets/cmux-hermes-orchestration/codex/plan-arbiter/SKILL.md`
+    - `skillsets/cmux-hermes-orchestration/claude/commands/cmux-hermes.md`
+    - `skillsets/cmux-hermes-orchestration/claude/commands/plan-arbiter.md`
+12. The broker CLI:
+    `skillsets/cmux-hermes-orchestration/codex/cmux-hermes-orchestrator/scripts/cmux-hermes.py`
+13. Evidence required by the step: repo path, base branch, target alias,
+    live provider/model catalog, Tailscale/SSH reachability, and explicit
+    per-task delegation activation
 
 ### Review And PR Profile
 

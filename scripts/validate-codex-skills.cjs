@@ -73,8 +73,11 @@ function validateManifest(skillDir, file) {
   function collect(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) collect(full);
-      else if (entry.isFile() && full !== manifestPath) packaged.push(path.relative(skillDir, full));
+      if (entry.isDirectory()) {
+        collect(full);
+      } else if (entry.isFile() && full !== manifestPath) {
+        packaged.push(path.relative(skillDir, full));
+      }
     }
   }
   collect(skillDir);
@@ -97,7 +100,9 @@ function validateOpenAiMetadata(skillDir, file) {
   if (/^policy:\s*$/m.test(text) && !/^\s+allow_implicit_invocation:\s*(true|false)\s*$/m.test(text)) {
     errors.push(`${metadataPath}: malformed implicit-invocation policy`);
   }
-  if (['adaptive-model-orchestrator', 'ai-config-kit-core'].includes(file.name)
+  if (['adaptive-model-orchestrator', 'ai-config-kit-core',
+       'cmux-hermes-orchestrator', 'native-agent-surface',
+       'plan-arbiter'].includes(file.name)
       && !/^\s+allow_implicit_invocation:\s*false\s*$/m.test(text)) {
     errors.push(`${metadataPath}: behavioral framework skills must be explicit-only`);
   }

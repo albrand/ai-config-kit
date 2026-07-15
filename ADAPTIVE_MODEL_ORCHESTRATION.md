@@ -90,6 +90,13 @@ The profile's doctor check must verify executable, authentication, model,
 effort, and agent availability before use. Provider-specific trust and private
 context sharing require explicit operator authorization.
 
+A distinct remote-router topology is cmux + Hermes: cmux is the local UI/session
+transport and Hermes is the provider router, plan/delegation brain, fallback, and
+usage ledger on a Tailscale-only VPS, driven by a local deterministic broker.
+It is default-off, one-writer-per-task, and acyclic like the sidecar role above.
+See `CMUX_HERMES_ORCHESTRATION.md` and `skillsets/cmux-hermes-orchestration/`;
+use `plan-arbiter` for efficient-frontier lane selection across that surface.
+
 ## Max And Ultra Decision
 
 Treat `xhigh` (or the provider's normal strong tier) as enough when the scope is

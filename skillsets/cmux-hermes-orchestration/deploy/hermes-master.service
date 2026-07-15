@@ -1,0 +1,30 @@
+[Unit]
+Description=Persistent Hermes master tmux session
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+Environment=HOME=/var/lib/hermes
+Environment=TMUX_TMPDIR=/var/lib/hermes/.tmux
+WorkingDirectory=/var/lib/hermes
+UMask=0077
+ExecStart=/usr/local/libexec/hermes-master-supervisor
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/hermes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

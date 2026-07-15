@@ -1,0 +1,13 @@
+{
+  "name": "native-agent-surface",
+  "version": 1,
+  "required": [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/NATIVE_SURFACE_CONTRACT.md",
+    "scripts/detect-native-surfaces.py"
+  ],
+  "executable": [
+    "scripts/detect-native-surfaces.py"
+  ]
+}
