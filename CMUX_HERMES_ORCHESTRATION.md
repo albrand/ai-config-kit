@@ -13,8 +13,10 @@ writer per task.
 ## Topology And Authority
 
 - **cmux** is the only local UI/session transport. It owns workspaces, surfaces,
-  send/target, focus, and native lifecycle. Discover surfaces with
-  `cmux --id-format both tree --all` and persist **full UUIDs**, never short refs.
+  send/target, focus, and native lifecycle. Discover workspaces through the
+  structured inventory (`cmux --id-format both --json list-workspaces`)
+  and persist **full UUIDs**, never short refs. Free-text tree parsing is
+  superseded by structured JSON.
 - **Hermes** lives on the Tailscale-only VPS. It is the provider router,
   plan/delegation brain, fallback arbiter, and usage ledger. It runs as user
   `hermes` from `/var/lib/hermes` with `HOME` and `TMUX_TMPDIR` set.
@@ -48,6 +50,13 @@ writer per task.
   coordination against accidental cross-thread mutation, not isolation from a
   malicious process with the same Unix UID.
 - A dedicated worktree and a **non-focused** cmux workspace are created per lane.
+  Workspace creation is **reuse-first**: the broker resolves the structured
+  inventory, reuses an exact existing workspace for the worktree when safely
+  found, fails closed on ambiguity, re-inventories immediately before create
+  (TOCTOU), creates only when still missing, and validates the returned UUID and
+  post-create identity. The manifest records `workspace_origin` (`reused` or
+  `created`); a task closes **only** a workspace it created — a reused workspace
+  survives cancel/close.
 - Worktrees and branches are never auto-deleted. Cancel/close stops sessions but
   preserves branches and worktrees.
 - Cleanup defaults to **report-only**. Destructive cleanup requires explicit

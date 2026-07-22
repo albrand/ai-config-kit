@@ -5,9 +5,14 @@
     "SKILL.md",
     "agents/openai.yaml",
     "references/NATIVE_SURFACE_CONTRACT.md",
-    "scripts/detect-native-surfaces.py"
+    "references/PROJECT_SETUP.md",
+    "references/BROWSER_E2E.md",
+    "references/AGENT_SESSION_COORDINATION.md",
+    "scripts/detect-native-surfaces.py",
+    "scripts/resolve-workspace.py"
   ],
   "executable": [
-    "scripts/detect-native-surfaces.py"
+    "scripts/detect-native-surfaces.py",
+    "scripts/resolve-workspace.py"
   ]
 }

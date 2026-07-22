@@ -64,7 +64,8 @@ PROVIDER_RE = re.compile(r"^[A-Za-z0-9._/-]{1,64}$")
 TOOLSET_RE = re.compile(r"^(safe|no-terminal|none)$")
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,254}$")
 UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 INT_RE = re.compile(r"^[0-9]+$")
 
@@ -267,6 +268,8 @@ def assert_remote_user(target: str) -> None:
 
 def safe_abs_path(raw: str, *, base: Path | None = None) -> Path:
     """Reject non-absolute paths and symlink escapes outside base."""
+    if not isinstance(raw, str) or not raw:
+        raise BrokerError("path is required")
     p = Path(raw)
     if not p.is_absolute():
         raise BrokerError(f"path must be absolute: {raw!r}")
@@ -429,29 +432,234 @@ def now_iso() -> str:
 
 
 def cmux_ids() -> dict[str, str]:
-    """Discover cmux surfaces with --id-format both. Returns long UUIDs only."""
+    """Discover cmux surfaces with --id-format both. Returns long UUIDs only.
+
+    Now derived from the structured workspace inventory rather than free-text
+    parsing of ``tree``. Never serializes CMUX_* values.
+    """
+    surfaces: dict[str, str] = {}
+    for ws in cmux_workspace_inventory():
+        uuid = ws.get("workspace_uuid")
+        if uuid:
+            surfaces[uuid] = uuid
+    return surfaces
+
+
+def parse_cmux_inventory(raw: str) -> list[dict[str, Any]]:
+    """Parse a structured cmux workspace-list JSON into normalized rows.
+
+    Never executes cmux. Accepts both the live cmux schema (``id``,
+    ``current_directory``, ``title``) and the normalized adapter schema. Every
+    workspace must carry a full UUID and an absolute cwd; malformed rows block
+    the inventory so callers cannot mistake an unreadable workspace for absence
+    and create a duplicate. Treats all parsed text as untrusted.
+    """
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BrokerError(f"cmux inventory is not valid JSON: {exc}") from exc
+    if isinstance(obj, dict):
+        rows = obj.get("workspaces")
+        if not isinstance(rows, list):
+            rows = obj.get("items")
+        if not isinstance(rows, list):
+            raise BrokerError("cmux inventory JSON has no workspace list")
+    elif isinstance(obj, list):
+        rows = obj
+    else:
+        raise BrokerError("cmux inventory JSON must be an object or list")
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise BrokerError("cmux inventory contains a non-object workspace")
+        uuid = row.get("workspace_uuid") or row.get("uuid") or row.get("id")
+        if not UUID_RE.match(str(uuid or "")):
+            raise BrokerError("cmux inventory contains a workspace without a full UUID")
+        cwd_raw = row.get("cwd") or row.get("current_directory")
+        if not isinstance(cwd_raw, str) or not cwd_raw:
+            raise BrokerError(
+                f"cmux inventory workspace {uuid} has no absolute current directory"
+            )
+        try:
+            cwd = safe_abs_path(cwd_raw)
+        except BrokerError as exc:
+            raise BrokerError(
+                f"cmux inventory workspace {uuid} has invalid current directory: {exc}"
+            ) from exc
+        out.append({
+            "workspace_uuid": str(uuid),
+            "name": str(row.get("name") or row.get("title") or ""),
+            "cwd": str(cwd),
+        })
+    return out
+
+
+def cmux_workspace_inventory() -> list[dict[str, Any]]:
+    """Structured cmux workspace inventory via argv-only JSON output.
+
+    Replaces free-text ``tree`` parsing with structured JSON. Validates full
+    UUIDs and absolute cwd for every row.
+    """
     proc = run(
-        [_bin("CMUX_BIN", "cmux"), "--id-format", "both", "tree", "--all"],
+        [_bin("CMUX_BIN", "cmux"), "--id-format", "both", "--json",
+         "list-workspaces"],
         timeout=20,
     )
     out = proc.stdout.decode("utf-8", "replace")
-    surfaces: dict[str, str] = {}
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split()
-        uuids = [tok for tok in parts if UUID_RE.match(tok)]
-        if uuids:
-            # Persist the long UUID, never the short ref.
-            surfaces[parts[0]] = uuids[0]
-    return surfaces
+    return parse_cmux_inventory(out)
 
 
 def assert_uuid(value: str, label: str) -> str:
     if not UUID_RE.match(value):
         raise BrokerError(f"unsafe {label}: {value!r} (must be a full UUID)")
     return value
+
+
+# --- workspace reuse decision ---------------------------------------------
+
+
+def _classify_cwd(cwd: str, project: Path) -> str:
+    """Classify a workspace cwd vs a canonical project path."""
+    try:
+        c = Path(cwd).resolve(strict=False)
+    except (OSError, ValueError):
+        return "none"
+    if c == project:
+        return "exact"
+    try:
+        c.relative_to(project)
+        return "inside-project"
+    except ValueError:
+        pass
+    try:
+        project.relative_to(c)
+        return "broad-parent"
+    except ValueError:
+        return "none"
+
+
+def resolve_cmux_workspace(project: Path, inventory: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Read-only reuse decision for a project. Never creates.
+
+    Returns a structured result:
+      decision: reuse | missing | ambiguous
+      match_type: exact | inside-project | None
+      selected: the single reusable workspace dict, or None
+    Exact (cwd == project) wins. A single inside-project cwd is eligible.
+    Broad-parent cwd is advisory only and never reused. Ties are ambiguous and
+    fail closed.
+    """
+    project = project.resolve(strict=False)
+    rows = inventory if inventory is not None else cmux_workspace_inventory()
+    exact: list[dict[str, Any]] = []
+    inside: list[dict[str, Any]] = []
+    advisory: list[str] = []
+    for ws in rows:
+        kind = _classify_cwd(str(ws.get("cwd") or ""), project)
+        if kind == "exact":
+            exact.append(ws)
+        elif kind == "inside-project":
+            inside.append(ws)
+        elif kind == "broad-parent":
+            advisory.append(
+                f"broad-parent workspace {ws.get('workspace_uuid')} cwd={ws.get('cwd')} "
+                "is advisory only; not reused"
+            )
+    if len(exact) == 1:
+        return {"decision": "reuse", "match_type": "exact",
+                "selected": exact[0], "advisory": advisory}
+    if len(exact) > 1:
+        return {"decision": "ambiguous", "match_type": "exact",
+                "selected": None, "advisory": advisory,
+                "reason": "multiple exact (cwd==project) workspaces"}
+    if len(inside) == 1:
+        return {"decision": "reuse", "match_type": "inside-project",
+                "selected": inside[0], "advisory": advisory}
+    if len(inside) > 1:
+        return {"decision": "ambiguous", "match_type": "inside-project",
+                "selected": None, "advisory": advisory,
+                "reason": "multiple inside-project workspaces"}
+    return {"decision": "missing", "match_type": None,
+            "selected": None, "advisory": advisory}
+
+
+def ensure_cmux_workspace(cwd: Path, name: str) -> tuple[str, str]:
+    """Reuse-or-create a non-focused cmux workspace for ``cwd``.
+
+    Inventory before create, fail on ambiguity, re-inventory immediately before
+    create (TOCTOU), create non-focused only when still missing, then validate
+    the returned UUID and post-create identity. Returns (workspace_uuid, origin)
+    where origin is 'reused' or 'created'. Only 'created' workspaces may later
+    be closed by the owning task.
+    """
+    cwd = cwd.resolve(strict=False)
+    # First inventory pass.
+    inv = cmux_workspace_inventory()
+    decision = resolve_cmux_workspace(cwd, inv)
+    if decision["decision"] == "ambiguous":
+        raise BrokerError(
+            f"ambiguous workspace reuse for {cwd}: {decision.get('reason')}"
+        )
+    if decision["decision"] == "reuse":
+        return decision["selected"]["workspace_uuid"], "reused"
+
+    # TOCTOU: re-inventory immediately before create.
+    inv2 = cmux_workspace_inventory()
+    decision2 = resolve_cmux_workspace(cwd, inv2)
+    if decision2["decision"] == "ambiguous":
+        raise BrokerError(
+            f"ambiguous workspace reuse (recheck) for {cwd}: {decision2.get('reason')}"
+        )
+    if decision2["decision"] == "reuse":
+        return decision2["selected"]["workspace_uuid"], "reused"
+
+    new_uuid = None
+    try:
+        cproc = run(
+            [_bin("CMUX_BIN", "cmux"), "new-workspace", "--focus", "false",
+             "--name", name, "--cwd", str(cwd)],
+            timeout=20,
+        )
+        out = cproc.stdout.decode("utf-8", "replace")
+        for tok in out.split():
+            if UUID_RE.match(tok):
+                new_uuid = tok
+                break
+        if not new_uuid:
+            raise BrokerError("cmux new-workspace returned no full UUID")
+        # Validate post-create identity: the UUID must now exist for this cwd.
+        inv3 = cmux_workspace_inventory()
+        found = next(
+            (ws for ws in inv3
+             if str(ws.get("workspace_uuid", "")).lower() == new_uuid.lower()),
+            None,
+        )
+        if found is None:
+            raise BrokerError(
+                f"post-create identity check failed: {new_uuid} not in inventory"
+            )
+        found_cwd = found.get("cwd")
+        if found_cwd and Path(found_cwd).resolve(strict=False) != cwd:
+            raise BrokerError(
+                f"post-create cwd mismatch: {found_cwd!r} != {cwd!r}"
+            )
+    except BaseException:
+        # Creation can succeed before validation fails. Roll back only the UUID
+        # returned by this create call; never close a pre-existing workspace.
+        if new_uuid:
+            try:
+                run(
+                    [_bin("CMUX_BIN", "cmux"), "close-workspace",
+                     "--workspace", new_uuid],
+                    timeout=20,
+                )
+            except BrokerError as cleanup_exc:
+                sys.stderr.write(
+                    f"warn: failed to close unvalidated workspace {new_uuid}: "
+                    f"{cleanup_exc}\n"
+                )
+        raise
+    return new_uuid, "created"
 
 
 # --- Subcommand: doctor (token-free) ---------------------------------------
@@ -479,10 +687,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if cmux:
         try:
-            proc = run([_bin("CMUX_BIN", "cmux"), "--id-format", "both", "tree", "--all"], timeout=20)
-            check("cmux --id-format both", proc.returncode == 0)
+            inv = cmux_workspace_inventory()
+            check("cmux list-workspaces (structured json)", True,
+                  f"{len(inv)} workspace(s)")
         except BrokerError as exc:
-            check("cmux --id-format both", False, str(exc))
+            check("cmux list-workspaces (structured json)", False, str(exc))
             ok = False
 
     tailscale = shutil.which(_bin("TAILSCALE_BIN", "tailscale"))
@@ -720,6 +929,7 @@ def cmd_lane(args: argparse.Namespace) -> int:
     capability_path = capabilities_dir() / f"cap-{secrets.token_hex(16)}"
     wt_created = False
     ws_uuid = None
+    ws_origin = None
     try:
         _atomic_write_private(capability_path, (capability + "\n").encode("utf-8"),
                               create_only=True)
@@ -731,18 +941,15 @@ def cmd_lane(args: argparse.Namespace) -> int:
             raise BrokerError("git worktree add failed; worktree not created")
         wt_created = True
 
-        # Non-focused cmux workspace (do not steal focus from the operator).
-        cproc = run(
-            [_bin("CMUX_BIN", "cmux"), "new-workspace", "--focus", "false",
-             "--name", f"cmux-hermes-{slug}", "--cwd", str(wt)],
-            timeout=20,
+        # Reuse-or-create the cmux workspace for this worktree. Reuse only an
+        # exact existing workspace for this worktree; never reuse an existing
+        # task/worktree without its owner capability.
+        ws_uuid, ws_origin = ensure_cmux_workspace(
+            wt, f"cmux-hermes-{slug}"
         )
-        out = cproc.stdout.decode("utf-8", "replace")
-        for tok in out.split():
-            if UUID_RE.match(tok):
-                ws_uuid = tok
-                break
         plan["cmux_workspace_uuid"] = ws_uuid
+        plan["workspace_origin"] = ws_origin
+        plan["created_workspace"] = ws_origin == "created"
         plan["status"] = "active"
         save_manifest(task_id, plan)
         lock = {
@@ -751,13 +958,16 @@ def cmd_lane(args: argparse.Namespace) -> int:
             "owner_capability_sha256": _capability_digest(capability),
             "worktree": str(wt),
             "status": "active",
+            "created_workspace": ws_origin == "created",
             "acquired_at": now_iso(),
         }
         _atomic_write_private(
             lock_path, (json.dumps(lock, indent=2) + "\n").encode("utf-8")
         )
     except BaseException:
-        if ws_uuid:
+        # Only close a workspace this task actually created; a reused workspace
+        # must survive any failure of this task.
+        if ws_uuid and ws_origin == "created":
             run(
                 [_bin("CMUX_BIN", "cmux"), "close-workspace", "--workspace", ws_uuid],
                 timeout=20,
@@ -821,6 +1031,30 @@ def cmd_send(args: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def _task_created_workspace(plan: dict[str, Any]) -> bool:
+    """True only if this task created (not reused) its cmux workspace."""
+    if plan.get("workspace_origin"):
+        return plan.get("workspace_origin") == "created"
+    # Backward-compatible default for manifests predating workspace_origin.
+    return bool(plan.get("created_workspace"))
+
+
+def _maybe_close_created_workspace(plan: dict[str, Any]) -> None:
+    """Close a workspace only if this task created it. Reused ones survive."""
+    if not plan.get("cmux_workspace_uuid"):
+        return
+    if not _task_created_workspace(plan):
+        return
+    try:
+        run(
+            [_bin("CMUX_BIN", "cmux"), "close-workspace",
+             "--workspace", plan["cmux_workspace_uuid"]],
+            timeout=20,
+        )
+    except BrokerError as exc:
+        sys.stderr.write(f"warn: cmux close failed: {exc}\n")
+
+
 # --- Subcommand: cancel / close (no branch/worktree deletion) --------------
 
 
@@ -828,21 +1062,18 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     task_id = args.task
     plan = load_manifest(task_id)
     _enforce_single_owner(task_id, args.owner_capability_file)
-    # Stop/close sessions; never delete branches or worktrees.
-    if plan.get("cmux_workspace_uuid"):
-        try:
-            run(
-                [_bin("CMUX_BIN", "cmux"), "close-workspace",
-                 "--workspace", plan["cmux_workspace_uuid"]],
-                timeout=20,
-            )
-        except BrokerError as exc:
-            sys.stderr.write(f"warn: cmux close failed: {exc}\n")
+    # Stop/close sessions; never delete branches or worktrees. Only a workspace
+    # this task created is closed; a reused workspace is preserved.
+    _maybe_close_created_workspace(plan)
     plan["status"] = "cancelled"
     plan["cancelled_at"] = now_iso()
     save_manifest(task_id, plan)
+    note = ("branches and worktrees preserved"
+            + ("; reused workspace preserved"
+               if plan.get("cmux_workspace_uuid")
+               and not _task_created_workspace(plan) else ""))
     sys.stdout.write(json.dumps({"task_id": task_id, "status": "cancelled",
-                                 "note": "branches and worktrees preserved"}, indent=2) + "\n")
+                                 "note": note}, indent=2) + "\n")
     return 0
 
 
@@ -850,10 +1081,17 @@ def cmd_close(args: argparse.Namespace) -> int:
     task_id = args.task
     plan = load_manifest(task_id)
     _enforce_single_owner(task_id, args.owner_capability_file)
+    # Close only a workspace this task created; preserve a reused one.
+    _maybe_close_created_workspace(plan)
     plan["status"] = "closed"
     plan["closed_at"] = now_iso()
     save_manifest(task_id, plan)
-    sys.stdout.write(json.dumps({"task_id": task_id, "status": "closed"}, indent=2) + "\n")
+    note = ("branches and worktrees preserved"
+            + ("; reused workspace preserved"
+               if plan.get("cmux_workspace_uuid")
+               and not _task_created_workspace(plan) else ""))
+    sys.stdout.write(json.dumps({"task_id": task_id, "status": "closed",
+                                 "note": note}, indent=2) + "\n")
     return 0
 
 
@@ -931,6 +1169,33 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         sys.stdout.write(json.dumps(load_manifest(args.task), indent=2) + "\n")
         return 0
     sys.stdout.write(json.dumps(out, indent=2) + "\n")
+    return 0
+
+
+# --- Subcommand: resolve / workspace (reuse-first) ------------------------
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    """Read-only reuse decision for a project. Never creates, never sends."""
+    project = safe_abs_path(args.project)
+    result = resolve_cmux_workspace(project)
+    sys.stdout.write(
+        json.dumps({"project": str(project), **result}, indent=2) + "\n"
+    )
+    return 0 if result["decision"] in ("reuse", "missing") else 2
+
+
+def cmd_workspace(args: argparse.Namespace) -> int:
+    """Reuse-or-create a non-focused cmux workspace for a cwd."""
+    if args.action == "resolve":
+        return cmd_resolve(args)
+    cwd = safe_abs_path(args.cwd)
+    name = _validate_remote_token(args.name, SESSION_NAME_RE, "workspace name")
+    ws_uuid, origin = ensure_cmux_workspace(cwd, name)
+    sys.stdout.write(
+        json.dumps({"workspace_uuid": ws_uuid, "origin": origin,
+                    "cwd": str(cwd), "name": name}, indent=2) + "\n"
+    )
     return 0
 
 
@@ -1020,6 +1285,21 @@ def build_parser() -> argparse.ArgumentParser:
     t = sub.add_parser("tasks", help="list or show task manifests")
     t.add_argument("--task", default=None)
     t.set_defaults(func=cmd_tasks)
+
+    rs = sub.add_parser("resolve", help="read-only reuse decision for a project")
+    rs.add_argument("project", help="absolute path to the project/worktree")
+    rs.set_defaults(func=cmd_resolve)
+
+    ws = sub.add_parser("workspace", help="reuse-or-create a cmux workspace")
+    ws.add_argument("action", choices=["ensure", "resolve"],
+                    help="ensure = reuse-or-create; resolve = read-only")
+    ws.add_argument("--cwd", default=None,
+                    help="absolute worktree cwd (ensure)")
+    ws.add_argument("--name", default="cmux-hermes",
+                    help="workspace name (ensure)")
+    ws.add_argument("--project", default=None,
+                    help="absolute project path (resolve)")
+    ws.set_defaults(func=cmd_workspace)
 
     return p
 

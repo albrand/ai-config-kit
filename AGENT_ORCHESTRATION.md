@@ -196,6 +196,11 @@ delegation rules above apply, plus these hard constraints:
   concurrency 1, depth 1, max output 1024, max turns 8, no recursion.
 - Git worktrees are the only write-isolation boundary: one task, one worktree,
   one write owner. Partition executor writes by disjoint worktree ownership.
+- Workspaces are **reuse-first**: resolve the structured cmux inventory before
+  creating; reuse an exact workspace for the worktree, fail closed on ambiguity,
+  and close only a workspace this task created. Mirror this with
+  `skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/resolve-workspace.py`
+  and the project-setup / session-coordination references.
 - SSH is Mac → VPS only; no reverse SSH. Noninteractive advisor calls fail
   closed because Hermes `-q` exposes prompts in argv. Never
   forward the full environment or serialize `CMUX_SOCKET_CAPABILITY`/`CMUX_*`.

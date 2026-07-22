@@ -5,9 +5,11 @@ description: >-
   transports (cmux), terminal multiplexers (tmux, zellij), and other agentic
   shells/harnesses — via a capability-first, host-neutral adapter contract.
   Use when an agent needs to detect which native surfaces are present, route on
-  declared capabilities instead of hard-coding one tool, or safely target
-  discovered surfaces without serializing environment values or socket
-  capabilities. cmux is the first adapter, not the universal surface.
+  declared capabilities instead of hard-coding one tool, reuse a project
+  workspace before creating one, bootstrap a project, run browser E2E, or
+  coordinate bounded multi-model sessions without serializing environment
+  values or socket capabilities. cmux is the first adapter, not the universal
+  surface.
 ---
 
 # Native Agent Surface
@@ -18,7 +20,12 @@ capabilities, and routes on those capabilities. cmux is one adapter; tmux,
 zellij, git worktrees, and other harnesses are peers under the same contract.
 
 Read `references/NATIVE_SURFACE_CONTRACT.md` before targeting any discovered
-surface. Run `scripts/detect-native-surfaces.py` to produce the surface report.
+surface. Run `scripts/detect-native-surfaces.py` to produce the surface report,
+and `scripts/resolve-workspace.py` to decide reuse vs. create for a project.
+
+For project setup see `references/PROJECT_SETUP.md`, for browser E2E see
+`references/BROWSER_E2E.md`, and for multi-session cooperation see
+`references/AGENT_SESSION_COORDINATION.md`.
 
 ## Capability Gate
 
@@ -55,6 +62,22 @@ Before using any native surface:
 - `--format text`: compact human-readable summary.
 - `--check <name>`: exit 0 only if surface `<name>` is available.
 - `--selftest`: offline self-tests in a temp dir (no network, no writes).
+
+Each surface also reports `adapter` and `runtime_capabilities` (candidate fields
+a resolver adapter can consume) plus an `adapter_status`. This is metadata only.
+
+## Resolver Surface (reuse-first, never creates)
+
+`scripts/resolve-workspace.py` reads a structured runtime inventory (JSON) and
+decides `reuse | missing | ambiguous | unsupported` for an absolute/canonical
+project path. Exact cwd == project wins; a single inside-project cwd is eligible;
+a broad-parent cwd is advisory only and never reused; ties/duplicates are
+ambiguous and fail closed. The resolver never executes a discovered binary.
+
+- `--project <abs>`: canonical project path (required).
+- `--surface cmux|tmux`: adapter that produced the inventory.
+- `--inventory <path|->`: JSON inventory file, or `-` for stdin.
+- `--selftest`: offline fixture self-tests.
 
 ## Guardrails
 

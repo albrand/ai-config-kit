@@ -85,17 +85,56 @@ def setup_fakes(env: dict[str, str]) -> Path:
 
     cmux = bindir / "cmux"
     write_fake(cmux, textwrap.dedent("""\
-        import sys
+        import sys, os, json, uuid
         a = sys.argv[1:]
-        if "--id-format" in a and "tree" in a:
-            ws = os.environ["FAKE_CMUX_UUID"] if False else __import__("uuid").uuid4().hex
-            print("workspace 00000000-0000-0000-0000-000000000001 " +
-                  "11111111-1111-1111-1111-111111111111")
+        state_path = os.environ.get("FAKE_CMUX_STATE")
+
+        def load():
+            if state_path and os.path.exists(state_path):
+                try:
+                    with open(state_path) as fh:
+                        data = json.load(fh)
+                    return data if isinstance(data, list) else []
+                except Exception:
+                    return []
+            return []
+
+        def save(rows):
+            if state_path:
+                tmp = state_path + ".tmp"
+                with open(tmp, "w") as fh:
+                    json.dump(rows, fh)
+                os.replace(tmp, state_path)
+
+        if "list-workspaces" in a or ("--id-format" in a and "tree" in a):
+            rows = [] if os.environ.get("FAKE_CMUX_HIDE_INVENTORY") == "1" else load()
+            print(json.dumps({"workspaces": rows}))
             sys.exit(0)
         if a[:1] == ["new-workspace"]:
-            print("11111111-1111-1111-1111-111111111111")
+            cwd = os.getcwd()
+            name = "w"
+            it = iter(a[1:])
+            for tok in it:
+                if tok == "--cwd":
+                    cwd = next(it, None)
+                elif tok == "--name":
+                    name = next(it, None)
+                elif tok == "--focus":
+                    next(it, None)
+            u = str(uuid.uuid4())
+            rows = load()
+            rows.append({"workspace_uuid": u, "name": name, "cwd": cwd})
+            save(rows)
+            print(u)
             sys.exit(0)
         if a[:1] == ["close-workspace"]:
+            target = None
+            it = iter(a[1:])
+            for tok in it:
+                if tok == "--workspace":
+                    target = next(it, None)
+            rows = [r for r in load() if r.get("workspace_uuid") != target]
+            save(rows)
             sys.exit(0)
         if a[:1] == ["send"]:
             sys.stdout.write(a[-1])
@@ -144,6 +183,7 @@ def setup_fakes(env: dict[str, str]) -> Path:
         "CMUX_HERMES_TARGET": "vps-fake",
         "CMUX_HERMES_ALLOWED_TARGETS": "vps-fake",
         "CMUX_HERMES_STATE_DIR": str(tmp / "state"),
+        "FAKE_CMUX_STATE": str(tmp / "cmux-state.json"),
     })
     return tmp
 
@@ -318,6 +358,138 @@ def main() -> int:
     # recursive usage with no session still works
     res2 = broker.recursive_usage("vps-fake", None)
     check("usage all rows", res2["scoped_rows"] == 3, f"scoped={res2['scoped_rows']}")
+
+    # --- workspace reuse decision (pure, structured inventory) -------------
+    def set_cmux(rows):
+        with open(os.environ["FAKE_CMUX_STATE"], "w") as fh:
+            json.dump(rows, fh)
+
+    def get_cmux():
+        try:
+            with open(os.environ["FAKE_CMUX_STATE"]) as fh:
+                return json.load(fh)
+        except Exception:
+            return []
+
+    proj = tmp / "proj"
+    proj.mkdir()
+    proj_c = str(proj.resolve())
+
+    inv = [{"workspace_uuid": str(uuidlib.uuid4()), "cwd": proj_c, "name": "w"}]
+    r = broker.resolve_cmux_workspace(Path(proj_c), inv)
+    check("resolve exact reuse", r["decision"] == "reuse"
+          and r["match_type"] == "exact", str(r["decision"]))
+
+    inv = [{"workspace_uuid": str(uuidlib.uuid4()), "cwd": str(proj / "sub")}]
+    r = broker.resolve_cmux_workspace(Path(proj_c), inv)
+    check("resolve inside-project reuse", r["decision"] == "reuse"
+          and r["match_type"] == "inside-project", str(r["decision"]))
+
+    inv = [{"workspace_uuid": str(uuidlib.uuid4()), "cwd": str(tmp)}]
+    r = broker.resolve_cmux_workspace(Path(proj_c), inv)
+    check("resolve broad-parent not reused", r["decision"] == "missing"
+          and bool(r["advisory"]), str(r["decision"]))
+
+    inv = [{"workspace_uuid": str(uuidlib.uuid4()), "cwd": proj_c},
+           {"workspace_uuid": str(uuidlib.uuid4()), "cwd": proj_c}]
+    r = broker.resolve_cmux_workspace(Path(proj_c), inv)
+    check("resolve ambiguity exact", r["decision"] == "ambiguous", str(r["decision"]))
+
+    try:
+        broker.parse_cmux_inventory(
+            json.dumps({"workspaces": [{"workspace_uuid": "bad", "cwd": proj_c}]}))
+        malformed_uuid_blocked = False
+    except broker.BrokerError:
+        malformed_uuid_blocked = True
+    check("parse blocks malformed uuid", malformed_uuid_blocked)
+    try:
+        broker.parse_cmux_inventory(
+            json.dumps({"workspaces": [{"workspace_uuid": str(uuidlib.uuid4()),
+                                        "cwd": "relative"}]}))
+        malformed_path_blocked = False
+    except broker.BrokerError:
+        malformed_path_blocked = True
+    check("parse blocks relative cwd", malformed_path_blocked)
+
+    live_shape_uuid = str(uuidlib.uuid4()).upper()
+    parsed = broker.parse_cmux_inventory(json.dumps({"workspaces": [{
+        "id": live_shape_uuid,
+        "current_directory": proj_c,
+        "title": "live-shape",
+    }]}))
+    check("parse live cmux schema and uppercase UUID",
+          len(parsed) == 1
+          and parsed[0]["workspace_uuid"] == live_shape_uuid
+          and parsed[0]["cwd"] == proj_c,
+          str(parsed))
+
+    # --- workspace ensure create (empty inventory) -------------------------
+    set_cmux([])
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rc = broker.main(["workspace", "ensure", "--cwd", str(proj), "--name", "ws-ensure"])
+    ensure = json.loads(out.getvalue())
+    check("ensure creates when missing", rc == 0 and ensure["origin"] == "created", f"rc={rc}")
+
+    # --- ensure reuses exact (now present) ----------------------------------
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rc = broker.main(["workspace", "ensure", "--cwd", str(proj), "--name", "ws-ensure2"])
+    ensure = json.loads(out.getvalue())
+    check("ensure reuses exact", rc == 0 and ensure["origin"] == "reused", f"rc={rc}")
+
+    # --- failed post-create validation rolls back only the new workspace ---
+    set_cmux([])
+    os.environ["FAKE_CMUX_HIDE_INVENTORY"] = "1"
+    try:
+        rc = broker.main(["workspace", "ensure", "--cwd", str(proj),
+                          "--name", "ws-hidden-after-create"])
+    finally:
+        os.environ.pop("FAKE_CMUX_HIDE_INVENTORY", None)
+    check("post-create validation failure blocked", rc == 2, f"rc={rc}")
+    check("unvalidated created workspace rolled back", get_cmux() == [],
+          str(get_cmux()))
+
+    # --- ensure ambiguity blocked (TOCTOU recheck also ambiguous) ----------
+    set_cmux([
+        {"workspace_uuid": str(uuidlib.uuid4()), "cwd": str(proj), "name": "a"},
+        {"workspace_uuid": str(uuidlib.uuid4()), "cwd": str(proj), "name": "b"},
+    ])
+    rc = broker.main(["workspace", "ensure", "--cwd", str(proj), "--name", "ws-amb"])
+    check("ensure ambiguity blocked", rc == 2, f"rc={rc}")
+
+    # --- lane reuses a pre-existing exact workspace ------------------------
+    set_cmux([])
+    reuse_slug = "reuse-lane"
+    reuse_wt = str((repo / ".cmux-hermes-worktrees" / reuse_slug).resolve())
+    seed_uuid = str(uuidlib.uuid4())
+    set_cmux([{"workspace_uuid": seed_uuid, "cwd": reuse_wt, "name": "preexisting"}])
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rc = broker.main(["lane", str(repo), "--base", "main",
+                          "--slug", reuse_slug, "--task-id", "task-reuse"])
+    check("lane reuse exits 0", rc == 0, f"rc={rc}")
+    lane2 = json.loads(out.getvalue())
+    check("lane reused existing workspace",
+          lane2.get("workspace_origin") == "reused"
+          and lane2.get("created_workspace") is False,
+          str(lane2.get("workspace_origin")))
+
+    # --- cancel preserves a reused workspace -------------------------------
+    cap2 = lane2["owner_capability_file"]
+    rc = broker.main(["cancel", "--task", "task-reuse", "--owner-capability-file", cap2])
+    check("cancel reused workspace exits 0", rc == 0, f"rc={rc}")
+    after = get_cmux()
+    check("reused workspace preserved after cancel",
+          any(w.get("workspace_uuid") == seed_uuid for w in after), str(len(after)))
+
+    # --- read-only resolve subcommand ---------------------------------------
+    set_cmux([{"workspace_uuid": seed_uuid, "cwd": proj_c, "name": "w"}])
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rc = broker.main(["resolve", proj_c])
+    rr = json.loads(out.getvalue())
+    check("resolve subcommand reuses", rc == 0 and rr["decision"] == "reuse", str(rr["decision"]))
 
     failed = [r for r in RESULTS if not r[1]]
     print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

@@ -233,8 +233,17 @@ This rule is always on. It does not require the user to ask for security work.
   only (Tailscale-only), no reverse SSH or listening daemon, prompt content over
   stdin only, no full-environment forwarding, and never serialize
   `CMUX_SOCKET_CAPABILITY` or `CMUX_*`. Delegation is default-off with one
-  worktree writer per task. See `CMUX_HERMES_ORCHESTRATION.md` and
-  `skillsets/cmux-hermes-orchestration/`.
+  worktree writer per task. Discover and **reuse** a workspace before creating
+  one (resolve the structured inventory; fail closed on ambiguity; close only a
+  workspace this task created). See `CMUX_HERMES_ORCHESTRATION.md`,
+  `NATIVE_AGENT_SURFACES.md`, and `skillsets/cmux-hermes-orchestration/`.
+- Automatic native-surface discovery is preference-gated and opt-in, never
+  triggered merely by the skill's presence. It runs only when the installed
+  preference is `enabled`, or `auto` has a qualifying interactive TTY plus a
+  supported host (`cmux`|`tmux`|`zellij`); `disabled` skips it. A missing,
+  corrupt, or unknown preference fails closed. Install/audit via
+  `skillsets/native-agent-surfaces/scripts/install.py`; cmux is one adapter, not
+  the universal surface, and model selection / provider routing is unrelated.
 
 ## Collaboration Defaults
 

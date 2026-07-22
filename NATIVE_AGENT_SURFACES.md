@@ -31,10 +31,28 @@ Route on **declared capabilities**, not on tool names:
   trust signal; never assume a surface version or provenance.
 - The detector (`skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/detect-native-surfaces.py`)
   emits a single JSON report: schema version, timestamp, host info, the surface
-  list, and an environment-hygiene block.
+  list (each entry carrying `adapter`, `adapter_status`, and candidate
+  `runtime_capabilities`), and an environment-hygiene block.
 - The detector executes no discovered binary. Discovery, targeting, sending,
   and trusted version verification belong to the owning adapter after its own
   trust and authorization gates.
+
+## Reuse Before Create
+
+Workspace duplication is a failure mode, not a feature. Before creating a
+workspace, resolve the structured runtime inventory and reuse an existing one.
+
+- The resolver (`skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/resolve-workspace.py`)
+  consumes a structured JSON inventory and decides `reuse | missing | ambiguous
+  | unsupported` for an absolute/canonical project. It never creates and never
+  executes a discovered binary.
+- **Exact** cwd == project wins. A single **inside-project** cwd is eligible.
+  A **broad-parent** cwd is advisory only and is **never** auto-reused.
+  Ties/duplicates are **ambiguous** and fail closed.
+- See `references/PROJECT_SETUP.md` (manifest-first setup),
+  `references/BROWSER_E2E.md` (capability-negotiated browser E2E), and
+  `references/AGENT_SESSION_COORDINATION.md` (discover-before-create,
+  one-writer-per-worktree cooperation).
 
 ## Hard Safety Boundary
 
@@ -70,8 +88,39 @@ broker boundary:
   track long work on the remote host and are consumed back through these
   surfaces.
 
+## Preference-Aware Install And Automatic Discovery
+
+Automatic native-surface discovery is opt-in and preference-gated; it never
+happens merely because the skill is present.
+
+- The preference-aware installer
+  (`skillsets/native-agent-surfaces/scripts/install.py`) copies the versioned,
+  model-neutral bundle (`skillsets/native-agent-surfaces/bundle-manifest.json`)
+  to `$XDG_DATA_HOME/ai-config-kit/native-agent-surfaces` and lays down a thin
+  Codex adapter at `$CODEX_HOME/skills/native-agent-surface`, recording a hash
+  receipt.
+- Modes: `enabled` (always install), `auto` (install only on an interactive TTY
+  with a supported host `cmux`|`tmux`|`zellij` present), `disabled` (persist the
+  preference, install/remove nothing). An explicit `--mode` flag wins and is
+  persisted; otherwise the mode is read from
+  `$XDG_CONFIG_HOME/ai-config-kit/preferences.json`.
+- A missing, corrupt, or unknown preference **fails closed** — it is never
+  treated as consent. `disabled` skips automatic discovery entirely.
+- Automatic discovery runs only when the installed preference is `enabled`, or
+  `auto` has a qualifying interactive host. cmux is one adapter, never the
+  universal surface; model selection / provider routing is unrelated.
+- The receipt tracks bundle/adapter versions, source tree hash, per-file
+  installed hashes, mode, resolved paths, and timestamp — never environment
+  values. Conflicting installs are never silently overwritten: an unmanaged or
+  customized target blocks unless `--backup-conflicts` backs it up. `uninstall`
+  removes only receipt-owned files whose hashes still match, then persists
+  `disabled`.
+
 ## Entry Point
 
 - Doctrine: this file.
 - Skillset: `skillsets/native-agent-surfaces/` (explicit-only Codex skill
-  `native-agent-surface`, adapter contract, stdlib detector).
+  `native-agent-surface`, adapter contract, stdlib detector, reuse-first
+  workspace resolver, the project-setup / browser-E2E / session-coordination
+  references, the versioned `bundle-manifest.json`, and the preference-aware
+  `scripts/install.py`).

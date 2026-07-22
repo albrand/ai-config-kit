@@ -50,6 +50,10 @@ DENY_ENV_PREFIXES = ("CMUX_",)
 # Host-neutral registry. Each entry describes how to recognize a surface and the
 # capabilities it offers when present. ``discovery_command`` is documentation
 # only and is NEVER executed by this tool.
+#   * ``adapter`` names the resolver adapter (scripts/resolve-workspace.py) that
+#     can normalize a structured runtime inventory for reuse decisions, or null.
+#   * ``runtime_capabilities`` are candidate fields the adapter can consume
+#     (metadata only; presence is not a guarantee the runtime exposes them).
 REGISTRY: list[dict[str, Any]] = [
     {
         "name": "cmux",
@@ -62,7 +66,9 @@ REGISTRY: list[dict[str, Any]] = [
             "id-format",
             "lifecycle-cancel-close",
         ],
-        "discovery_command": "cmux --id-format both tree --all",
+        "adapter": "cmux",
+        "runtime_capabilities": ["workspace-list", "workspace-cwd", "full-uuid"],
+        "discovery_command": "cmux --id-format both --json list-workspaces",
         "notes": "Local UI/session transport. Persist full UUIDs; never "
         "serialize CMUX_SOCKET_CAPABILITY or any CMUX_* value.",
     },
@@ -71,8 +77,11 @@ REGISTRY: list[dict[str, Any]] = [
         "category": "terminal-multiplexer",
         "binary_names": ["tmux"],
         "capabilities": ["session-lifecycle", "pane-targeting"],
+        "adapter": "tmux",
+        "runtime_capabilities": ["session-cwd"],
         "discovery_command": "tmux list-sessions",
-        "notes": "Generic agentic shell surface; one adapter among many.",
+        "notes": "Generic agentic shell surface; one adapter among many. Has no "
+        "workspace UUIDs; the resolver never invents capabilities it lacks.",
     },
     {
         "name": "zellij",
@@ -137,6 +146,11 @@ def detect_surfaces(
                 "binary": resolved,
                 "version": None,
                 "capabilities": list(entry.get("capabilities", [])),
+                "adapter": entry.get("adapter"),
+                "adapter_status": "ready" if (available and entry.get("adapter")) else (
+                    "missing-binary" if not available else "none"
+                ),
+                "runtime_capabilities": list(entry.get("runtime_capabilities", [])),
                 "discovery_command": entry.get("discovery_command"),
                 "notes": entry.get("notes"),
             }
@@ -199,6 +213,10 @@ def selftest() -> int:
             ("env values never serialized", report["environment"]["env_values_serialized"] is False),
             ("deny block lists CMUX_ prefix", "CMUX_" in report["environment"]["denied_prefixes"]),
             ("host-neutral registry has >1 surface", len(report["surfaces"]) > 1),
+            ("adapter_status never serializes env values",
+             all("env" not in str(s) for s in report["surfaces"])),
+            ("cmux exposes runtime_capabilities",
+             bool(cmux.get("runtime_capabilities"))),
             ("json serializes cleanly", json.dumps(report) != ""),
         ]
         failed = 0

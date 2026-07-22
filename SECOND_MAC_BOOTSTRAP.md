@@ -51,6 +51,7 @@ If the URL requires credentials or the commit does not match exactly, stop.
 ```sh
 node scripts/validate-codex-skills.cjs
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/detect-native-surfaces.py --selftest
+PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/scripts/install_test.py
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/cmux-hermes-orchestration/scripts/hermes-work-journal.py selftest
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/cmux-hermes-orchestration/scripts/cmux_hermes_test.py
 ```
@@ -76,28 +77,55 @@ cp -R skillsets scripts adapters "$DEST"/
 
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 mkdir -p "$CODEX_HOME/skills" "$HOME/.claude/commands" "$HOME/.local/bin"
-for skill in native-agent-surface cmux-hermes-orchestrator plan-arbiter; do
-  case "$skill" in
-    native-agent-surface)
-      src="skillsets/native-agent-surfaces/codex/$skill" ;;
-    *)
-      src="skillsets/cmux-hermes-orchestration/codex/$skill" ;;
-  esac
-  rsync -a --delete "$src/" "$CODEX_HOME/skills/$skill/"
-done
-for command in cmux-hermes plan-arbiter; do
-  install -m 0600 "skillsets/cmux-hermes-orchestration/claude/commands/$command.md" \
-    "$HOME/.claude/commands/$command.md"
-done
-chmod 0755 \
-  "$CODEX_HOME/skills/native-agent-surface/scripts/detect-native-surfaces.py" \
-  "$CODEX_HOME/skills/cmux-hermes-orchestrator/scripts/cmux-hermes.py"
-ln -sfn "$CODEX_HOME/skills/native-agent-surface/scripts/detect-native-surfaces.py" \
-  "$HOME/.local/bin/native-agent-surfaces"
-ln -sfn "$CODEX_HOME/skills/cmux-hermes-orchestrator/scripts/cmux-hermes.py" \
-  "$HOME/.local/bin/cmux-hermes"
-node "$CODEX_HOME/skills/skill-library-router/scripts/refresh-skill-index.cjs"
-node "$CODEX_HOME/skills/skill-library-router/scripts/refresh-skill-index.cjs" --check
+```
+
+Native agent surfaces is installed by the preference-aware installer, **not** by
+an unconditional skill copy. You must choose an explicit mode first. A missing,
+corrupt, or unknown preference fails closed.
+
+```sh
+# REQUIRED: choose exactly one. Replace the placeholder before running.
+NATIVE_SURFACES_PREFERENCE="<ENABLED|AUTO|DISABLED>"
+case "$NATIVE_SURFACES_PREFERENCE" in
+  ENABLED|AUTO|DISABLED) mode="$(echo "$NATIVE_SURFACES_PREFERENCE" | tr A-Z a-z)" ;;
+  *) echo "Set NATIVE_SURFACES_PREFERENCE to ENABLED, AUTO, or DISABLED." >&2; exit 1 ;;
+esac
+
+# Install the versioned bundle + Codex adapter from a hash receipt.
+python3 skillsets/native-agent-surfaces/scripts/install.py install --mode "$mode"
+python3 skillsets/native-agent-surfaces/scripts/install.py status
+
+detector="$CODEX_HOME/skills/native-agent-surface/scripts/detect-native-surfaces.py"
+if [ -x "$detector" ]; then
+  ln -sfn "$detector" "$HOME/.local/bin/native-agent-surfaces"
+fi
+```
+
+cmux + Hermes orchestration and plan-arbiter are **separate and optional**.
+Install them only if you have adopted cmux + Hermes; otherwise skip this block.
+
+```sh
+# OPTIONAL: cmux (local UI/session transport) + Hermes (remote router).
+INSTALL_CMUX_HERMES="<yes|no>"
+if [ "$INSTALL_CMUX_HERMES" = "yes" ]; then
+  for skill in cmux-hermes-orchestrator plan-arbiter; do
+    rsync -a --delete "skillsets/cmux-hermes-orchestration/codex/$skill/" \
+      "$CODEX_HOME/skills/$skill/"
+  done
+  for command in cmux-hermes plan-arbiter; do
+    install -m 0600 "skillsets/cmux-hermes-orchestration/claude/commands/$command.md" \
+      "$HOME/.claude/commands/$command.md"
+  done
+  chmod 0755 "$CODEX_HOME/skills/cmux-hermes-orchestrator/scripts/cmux-hermes.py"
+  ln -sfn "$CODEX_HOME/skills/cmux-hermes-orchestrator/scripts/cmux-hermes.py" \
+    "$HOME/.local/bin/cmux-hermes"
+fi
+
+# Refresh the Codex skill index if the router is installed.
+if [ -f "$CODEX_HOME/skills/skill-library-router/scripts/refresh-skill-index.cjs" ]; then
+  node "$CODEX_HOME/skills/skill-library-router/scripts/refresh-skill-index.cjs"
+  node "$CODEX_HOME/skills/skill-library-router/scripts/refresh-skill-index.cjs" --check
+fi
 ```
 
 Do not copy: `.git`, any `journals/`, any `.env`, any local-only notes, or any
@@ -133,15 +161,25 @@ Never copy `~/.ssh/*`, Tailscale auth keys, provider API keys, or any
 ## 7. Validate The Installed Runtime
 
 ```sh
-native-agent-surfaces --format json | python3 -m json.tool
-CMUX_HERMES_TARGET="<LOCAL_SSH_ALIAS>" \
-CMUX_HERMES_ALLOWED_TARGETS="<LOCAL_SSH_ALIAS>" \
-  cmux-hermes doctor --target "<LOCAL_SSH_ALIAS>"
-ssh -o BatchMode=yes -- "<LOCAL_SSH_ALIAS>" \
-  'sudo -u hermes /usr/local/bin/hermes-work-journal list'
+# Native surfaces detector (manual inspection), only when installed. With
+# NATIVE_SURFACES_PREFERENCE=DISABLED, automatic discovery and installation skip.
+if command -v native-agent-surfaces >/dev/null 2>&1; then
+  native-agent-surfaces --format json | python3 -m json.tool
+fi
+python3 skillsets/native-agent-surfaces/scripts/install_test.py
+
+# Optional, only when INSTALL_CMUX_HERMES=yes:
+if [ "$INSTALL_CMUX_HERMES" = "yes" ]; then
+  CMUX_HERMES_TARGET="<LOCAL_SSH_ALIAS>" \
+  CMUX_HERMES_ALLOWED_TARGETS="<LOCAL_SSH_ALIAS>" \
+    cmux-hermes doctor --target "<LOCAL_SSH_ALIAS>"
+  ssh -o BatchMode=yes -- "<LOCAL_SSH_ALIAS>" \
+    'sudo -u hermes /usr/local/bin/hermes-work-journal list'
+fi
 ```
 
-All three must pass before the install is considered ready.
+The native-surfaces detector self-test must pass before the install is considered
+ready; the cmux + Hermes checks apply only when that surface was installed.
 
 ## 8. Promote A Reviewed Update
 
