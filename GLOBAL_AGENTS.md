@@ -244,6 +244,14 @@ This rule is always on. It does not require the user to ask for security work.
   corrupt, or unknown preference fails closed. Install/audit via
   `skillsets/native-agent-surfaces/scripts/install.py`; cmux is one adapter, not
   the universal surface, and model selection / provider routing is unrelated.
+- Session-start hooks load only at session start. Before resuming or launching
+  a hook-capable agent, run its installed report-only preflight when available
+  to catch stale sessions and broken SessionStart hook
+  prerequisites (model-neutral contract in
+  `references/SESSION_START_HEALTH.md`; Claude doctor at
+  `scripts/claude-session-hook-doctor.py`). It never repairs/mutates, never
+  executes an arbitrary hook command, and never serializes env values; recovery
+  is update-via-official-command, exit, then resume the exact session id.
 
 ## Collaboration Defaults
 
