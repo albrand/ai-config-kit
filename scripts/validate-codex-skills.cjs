@@ -10,6 +10,7 @@ const warnings = [];
 
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === '__pycache__') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
     else if (entry.isFile() && entry.name === 'SKILL.md' && full.includes(`${path.sep}codex${path.sep}`)) out.push(full);
@@ -72,9 +73,14 @@ function validateManifest(skillDir, file) {
   const packaged = [];
   function collect(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '__pycache__') continue;
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) collect(full);
-      else if (entry.isFile() && full !== manifestPath) packaged.push(path.relative(skillDir, full));
+      if (entry.isDirectory()) {
+        collect(full);
+      } else if (entry.isFile() && full !== manifestPath
+                 && !entry.name.endsWith('.pyc') && !entry.name.endsWith('.pyo')) {
+        packaged.push(path.relative(skillDir, full));
+      }
     }
   }
   collect(skillDir);
@@ -97,7 +103,9 @@ function validateOpenAiMetadata(skillDir, file) {
   if (/^policy:\s*$/m.test(text) && !/^\s+allow_implicit_invocation:\s*(true|false)\s*$/m.test(text)) {
     errors.push(`${metadataPath}: malformed implicit-invocation policy`);
   }
-  if (['adaptive-model-orchestrator', 'ai-config-kit-core'].includes(file.name)
+  if (['adaptive-model-orchestrator', 'ai-config-kit-core',
+       'cmux-hermes-orchestrator', 'native-agent-surface',
+       'plan-arbiter'].includes(file.name)
       && !/^\s+allow_implicit_invocation:\s*false\s*$/m.test(text)) {
     errors.push(`${metadataPath}: behavioral framework skills must be explicit-only`);
   }

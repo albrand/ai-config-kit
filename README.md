@@ -26,6 +26,10 @@ concept quickly.
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
 | Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
 | Adopt GLM plus Sol/Terra/Luna-style adaptive routing | `ADAPTIVE_MODEL_ORCHESTRATION.md`, then `skillsets/adaptive-model-orchestration/` |
+| Orchestrate cmux (local) + Hermes (remote router on a Tailscale-only VPS) | `CMUX_HERMES_ORCHESTRATION.md`, then `skillsets/cmux-hermes-orchestration/` |
+| Discover/use native host surfaces (cmux, tmux, zellij, generic harnesses) | `NATIVE_AGENT_SURFACES.md`, then `skillsets/native-agent-surfaces/` (install via the preference-aware `scripts/install.py`) |
+| Reuse a workspace before creating one; coordinate agent sessions; browser E2E | `skillsets/native-agent-surfaces/codex/native-agent-surface/references/PROJECT_SETUP.md`, then `AGENT_SESSION_COORDINATION.md` and `BROWSER_E2E.md` |
+| Bootstrap the kit on a second Mac from the public repo | `SECOND_MAC_BOOTSTRAP.md` |
 | Use a chosen context accelerator (knowledge graph / agent wiki) | `CONTEXT_ACCELERATION.md` and `skillsets/context-acceleration/` |
 
 ## What This Repository Is
@@ -217,6 +221,9 @@ question.
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
 | `HARNESS_STRATEGY.md` | Master/sub-agent routing, model tiers, cache rules, anti-drift rules, escalation, validation, and delivery standards. |
 | `ADAPTIVE_MODEL_ORCHESTRATION.md` | Canonical capability-first multi-model routing, effort, max/ultra, and integration contract. |
+| `CMUX_HERMES_ORCHESTRATION.md` | Bounded, default-off orchestration between cmux (local UI/session transport) and Hermes (remote provider router on a Tailscale-only VPS) via a local deterministic broker; hard network boundary, reuse-first workspace creation, worktree write isolation, no reverse SSH, and report-only cleanup. |
+| `NATIVE_AGENT_SURFACES.md` | Capability-first, host-neutral doctrine for discovering and using native host software an agent runs in or through (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses); never serializes env values or socket capabilities. |
+| `SECOND_MAC_BOOTSTRAP.md` | Git-based second-Mac install from the public repo with explicit copy/install commands; configures its own SSH/Tailscale and never copies credentials. |
 | `SESSION_JOURNALING.md` | Local execution journal protocol for resumable repository work. |
 | `CONTINUOUS_SKILL_LEARNING.md` | Promotion ladder for turning repeated lessons into rules, skills, templates, or automated gates. |
 | `ARCHITECTURE_AND_CODE_QUALITY.md` | Generic architecture review, boundary principles, code quality doctrine, state/data/security/performance review, and self-review checklist. |
@@ -238,6 +245,8 @@ question.
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 | `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
 | `skillsets/security-review/` | Executable defensive-security skillset: the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference. Paired with `SECURITY_AND_PENTEST.md`. |
+| `skillsets/cmux-hermes-orchestration/` | Executable, default-off orchestration skillset for cmux (local) + Hermes (remote router on a Tailscale-only VPS): stdlib-only deterministic broker, two explicit-only Codex skills (`cmux-hermes-orchestrator`, `plan-arbiter`), Claude Code commands, shared references, durable Hermes work journals, a no-secrets remote `AGENTS.md` template, and Builder.io MIT provenance. Paired with `CMUX_HERMES_ORCHESTRATION.md`. |
+| `skillsets/native-agent-surfaces/` | Portable, capability-first skillset for discovering/using native host surfaces (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses): explicit-only Codex skill (`native-agent-surface`), host-neutral adapter contract, stdlib detector that never serializes env values or socket capabilities, reuse-first workspace resolver (`resolve-workspace.py`), project-setup / browser-E2E / agent-session-coordination references, versioned model-neutral `bundle-manifest.json`, and a preference-aware model-agnostic global installer (`scripts/install.py`) with offline tests. Paired with `NATIVE_AGENT_SURFACES.md`. |
 
 ## Load Profiles
 

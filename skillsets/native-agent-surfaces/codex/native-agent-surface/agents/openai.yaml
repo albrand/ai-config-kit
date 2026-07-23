@@ -1,0 +1,7 @@
+interface:
+  display_name: "Native Agent Surface"
+  short_description: "Reuse workspaces and coordinate native agent surfaces"
+  default_prompt: "Use $native-agent-surface to discover and reuse the correct project workspace before creating one, derive project setup from repository manifests, coordinate bounded model sessions, and run snapshot-led browser E2E through declared host capabilities while never serializing environment values or socket capabilities."
+
+policy:
+  allow_implicit_invocation: false

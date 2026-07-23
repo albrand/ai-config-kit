@@ -1,0 +1,7 @@
+interface:
+  display_name: "Plan Arbiter"
+  short_description: "Arbitrate competing plans or execution lanes on evidence, capability, budget, and risk; pick the efficient-frontier handoff, watchdog-verify delegated results independently, and enforce stay-with-limits budget checks before each bounded wave. Builder.io concepts under MIT provenance."
+  default_prompt: "Use $plan-arbiter when two or more plans, agents, or model lanes could plausibly own a task: score candidates on capability fit, quality signal, cost/latency, and risk, select the efficient-frontier lane, partition writes by disjoint ownership, watchdog-verify results independently, check the budget before each wave, and return the arbitration verdict."
+
+policy:
+  allow_implicit_invocation: false

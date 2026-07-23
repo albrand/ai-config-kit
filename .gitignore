@@ -1,0 +1,3 @@
+.ai-config-kit-sidecar-write-scope
+__pycache__/
+*.py[cod]

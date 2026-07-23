@@ -185,6 +185,34 @@ After delegated work returns:
 - Run or record validation.
 - Close the agent if no longer needed.
 
+## cmux + Hermes Bounded Delegation
+
+When an operator has adopted cmux as the local surface and Hermes as the remote
+provider router (Tailscale-only VPS), use `CMUX_HERMES_ORCHESTRATION.md` and the
+`skillsets/cmux-hermes-orchestration/` skillset for that surface. The same
+delegation rules above apply, plus these hard constraints:
+
+- Delegation is **default-off**; enable it explicitly per task. Defaults stay at
+  concurrency 1, depth 1, max output 1024, max turns 8, no recursion.
+- Git worktrees are the only write-isolation boundary: one task, one worktree,
+  one write owner. Partition executor writes by disjoint worktree ownership.
+- Workspaces are **reuse-first**: resolve the structured cmux inventory before
+  creating; reuse an exact workspace for the worktree, fail closed on ambiguity,
+  and close only a workspace this task created. Mirror this with
+  `skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/resolve-workspace.py`
+  and the project-setup / session-coordination references.
+- SSH is Mac → VPS only; no reverse SSH. Noninteractive advisor calls fail
+  closed because Hermes `-q` exposes prompts in argv. Never
+  forward the full environment or serialize `CMUX_SOCKET_CAPABILITY`/`CMUX_*`.
+- Never use `hermes -z` (it auto-enables YOLO). Use the persistent master.
+- A persistent Hermes master may run in a remote tmux session attached through
+  cmux; never detach a one-shot parent while children run. One-shot background
+  delegation is forbidden.
+- Hand lane/plan selection to the `plan-arbiter` skill (efficient-frontier
+  selection, watchdog verification, stay-with-limits budget checks). The active
+  coordinator keeps final authority on architecture, security, data, and release.
+- Usage groups exact session exports by provider/model; query known child IDs explicitly.
+
 ## Anti-Patterns
 
 - Delegating the immediate blocking task and waiting idly.

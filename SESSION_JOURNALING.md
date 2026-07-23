@@ -45,6 +45,25 @@ The repo decides whether journals are:
 
 If local-only, add the journal path to ignore rules.
 
+## Durable Remote Journals (Hermes)
+
+For long work that runs on a remote host (e.g. the Hermes provider router on a
+Tailscale-only VPS), keep a **durable** journal on that host so the work is
+resumable across cmux/Hermes orchestration. This is the remote counterpart to
+the local protocol above.
+
+- Tool and contract: `skillsets/cmux-hermes-orchestration/scripts/hermes-work-journal.py`
+  and `skillsets/cmux-hermes-orchestration/references/HERMES_WORK_JOURNALS.md`.
+- Per-task directories under `HERMES_WORK_JOURNAL_DIR` (default
+  `/var/lib/hermes/work-journals`): atomic JSON state plus an append-only
+  markdown log. Directories `0700`, files `0600`, `fcntl`-locked.
+- Commands: `start | append | heartbeat | checkpoint | resume | close | show | list`. There
+  is **no delete**; close to finish.
+- Same no-secrets rule: never paste credentials, tokens, private URLs, or
+  closed-scope facts. The tool never stores environment values.
+- On resume, re-open current source/tests/runtime evidence before trusting a
+  prior journal conclusion — journals are a fallback trace, not authority.
+
 ## Journal Lifecycle
 
 1. Start.
