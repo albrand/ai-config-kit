@@ -16,6 +16,8 @@ Pair it with the top-level `NATIVE_AGENT_SURFACES.md` doctrine.
 - Project setup: `references/PROJECT_SETUP.md`
 - Browser E2E: `references/BROWSER_E2E.md`
 - Session coordination: `references/AGENT_SESSION_COORDINATION.md`
+- Session-start health: `references/SESSION_START_HEALTH.md` (model-neutral
+  preflight contract; Claude doctor at `codex/native-agent-surface/scripts/claude-session-hook-doctor.py`)
 - Bundle manifest: `bundle-manifest.json` (versioned, model-neutral)
 - Codex adapter source: `codex/native-agent-surface/` (explicit-only skill;
   present in the ai-config-kit source tree, not the canonical installed bundle)
@@ -110,10 +112,23 @@ Run the resolver self-test (offline JSON fixtures, no network, no writes):
 python3 codex/native-agent-surface/scripts/resolve-workspace.py --selftest
 ```
 
-Emit the JSON report:
+Run the Claude session-start hook doctor self-test (offline temp fixtures, no
+network, no real home writes, no plugin execution):
 
 ```sh
-python3 codex/native-agent-surface/scripts/detect-native-surfaces.py --format json
+python3 codex/native-agent-surface/scripts/claude-session-hook-doctor.py --selftest
+python3 scripts/claude_session_hook_doctor_test.py
+```
+
+The doctor is **report-only**: it never executes an arbitrary hook command, has
+no repair mode, runs only read-only metadata queries under a bounded timeout,
+and never serializes environment values. It checks enabled plugins' on-disk
+`hooks/hooks.json` for malformed manifests, duplicate SessionStart commands,
+missing runtimes/targets, and advises `restart_required` when a live Claude
+process predates an updated executable or hook manifest. Emit the doctor report:
+
+```sh
+python3 codex/native-agent-surface/scripts/claude-session-hook-doctor.py --format json
 ```
 
 Validate the Codex skill from the repo root:

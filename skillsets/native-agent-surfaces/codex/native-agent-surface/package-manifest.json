@@ -1,6 +1,6 @@
 {
   "name": "native-agent-surface",
-  "version": 1,
+  "version": 2,
   "required": [
     "SKILL.md",
     "agents/openai.yaml",
@@ -8,11 +8,14 @@
     "references/PROJECT_SETUP.md",
     "references/BROWSER_E2E.md",
     "references/AGENT_SESSION_COORDINATION.md",
+    "references/SESSION_START_HEALTH.md",
     "scripts/detect-native-surfaces.py",
-    "scripts/resolve-workspace.py"
+    "scripts/resolve-workspace.py",
+    "scripts/claude-session-hook-doctor.py"
   ],
   "executable": [
     "scripts/detect-native-surfaces.py",
-    "scripts/resolve-workspace.py"
+    "scripts/resolve-workspace.py",
+    "scripts/claude-session-hook-doctor.py"
   ]
 }

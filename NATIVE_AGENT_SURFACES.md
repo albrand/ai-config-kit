@@ -50,9 +50,32 @@ workspace, resolve the structured runtime inventory and reuse an existing one.
   A **broad-parent** cwd is advisory only and is **never** auto-reused.
   Ties/duplicates are **ambiguous** and fail closed.
 - See `references/PROJECT_SETUP.md` (manifest-first setup),
-  `references/BROWSER_E2E.md` (capability-negotiated browser E2E), and
+  `references/BROWSER_E2E.md` (capability-negotiated browser E2E),
   `references/AGENT_SESSION_COORDINATION.md` (discover-before-create,
-  one-writer-per-worktree cooperation).
+  one-writer-per-worktree cooperation), and
+  `references/SESSION_START_HEALTH.md` (session-start health preflight).
+
+## Session-Start Health
+
+Session-start hooks load only at session start, so a stale session or an updated
+hook manifest silently diverges from what is on disk. Before launch/resume, an
+adapter *may* expose a **report-only** preflight (see
+`references/SESSION_START_HEALTH.md`) covering: hook identity, invocation
+uniqueness, runtime presence, path resolvability, and restart-required state.
+
+The preflight is model-neutral in what it checks and never encodes a tool's
+command shapes. It never repairs or mutates, never executes an arbitrary hook
+command (commands are tokenized and inspected), keeps resolved targets inside
+the owning plugin root, and never serializes environment values. It never claims
+the in-memory process version — a stale-session advisory is computed only from
+process start time vs. on-disk artifact mtime.
+
+The Claude adapter is
+`skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/claude-session-hook-doctor.py`
+(stdlib-only, report-only). Exit nonzero signals broken prerequisites; a restart
+advisory alone may remain exit 0. Recovery is always: update via the official
+command, exit, then resume the **exact** session id — never patch a cache by
+hand or suppress a failure.
 
 ## Hard Safety Boundary
 
@@ -121,6 +144,7 @@ happens merely because the skill is present.
 - Doctrine: this file.
 - Skillset: `skillsets/native-agent-surfaces/` (explicit-only Codex skill
   `native-agent-surface`, adapter contract, stdlib detector, reuse-first
-  workspace resolver, the project-setup / browser-E2E / session-coordination
-  references, the versioned `bundle-manifest.json`, and the preference-aware
+  workspace resolver, the project-setup / browser-E2E / session-coordination /
+  session-start-health references, a report-only Claude session-start hook
+  doctor, the versioned `bundle-manifest.json`, and the preference-aware
   `scripts/install.py`).

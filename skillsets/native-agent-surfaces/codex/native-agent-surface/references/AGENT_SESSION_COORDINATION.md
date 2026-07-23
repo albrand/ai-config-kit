@@ -62,6 +62,21 @@ identify each target, confirm its cwd/worktree and owner, send a bounded read-on
 request, and require a structured result. Never infer shared model state from a
 shared cmux window.
 
+## Session-start health
+
+Session-start hooks load only at session start, so a stale session or an updated
+hook manifest will silently diverge from what is on disk. Before resuming or
+launching, an adapter may run the report-only preflight defined in
+`SESSION_START_HEALTH.md` (hook identity, invocation uniqueness, runtime
+presence, path resolvability, restart-required state). It never repairs or
+mutates, never executes an arbitrary hook command, and never serializes
+environment values.
+
+For Claude, run `scripts/claude-session-hook-doctor.py --format json`. On a
+`restart_required` advisory or a broken prerequisite, do not force the resume:
+update the tool/plugin through its official command, exit, and resume the exact
+session id (full id). Never patch a cache by hand or suppress a failure.
+
 ## Hard boundary
 
 - Never serialize environment values or `CMUX_*`. Never `shell=True` or

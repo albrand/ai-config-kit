@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": 1,
+  "bundle_version": 2,
   "bundle_name": "native-agent-surfaces",
   "model_neutral": true,
   "summary": "Model-neutral knowledge base for capability-first, host-native agent-surface discovery. The installer copies this bundle verbatim to a canonical data location and lays down a receipt-tracked Codex adapter (Codex first) on top of it. The canonical bundle is the model-neutral source of truth; tool adapters layer on top of it.",
@@ -33,7 +33,8 @@
   },
   "executable": [
     "scripts/detect-native-surfaces.py",
-    "scripts/resolve-workspace.py"
+    "scripts/resolve-workspace.py",
+    "scripts/claude-session-hook-doctor.py"
   ],
   "knowledge_payload": [
     {"source": "bundle-manifest.json", "target": "bundle-manifest.json"},
@@ -42,8 +43,10 @@
     {"source": "codex/native-agent-surface/references/PROJECT_SETUP.md", "target": "references/PROJECT_SETUP.md"},
     {"source": "codex/native-agent-surface/references/BROWSER_E2E.md", "target": "references/BROWSER_E2E.md"},
     {"source": "codex/native-agent-surface/references/AGENT_SESSION_COORDINATION.md", "target": "references/AGENT_SESSION_COORDINATION.md"},
+    {"source": "codex/native-agent-surface/references/SESSION_START_HEALTH.md", "target": "references/SESSION_START_HEALTH.md"},
     {"source": "codex/native-agent-surface/scripts/detect-native-surfaces.py", "target": "scripts/detect-native-surfaces.py"},
-    {"source": "codex/native-agent-surface/scripts/resolve-workspace.py", "target": "scripts/resolve-workspace.py"}
+    {"source": "codex/native-agent-surface/scripts/resolve-workspace.py", "target": "scripts/resolve-workspace.py"},
+    {"source": "codex/native-agent-surface/scripts/claude-session-hook-doctor.py", "target": "scripts/claude-session-hook-doctor.py"}
   ],
   "adapters": {
     "codex": {
@@ -56,8 +59,10 @@
         "references/PROJECT_SETUP.md",
         "references/BROWSER_E2E.md",
         "references/AGENT_SESSION_COORDINATION.md",
+        "references/SESSION_START_HEALTH.md",
         "scripts/detect-native-surfaces.py",
-        "scripts/resolve-workspace.py"
+        "scripts/resolve-workspace.py",
+        "scripts/claude-session-hook-doctor.py"
       ]
     }
   }

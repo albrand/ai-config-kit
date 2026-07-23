@@ -51,6 +51,8 @@ If the URL requires credentials or the commit does not match exactly, stop.
 ```sh
 node scripts/validate-codex-skills.cjs
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/detect-native-surfaces.py --selftest
+PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/codex/native-agent-surface/scripts/claude-session-hook-doctor.py --selftest
+PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/scripts/claude_session_hook_doctor_test.py
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/native-agent-surfaces/scripts/install_test.py
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/cmux-hermes-orchestration/scripts/hermes-work-journal.py selftest
 PYTHONDONTWRITEBYTECODE=1 python3 skillsets/cmux-hermes-orchestration/scripts/cmux_hermes_test.py

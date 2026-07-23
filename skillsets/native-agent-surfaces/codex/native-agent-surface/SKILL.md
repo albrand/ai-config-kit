@@ -79,6 +79,45 @@ ambiguous and fail closed. The resolver never executes a discovered binary.
 - `--inventory <path|->`: JSON inventory file, or `-` for stdin.
 - `--selftest`: offline fixture self-tests.
 
+## Session-Start Health
+
+Before launch/resume, an adapter *may* run a report-only preflight that catches
+stale sessions and broken session-start hook prerequisites early. The neutral
+contract is `references/SESSION_START_HEALTH.md` (hook identity, invocation
+uniqueness, runtime presence, path resolvability, restart-required state). It
+does not encode any one tool's command shapes.
+
+The Claude adapter is `scripts/claude-session-hook-doctor.py`: stdlib-only and
+**report-only** (no repair, no mutation, no arbitrary hook execution), and
+requires Claude Code `2.1.211` or newer. It:
+
+- resolves a Claude executable from `--claude` or PATH and runs only read-only
+  metadata subcommands under a bounded timeout (or takes `--plugins-json` /
+  `--version-string` to avoid invoking the CLI);
+- for each **enabled** plugin, reads on-disk `hooks/hooks.json`, validates
+  JSON/event shape, inspects SessionStart commands, flags exact duplicate
+  commands, tokenizes with `shlex` (no shell), verifies the runtime exists,
+  resolves only literal path references anchored at the plugin root, and
+  verifies those targets exist;
+- probes active Claude processes with a best-effort `ps` and advises
+  `restart_required` when a process predates an updated executable or hook
+  manifest (it never claims the in-memory process version); a basename-only
+  process match is downgraded to `restart_suspected` until the full native
+  surface and exact session are confirmed.
+
+```sh
+scripts/claude-session-hook-doctor.py --format json            # report
+scripts/claude-session-hook-doctor.py --plugins-json plugins.json
+scripts/claude-session-hook-doctor.py --selftest               # offline self-test
+```
+
+Exit nonzero only for errors; a restart advisory alone stays exit 0 unless
+`--strict` is given. Recovery is always: update via the official command, exit,
+then resume the **exact** session id — hooks load only at session start.
+Static path resolution cannot prove that a launcher injected
+`CLAUDE_PLUGIN_ROOT`; a fresh launch/resume without a SessionStart failure is
+the runtime proof.
+
 ## Guardrails
 
 - This skill is explicit-only; it never auto-activates.
