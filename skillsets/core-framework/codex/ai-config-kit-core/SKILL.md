@@ -5,6 +5,10 @@ description: Route into the albrand/ai-config-kit operating framework and load o
 
 # AI Config Kit Core
 
+Load `references/TEST_OWNERSHIP.md` before selecting tests or validation for an
+implementation, review, quality-gate, migration, config, dependency, or generated
+artifact change.
+
 Use the bundled framework as an on-demand operating library. Keep current system,
 developer, user, and repository instructions authoritative. Treat framework rules
 as guidance unless the repository explicitly adopts them.

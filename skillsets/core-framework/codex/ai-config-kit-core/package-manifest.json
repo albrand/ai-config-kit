@@ -1,6 +1,6 @@
 {
   "name": "ai-config-kit-core",
-  "version": 1,
+  "version": 2,
   "required": [
     "SKILL.md",
     "agents/openai.yaml",
@@ -20,6 +20,7 @@
     "references/HARNESS_STRATEGY.md",
     "references/QUALITY_CONVERGENCE.md",
     "references/QUALITY_GATES.md",
+    "references/TEST_OWNERSHIP.md",
     "references/REPO_ADOPTION_PLAYBOOK.md",
     "references/REPO_AGENTS_TEMPLATE.md",
     "references/REVIEW_AND_PR_FRAMEWORK.md",

@@ -30,35 +30,46 @@ Use this as the user-level baseline for AI coding agents.
 
 ## Board-Backed Regression Protection
 
-This rule applies to every repository and every implementation, review,
-release, or skill/agent workflow.
+This rule is **proportional**, not universal. Board-backed checking is mandatory
+only when a board is configured or linked for the repository, or when
+risk/product/release scope makes board-backed invariants material. A missing
+board must not suppress code findings: report concrete code, contract, security,
+or data issues regardless of board access.
 
 - Treat already working, accepted, QA-approved, Done, released, or otherwise
   board-backed behavior as protected scope. A task is incomplete if it
   implements the current change while regressing behavior that was already
   working.
 - Before implementation, PR review, quality-gate, readiness, or release
-  claims, ask imperatively for access to the authoritative ticket board. For
-  Jira-backed projects, require Jira board access; for non-Jira projects, use
-  the configured equivalent board. If access is unavailable, request access or a
-  current board export and report the work as `board regression gate blocked`.
-- Build an inventory of all visible tickets on the board, not only the current
-  ticket: key, title, type, status, sprint/release, component/area, acceptance
-  criteria, linked PR/release evidence, and QA/Done evidence when present. Use
-  metadata first for scale, then open the current ticket plus every adjacent,
-  completed, QA, Done, released, or otherwise impacted ticket in detail.
+  claims, ask for access to the authoritative ticket board **when one is
+  configured or linked**. For Jira-backed projects, request Jira board access;
+  for non-Jira projects, use the configured equivalent board. If a board is
+  expected but access is unavailable, request access or a current board export
+  and report the work as `board regression gate blocked` only for the
+  board-backed invariants that actually need it.
+- When board access applies, build an inventory of all visible tickets on the
+  board, not only the current ticket: key, title, type, status, sprint/release,
+  component/area, acceptance criteria, linked PR/release evidence, and QA/Done
+  evidence when present. Use metadata first for scale, then open the current
+  ticket plus every adjacent, completed, QA, Done, released, or otherwise
+  impacted ticket in detail.
 - Check the code, diff, tests, docs, migrations, config, and release notes
-  against the entire ticket inventory. Identify overlaps, contradictions,
-  duplicate scope, missing acceptance criteria, and any changed files/routes/
-  contracts that can affect previously completed tickets.
+  against the ticket inventory. Identify overlaps, contradictions, duplicate
+  scope, missing acceptance criteria, and any changed files/routes/contracts
+  that can affect previously completed tickets.
 - Treat a plausible regression against protected ticket behavior as a
   **Blocker** until disproven with repo evidence and targeted validation. Treat
   missing board access, incomplete ticket inventory, or missing PR-to-ticket
-  traceability as **Blocked / NOT READY**, never as a pass.
-- Every final implementation, review, or readiness answer must state which
-  board was checked, the inventory size/scope/date, the tickets matched to the
-  change, the protected behavior checked for regression, and any gaps or
-  blockers.
+  traceability as **Blocked / NOT READY** for the board-backed invariants that
+  need them, never as a pass — but do not block unrelated code findings on board
+  access, and do not let board inventory expand re-review blocking scope without
+  a causal delta path to the changed surface.
+- When board access applies, every final implementation, review, or readiness
+  answer should state which board was checked, the inventory size/scope/date,
+  the tickets matched to the change, the protected behavior checked for
+  regression, and any gaps or blockers. When no board is configured or linked,
+  state that and rely on code, contract, and runtime evidence instead of
+  blocking on a board that was never in scope.
 
 5. Delegate when useful and allowed.
 
@@ -167,6 +178,9 @@ release, or skill/agent workflow.
 9. Verify before completion.
 
 - Run the strongest practical validation for the changed surface.
+- Select test and validation evidence by ownership and boundary using
+  `TEST_OWNERSHIP.md`; do not treat any layer as a blanket all-changes-need-tests
+  mandate.
 - Distinguish passed, failed, blocked, skipped, and not run.
 - Do not imply unrun checks passed.
 - Report residual risk and missing evidence.

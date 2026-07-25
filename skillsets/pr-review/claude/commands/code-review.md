@@ -20,7 +20,7 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
 2. Create a todo list before starting.
 3. Preflight:
    - Confirm the PR or diff is open and reviewable.
-   - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the same AI reviewer.
+   - Stop or ask if it is closed, draft, or obviously automated/trivial. Stop for a prior review only when the same authenticated reviewer reviewed the current head and no author reply or head change occurred since; otherwise apply delta-first re-review.
    - Still review AI-generated PRs when the user asks for it.
 4. If the task involves existing PR comments, fetch live top-level comments, reviews, review comments, review threads, head SHA, review decision, and current checks before editing or replying. Map each comment to fixed, evidence-backed reply, not applicable, or still blocked.
 5. Resolve instruction scope:
@@ -32,11 +32,11 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - Extract the business rules the PR is trying to satisfy: user workflow, role/permission rules, data lifecycle, external contracts, acceptance criteria, non-goals, and previously working behavior that must remain intact.
    - Build a compact matrix: `business rule / source / changed code / expected behavior / validation evidence`.
    - If business rules or acceptance criteria are unclear and the gap changes the verdict, ask one targeted question or mark the PR `NEEDS DISCUSSION`.
-7. Demand authoritative ticket-board access before readiness judgment:
+7. Apply proportional board-backed checking when a board is configured/linked or product/release risk makes its invariants material:
    - For Jira-backed repositories, ask imperatively for Jira board access; for non-Jira repositories, ask for the configured board or a current board export.
    - Inventory all visible board tickets, not only the PR's linked issue.
    - Check the diff against current, adjacent, QA, Done, released, and previously working tickets that share files, routes, contracts, data, permissions, or user workflows with the PR.
-   - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY**. Do not approve or call the PR regression-safe.
+   - Missing board evidence blocks only board-backed invariants that require it. Continue reporting validated code findings. Board inventory cannot expand re-review blocking scope without a causal delta path.
 8. Use independent agents when useful and available:
    - One or two instruction-compliance passes.
    - One business-rule coverage pass.
@@ -58,8 +58,9 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - For bugfix PRs, check for reproduced failure and regression protection.
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Convert follow-ups into vertical-slice tickets only when ticketing is requested.
-11. Validate every candidate finding before reporting. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
-12. Create a private comment plan before posting; dedupe findings; run the output contract's pre-post self-check; prefer one submitted PR review over loose issue comments.
+11. Validate and try to falsify every candidate finding. State severity and confidence for survivors. Drop false positives, speculative issues, lint-only concerns, style-only concerns, pre-existing issues, and unsupported assumptions.
+12. Create a private comment plan; dedupe findings; run the output contract's pre-post freshness check and self-check; prefer one submitted PR review.
+   - Immediately before posting, re-fetch head SHA, authenticated reviewer, unresolved threads, mergeability, and required checks. Recompute if the head or reviewer changed.
 13. For GitHub PRs, post approved high-confidence review comments by default unless `--no-post` is present or posting is blocked.
 14. Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Each thread must include:
    - `Business rule / contract:` the source rule being violated.
@@ -75,7 +76,8 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    Do not add AI attribution or signatures such as `Generated with Claude Code`, model names, AI disclaimers, or watermarks.
    If inline review APIs fail, fall back to one submitted request-changes/comment review body with file/line references and state the fallback.
 15. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
-16. When preparing or editing a PR body, use only `Summary`, `Changes and value`,
+16. For re-review, record previous reviewed SHA, current SHA, `old..new` delta, and prior finding dispositions. New blockers must be introduced/materially worsened by the delta, be a concrete regression caused/exposed by it, or have a causal path to an explicitly in-scope release-critical invariant. Unrelated legacy defects are non-blocking follow-ups. Full-head fallback requires an unavailable/unreliable baseline, materially expanded scope/security/data/architecture, or an explicit fresh-review request.
+17. When preparing or editing a PR body, follow the repository's required PR template when present. Otherwise use only `Summary`, `Changes and value`,
     and `Ticket` when applicable. Keep the value section specific and
     non-repetitive, and do not add approach, validation, deployment, risk,
     follow-up, checklist, rollback, residual-risk, testing, or command-log

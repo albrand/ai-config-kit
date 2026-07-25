@@ -27,7 +27,10 @@ Use this skill to create or reconcile the technical operating system for a proje
    - `CI/review bootstrap`: add or propose quality gates, PR templates, review automation, and branch protections.
    - `Infrastructure bootstrap`: provision or update cloud/deployment resources only after explicit approval.
    - `Legacy reconcile`: import current technology decisions and harden gaps without forcing a new stack.
-8. Assess and scaffold the quality system:
+8. Assess and scaffold the quality system using `TEST_OWNERSHIP.md`. Treat the
+   following as inventory choices classified by owner, boundary, and risk, not a
+   mandate to scaffold every layer. Do not recreate upstream library suites,
+   unit-test declarative config or migration text, or test generated internals:
    - Local validation: format, lint, typecheck, unit, integration, e2e or smoke tests, build, codegen/schema, migration, seed, and docs checks.
    - CI/CD validation: install/cache, changed-surface checks, full-suite checks, build artifacts, preview/deploy checks, environment validation, migration dry runs, rollback checks, and release promotion gates.
    - PR validation: minimal app-value PR body contract, required checks,

@@ -79,6 +79,13 @@ Include negative paths, boundary cases, permissions, state transitions, data lif
 
 For `/tech-terraform`, assess existing implementation and scaffold or propose every quality layer that is useful for the stack and risk profile.
 
+Treat the list below as an inventory to classify, not a mandate to scaffold
+every test layer. For each candidate, identify the owning surface, boundary,
+risk, and smallest falsifiable evidence under `TEST_OWNERSHIP.md`. Prefer native
+parsers/linters/planners for config, outcome checks for migrations,
+generator/consumer evidence for generated code, and repository-owned boundary
+checks instead of recreating library or vendor suites.
+
 At minimum, evaluate:
 
 - Local developer validation: format, lint, typecheck, unit tests, integration tests, e2e or smoke tests, build, codegen/schema checks, migration checks, seed checks, and docs checks.

@@ -2,6 +2,11 @@
 
 Quality gates prove that the requested outcome works and that important adjacent behavior did not regress.
 
+Test and validation requirements below are ownership- and boundary-gated by
+`TEST_OWNERSHIP.md`: require new test evidence only when the changed surface owns
+the behavior, contract, or invariant. Do not read these levels as a blanket
+all-changes-need-tests mandate.
+
 ## Validation Truth Rules
 
 Always distinguish:
@@ -54,6 +59,13 @@ If there is no evidence, there is no completion. A confident assessment without 
 
 ## Gate Levels
 
+Test evidence at every level is **ownership-gated**: require it only when the
+changed surface owns the behavior, contract, or invariant being validated, per
+`TEST_OWNERSHIP.md`. Do not treat the items below as a blanket mandate to add a
+test to every change; select the smallest falsifiable evidence for the owning
+surface. Upstream suites, declarative-config mechanics, migration text, and
+generated internals are owned by their tools, not re-tested here.
+
 ### Level 0: Docs Or Prompt Only
 
 Use for documentation, prompts, and framework text.
@@ -71,9 +83,10 @@ Suggested checks:
 
 Use for small code changes.
 
-Required:
+Required when the changed surface owns the behavior:
 
-- Focused test or direct reproducer tied to the changed behavior.
+- Focused test or direct reproducer tied to the changed behavior, or the smallest
+  falsifiable evidence selected by `TEST_OWNERSHIP.md`.
 - Lint or format check for changed files when available.
 - Typecheck if the language supports it and the change touches typed code.
 
@@ -81,26 +94,28 @@ Required:
 
 Use for normal implementation work.
 
-Required:
+Required when ownership and risk apply:
 
-- Focused tests.
+- Focused tests or boundary/contract checks for owned behavior.
 - Lint.
 - Typecheck.
-- Relevant unit or integration tests.
+- Relevant unit or integration tests when the repository owns that layer.
 - Diff whitespace check.
 
 ### Level 3: Cross-Cutting Change
 
 Use for shared helpers, auth, data flow, state flow, build config, schema, or broad refactors.
 
-Required:
+Required when ownership and risk apply:
 
 - Level 2 checks.
-- Full test suite or relevant broad suite.
+- Full test suite or relevant broad suite when the repository owns the affected
+  behavior and a broad run is the smallest falsifiable evidence.
 - Build.
 - Security or policy checks when applicable.
-- Generated artifact checks when applicable.
-- Regression tests for risky paths.
+- Generated artifact checks via generator/parity/consumer evidence per
+  `TEST_OWNERSHIP.md`.
+- Regression protection for risky owned paths.
 
 ### Level 4: Release Or Deployment Change
 
@@ -123,7 +138,9 @@ For bugs:
 1. Capture exact symptom.
 2. Reproduce when feasible.
 3. Identify root cause or state leading hypothesis.
-4. Add regression protection when practical.
+4. Add regression protection when practical and when the repository owns the
+   failing behavior; select the smallest falsifiable evidence per
+   `TEST_OWNERSHIP.md`.
 5. Re-run original reproducer.
 6. Run one adjacent regression check when feasible.
 
@@ -164,7 +181,10 @@ Use when tickets, docs, designs, roadmap items, or stakeholder requirements defi
 
 Use when reviewing a pull request, branch, or diff for merge readiness.
 
-- Preflight the PR or diff before review: open, not draft unless explicitly requested, not trivial automated work, not already reviewed by the same AI reviewer unless asked.
+- Preflight the PR or diff before review: open, not draft unless explicitly
+  requested, not trivial automated work. Reuse a prior review only when the same
+  authenticated reviewer reviewed the same head and no author reply followed;
+  otherwise apply delta-first re-review.
 - Resolve applicable instruction scope before making findings.
 - Read PR title, body, linked issue, changed-file list, and author intent before reviewing details.
 - Validate each candidate finding before reporting it.
