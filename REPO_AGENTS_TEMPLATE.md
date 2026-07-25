@@ -172,13 +172,20 @@ Required defaults:
 
 ## Testing Rules
 
-- Bug fixes need regression tests that fail on the old behavior when feasible.
+Test requirements are ownership- and boundary-gated by `TEST_OWNERSHIP.md`.
+Require new test evidence only when this repository owns the behavior, contract,
+or invariant; do not recreate upstream suites, declarative-config mechanics,
+migration text, or generated internals. Select the smallest falsifiable evidence
+for the owning surface.
+
+- Bug fixes need regression protection that fails on the old behavior when the
+  repository owns the failing behavior and the risk justifies durable coverage.
 - Repeated validation failures require a convergence loop with target, max iterations, evidence, and stop reason.
-- UI changes need behavior-level tests when practical.
-- API changes need contract or handler tests.
-- Shared helpers need edge-case unit tests.
-- State-flow changes need tests for cache, invalidation, optimistic update, or rollback behavior.
-- Security-sensitive changes need role, permission, or isolation coverage.
+- UI changes need behavior-level tests when practical and owned.
+- API or integration-boundary changes need contract or handler checks at the boundary.
+- Shared helpers need edge-case unit tests when the repository owns the helper.
+- State-flow changes need tests for cache, invalidation, optimistic update, or rollback behavior when owned.
+- Security-sensitive changes keep durable role, permission, or isolation coverage or a CI guard.
 
 ## Validation Commands
 
@@ -201,7 +208,7 @@ Add explicit process names here. Only run them when the user invokes them.
 Examples:
 
 - `run the design-contract review`: compare changed UI against approved designs and changed contracts.
-- `run the bugfix evidence process`: fix the bug, add behavior regression tests, update the issue, prepare the PR, and attach external evidence.
+- `run the bugfix evidence process`: fix the bug, add ownership-gated regression protection per `TEST_OWNERSHIP.md`, update the issue, prepare the PR, and attach external evidence.
 - `run the release readiness process`: validate build, checks, deployment notes, rollback, and operational risk.
 
 ## Completion Report

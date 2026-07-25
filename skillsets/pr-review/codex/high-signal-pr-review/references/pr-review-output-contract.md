@@ -215,6 +215,16 @@ If the user requested response or resolution of existing comments:
 
 ## Operator Close-Out Shape
 
+For re-review, first record the previous reviewed SHA, current SHA, `old..new`
+delta, and prior finding dispositions. A new blocker must be introduced or
+materially worsened by the delta, be a concrete regression caused/exposed by it,
+or have a causal path to an explicitly in-scope release-critical invariant.
+Unrelated legacy defects are non-blocking follow-ups. Preserve finding identity.
+Use a full-current-head fallback only when the baseline is unavailable or
+unreliable, scope/security/data/architecture materially expanded, or the user
+explicitly asks for a fresh review. New validation remains ownership-gated by
+`TEST_OWNERSHIP.md`.
+
 This section is for the agent's response to the operator after review work. It
 is not a PR surface and must not be copied into a PR review body or PR body.
 

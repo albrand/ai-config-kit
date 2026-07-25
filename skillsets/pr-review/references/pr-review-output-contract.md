@@ -64,6 +64,7 @@ Record:
 - Whether posting is expected, skipped, or blocked.
 - Existing issue comments, review comments, and review threads inspected when the task is to address or respond to PR feedback.
 - Review state after the latest head change, including whether re-review is required.
+- For re-review: the previous reviewed SHA, the current SHA, the `old..new` delta, and the prior finding ledger with dispositions.
 
 ## Preflight
 
@@ -108,7 +109,7 @@ Report only findings that meet at least one condition:
 - The implementation does not satisfy, contradicts, or silently narrows a business rule, acceptance criterion, workflow, role rule, state transition, or previously working board-backed behavior the PR is supposed to preserve.
 - The change breaks an auth, data, security, runtime, API, or environment contract.
 - The change violates an applicable scoped instruction and the exact rule can be cited.
-- Required validation is missing for a risky behavior introduced by the PR.
+- Required validation is missing for a risky behavior introduced by the PR (ownership-gated by `TEST_OWNERSHIP.md`; in re-review, scoped to what the delta causally affects).
 
 Drop:
 
@@ -212,6 +213,83 @@ If the user requested response or resolution of existing comments:
 - Resolve only review threads that were actually addressed.
 - Re-check unresolved thread count, current checks, deployment state, and review decision after pushing.
 - Request re-review when the current head no longer has a valid approval.
+
+## Delta-First Re-Review Contract
+
+This section is the normative source for re-review behavior. A **re-review** is
+any second or later review of the same PR, a follow-up review after the author
+replied or pushed, or a queue sweep that revisits a previously reviewed head.
+Re-review is **delta-first** by default, not full-current-head. Codex, Claude
+Code, opencode/GLM, and any other AI entrypoint must load and obey this contract
+before re-reviewing.
+
+### Re-Review Inputs
+
+Record before judging:
+
+- Previous reviewed SHA (the baseline).
+- Current SHA (the head under re-review).
+- The `old..new` delta being re-reviewed.
+- Prior finding ledger and dispositions (fixed, accepted-risk, not-applicable,
+  wontfix, or still-open) for this PR.
+- Only the direct and transitive consumers causally affected by the delta.
+
+### New Blockers In Re-Review
+
+Raise a **new blocker** only when it meets at least one condition:
+
+- Introduced or materially worsened by the delta under review.
+- A concrete regression caused or exposed by the delta.
+- An explicitly in-scope, release-critical invariant with causal proof tying it
+  to the delta.
+
+Unrelated or pre-existing discoveries are **non-blocking follow-ups**. Report
+them separately; do not let them expand the blocking scope of the re-review.
+Required new test evidence is scoped to what the delta causally affects and is
+ownership-gated by `TEST_OWNERSHIP.md`.
+
+### Board Inventory In Re-Review
+
+Board inventory cannot expand re-review blocking scope without a **causal delta
+path** to the changed surface. A plausible regression against protected
+board-backed behavior is a blocker only when the delta can reach that behavior;
+otherwise it is a follow-up. Missing board access must not suppress concrete code
+findings (see the proportional board rule in `GLOBAL_AGENTS.md`).
+
+### Finding Identity
+
+Preserve stable finding identity across re-reviews. Do not duplicate, reopen, or
+re-report a finding already disposed as fixed, not-applicable, or accepted-risk
+unless the facts changed. Drop fixed findings from the active ledger and track
+only what remains open and what the new delta newly introduces or worsens.
+
+### Full-Current-Head Fallback
+
+Fall back to a **full current-head review** only when:
+
+- The baseline SHA is unavailable or unreachable.
+- The rewritten range makes comparison unreliable (for example, a force-push or
+  squash that destroys the delta).
+- Scope, security, data, or architecture materially expanded beyond the delta.
+- The user explicitly asks for a fresh full review.
+
+State the fallback reason in the review. Outside these cases, keep the review
+delta-first.
+
+### Re-Review Scenarios
+
+- **Fixed blocker:** the prior blocker was resolved. Drop it; do not reopen
+  without changed facts. Require new evidence only for what the new delta affects.
+- **Delta-caused adjacent regression:** the follow-up commit changes a helper the
+  prior delta's callers use. There is a causal path, so it is in scope; require
+  evidence for that path only.
+- **Unrelated legacy defect:** the delta never touched it. Report as a
+  non-blocking follow-up; do not block the delta.
+- **Unavailable baseline:** the prior SHA is unreachable. Fall back to a full
+  current-head review and state the reason.
+- **Materially expanded scope:** the follow-up rewrites an auth boundary or data
+  path. A full current-head review is justified and durable protection may be
+  required anew.
 
 ## Operator Close-Out Shape
 

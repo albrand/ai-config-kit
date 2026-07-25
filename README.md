@@ -21,6 +21,7 @@ concept quickly.
 | Understand anti-bias and causal-overfitting controls | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
 | Plan implementation work | [Load Profiles](#load-profiles), then `OPERATING_MODEL.md` |
+| Decide what test evidence a change needs | `TEST_OWNERSHIP.md`, then `QUALITY_GATES.md` |
 | Review PRs | [Review And PR Profile](#review-and-pr-profile), then `skillsets/pr-review/` |
 | Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
@@ -228,6 +229,7 @@ question.
 | `CONTINUOUS_SKILL_LEARNING.md` | Promotion ladder for turning repeated lessons into rules, skills, templates, or automated gates. |
 | `ARCHITECTURE_AND_CODE_QUALITY.md` | Generic architecture review, boundary principles, code quality doctrine, state/data/security/performance review, and self-review checklist. |
 | `QUALITY_GATES.md` | Validation levels, evidence rules, docs/code/UI/API/data/security/release gates, and validation report template. |
+| `TEST_OWNERSHIP.md` | Ownership- and boundary-based test-evidence decision gate that replaces blanket all-changes-need-tests mandates. |
 | `QUALITY_CONVERGENCE.md` | Controlled iteration loop with dimensions, targets, scoring, breakpoints, evidence packets, and stop conditions. |
 | `REVIEW_AND_PR_FRAMEWORK.md` | Review posture, criteria, finding format, self-review, PR preparation, approval standard, and PR body template. |
 | `FRAMEWORK_PATTERNS.md` | Neutral reusable patterns for collaboration, source-of-truth order, impact mapping, debugging, big changes, review, journaling, validation, skills, routing, and convergence. |
@@ -647,7 +649,7 @@ Docs-only changes should use Level 0 from `QUALITY_GATES.md`:
 - ASCII or encoding check when required.
 - Archive check when maintaining a distributable bundle.
 
-Code changes should add focused tests, lint, typecheck, relevant broader tests, build, security checks, data checks, or release checks according to risk.
+Code changes add focused tests, lint, typecheck, relevant broader tests, build, security checks, data checks, or release checks according to risk **and ownership**. Test evidence is ownership- and boundary-gated by `TEST_OWNERSHIP.md`: require it only when the repository owns the behavior, contract, or invariant. Upstream suites, declarative-config mechanics, migration text, and generated internals are owned by their tools and are not re-tested here.
 
 Never report unrun checks as passed.
 

@@ -93,7 +93,7 @@ Prefer:
 - Low nesting.
 - Narrow interfaces.
 - Localized side effects.
-- Tests that exercise behavior.
+- Tests that exercise behavior at the layer that owns it (see `TEST_OWNERSHIP.md`).
 
 Avoid:
 
@@ -230,5 +230,5 @@ Before completion:
 - [ ] Control flow is readable.
 - [ ] No obvious duplication was introduced.
 - [ ] Data and security boundaries are preserved.
-- [ ] Tests cover the behavior at the right layer.
+- [ ] Tests cover the behavior at the right layer, ownership-gated by `TEST_OWNERSHIP.md`.
 - [ ] Validation results are reported truthfully.

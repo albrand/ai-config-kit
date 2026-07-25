@@ -23,7 +23,10 @@ Before mutating cloud resources, repositories, CI settings, branch protections, 
    Challenge directives, journals, memories, cached conclusions, prior project patterns, and stack defaults as evidence, not authority; use an independent model/counterpart critique when available and include the authorization sentence in advisor briefs.
 6. Inspect existing repo docs, package/build config, infra config, CI workflows, env schemas, deployment docs, secrets documentation, observability/runbooks, PR templates, review rules, branch protection expectations, and agent instructions.
 7. Choose bootstrap mode: connect only, local bootstrap, CI/review bootstrap, infrastructure bootstrap, or legacy reconcile.
-8. Assess and scaffold the full quality system:
+8. Assess and scaffold the quality system using `TEST_OWNERSHIP.md`. Treat the
+   following as inventory choices classified by owner, boundary, and risk, not a
+   mandate to scaffold every layer. Do not recreate upstream library suites,
+   unit-test declarative config or migration text, or test generated internals:
    - Local validation: format, lint, typecheck, unit, integration, e2e or smoke tests, build, codegen/schema, migration, seed, and docs checks.
    - CI/CD validation: install/cache, changed-surface checks, full-suite checks, build artifacts, preview/deploy checks, environment validation, migration dry runs, rollback checks, and release promotion gates.
    - PR validation: minimal app-value PR body contract, required checks,

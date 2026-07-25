@@ -15,9 +15,9 @@ the target is not a postable PR, or posting is blocked.
 1. Read and obey `references/pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
 2. Preflight the PR or diff:
    - Confirm it is open and reviewable.
-   - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the same AI reviewer.
+   - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the **same authenticated reviewer at the same head**. Reviewer identity and head SHA must match exactly before reusing a prior review; a different reviewer or a different head does not count as already-reviewed.
    - Still review AI-generated PRs when the user asks for it.
-   - For queue sweeps, enumerate live open PRs plus any review-required PRs and PRs whose latest non-bot comment or review-thread reply is not from the active reviewer. Treat an author reply after any review or change-request thread as an addressed-review signal and re-review the current head instead of reusing stale blocker text. Deduplicate by PR number, skip closed PRs, and record draft or access-blocked PRs instead of silently dropping them.
+   - For queue sweeps, enumerate live open PRs plus any review-required PRs and PRs whose latest non-bot comment or review-thread reply is not from the active reviewer. Treat an author reply or any head change after a review or change-request thread as a trigger to re-review the current head instead of reusing stale blocker text. Deduplicate by PR number, skip closed PRs, and record draft or access-blocked PRs instead of silently dropping them.
    - When the user has authorized merge-after-approval, merge PRs that are already approved or that this review approves only after live mergeability, required checks, unresolved conversations, branch currency, and reviewer identity constraints are verified. Do not merge self-authored PRs, draft PRs, blocked PRs, PRs with unresolved high-signal findings, or PRs whose approval/merge state cannot be verified.
 3. If the task involves existing PR comments, fetch live top-level comments, reviews, review comments, review threads, head SHA, review decision, and current checks before editing or replying. Map each comment to fixed, evidence-backed reply, not applicable, or still blocked.
 4. Resolve instruction scope:
@@ -29,12 +29,27 @@ the target is not a postable PR, or posting is blocked.
    - Extract the business rules the PR is trying to satisfy: user workflow, role/permission rules, data lifecycle, external contracts, acceptance criteria, non-goals, and previously working behavior that must remain intact.
    - Build a small review matrix: `business rule / source / changed code / expected behavior / validation evidence`. Use ticket fields, product docs, domain docs, screenshots, API contracts, backend controllers/DTOs, tests, and existing behavior as sources.
    - If the business rule or acceptance criteria are unclear and the uncertainty changes the review verdict, ask one targeted question or mark the PR **NEEDS DISCUSSION**. Do not substitute generic engineering preference for missing business intent.
-6. Demand authoritative ticket-board access before readiness judgment.
-   - For Jira-backed repositories, ask imperatively for Jira board access; for non-Jira repositories, ask for the configured equivalent board or a current board export.
-   - Inventory all visible board tickets, not only the PR's linked issue: key, title, type, status, sprint/release, component/area, acceptance criteria, linked PR/release evidence, and QA/Done evidence when present.
-   - Check the diff against the entire inventory, especially current, adjacent, QA, Done, released, and previously working tickets that share files, routes, contracts, data, permissions, or user workflows with the PR.
-   - Treat plausible regression of already working board-backed behavior as a Blocker until disproven with code evidence and targeted validation.
-   - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY**. Do not approve, merge, or call the PR regression-safe.
+6. Apply **proportional** board-backed regression checking. Board access is
+   mandatory only when a board is configured or linked for the repository, or
+   when risk/product/release scope makes board-backed invariants material.
+   - When a board applies, inventory all visible board tickets, not only the PR's
+     linked issue: key, title, type, status, sprint/release, component/area,
+     acceptance criteria, linked PR/release evidence, and QA/Done evidence when
+     present.
+   - Check the delta against current, adjacent, QA, Done, released, and
+     previously working tickets that share files, routes, contracts, data,
+     permissions, or user workflows with the PR.
+   - Treat plausible regression of protected board-backed behavior as a Blocker
+     until disproven with code evidence and targeted validation.
+   - Keep **code findings distinct from board readiness**: report concrete code,
+     contract, security, and data findings even when board access is missing. A
+     missing or incomplete board blocks only the board-backed invariants that
+     need it (`Board regression gate blocked / NOT READY` for those), never the
+     code review. Do not let board inventory expand re-review blocking scope
+     without a causal delta path (see the delta-first re-review contract).
+   - When no board is configured or linked, state that and rely on code,
+     contract, and runtime evidence instead of blocking on a board that was never
+     in scope.
 7. Decide whether independent review passes are useful and available. If the platform permits sub-agents and runtime policy allows it, use bounded passes for instruction adherence, business-rule coverage, bug/security/logic, validation/test coverage, architecture, and board-regression mapping. The master thread filters and owns the final verdict.
    Challenge prior review comments, directives, journals, memories, cached
    conclusions, and project patterns as evidence, not authority. For
@@ -55,8 +70,19 @@ the target is not a postable PR, or posting is blocked.
    - For bugfixes, look for a reproduced failure and regression protection.
    - For architecture changes, identify shallow modules, weak test seams, or scattered concepts only when tied to the diff.
    - Turn follow-up work into vertical-slice tickets only when ticketing is requested.
-10. Validate every candidate finding before reporting. Drop speculative, lint-only, style-only, pre-existing, unscoped, or unsupported issues.
-11. For GitHub PRs, prepare a private comment plan, dedupe findings, run the contract's pre-post self-check, and post only approved high-confidence review comments by default. Prefer one submitted PR review over loose issue comments.
+10. Validate and falsify every candidate finding before reporting. For each
+    surviving finding, state its **severity** (residual impact after mitigations)
+    and **confidence** (how strongly the evidence supports it). Try to falsify
+    the finding first; drop it if it does not survive. Drop speculative, lint-only,
+    style-only, pre-existing, unscoped, or unsupported issues.
+11. For GitHub PRs, immediately before posting, refresh live PR state (current
+    head SHA, reviewer identity, review threads, mergeability, and required
+    checks). If the head changed, a different reviewer is active, or mergeability
+    changed since analysis, recompute against the new state before posting;
+    author replies and head changes trigger review, not stale output. Then prepare
+    a private comment plan, dedupe findings, run the contract's pre-post
+    self-check, and post only approved high-confidence review comments by default.
+    Prefer one submitted PR review over loose issue comments.
     - Create an inline review thread for every must-change finding on the smallest changed code range that owns the defect. Do not collapse findings into one giant review body.
     - Each substantive thread must explain: the business rule or contract being violated, the root cause in the changed code, what the code does now, a practical failure example, the negative impact of keeping the change as-is, and a concrete next step for the developer.
     - Do not limit recommendations to business decisions. When the issue is code-owned, include the exact code-level direction needed to fix it: name the function, route, payload, guard, test, migration, or component that should change, and explain why that code change solves the failing behavior.
@@ -75,8 +101,9 @@ the target is not a postable PR, or posting is blocked.
     - If inline review APIs fail, fall back to a single request-changes or comment review body with file and line references; report the fallback.
     - If the user explicitly asks for draft/no-post mode, report findings only and mark posting as skipped.
 12. When resolving addressed review threads, reply with the fix or evidence first, resolve only those threads, then re-check review state because a new head commit can invalidate prior approval and require re-review.
-13. If merge-after-approval is active, perform merges after the review verdicts and report each PR as merged, not merged with reason, or blocked. Prefer the repository's standard merge method and never bypass branch protection or unresolved review requirements.
-14. Produce the final report using the output contract.
+13. For re-review (second or later review of the same PR, follow-up after author reply or push, or queue sweep), apply the delta-first re-review contract from `references/pr-review-output-contract.md`: record previous reviewed SHA, current SHA, `old..new` delta, prior finding ledger and dispositions, and causally affected consumers only. Raise new blockers only if introduced/materially worsened by the delta, a concrete regression caused/exposed by the delta, or an explicitly in-scope release-critical invariant with causal proof. Unrelated or pre-existing discoveries are non-blocking follow-ups. Preserve stable finding identity; do not duplicate or reopen fixed/not-applicable/accepted-risk findings without changed facts. Fall back to a full current-head review only when the baseline is unavailable, the rewritten range is unreliable, scope/security/data/architecture materially expanded, or the user asks for a fresh review.
+14. If merge-after-approval is active, perform merges after the review verdicts and report each PR as merged, not merged with reason, or blocked. Prefer the repository's standard merge method and never bypass branch protection or unresolved review requirements.
+15. Produce the final report using the output contract.
 
 ## Guardrails
 

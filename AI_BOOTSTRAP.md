@@ -27,6 +27,7 @@ Before acting on repository work, load and follow the framework in this order:
 12. `SESSION_JOURNALING.md` if the repo uses journals
 13. `ARCHITECTURE_AND_CODE_QUALITY.md`
 14. `QUALITY_GATES.md`
+14a. `TEST_OWNERSHIP.md` when deciding what test or validation evidence a change needs
 15. `QUALITY_CONVERGENCE.md` when work needs iterative improvement
 16. `REVIEW_AND_PR_FRAMEWORK.md`
 17. `TEMPLATES.md` when a structured output is needed

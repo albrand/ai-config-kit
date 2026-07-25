@@ -1,0 +1,10 @@
+{
+  "name": "high-signal-pr-review",
+  "version": 2,
+  "required": [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/pr-review-output-contract.md"
+  ],
+  "executable": []
+}
