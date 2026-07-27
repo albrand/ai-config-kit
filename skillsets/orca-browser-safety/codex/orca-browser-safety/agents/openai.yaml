@@ -1,0 +1,6 @@
+interface:
+  display_name: "Orca Browser Safety"
+  short_description: "Isolated Orca browsing with safe page cleanup"
+  default_prompt: "Use $orca-browser-safety for this interactive browser task, keep it inside an isolated Orca workspace profile, and close only the page IDs you create when the browser slice is complete."
+policy:
+  allow_implicit_invocation: true

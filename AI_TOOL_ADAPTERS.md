@@ -181,6 +181,13 @@ Recommended setup:
   cwd==project wins, a broad-parent cwd is advisory only, and ambiguity fails
   closed. See the bundled `references/PROJECT_SETUP.md`,
   `references/BROWSER_E2E.md`, and `references/AGENT_SESSION_COORDINATION.md`.
+- For isolated Orca interactive browsing, copy the complete
+  `skillsets/orca-browser-safety/codex/orca-browser-safety/` directory to
+  `~/.agents/skills/orca-browser-safety/`, refresh the skill router index,
+  and load it before browser work. It requires an isolated workspace profile,
+  a full worktree ID for discovery/creation, the returned page ID on every
+  page-scoped command, and closure only of pages created by the current agent;
+  it never permits personal-browser control or cross-agent tab cleanup.
 - For on-demand access to shared framework doctrine, install the complete
   `skillsets/core-framework/codex/ai-config-kit-core/` directory.
 - If a local sidecar is configured, use it first for compact no-tool
