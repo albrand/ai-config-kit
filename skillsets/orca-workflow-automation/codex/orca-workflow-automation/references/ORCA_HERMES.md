@@ -26,6 +26,20 @@ authority. The master thread (Orca-side) validates every Hermes handoff result.
 Hermes is reached through an **Orca-owned persistent terminal** over a
 **forward** SSH / Tailscale connection initiated from the operator side.
 
+Create that terminal with the packaged bridge as its command:
+
+```sh
+python3 <ABSOLUTE_SKILL_PATH>/scripts/orca-hermes-terminal.py \
+  --target vps \
+  --name orca-hermes-master
+```
+
+The helper validates the SSH alias and tmux name, resolves the effective SSH
+configuration, removes every local variable selected by `SendEnv`, rejects any
+target using `SetEnv`, disables forwarding, uses `BatchMode`, invokes `ssh`
+with an argument array (no local shell), and runs the fixed remote process as
+the restricted `hermes` user.
+
 ## Hard Boundaries
 
 - **No reverse SSH.** Never open an inbound listener from the remote side.

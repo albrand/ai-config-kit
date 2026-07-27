@@ -15,6 +15,7 @@ automation invokes.
 - Codex metadata: `codex/orca-workflow-automation/agents/openai.yaml`
 - PR review queue helper: `codex/orca-workflow-automation/scripts/orca-pr-review-queue.py`
 - Execution ledger helper: `codex/orca-workflow-automation/scripts/execution-ledger.py`
+- Hermes terminal bridge: `codex/orca-workflow-automation/scripts/orca-hermes-terminal.py`
 - References:
   - `codex/orca-workflow-automation/references/PR_REVIEW_AUTOMATION.md`
   - `codex/orca-workflow-automation/references/EXECUTION_PRODUCTIVITY.md`
@@ -49,6 +50,9 @@ python3 scripts/orca_pr_review_queue_test.py
 
 # Execution ledger (fixtures, no real home writes)
 python3 scripts/execution_ledger_test.py
+
+# Forward-SSH bridge argv contract (offline; no connection)
+python3 scripts/orca_hermes_terminal_test.py
 
 # Byte-compile the packaged Python
 python3 -m compileall codex/orca-workflow-automation/scripts

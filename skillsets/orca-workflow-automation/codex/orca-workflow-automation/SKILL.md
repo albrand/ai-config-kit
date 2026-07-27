@@ -58,7 +58,9 @@ for capability-first discovery.
    usage ledger reached through an Orca-owned persistent terminal over forward
    SSH/Tailscale only. No reverse SSH, no listeners, no environment forwarding,
    no recursive orchestration. The master thread validates every Hermes
-   handoff result.
+   handoff result. Use `scripts/orca-hermes-terminal.py --name
+   orca-hermes-master` as the terminal command; it validates variable tokens,
+   clears SSH environment forwarding, and never invokes a local shell.
 
 ## Safe Example Orca Automation (Documentation Only)
 

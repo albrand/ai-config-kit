@@ -8,10 +8,12 @@
     "references/EXECUTION_PRODUCTIVITY.md",
     "references/ORCA_HERMES.md",
     "scripts/orca-pr-review-queue.py",
-    "scripts/execution-ledger.py"
+    "scripts/execution-ledger.py",
+    "scripts/orca-hermes-terminal.py"
   ],
   "executable": [
     "scripts/orca-pr-review-queue.py",
-    "scripts/execution-ledger.py"
+    "scripts/execution-ledger.py",
+    "scripts/orca-hermes-terminal.py"
   ]
 }
