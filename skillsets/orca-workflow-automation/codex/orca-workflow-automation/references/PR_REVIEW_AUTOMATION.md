@@ -3,6 +3,17 @@
 This reference defines the operating model for the Orca-owned PR review queue.
 The companion helper is
 `../scripts/orca-pr-review-queue.py` (commands `scan`, `precheck`, `ack`).
+Install or reconcile a listener with
+`../scripts/configure-orca-pr-listener.py` (`plan`, `install`, `status`).
+
+## Repository-Independent Installation
+
+The configurator works for any Orca-registered GitHub repository, one explicit
+target at a time. It requires the GitHub `OWNER/REPO`, reviewer login, and an
+exact Orca repo path or selector. `plan` and `status` are read-only. `install`
+is idempotent and disabled by default; `--enable` is an explicit promotion
+after validation. Name, marker, or target mismatches fail closed. There is no
+bulk activation or removal command.
 
 ## Core Model: Polling, Not Webhooks
 
@@ -83,6 +94,16 @@ This gate applies to scheduled runs. Treat `orca automations run <id>` as a
 manual force-run that may bypass precheck. Prove idle behavior with a
 short-lived scheduled canary and confirm `skipped_precheck`, no workspace, and
 no terminal before enabling the intended cadence.
+
+Roll out each repo separately:
+
+1. Run `plan` and inspect the exact target, reviewer, board policy, precheck,
+   and base branch.
+2. Run `install` without `--enable`.
+3. Run the planned precheck directly.
+4. Use a short-lived scheduled canary and verify `skipped_precheck` creates no
+   workspace or terminal when idle.
+5. Reconcile with `install --enable` only after the canary passes.
 
 ## Orca Owns Schedule And Lifecycle
 

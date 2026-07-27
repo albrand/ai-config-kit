@@ -6,13 +6,14 @@ Hermes critique.
 
 This skillset does **not** schedule anything itself. Orca owns the schedule, the
 fresh worktree/workspace per run, the terminal session, and the lifecycle. The
-skill provides the safe operating model and two stdlib helpers that an Orca
-automation invokes.
+skill provides stdlib tooling to configure one repository at a time, discover
+review work, record safe telemetry, and attach the optional Hermes bridge.
 
 ## Entry Points
 
 - Codex skill: `codex/orca-workflow-automation/SKILL.md` (explicit-only)
 - Codex metadata: `codex/orca-workflow-automation/agents/openai.yaml`
+- Per-repo listener configurator: `codex/orca-workflow-automation/scripts/configure-orca-pr-listener.py`
 - PR review queue helper: `codex/orca-workflow-automation/scripts/orca-pr-review-queue.py`
 - Execution ledger helper: `codex/orca-workflow-automation/scripts/execution-ledger.py`
 - Hermes terminal bridge: `codex/orca-workflow-automation/scripts/orca-hermes-terminal.py`
@@ -23,6 +24,10 @@ automation invokes.
 
 ## What It Does
 
+- **Per-repo configurator** (`configure-orca-pr-listener.py`): read-only
+  `plan`/`status` plus idempotent `install` for any Orca-registered GitHub
+  repository. Requires explicit repo and reviewer identity, defaults disabled,
+  refuses target/name collisions, and has no bulk mode.
 - **PR review queue** (`orca-pr-review-queue.py`): read-only queue discovery via
   `gh` (argument arrays, never `shell=True`). Private/draft-only default, exact
   head-SHA pinning, self-review prevention, same-reviewer+same-head+no-later-
@@ -54,6 +59,9 @@ python3 scripts/execution_ledger_test.py
 # Forward-SSH bridge argv contract (offline; no connection)
 python3 scripts/orca_hermes_terminal_test.py
 
+# Per-repo configurator fixtures (no real Orca or automation mutation)
+python3 scripts/configure_orca_pr_listener_test.py
+
 # Byte-compile the packaged Python
 python3 -m compileall codex/orca-workflow-automation/scripts
 ```
@@ -64,28 +72,25 @@ Validate the Codex skill from the repo root:
 node scripts/validate-codex-skills.cjs
 ```
 
-## Safe Example Orca Automation (Documentation Only)
+## Configure One Repository
 
-This is the *shape* of a safe command for docs. Do **not** create it. It is
-`--disabled` by default, starts a fresh session per run, scopes to an exact repo
-selector, and runs a bounded, non-leaking precheck:
+Use the installed configurator for each active repository. The first install is
+disabled:
 
 ```sh
-# Example only — do not create this automation. Placeholders must be filled in.
-orca automations create \
-  --disabled \
-  --name "draft-pr-review-queue-sweep" \
-  --trigger hourly \
-  --prompt "Use \\$orca-workflow-automation to produce private draft reviews only; never post, merge, or edit a PR." \
-  --provider codex \
-  --repo "id:<ORCA_REPO_ID>" \
-  --workspace-mode new-per-run \
-  --base-branch origin/main \
-  --fresh-session \
-  --precheck "python3 <ABSOLUTE_SKILL_PATH>/scripts/orca-pr-review-queue.py --repo <OWNER>/<REPO> precheck" \
-  --precheck-timeout 30
+python3 codex/orca-workflow-automation/scripts/configure-orca-pr-listener.py \
+  --github-repo OWNER/REPO \
+  --reviewer LOGIN \
+  --repo-path /absolute/path/to/repo \
+  plan
+
+python3 codex/orca-workflow-automation/scripts/configure-orca-pr-listener.py \
+  --github-repo OWNER/REPO \
+  --reviewer LOGIN \
+  --repo-path /absolute/path/to/repo \
+  install
 ```
 
-`orca automations run <id>` may force a run without applying the scheduled
-precheck. Validate the precheck with a short-lived scheduled canary, then
-restore the intended cadence.
+Run the planned precheck directly and validate a scheduled canary before
+rerunning `install --enable`. `orca automations run <id>` may bypass precheck,
+so it is not proof that an idle schedule is cost-free.

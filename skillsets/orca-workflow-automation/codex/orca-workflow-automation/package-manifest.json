@@ -7,11 +7,13 @@
     "references/PR_REVIEW_AUTOMATION.md",
     "references/EXECUTION_PRODUCTIVITY.md",
     "references/ORCA_HERMES.md",
+    "scripts/configure-orca-pr-listener.py",
     "scripts/orca-pr-review-queue.py",
     "scripts/execution-ledger.py",
     "scripts/orca-hermes-terminal.py"
   ],
   "executable": [
+    "scripts/configure-orca-pr-listener.py",
     "scripts/orca-pr-review-queue.py",
     "scripts/execution-ledger.py",
     "scripts/orca-hermes-terminal.py"

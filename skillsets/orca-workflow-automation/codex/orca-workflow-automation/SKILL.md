@@ -1,6 +1,14 @@
 ---
 name: orca-workflow-automation
-description: Explicit-only skill for Orca-owned workflow automation: scheduled PR-review queue sweeps, execution-productivity telemetry, and optional read-only Hermes critique. Orca owns schedules, worktree/workspace lifecycle, terminal targeting, and the browser/mobile/emulator control surface. PR review is private/draft-only by default, pinned to exact head SHA, with self-review prevention, same-reviewer+same-head+no-later-top-level-author-comment duplicate suppression, author-comment/head-change reopening, a board-backed regression gate, and no auto-merge. Use only when the user explicitly asks to run or reason about an Orca automation; never invoke implicitly.
+description: >-
+  Explicit-only skill for Orca-owned workflow automation, including
+  per-repository PR listeners, scheduled review-queue sweeps,
+  execution-productivity telemetry, and optional read-only Hermes critique.
+  Orca owns schedules, worktree/workspace lifecycle, terminal targeting, and
+  browser/mobile/emulator control. Review work is private/draft-only by
+  default, pinned to an exact head SHA, board-gated, duplicate-suppressed, and
+  never auto-merged. Use only when the user explicitly asks to run, configure,
+  or reason about an Orca automation; never invoke implicitly.
 ---
 
 # Orca Workflow Automation
@@ -8,8 +16,8 @@ description: Explicit-only skill for Orca-owned workflow automation: scheduled P
 This skill is **explicit-only**. Load it only when the user explicitly asks to
 run, configure, or reason about an Orca-owned automation. It never runs on a
 timer by itself: Orca owns scheduling and lifecycle. This skill provides the
-safe operating model and the two stdlib helpers (`orca-pr-review-queue.py` and
-`execution-ledger.py`) that an Orca automation invokes.
+safe operating model and stdlib tools for per-repository listener
+configuration, queue discovery, telemetry, and the optional Hermes bridge.
 
 Orca is a native agent surface (worktree/workspace lifecycle, terminal
 targeting, orchestration, scheduled automations, browser/mobile/emulator
@@ -34,7 +42,14 @@ for capability-first discovery.
 
 ## Workflows
 
-1. **PR review queue.** Read `references/PR_REVIEW_AUTOMATION.md` before any
+1. **Per-repository listener configuration.** Use
+   `scripts/configure-orca-pr-listener.py` for any Orca-registered GitHub
+   repository. Require an explicit `OWNER/REPO`, reviewer, and Orca repo path
+   or selector. Run `plan`, then `install` without `--enable`; validate the
+   direct precheck and a scheduled canary before reconciling with `--enable`.
+   The configurator is idempotent, refuses identity/name collisions, and never
+   performs bulk activation.
+2. **PR review queue.** Read `references/PR_REVIEW_AUTOMATION.md` before any
    queue work. Use `scripts/orca-pr-review-queue.py`:
    - `scan` — fetch open PR metadata read-only via `gh`, compute eligible
      private draft work items, pin the **exact** `headRefOid`, reject/skip
@@ -45,7 +60,7 @@ for capability-first discovery.
    - `ack` — record a completed draft outcome for an exact PR+head+reviewer
      (and an optional latest top-level author-comment marker); a later head
      change or a later top-level author comment reopens re-review eligibility.
-2. **Execution productivity ledger.** Read `references/EXECUTION_PRODUCTIVITY.md`
+3. **Execution productivity ledger.** Read `references/EXECUTION_PRODUCTIVITY.md`
    before recording. Use `scripts/execution-ledger.py`:
    - `record` — append one validated JSONL row (allowlist only; unknown and
      forbidden fields rejected) to the XDG data ledger.
@@ -53,7 +68,7 @@ for capability-first discovery.
      count (default 5), including elapsed median, success/validated rate, and
      retry/repair/scope-drift counts by route/skill; route recommendations only
      when the sample threshold is met.
-3. **Optional Hermes critique.** Read `references/ORCA_HERMES.md`. Orca is the
+4. **Optional Hermes critique.** Read `references/ORCA_HERMES.md`. Orca is the
    local control plane. Hermes is an optional, bounded plan critic / fallback /
    usage ledger reached through an Orca-owned persistent terminal over forward
    SSH/Tailscale only. No reverse SSH, no listeners, no environment forwarding,
@@ -62,31 +77,27 @@ for capability-first discovery.
    orca-hermes-master` as the terminal command; it validates variable tokens,
    clears SSH environment forwarding, and never invokes a local shell.
 
-## Safe Example Orca Automation (Documentation Only)
+## Install One Disabled Listener
 
-This is an example of the *shape* of a safe Orca automation command for docs.
-Do **not** create it. It is `--disabled` by default, starts a fresh session per
-run, scopes to an exact repo selector, and runs a bounded precheck that leaks
-no PR details:
+The configurator works for any Orca-registered GitHub repository. It creates
+only the repository explicitly named and defaults to disabled:
 
 ```sh
-# Example only — do not create this automation. Placeholders must be filled in.
-orca automations create \
-  --disabled \
-  --name "draft-pr-review-queue-sweep" \
-  --trigger hourly \
-  --prompt "Use \\$orca-workflow-automation to produce private draft reviews only; never post, merge, or edit a PR." \
-  --provider codex \
-  --repo "id:<ORCA_REPO_ID>" \
-  --workspace-mode new-per-run \
-  --base-branch origin/main \
-  --fresh-session \
-  --precheck "python3 <ABSOLUTE_SKILL_PATH>/scripts/orca-pr-review-queue.py --repo <OWNER>/<REPO> precheck" \
-  --precheck-timeout 30
+python3 scripts/configure-orca-pr-listener.py \
+  --github-repo OWNER/REPO \
+  --reviewer LOGIN \
+  --repo-path /absolute/path/to/repo \
+  plan
+
+python3 scripts/configure-orca-pr-listener.py \
+  --github-repo OWNER/REPO \
+  --reviewer LOGIN \
+  --repo-path /absolute/path/to/repo \
+  install
 ```
 
-`precheck` exits nonzero when there is nothing to do; an Orca automation can
-gate the heavier `scan` behind a passing precheck to bound cost.
+Run the emitted precheck directly, then prove the scheduled `skipped_precheck`
+path creates no workspace or terminal. Only then rerun `install --enable`.
 
 `orca automations run <id>` is a manual force-run path and may bypass the
 scheduled precheck. Use a short-lived scheduled canary to validate precheck
@@ -98,5 +109,7 @@ behavior; do not use a manual run as proof that an idle schedule is cost-free.
 - Never record prompts, transcripts, environment values, secrets, private
   branch SHAs, or repo URLs in any ledger or state file.
 - Never execute an Orca automation implicitly; this skill is explicit-only.
+- Never bulk-enable listeners. Install and validate each target repository
+  separately.
 - Orca owns lifecycle. Do not vendor Orca skill bodies; resolve them at runtime
   with `orca skills get`.
