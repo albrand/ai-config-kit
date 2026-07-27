@@ -33,6 +33,16 @@ list is shortened, omitted, or too noisy to route reliably.
 - Skip bundled `upstream/` skill copies (the indexer ignores them) so plugins
   that ship an upstream `SKILL.md` alongside their own do not create
   duplicate-named, ambiguous router entries.
+- Exclude backup directory trees (names matching `*.bak`, `*.bak.<timestamp>`,
+  `*.bak_<ts>`, e.g. `native-agent-surface.bak.20240101T000000Z`) so stale
+  installer backups are never indexed. The match is whole-segment only;
+  legitimate skill names that merely contain the substring `bak` (e.g.
+  `feedback-loop`, `bakery`) are still indexed.
+- Index external agent skills (e.g. `~/.agents/skills`, overridable via
+  `AGENT_SKILLS_HOME`) with source `agent`. These skills are **vendor
+  policy-controlled**: the router reports their existing implicit/explicit mode
+  as-is and **never** writes or creates an `agents/openai.yaml` inside them.
+  Plugin and existing user/system behavior is unchanged.
 - Do not disable skills to save context. Explicit-only skills remain accessible
   by direct `$skill-name` invocation and through the generated index.
 - Refresh the index immediately after installing, updating, or removing Codex
@@ -54,3 +64,11 @@ node <CODEX_HOME>/skills/skill-library-router/scripts/refresh-skill-index.cjs --
 
 Report total skills, implicit skills, explicit-only skills, policy changes, and
 any skipped or blocked writes.
+
+An offline selftest (temp fixtures, no real home touched) proves external agent
+skills are indexed/source=agent without being written, backup trees are
+excluded, and legitimate `bak`-substring names survive:
+
+```bash
+node skillsets/skill-library-router/scripts/refresh_skill_index_test.cjs
+```

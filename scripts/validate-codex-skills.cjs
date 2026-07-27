@@ -105,7 +105,7 @@ function validateOpenAiMetadata(skillDir, file) {
   }
   if (['adaptive-model-orchestrator', 'ai-config-kit-core',
        'cmux-hermes-orchestrator', 'native-agent-surface',
-       'plan-arbiter'].includes(file.name)
+       'orca-workflow-automation', 'plan-arbiter'].includes(file.name)
       && !/^\s+allow_implicit_invocation:\s*false\s*$/m.test(text)) {
     errors.push(`${metadataPath}: behavioral framework skills must be explicit-only`);
   }

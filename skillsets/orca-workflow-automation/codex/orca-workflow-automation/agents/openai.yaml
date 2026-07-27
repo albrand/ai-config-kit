@@ -1,0 +1,6 @@
+interface:
+  display_name: "Orca Workflow Automation"
+  short_description: "Explicit-only Orca-owned PR-review queue and execution-productivity ledger"
+  default_prompt: "Use $orca-workflow-automation to run Orca-owned PR-review queue sweeps or record execution telemetry (explicit-only)."
+policy:
+  allow_implicit_invocation: false

@@ -13,6 +13,12 @@ const indexJsonPath = path.join(referencesDir, 'skill-index.json');
 const indexMdPath = path.join(referencesDir, 'skill-index.md');
 const policySummaryPath = path.join(referencesDir, 'applied-policy-summary.json');
 
+// External agent skills root (e.g. ~/.agents/skills), surfaced read-only with
+// source 'agent'. These skills remain vendor policy-controlled: the router
+// indexes them but NEVER writes a policy file into them and NEVER passes them
+// to ensurePolicyFalse. Overrides via AGENT_SKILLS_HOME; default ~/.agents/skills.
+const agentSkillsHome = process.env.AGENT_SKILLS_HOME || path.join(os.homedir(), '.agents', 'skills');
+
 const explicitOnlyUserSkillNames = new Set([
   // Specialized / heavy workflows — router-accessible on demand.
   'adaptive-model-orchestrator',
@@ -48,6 +54,24 @@ const pluginImplicitExceptions = new Set(['knowledge-update']);
 // (e.g. Vercel) which otherwise create duplicate-named, ambiguous router entries.
 const skippedDirectoryNames = new Set(['.git', 'node_modules', 'upstream']);
 const pluginManifestDirectoryNames = new Set(['.claude-plugin', '.codex-plugin', '.cursor-plugin']);
+
+// Backup directory patterns produced by installers/tools (e.g.
+// `native-agent-surface.bak.20240101T000000Z`, `skill.bak`). Excluded from
+// recursive scans. Matched on whole-segment names only so legitimate skill names
+// that merely contain the substring "bak" (e.g. `feedback-loop`, `bakery`) are
+// never excluded.
+function isBackupDirectoryName(name) {
+  if (typeof name !== 'string' || name.length === 0) return false;
+  if (name === '.bak') return true;
+  // Whole-segment backup names only: ends with ".bak", contains ".bak."
+  // (timestamped siblings like native-agent-surface.bak.20240101T000000Z),
+  // or ".bak_<ts>". Legitimate skill names that merely contain the substring
+  // "bak" (e.g. feedback-loop, bakery) are never excluded.
+  if (/(^|\.)bak$/i.test(name)) return true;
+  if (/\.bak\./i.test(name)) return true;
+  if (/\.bak_/i.test(name)) return true;
+  return false;
+}
 const routingStopWords = new Set([
   'a',
   'about',
@@ -125,6 +149,7 @@ function walkForSkillFiles(dir, out) {
 
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (skippedDirectoryNames.has(entry.name)) continue;
+    if (entry.isDirectory() && isBackupDirectoryName(entry.name)) continue;
 
     const fullPath = path.join(dir, entry.name);
 
@@ -142,6 +167,7 @@ function walkForPluginManifests(dir, out) {
 
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (skippedDirectoryNames.has(entry.name)) continue;
+    if (entry.isDirectory() && isBackupDirectoryName(entry.name)) continue;
 
     const fullPath = path.join(dir, entry.name);
 
@@ -190,6 +216,15 @@ function scanSkillFiles() {
 
   for (const root of pluginSkillRoots()) {
     walkForSkillFiles(root, files);
+  }
+
+  // External agent skills root: indexed read-only with source 'agent'. The
+  // agent root is disjoint from the codex skillRoot by default; if an operator
+  // configures an agent root that nests inside skillRoot/plugin cache, the
+  // path-based source resolver below still prefers the more specific codex
+  // roots so ownership stays unambiguous.
+  if (agentSkillsHome && fs.existsSync(agentSkillsHome)) {
+    walkForSkillFiles(agentSkillsHome, files);
   }
 
   return Array.from(new Set(files)).sort();
@@ -288,10 +323,24 @@ function handlesFrom(value) {
 }
 
 function sourceFor(file) {
-  if (isInside(file, systemSkillRoot)) return 'system';
-  if (isInside(file, pluginCacheRoot)) return 'plugin';
-  if (isInside(file, skillRoot)) return 'user';
-  return 'unknown';
+  return rootDescriptorFor(file).source;
+}
+
+function rootDescriptors() {
+  // Most-specific roots come first so nested system/plugin roots cannot be
+  // mistaken for the general user root. Writable is an ownership boundary,
+  // not merely a policy preference.
+  return [
+    { root: systemSkillRoot, source: 'system', writable: true },
+    { root: pluginCacheRoot, source: 'plugin', writable: true },
+    { root: skillRoot, source: 'user', writable: true },
+    { root: agentSkillsHome, source: 'agent', writable: false },
+  ].filter((descriptor) => descriptor.root);
+}
+
+function rootDescriptorFor(file) {
+  return rootDescriptors().find((descriptor) => isInside(file, descriptor.root))
+    || { root: null, source: 'unknown', writable: false };
 }
 
 function pluginFor(file) {
@@ -377,7 +426,8 @@ function skillRecord(file) {
   const name = readYamlScalar(frontmatter, 'name') || path.basename(path.dirname(file));
   const description = readYamlScalar(frontmatter, 'description');
   const policy = readPolicy(file);
-  const source = sourceFor(file);
+  const rootDescriptor = rootDescriptorFor(file);
+  const source = rootDescriptor.source;
   const plugin = pluginFor(file);
   const relativePath = path.relative(codexHome, file);
   const aliases = aliasesFor(name, file, plugin);
@@ -397,6 +447,7 @@ function skillRecord(file) {
     path: file,
     relativePath,
     source,
+    writable: rootDescriptor.writable,
     plugin,
     aliases,
     routingTerms,
@@ -418,14 +469,20 @@ function skillRecord(file) {
 
 function shouldBeExplicit(skill) {
   if (skill.name === 'skill-library-router') return false;
+  // Read-only roots remain vendor policy-controlled. Their current policy is
+  // indexed as-is, but they are never candidates for mutation.
+  if (!skill.writable) return false;
   if (skill.source === 'plugin') return !pluginImplicitExceptions.has(skill.name);
   if (skill.source === 'system') return explicitOnlySystemSkillNames.has(skill.name);
   if (skill.source === 'user') return explicitOnlyUserSkillNames.has(skill.name);
   return false;
 }
 
-function ensurePolicyFalse(skillFile) {
-  const agentPath = path.join(path.dirname(skillFile), 'agents', 'openai.yaml');
+function ensurePolicyFalse(skill) {
+  if (!skill || skill.writable !== true) {
+    throw new Error('refusing policy write outside a writable skill root');
+  }
+  const agentPath = path.join(path.dirname(skill.path), 'agents', 'openai.yaml');
   ensureDir(path.dirname(agentPath));
 
   if (!fs.existsSync(agentPath)) {
@@ -544,7 +601,7 @@ function refreshIndex() {
   for (const skill of initialSkills) {
     if (!shouldBeExplicit(skill)) continue;
 
-    const result = ensurePolicyFalse(skill.path);
+    const result = ensurePolicyFalse(skill);
     policyChanges.push({
       name: skill.name,
       source: skill.source,
@@ -571,8 +628,44 @@ function refreshIndex() {
   }, null, 2));
 }
 
-if (checkOnly) {
-  checkIndex(sortSkills(scanSkillFiles()));
-} else {
-  refreshIndex();
+function run() {
+  if (checkOnly) {
+    checkIndex(sortSkills(scanSkillFiles()));
+  } else {
+    refreshIndex();
+  }
+}
+
+// Exported for offline testing (temp-home fixtures). Path constants are computed
+// from CODEX_HOME / AGENT_SKILLS_HOME at require time, so tests set those env
+// vars before requiring this module fresh.
+module.exports = {
+  run,
+  scanSkillFiles,
+  sortSkills,
+  skillRecord,
+  sourceFor,
+  rootDescriptors,
+  rootDescriptorFor,
+  shouldBeExplicit,
+  ensurePolicyFalse,
+  isBackupDirectoryName,
+  refreshIndex,
+  checkIndex,
+  paths: {
+    codexHome,
+    skillRoot,
+    systemSkillRoot,
+    pluginCacheRoot,
+    agentSkillsHome,
+    routerRoot,
+    referencesDir,
+    indexJsonPath,
+    indexMdPath,
+    policySummaryPath,
+  },
+};
+
+if (require.main === module) {
+  run();
 }

@@ -101,6 +101,21 @@ broker boundary:
    `skillsets/native-agent-surfaces/codex/native-agent-surface/references/NATIVE_SURFACE_CONTRACT.md`.
 3. Never special-case your adapter as canonical. cmux was first; yours is a peer.
 
+## Registered Adapters
+
+The detector registry currently describes: `cmux` (session transport), `tmux`
+and `zellij` (terminal multiplexers), `git` (worktree-isolation helper), and
+**Orca** (the Orca coding-agent desktop app). Orca declares worktree/workspace
+lifecycle, terminal targeting, orchestration, scheduled automations,
+browser/mobile/emulator control, and file-mutation ownership. The plain `orca`
+binary is gated to Darwin so presence-only discovery cannot collide with the
+Linux GNOME screen reader of the same name; `orca-ide` is resolved
+cross-platform when present. Orca is **detector-only** in this bundle: it is not
+added to the installer `SUPPORTED_HOSTS` auto-gating list (no safe
+platform-aware probe is wired into the installer yet), so it requires an
+explicit `enabled` mode. Orca-specific workflow automation lives in the
+separate `orca-workflow-automation` skillset.
+
 ## Relationship To Other Surface Work
 
 - The cmux+Hermes orchestration (`CMUX_HERMES_ORCHESTRATION.md` and

@@ -1,0 +1,17 @@
+{
+  "name": "orca-workflow-automation",
+  "version": 1,
+  "required": [
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/PR_REVIEW_AUTOMATION.md",
+    "references/EXECUTION_PRODUCTIVITY.md",
+    "references/ORCA_HERMES.md",
+    "scripts/orca-pr-review-queue.py",
+    "scripts/execution-ledger.py"
+  ],
+  "executable": [
+    "scripts/orca-pr-review-queue.py",
+    "scripts/execution-ledger.py"
+  ]
+}
