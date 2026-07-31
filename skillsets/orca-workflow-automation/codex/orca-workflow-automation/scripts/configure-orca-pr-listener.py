@@ -55,6 +55,7 @@ SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 SAFE_TIMEZONE_RE = re.compile(r"^[A-Za-z0-9._+/-]{1,128}$")
 PRECHECK_TIMEOUT = 30
 SIBLING_HELPER = "orca-pr-review-queue.py"
+CLEANUP_HELPER = "orca-automation-workspace-cleanup.py"
 
 BOARD_POLICIES = ("required",)
 TRIGGERS = ("hourly", "daily", "weekly")
@@ -82,6 +83,10 @@ def _script_dir() -> Path:
 
 def sibling_helper_path() -> Path:
     return _script_dir() / SIBLING_HELPER
+
+
+def cleanup_helper_path() -> Path:
+    return _script_dir() / CLEANUP_HELPER
 
 
 # --------------------------------------------------------------------------- #
@@ -374,6 +379,7 @@ def build_prompt(
     board_policy: str,
     base_branch: str,
     enable_hermes_critique: bool = False,
+    cleanup_command: str | None = None,
 ) -> str:
     head = marker(github_repo, reviewer)
     lines: list[str] = []
@@ -418,6 +424,25 @@ def build_prompt(
             "the master thread validates every Hermes result. No reverse SSH, no "
             "listeners, no environment forwarding."
         )
+    if cleanup_command:
+        lines.append("")
+        lines.append(
+            "FINAL ACTION (post-result workspace cleanup): run this exact command "
+            "as the very last shell action immediately before emitting your final "
+            "private output:"
+        )
+        lines.append(f"  {cleanup_command}")
+        lines.append(
+            "This spawns a detached watcher that removes only this run's "
+            "new-per-run workspace AFTER Orca has persisted the run output: it "
+            "waits for a run with this exact workspaceId to reach status "
+            "completed with a non-empty outputSnapshot, then removes the exact "
+            "worktree. Deletion is fail-closed: blocked, partial, stale, "
+            "unposted, or timed-out runs leave the workspace in place. This "
+            "changes nothing about output: keep PRIVATE DRAFT output only and "
+            "never post, comment, merge, or edit any PR, branch, or GitHub "
+            "resource."
+        )
     return "\n".join(lines)
 
 
@@ -438,6 +463,45 @@ def build_precheck_command(
             "--reviewer",
             reviewer,
             "precheck",
+        ]
+    )
+
+
+def build_cleanup_command(
+    helper_abs: Path,
+    name: str,
+    github_repo: str,
+    reviewer: str,
+    repo_id: str,
+) -> str:
+    """Fixed final-arm command handed to the automation prompt.
+
+    Exact, deterministic tokens only: the cleanup helper absolute path, the
+    deterministic automation name, the marker identity (repo/reviewer), and the
+    exact Orca repo id. Built with ``shlex.join`` so no validated token can
+    introduce shell metacharacters.
+    """
+    if not GITHUB_REPO_RE.fullmatch(github_repo):
+        raise ConfiguratorError("invalid github repo in cleanup command")
+    if not GITHUB_LOGIN_RE.fullmatch(reviewer):
+        raise ConfiguratorError("invalid reviewer in cleanup command")
+    if not isinstance(name, str) or not name:
+        raise ConfiguratorError("invalid automation name in cleanup command")
+    if not SAFE_ID_RE.fullmatch(repo_id):
+        raise ConfiguratorError("invalid repo id in cleanup command")
+    return shlex.join(
+        [
+            "python3",
+            str(helper_abs),
+            "--automation-name",
+            name,
+            "--github-repo",
+            github_repo,
+            "--reviewer",
+            reviewer,
+            "--orca-repo",
+            f"id:{repo_id}",
+            "watch",
         ]
     )
 
@@ -624,6 +688,7 @@ class PlanSpec:
         "github_repo", "reviewer", "name", "marker", "prompt", "precheck",
         "repo_id", "repo_path", "base_branch", "trigger", "provider",
         "timezone", "board_policy", "enabled", "helper_path",
+        "cleanup_helper_path", "cleanup_command",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -651,11 +716,18 @@ def build_plan(
     timezone = validate_timezone(args.timezone)
     helper_abs = sibling_helper_path()
     preflight_helper(helper_abs)
+    cleanup_abs = cleanup_helper_path()
+    preflight_helper(cleanup_abs)
+    repo_id_str = str(repo["id"])
 
     name = deterministic_name(github_repo, reviewer)
+    cleanup_cmd = build_cleanup_command(
+        cleanup_abs, name, github_repo, reviewer, repo_id_str
+    )
     prompt = build_prompt(
         github_repo, reviewer, args.board_policy, base_branch,
         enable_hermes_critique=bool(args.hermes_critique),
+        cleanup_command=cleanup_cmd,
     )
     precheck = build_precheck_command(helper_abs, github_repo, reviewer)
 
@@ -666,7 +738,7 @@ def build_plan(
         marker=marker(github_repo, reviewer),
         prompt=prompt,
         precheck=precheck,
-        repo_id=str(repo["id"]),
+        repo_id=repo_id_str,
         repo_path=repo.get("path"),
         base_branch=base_branch,
         trigger=args.trigger,
@@ -675,6 +747,8 @@ def build_plan(
         board_policy=args.board_policy,
         enabled=bool(args.enable),
         helper_path=str(helper_abs),
+        cleanup_helper_path=str(cleanup_abs),
+        cleanup_command=cleanup_cmd,
     )
 
 

@@ -76,6 +76,17 @@ for capability-first discovery.
    handoff result. Use `scripts/orca-hermes-terminal.py --name
    orca-hermes-master` as the terminal command; it validates variable tokens,
    clears SSH environment forwarding, and never invokes a local shell.
+5. **Post-result workspace cleanup.** The configured listener prompt runs
+   `scripts/orca-automation-workspace-cleanup.py watch` as its FINAL action
+   before emitting private output. It validates the exact automation (name +
+   marker identity + repo id) and the current new-per-run workspace, then
+   spawns a detached watcher that removes ONLY the matching worktree after a
+   run with the exact `workspaceId` reaches status `completed` with a non-empty
+   `outputSnapshot` (Orca has persisted the output). It is fail-closed: before
+   removal it re-reads the exact worktree and requires full-id equality, the
+   same repo id, and `isMainWorktree` false. Blocked, partial, stale, unposted,
+   timed-out, or ambiguous runs preserve the workspace. Orca still owns the
+   schedule and lifecycle.
 
 ## Install One Disabled Listener
 

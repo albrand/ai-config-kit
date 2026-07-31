@@ -606,5 +606,71 @@ class PromptSafetyTest(unittest.TestCase):
             c.build_precheck_command(Path("/x.py"), "acme/widgets", "bad login")
 
 
+# --------------------------------------------------------------------------- #
+class CleanupCommandTest(unittest.TestCase):
+    def test_build_cleanup_command_exact_and_safe(self):
+        cmd = c.build_cleanup_command(
+            Path("/abs/orca-automation-workspace-cleanup.py"),
+            "orca-pr-listener-acme-widgets-me", "acme/widgets", "me", "repo-1",
+        )
+        self.assertIn("orca-automation-workspace-cleanup.py", cmd)
+        self.assertIn("--automation-name orca-pr-listener-acme-widgets-me", cmd)
+        self.assertIn("--github-repo acme/widgets", cmd)
+        self.assertIn("--reviewer me", cmd)
+        self.assertIn("--orca-repo id:repo-1", cmd)
+        self.assertTrue(cmd.rstrip().endswith(" watch"))
+        for bad in (";", "|", "&", "$", "`"):
+            self.assertNotIn(bad, cmd)
+
+    def test_build_cleanup_command_rejects_bad_tokens(self):
+        helper = Path("/abs/orca-automation-workspace-cleanup.py")
+        with self.assertRaises(c.ConfiguratorError):
+            c.build_cleanup_command(helper, "name", "not-a-repo", "me", "repo-1")
+        with self.assertRaises(c.ConfiguratorError):
+            c.build_cleanup_command(helper, "name", "acme/widgets", "bad login", "repo-1")
+        with self.assertRaises(c.ConfiguratorError):
+            c.build_cleanup_command(helper, "", "acme/widgets", "me", "repo-1")
+        with self.assertRaises(c.ConfiguratorError):
+            c.build_cleanup_command(helper, "name", "acme/widgets", "me", "bad repo id")
+
+
+class CleanupPromptTest(unittest.TestCase):
+    def test_plan_prompt_includes_final_cleanup_arm(self):
+        orca = FakeOrca()
+        rc, out = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        spec = payload["spec"]
+        cmd = spec["cleanup_command"]
+        self.assertIn("orca-automation-workspace-cleanup.py", cmd)
+        self.assertIn(spec["name"], cmd)
+        self.assertIn("id:repo-1", cmd)
+        self.assertTrue(spec["cleanup_helper_path"].endswith(
+            "orca-automation-workspace-cleanup.py"))
+        prompt = spec["prompt"]
+        self.assertIn("FINAL ACTION", prompt)
+        self.assertIn(cmd, prompt)
+        self.assertIn("status", prompt)
+        self.assertIn("completed", prompt)
+        self.assertIn("non-empty outputSnapshot", prompt)
+        self.assertIn("fail-closed", prompt.lower())
+        self.assertIn("detached", prompt.lower())
+
+    def test_cleanup_prompt_keeps_private_only_policy(self):
+        orca = FakeOrca()
+        rc, out = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        prompt = json.loads(out)["spec"]["prompt"]
+        low = prompt.lower()
+        self.assertIn("private draft", low)
+        self.assertIn("never post", low)
+        self.assertIn("never merge", low)
+        self.assertIn("never comment", low)
+        self.assertIn("never edit", low)
+
+    def test_prompt_without_cleanup_command_omits_section(self):
+        p = c.build_prompt("acme/widgets", "me", "required", "origin/main")
+        self.assertNotIn("FINAL ACTION", p)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

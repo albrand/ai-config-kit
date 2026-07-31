@@ -17,6 +17,7 @@ review work, record safe telemetry, and attach the optional Hermes bridge.
 - PR review queue helper: `codex/orca-workflow-automation/scripts/orca-pr-review-queue.py`
 - Execution ledger helper: `codex/orca-workflow-automation/scripts/execution-ledger.py`
 - Hermes terminal bridge: `codex/orca-workflow-automation/scripts/orca-hermes-terminal.py`
+- Post-result workspace cleanup: `codex/orca-workflow-automation/scripts/orca-automation-workspace-cleanup.py`
 - References:
   - `codex/orca-workflow-automation/references/PR_REVIEW_AUTOMATION.md`
   - `codex/orca-workflow-automation/references/EXECUTION_PRODUCTIVITY.md`
@@ -37,6 +38,14 @@ review work, record safe telemetry, and attach the optional Hermes bridge.
   telemetry. Allowlist-only schema (unknown/forbidden fields rejected); never
   records prompts, transcripts, env values, secrets, repo URL, branch, or SHA.
   Commands: `record`, `summary` (aggregates only after a minimum sample count).
+- **Post-result workspace cleanup** (`orca-automation-workspace-cleanup.py`):
+  fail-closed cleanup for Orca `new-per-run` PR-review workspaces. The
+  configurator's prompt runs it as the final action before private output. It
+  validates the exact automation and current workspace, then spawns a detached
+  watcher that removes only the matching worktree after a run with the exact
+  workspaceId reaches status `completed` with a non-empty `outputSnapshot`
+  (Orca has persisted the output). Blocked, partial, stale, unposted, timed-out,
+  or ambiguous runs leave the workspace in place. Orca still owns lifecycle.
 
 ## Hard Boundaries
 
@@ -61,6 +70,9 @@ python3 scripts/orca_hermes_terminal_test.py
 
 # Per-repo configurator fixtures (no real Orca or automation mutation)
 python3 scripts/configure_orca_pr_listener_test.py
+
+# Post-result cleanup fixtures (no real Orca, Popen, sleep, or worktree deletion)
+python3 scripts/orca_automation_workspace_cleanup_test.py
 
 # Byte-compile the packaged Python
 python3 -m compileall codex/orca-workflow-automation/scripts

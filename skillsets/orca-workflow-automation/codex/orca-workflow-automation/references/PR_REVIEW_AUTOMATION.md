@@ -84,6 +84,28 @@ required checks, unresolved conversations, and reviewer identity.
 Each eligible PR is reviewed in a **fresh Orca worktree** scoped to its exact
 repo selector. One writer per worktree; no cross-PR contamination.
 
+## Post-Result Workspace Cleanup (Fail-Closed)
+
+The configured listener prompt runs
+`../scripts/orca-automation-workspace-cleanup.py watch` as its **final action**
+immediately before emitting private output. It is a bounded, fail-closed cleanup
+for the `new-per-run` workspace:
+
+- It resolves the **exact current workspace**, validates the **exact automation**
+  (deterministic name + marker identity + Orca repo id), then spawns a
+  **detached watcher** (argv array, `start_new_session`, cwd outside the
+  workspace, DEVNULL streams; never a shell).
+- The watcher polls the exact automation's runs and removes the worktree **only
+  after** a run with the **exact `workspaceId`** reaches status `completed` with
+  a **non-empty `outputSnapshot`** (Orca has persisted the output).
+- Before removal it re-reads the exact worktree and requires **full-id equality**,
+  the **same repo id**, and **`isMainWorktree` false**. It removes via
+  `orca worktree rm --worktree id:<full-id> --force --json`.
+- Deletion is fail-closed: blocked, partial, stale, unposted, timed-out, or
+  ambiguous runs (wrong automation/repo/workspace, main worktree, missing id)
+  **preserve** the workspace. This changes nothing about output: the review
+  stays private/draft-only and is never posted, merged, or edited from here.
+
 ## Bounded Precheck
 
 `precheck` exits 0 only if eligible work exists, and nonzero otherwise, printing

@@ -10,12 +10,14 @@
     "scripts/configure-orca-pr-listener.py",
     "scripts/orca-pr-review-queue.py",
     "scripts/execution-ledger.py",
-    "scripts/orca-hermes-terminal.py"
+    "scripts/orca-hermes-terminal.py",
+    "scripts/orca-automation-workspace-cleanup.py"
   ],
   "executable": [
     "scripts/configure-orca-pr-listener.py",
     "scripts/orca-pr-review-queue.py",
     "scripts/execution-ledger.py",
-    "scripts/orca-hermes-terminal.py"
+    "scripts/orca-hermes-terminal.py",
+    "scripts/orca-automation-workspace-cleanup.py"
   ]
 }
