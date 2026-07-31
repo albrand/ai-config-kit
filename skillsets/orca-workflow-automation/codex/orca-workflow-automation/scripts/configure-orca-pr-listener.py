@@ -276,8 +276,16 @@ def _canonical_repo(raw: dict[str, Any]) -> dict[str, Any]:
     remote = raw.get("gitRemoteIdentity")
     canonical_key = remote.get("canonicalKey") if isinstance(remote, dict) else None
     github_repo = None
-    if isinstance(canonical_key, str) and canonical_key.startswith("github.com/"):
-        github_repo = canonical_key.removeprefix("github.com/")
+    if isinstance(canonical_key, str) and "/" in canonical_key:
+        host, candidate = canonical_key.split("/", 1)
+        # Orca preserves SSH config aliases such as github.com-anluby in its
+        # verified remote identity. They still identify GitHub, while arbitrary
+        # lookalike hosts remain rejected.
+        if (
+            re.fullmatch(r"github\.com(?:-[A-Za-z0-9._-]+)?", host)
+            and GITHUB_REPO_RE.fullmatch(candidate)
+        ):
+            github_repo = candidate
     icon = raw.get("repoIcon")
     if github_repo is None and isinstance(icon, dict) and icon.get("source") == "github":
         label = icon.get("label")
@@ -413,10 +421,15 @@ def build_prompt(
         "or is unavailable, completion is BLOCKED (do not finish, do not post)."
     )
     lines.append(
-        "Ack the exact (PR, head SHA, reviewer) ONLY after validation completes. "
-        "Record aggregate execution telemetry only (outcome/validation/route); "
-        "never record prompts, transcripts, env values, secrets, repo URL, "
-        "branch, or SHA."
+        "Ack the exact (PR, head SHA, reviewer) once a run produces a completed, "
+        "non-empty PRIVATE result for that exact head, INCLUDING a BLOCKED "
+        "outcome. Acking is what suppresses that head from being processed "
+        "again; the exact head SHA is the sole reopening signal, so a same head "
+        "never reopens after author comments or any other activity. Never ack a "
+        "stale head (head changed mid-run), an interrupted run, or output-less "
+        "work. Record aggregate execution telemetry only "
+        "(outcome/validation/route); never record prompts, transcripts, env "
+        "values, secrets, repo URL, branch, or SHA."
     )
     if enable_hermes_critique:
         lines.append(
@@ -427,22 +440,25 @@ def build_prompt(
     if cleanup_command:
         lines.append("")
         lines.append(
-            "FINAL ACTION (post-result workspace cleanup): run this exact command "
-            "only after at least one substantive review is complete and validated, "
-            "as the very last shell action immediately before emitting your final "
-            "private output. Do not run it when the run stops with only blocked, "
-            "partial, stale-head, or unvalidated work:"
+            "FINAL ACTION (post-result workspace cleanup): whenever you produce "
+            "a completed, non-empty PRIVATE result for the exact head - "
+            "INCLUDING a BLOCKED or partial report - run this exact command as "
+            "the very last shell action immediately before emitting your final "
+            "private output. Do NOT run it for a stale head (head changed "
+            "mid-run), an interrupted run, or output-less work:"
         )
         lines.append(f"  {cleanup_command}")
         lines.append(
-            "This spawns a detached watcher that removes only this run's "
-            "new-per-run workspace AFTER Orca has persisted the run output: it "
-            "waits for a run with this exact workspaceId to reach status "
-            "completed with a non-empty outputSnapshot, then removes the exact "
-            "worktree. Deletion is fail-closed: blocked, partial, stale, "
-            "unposted, or timed-out runs leave the workspace in place. This "
-            "changes nothing about output: keep PRIVATE DRAFT output only and "
-            "never post, comment, merge, or edit any PR, branch, or GitHub "
+            "This spawns a detached watcher that removes ONLY this run's "
+            "new-per-run, non-main worktree AFTER Orca has persisted the run "
+            "output: it waits for a run with this exact workspaceId to reach "
+            "status completed with a non-empty outputSnapshot, then removes the "
+            "exact worktree. The watcher is fail-closed: blocked, partial, "
+            "stale, unposted, empty, or timed-out runs that Orca does not "
+            "persist as a completed run with non-empty output leave the "
+            "workspace in place. Arming the watcher never deletes immediately "
+            "and changes nothing about output: keep PRIVATE DRAFT output only "
+            "and never post, comment, merge, or edit any PR, branch, or GitHub "
             "resource."
         )
     return "\n".join(lines)

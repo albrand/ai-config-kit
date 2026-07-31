@@ -13,6 +13,7 @@ import tempfile
 import unittest
 import importlib.util
 from pathlib import Path
+from unittest import mock
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODULE_PATH = (SCRIPT_DIR.parent / "codex" / "orca-workflow-automation" / "scripts"
@@ -34,7 +35,6 @@ def pr(number, **over):
         "author": "someone",
         "authorIsBot": False,
         "reviewRequests": ["me"],
-        "authorActivityAt": "2024-01-01T00:00:00Z",
     }
     base.update(over)
     return base
@@ -112,18 +112,19 @@ class NormalizeTest(unittest.TestCase):
                             "state": "OPEN"})
         self.assertIsNone(n["headRefOid"])
 
-    def test_latest_top_level_author_comment_is_activity_marker(self):
+    def test_comments_are_not_scanned_for_activity(self):
+        # The exact head SHA is the sole reopening signal; author comment
+        # timestamps must no longer be surfaced as an activity marker.
         n = q.normalize_pr({
             "number": 1, "headRefOid": "A" * 40,
             "author": {"login": "author"}, "reviewRequests": [],
             "state": "OPEN",
             "comments": [
-                {"author": {"login": "other"}, "createdAt": "2024-02-01T00:00:00Z"},
-                {"author": {"login": "author"}, "createdAt": "2024-01-01T00:00:00Z"},
                 {"author": {"login": "author"}, "createdAt": "2024-01-03T00:00:00Z"},
             ],
         })
-        self.assertEqual(n["authorActivityAt"], "2024-01-03T00:00:00Z")
+        self.assertNotIn("authorActivityAt", n)
+        self.assertNotIn("authorActivityMarker", n)
 
 
 class ExactShaDedupTest(unittest.TestCase):
@@ -160,34 +161,59 @@ class ExactShaDedupTest(unittest.TestCase):
         self.assertEqual(skipped[0]["reason"], "already-reviewed-exact-sha")
 
 
-class AuthorReplyReopenTest(unittest.TestCase):
-    def test_later_author_reply_reopens(self):
-        records = {}
-        q.record_ack(records, pr_number=1, head="A" * 40, reviewer="me",
-                     author_activity_marker="2024-01-01T00:00:00Z")
-        new = pr(1, headRefOid="A" * 40,
-                 authorActivityAt="2024-01-02T00:00:00Z")
-        work, _ = q.compute_work_items([new], "me", records)
-        self.assertEqual(len(work), 1)
-        self.assertEqual(work[0]["reason"], "reopened-author-comment")
+class SameHeadNeverReopensTest(unittest.TestCase):
+    def _normalized_with_newer_author_comment(self):
+        # Raw gh payload whose author added a NEWER top-level comment at the
+        # SAME head SHA than the ack time.
+        return q.normalize_pr({
+            "number": 1, "state": "OPEN", "isDraft": False,
+            "headRefOid": "A" * 40, "headRefName": "branch",
+            "author": {"login": "author"},
+            "reviewRequests": [{"login": "me"}],
+            "comments": [
+                {"author": {"login": "author"},
+                 "createdAt": "2024-01-02T00:00:00Z"},
+            ],
+        })
 
-    def test_earlier_or_equal_marker_does_not_reopen(self):
+    def test_newer_author_comment_does_not_reopen_same_head(self):
         records = {}
-        q.record_ack(records, pr_number=1, head="A" * 40, reviewer="me",
-                     author_activity_marker="2024-01-05T00:00:00Z")
-        new = pr(1, headRefOid="A" * 40,
-                 authorActivityAt="2024-01-04T00:00:00Z")
-        work, skipped = q.compute_work_items([new], "me", records)
+        q.record_ack(records, pr_number=1, head="A" * 40, reviewer="me")
+        work, skipped = q.compute_work_items(
+            [self._normalized_with_newer_author_comment()], "me", records
+        )
         self.assertEqual(work, [])
         self.assertEqual(skipped[0]["reason"], "already-reviewed-exact-sha")
 
-    def test_no_marker_stored_does_not_reopen(self):
+    def test_legacy_activity_marker_in_record_does_not_reopen(self):
+        # Older state files may carry a now-unused author_activity_marker; a
+        # same head must stay suppressed regardless of that legacy field.
+        records = {
+            q._record_key(1, "me"): {
+                "pr": 1, "reviewer": "me", "head": "A" * 40,
+                "acked_at": "2024-01-01T00:00:00Z",
+                "author_activity_marker": "2024-01-01T00:00:00Z",
+            }
+        }
+        work, skipped = q.compute_work_items(
+            [self._normalized_with_newer_author_comment()], "me", records
+        )
+        self.assertEqual(work, [])
+        self.assertEqual(skipped[0]["reason"], "already-reviewed-exact-sha")
+
+    def test_changed_sha_reopens_without_any_author_comment(self):
         records = {}
         q.record_ack(records, pr_number=1, head="A" * 40, reviewer="me")
-        new = pr(1, headRefOid="A" * 40,
-                 authorActivityAt="2024-01-09T00:00:00Z")
+        new = q.normalize_pr({
+            "number": 1, "state": "OPEN", "isDraft": False,
+            "headRefOid": "B" * 40, "author": {"login": "author"},
+            "reviewRequests": [{"login": "me"}],
+        })
         work, _ = q.compute_work_items([new], "me", records)
-        self.assertEqual(work, [])
+        self.assertEqual(len(work), 1)
+        self.assertEqual(work[0]["reason"], "eligible")
+        self.assertEqual(work[0]["headRefOid"], "B" * 40)
+        self.assertNotIn("authorActivityMarker", work[0])
 
 
 class DeterministicOrderTest(unittest.TestCase):
@@ -208,14 +234,31 @@ class StateIoTest(unittest.TestCase):
 
     def test_save_then_load_roundtrip(self):
         records = {}
-        q.record_ack(records, pr_number=7, head="D" * 40, reviewer="me",
-                     author_activity_marker="2024-01-01T00:00:00Z")
+        q.record_ack(records, pr_number=7, head="D" * 40, reviewer="me")
         q.save_state({"records": records}, self.state_path)
         loaded = q.load_state(self.state_path)
         self.assertEqual(loaded["schema_version"], q.SCHEMA_VERSION)
         rec = next(iter(loaded["records"].values()))
         self.assertEqual(rec["head"], "D" * 40)
         self.assertEqual(rec["reviewer"], "me")
+        self.assertNotIn("author_activity_marker", rec)
+
+    def test_load_tolerates_legacy_activity_marker(self):
+        # Older state files may contain a now-unused author_activity_marker;
+        # they must still load without a schema bump.
+        legacy = {
+            "schema_version": q.SCHEMA_VERSION,
+            "records": {
+                q._record_key(7, "me"): {
+                    "pr": 7, "reviewer": "me", "head": "D" * 40,
+                    "acked_at": "2024-01-01T00:00:00Z",
+                    "author_activity_marker": "2024-01-01T00:00:00Z",
+                }
+            },
+        }
+        self.state_path.write_text(json.dumps(legacy), encoding="utf-8")
+        loaded = q.load_state(self.state_path)
+        self.assertEqual(len(loaded["records"]), 1)
 
     def test_state_file_mode_is_restrictive(self):
         records = {}
@@ -243,6 +286,105 @@ class StateIoTest(unittest.TestCase):
             self.assertNotIn(forbidden, text)
 
 
+class RepoScopedStateTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="orca-queue-scope-")
+        os.environ["XDG_STATE_HOME"] = str(Path(self.tmp) / "state")
+
+    def tearDown(self):
+        os.environ.pop("XDG_STATE_HOME", None)
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_two_repos_map_to_different_filenames(self):
+        a = q.state_file("acme/widgets")
+        b = q.state_file("acme/gadgets")
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(a.name, b.name)
+        self.assertEqual(a.parent, b.parent)  # same state dir
+
+    def test_same_repo_is_deterministic(self):
+        self.assertEqual(q.state_file("acme/widgets"),
+                         q.state_file("acme/widgets"))
+
+    def test_repo_scope_is_case_insensitive(self):
+        self.assertEqual(q.state_file("Acme/Widgets"),
+                         q.state_file("acme/widgets"))
+
+    def test_filename_has_no_raw_repo_or_path(self):
+        for repo in ("acme/widgets", "acme/gadgets", "org/repo.sub"):
+            name = q.state_file(repo).name
+            self.assertTrue(name.startswith("review-queue-state-"))
+            self.assertTrue(name.endswith(".json"))
+            self.assertNotIn(repo, name)
+            self.assertNotIn(repo.split("/")[0], name)
+            self.assertNotIn(repo.split("/")[-1], name)
+
+    def test_explicit_repo_and_cwd_namespaces_do_not_collide(self):
+        # A repo string equal to the textual cwd must still hash differently,
+        # because the two are tagged into separate one-way namespaces.
+        cwd = str(Path.cwd().resolve())
+        self.assertNotEqual(q._state_hash(cwd), q._state_hash(None))
+
+    def test_state_file_content_has_no_raw_repo_or_path(self):
+        state_path = Path(self.tmp) / "state.json"
+        records = {}
+        q.record_ack(records, pr_number=1, head="A" * 40, reviewer="me")
+        q.save_state({"records": records}, state_path)
+        text = state_path.read_text(encoding="utf-8")
+        for forbidden in ("acme/widgets", "widgets", "/repos", "repo", "path"):
+            self.assertNotIn(forbidden, text)
+
+    def test_two_repos_persist_to_separate_hashed_state_files(self):
+        rc = q.main(["--repo", "acme/widgets", "--reviewer", "me",
+                     "ack", "--pr", "1", "--head", "A" * 40],
+                    runner=fake_runner([]))
+        self.assertEqual(rc, 0)
+        rc = q.main(["--repo", "acme/gadgets", "--reviewer", "me",
+                     "ack", "--pr", "1", "--head", "B" * 40],
+                    runner=fake_runner([]))
+        self.assertEqual(rc, 0)
+        files = sorted(
+            Path(self.tmp).rglob("review-queue-state-*.json"))
+        self.assertEqual(len(files), 2)
+        for f in files:
+            self.assertNotIn("acme", f.name)
+            self.assertNotIn("widgets", f.name)
+            self.assertNotIn("gadgets", f.name)
+
+    def _scan(self, prs_payload, repo):
+        import io
+        buf = io.StringIO()
+        orig = sys.stdout
+        sys.stdout = buf
+        try:
+            q.main(["--repo", repo, "--reviewer", "me", "scan"],
+                   runner=fake_runner(prs_payload))
+        finally:
+            sys.stdout = orig
+        return json.loads(buf.getvalue())
+
+    def test_ack_under_one_repo_does_not_suppress_another(self):
+        # Cross-repository isolation: acking PR 1 head A under repo A must NOT
+        # suppress the same PR number + head under repo B (separate state files),
+        # while exact-head suppression is preserved within repo A.
+        fixture = [{"number": 1, "state": "OPEN", "isDraft": False,
+                    "headRefOid": "A" * 40, "author": {"login": "x"},
+                    "reviewRequests": [{"login": "me"}]}]
+        rc = q.main(["--repo", "acme/widgets", "--reviewer", "me",
+                     "ack", "--pr", "1", "--head", "A" * 40],
+                    runner=fake_runner([]))
+        self.assertEqual(rc, 0)
+        # Repo B: same PR/head still eligible (no collision).
+        payload_b = self._scan(fixture, "acme/gadgets")
+        self.assertEqual(len(payload_b["work_items"]), 1)
+        self.assertEqual(payload_b["work_items"][0]["headRefOid"], "A" * 40)
+        # Repo A: same head stays suppressed (exact-head semantics preserved).
+        payload_a = self._scan(fixture, "acme/widgets")
+        self.assertEqual(payload_a["work_items"], [])
+        self.assertTrue(payload_a["skipped"])
+
+
 class AckValidationTest(unittest.TestCase):
     def test_ack_rejects_empty_head(self):
         with self.assertRaises(ValueError):
@@ -256,12 +398,47 @@ class AckValidationTest(unittest.TestCase):
         entry = q.record_ack({}, pr_number=1, head="A" * 64, reviewer="me")
         self.assertEqual(entry["head"], "A" * 64)
 
-    def test_ack_rejects_invalid_reviewer_and_activity_marker(self):
+    def test_ack_rejects_invalid_reviewer_and_pr_number(self):
         with self.assertRaises(ValueError):
             q.record_ack({}, pr_number=1, head="A" * 40, reviewer="not a login")
         with self.assertRaises(ValueError):
+            q.record_ack({}, pr_number=0, head="A" * 40, reviewer="me")
+
+    def test_ack_rejects_unknown_marker_kwarg(self):
+        # The author_activity_marker parameter was removed; passing it is now a
+        # hard error rather than silently recorded.
+        with self.assertRaises(TypeError):
             q.record_ack({}, pr_number=1, head="A" * 40, reviewer="me",
-                         author_activity_marker="not-a-timestamp")
+                         author_activity_marker="2024-01-01T00:00:00Z")
+
+
+class StoredAccountRunnerTest(unittest.TestCase):
+    @mock.patch.object(q.subprocess, "run")
+    def test_runner_pins_gh_calls_to_requested_stored_account(self, run):
+        run.side_effect = [
+            q.subprocess.CompletedProcess([], 0, stdout="secret-token\n", stderr=""),
+            q.subprocess.CompletedProcess([], 0, stdout="[]\n", stderr=""),
+        ]
+
+        runner = q.stored_account_gh_runner("anluby")
+        self.assertEqual(runner(["pr", "list"]), "[]\n")
+
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            ["gh", "auth", "token", "--user", "anluby"],
+        )
+        api_call = run.call_args_list[1]
+        self.assertEqual(api_call.args[0], ["gh", "pr", "list"])
+        self.assertEqual(api_call.kwargs["env"]["GH_TOKEN"], "secret-token")
+        self.assertNotIn("secret-token", api_call.args[0])
+
+    @mock.patch.object(q.subprocess, "run")
+    def test_empty_stored_token_fails_closed(self, run):
+        run.return_value = q.subprocess.CompletedProcess(
+            [], 0, stdout="\n", stderr=""
+        )
+        with self.assertRaisesRegex(RuntimeError, "empty token"):
+            q.stored_account_gh_runner("anluby")
 
 
 class CliScanTest(unittest.TestCase):

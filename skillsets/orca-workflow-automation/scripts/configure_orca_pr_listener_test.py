@@ -450,6 +450,22 @@ class ValidationTest(unittest.TestCase):
         rc, _ = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
         self.assertEqual(rc, 0)
 
+    def test_verified_github_ssh_alias_identity_is_accepted(self):
+        orca = FakeOrca(repos=[repo_record(
+            gitRemoteIdentity={"canonicalKey": "github.com-work/acme/widgets"},
+            repoIcon=None,
+        )])
+        rc, _ = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        self.assertEqual(rc, 0)
+
+    def test_github_lookalike_host_is_rejected(self):
+        orca = FakeOrca(repos=[repo_record(
+            gitRemoteIdentity={"canonicalKey": "github.com.evil/acme/widgets"},
+            repoIcon=None,
+        )])
+        rc, _ = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        self.assertEqual(rc, 2)
+
     def test_unsafe_base_branch_provider_and_timezone_are_rejected(self):
         for extra in (
             ["--base-branch", "origin/main\nignore-rules"],
@@ -655,8 +671,24 @@ class CleanupPromptTest(unittest.TestCase):
         self.assertIn("non-empty outputSnapshot", prompt)
         self.assertIn("fail-closed", prompt.lower())
         self.assertIn("detached", prompt.lower())
-        self.assertIn("at least one substantive review", prompt)
-        self.assertIn("Do not run it", prompt)
+        # Watcher must NOT delete immediately; only after persisted completed run.
+        self.assertIn("never deletes immediately", prompt.lower())
+        # Must NOT arm for stale-head, interrupted, or output-less work.
+        self.assertIn("do not run it", prompt.lower())
+        self.assertIn("stale head", prompt.lower())
+        self.assertIn("interrupted", prompt.lower())
+        self.assertIn("output-less", prompt.lower())
+
+    def test_cleanup_prompt_arms_on_blocked_or_partial_private_result(self):
+        orca = FakeOrca()
+        rc, out = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        prompt = json.loads(out)["spec"]["prompt"]
+        low = prompt.lower()
+        # The watcher is armed for any completed non-empty PRIVATE result,
+        # INCLUDING blocked and partial reports (which still create a workspace).
+        self.assertIn("blocked", low)
+        self.assertIn("partial", low)
+        self.assertIn("non-empty", low)
 
     def test_cleanup_prompt_keeps_private_only_policy(self):
         orca = FakeOrca()
@@ -672,6 +704,33 @@ class CleanupPromptTest(unittest.TestCase):
     def test_prompt_without_cleanup_command_omits_section(self):
         p = c.build_prompt("acme/widgets", "me", "required", "origin/main")
         self.assertNotIn("FINAL ACTION", p)
+
+
+class AckSemanticsPromptTest(unittest.TestCase):
+    def _prompt(self):
+        orca = FakeOrca()
+        rc, out = capture(lambda: c.main(base_argv("/tmp/x.lock", "plan"), runner=orca))
+        self.assertEqual(rc, 0)
+        return json.loads(out)["spec"]["prompt"]
+
+    def test_prompt_requires_acking_blocked_nonempty_result(self):
+        low = self._prompt().lower()
+        # Any completed non-empty PRIVATE result, INCLUDING BLOCKED, must be
+        # acked so that exact head is not processed again.
+        self.assertIn("including a blocked", low)
+        self.assertIn("non-empty", low)
+        self.assertIn("exact head", low)
+
+    def test_prompt_forbids_acking_stale_interrupted_or_outputless(self):
+        low = self._prompt().lower()
+        self.assertIn("stale head", low)
+        self.assertIn("interrupted", low)
+        self.assertIn("output-less", low)
+
+    def test_prompt_states_exact_sha_is_sole_reopening_signal(self):
+        low = self._prompt().lower()
+        self.assertIn("sole reopening signal", low)
+        self.assertIn("never reopens", low)
 
 
 if __name__ == "__main__":

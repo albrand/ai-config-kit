@@ -14,10 +14,15 @@ Hard invariants (do not weaken):
     belong to the caller's explicit policy, not this helper.
   * Exact-SHA semantics: a work item is pinned to the precise ``headRefOid``
     re-fetched at scan time. Dedup and ack are keyed by exact (PR, head,
-    reviewer).
-  * State is local, atomic, 0600, schema-versioned, and contains no secrets, no
-    repo URL, no branch name, no PR title in the ack store (only PR number,
-    head SHA, reviewer login, timestamps).
+    reviewer). The exact head SHA is the SOLE reopening signal: a same head
+    stays suppressed regardless of author comments or any other activity; only
+    a changed SHA is eligible again.
+  * State is local, atomic, 0600, schema-versioned, and repository-scoped: the
+    state FILENAME is a truncated SHA-256 of the explicit OWNER/REPO (or the
+    resolved cwd when --repo is omitted), so separate repositories never share
+    ack state. It contains no secrets, no repo URL, no branch name, no PR title,
+    and no raw repo/path (only PR number, head SHA, reviewer login,
+    timestamps); the filename carries only the one-way hash.
 
 Commands:
   scan      Print eligible private draft work items as JSON (pinned exact SHA).
@@ -28,6 +33,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -39,7 +45,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 SCHEMA_VERSION = 1
-PR_LIST_FIELDS = "number,title,state,isDraft,headRefOid,headRefName,author,reviewRequests,comments"
+STATE_HASH_LEN = 16
+PR_LIST_FIELDS = "number,title,state,isDraft,headRefOid,headRefName,author,reviewRequests"
 FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
 GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
@@ -64,8 +71,27 @@ def state_dir() -> Path:
     return Path(base) / "ai-config-kit" / "orca-workflow-automation"
 
 
-def state_file() -> Path:
-    return state_dir() / "review-queue-state.json"
+def _state_hash(repo: str | None) -> str:
+    """Deterministic one-way hash scoping ack state to a single repository.
+
+    Hashes the explicit OWNER/REPO, or the resolved current working directory
+    when ``--repo`` is omitted. A ``repo:``/``cwd:`` tag separates the two
+    namespaces so an explicit repo string can never collide with a cwd. Returns
+    a truncated SHA-256 digest only; the raw repo/path is never stored or
+    printed in state.
+    """
+    if repo:
+        # GitHub OWNER/REPO identifiers are case-insensitive. Normalize them so
+        # callers using different casing still share the same exact-head cursor.
+        material = "repo:" + repo.casefold()
+    else:
+        material = "cwd:" + str(Path.cwd().resolve())
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:STATE_HASH_LEN]
+
+
+def state_file(repo: str | None = None) -> Path:
+    """Repository-scoped state path; the filename carries only a one-way hash."""
+    return state_dir() / f"review-queue-state-{_state_hash(repo)}.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -108,7 +134,6 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         pr_number = record.get("pr")
         reviewer = record.get("reviewer")
         head = record.get("head")
-        marker = record.get("author_activity_marker")
         if (
             not isinstance(pr_number, int)
             or pr_number < 1
@@ -117,7 +142,6 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
             or not isinstance(head, str)
             or not FULL_SHA_RE.fullmatch(head)
             or key != _record_key(pr_number, reviewer)
-            or (marker is not None and not isinstance(marker, str))
         ):
             raise QueueStateError(f"invalid queue state record: {path}")
     return data
@@ -163,26 +187,6 @@ def normalize_pr(raw: dict[str, Any]) -> dict[str, Any]:
             elif isinstance(item, str):
                 review_requests.append(item)
 
-    latest_author_comment = None
-    comments = raw.get("comments") or []
-    if isinstance(comments, list) and author_login:
-        for comment in comments:
-            if not isinstance(comment, dict):
-                continue
-            comment_author = comment.get("author") or {}
-            comment_login = (
-                comment_author.get("login")
-                if isinstance(comment_author, dict)
-                else comment_author
-            )
-            created_at = comment.get("createdAt")
-            if (
-                comment_login == author_login
-                and isinstance(created_at, str)
-                and (latest_author_comment is None or created_at > latest_author_comment)
-            ):
-                latest_author_comment = created_at
-
     head = raw.get("headRefOid")
     return {
         "number": int(raw.get("number") or 0),
@@ -194,7 +198,6 @@ def normalize_pr(raw: dict[str, Any]) -> dict[str, Any]:
         "author": author_login,
         "authorIsBot": author_is_bot,
         "reviewRequests": review_requests,
-        "authorActivityAt": latest_author_comment,
     }
 
 
@@ -219,15 +222,6 @@ def _record_key(pr_number: int, reviewer: str) -> str:
     return f"{pr_number}\0{reviewer}"
 
 
-def author_comment_reopens(pr: dict[str, Any], record: dict[str, Any]) -> bool:
-    """A later top-level author comment at the same head reopens eligibility."""
-    marker = pr.get("authorActivityAt")
-    stored = record.get("author_activity_marker")
-    if not isinstance(marker, str) or not isinstance(stored, str):
-        return False
-    return marker > stored
-
-
 def compute_work_items(
     prs: Iterable[dict[str, Any]],
     reviewer: str,
@@ -235,9 +229,10 @@ def compute_work_items(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return (work_items, skipped). Deterministic order by PR number.
 
-    Exact-SHA dedup: a PR whose current head matches the acked head for the same
-    reviewer is skipped unless a later top-level author comment reopens it. A
-    head change (different SHA) is eligible again.
+    Exact-SHA dedup: the exact head SHA is the SOLE reopening signal. A PR whose
+    current head matches the acked head for the same reviewer is always
+    suppressed, regardless of author comments or any other activity. Only a head
+    change (different SHA) is eligible again.
     """
     ordered = sorted(prs, key=lambda p: p["number"])
     work: list[dict[str, Any]] = []
@@ -249,13 +244,9 @@ def compute_work_items(
             continue
         record = records.get(_record_key(pr["number"], reviewer))
         if isinstance(record, dict) and record.get("head") == pr["headRefOid"]:
-            if author_comment_reopens(pr, record):
-                work.append(_work_item(pr, reviewer, "reopened-author-comment"))
-            else:
-                skipped.append({"number": pr["number"], "reason": "already-reviewed-exact-sha"})
-                continue
-        else:
-            work.append(_work_item(pr, reviewer, "eligible"))
+            skipped.append({"number": pr["number"], "reason": "already-reviewed-exact-sha"})
+            continue
+        work.append(_work_item(pr, reviewer, "eligible"))
     return work, skipped
 
 
@@ -266,7 +257,6 @@ def _work_item(pr: dict[str, Any], reviewer: str, reason: str) -> dict[str, Any]
         "headRefName": pr.get("headRefName"),
         "reviewer": reviewer,
         "reason": reason,
-        "authorActivityMarker": pr.get("authorActivityAt"),
     }
 
 
@@ -276,7 +266,6 @@ def record_ack(
     pr_number: int,
     head: str,
     reviewer: str,
-    author_activity_marker: str | None = None,
     acked_at: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(pr_number, int) or pr_number < 1:
@@ -285,19 +274,11 @@ def record_ack(
         raise ValueError("ack requires an exact 40- or 64-character hexadecimal head SHA")
     if not isinstance(reviewer, str) or not GITHUB_LOGIN_RE.fullmatch(reviewer):
         raise ValueError("ack requires a valid GitHub reviewer login")
-    if author_activity_marker is not None:
-        if not isinstance(author_activity_marker, str):
-            raise ValueError("author activity marker must be an ISO-8601 timestamp")
-        try:
-            datetime.fromisoformat(author_activity_marker.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("author activity marker must be an ISO-8601 timestamp") from exc
     entry = {
         "pr": int(pr_number),
         "reviewer": reviewer,
         "head": head,
         "acked_at": acked_at or _utc_now(),
-        "author_activity_marker": author_activity_marker,
     }
     records[_record_key(int(pr_number), reviewer)] = entry
     return entry
@@ -318,6 +299,35 @@ def default_gh_runner(args: list[str]) -> str:
         text=True,
     )
     return proc.stdout
+
+
+def stored_account_gh_runner(reviewer: str) -> GhRunner:
+    """Return a runner pinned to a stored ``gh`` account without leaking its token."""
+    if not GITHUB_LOGIN_RE.fullmatch(reviewer):
+        raise RuntimeError("invalid reviewer login for stored gh account")
+    token_proc = subprocess.run(
+        ["gh", "auth", "token", "--user", reviewer],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    token = token_proc.stdout.strip()
+    if not token:
+        raise RuntimeError("gh returned an empty token for the requested reviewer")
+    gh_env = os.environ.copy()
+    gh_env["GH_TOKEN"] = token
+
+    def run(args: list[str]) -> str:
+        proc = subprocess.run(
+            ["gh", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=gh_env,
+        )
+        return proc.stdout
+
+    return run
 
 
 def fetch_active_login(runner: GhRunner) -> str:
@@ -347,7 +357,7 @@ def fetch_open_prs(repo: str | None, runner: GhRunner) -> list[dict[str, Any]]:
 def cmd_scan(args, runner: GhRunner) -> int:
     reviewer = args.reviewer or fetch_active_login(runner)
     prs = fetch_open_prs(args.repo, runner)
-    state = load_state()
+    state = load_state(state_file(args.repo))
     work, skipped = compute_work_items(prs, reviewer, state.get("records", {}))
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -365,7 +375,7 @@ def cmd_scan(args, runner: GhRunner) -> int:
 def cmd_precheck(args, runner: GhRunner) -> int:
     reviewer = args.reviewer or fetch_active_login(runner)
     prs = fetch_open_prs(args.repo, runner)
-    state = load_state()
+    state = load_state(state_file(args.repo))
     work, _ = compute_work_items(prs, reviewer, state.get("records", {}))
     # Non-leaking: print only a generic boolean status to stderr.
     if work:
@@ -380,15 +390,15 @@ def cmd_ack(args, runner: GhRunner) -> int:
         sys.stderr.write("error: --head is required (exact headRefOid)\n")
         return 2
     reviewer = args.reviewer or fetch_active_login(runner)
-    state = load_state()
+    path = state_file(args.repo)
+    state = load_state(path)
     record_ack(
         state.setdefault("records", {}),
         pr_number=args.pr,
         head=args.head,
         reviewer=reviewer,
-        author_activity_marker=args.author_activity_marker,
     )
-    save_state(state)
+    save_state(state, path)
     sys.stderr.write(
         f"acked PR {args.pr} head {args.head[:12]} reviewer {reviewer}\n"
     )
@@ -411,14 +421,16 @@ def build_parser() -> argparse.ArgumentParser:
     ack = sub.add_parser("ack", help="record a completed draft outcome")
     ack.add_argument("--pr", type=int, required=True, help="PR number")
     ack.add_argument("--head", required=True, help="exact headRefOid at review time")
-    ack.add_argument("--author-activity-marker", default=None,
-                     help="latest top-level author comment timestamp from scan")
     return p
 
 
 def main(argv: list[str] | None = None, runner: GhRunner | None = None) -> int:
     args = build_parser().parse_args(argv)
-    gh_runner = runner or default_gh_runner
+    gh_runner = runner or (
+        stored_account_gh_runner(args.reviewer)
+        if args.reviewer
+        else default_gh_runner
+    )
     if args.command == "scan":
         return cmd_scan(args, gh_runner)
     if args.command == "precheck":

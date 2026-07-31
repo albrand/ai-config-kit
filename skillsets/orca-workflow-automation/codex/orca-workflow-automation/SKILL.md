@@ -52,14 +52,21 @@ for capability-first discovery.
 2. **PR review queue.** Read `references/PR_REVIEW_AUTOMATION.md` before any
    queue work. Use `scripts/orca-pr-review-queue.py`:
    - `scan` — fetch open PR metadata read-only via `gh`, compute eligible
-     private draft work items, pin the **exact** `headRefOid`, reject/skip
-     draft PRs, bots, self-authored PRs, and PRs not review-requested, and
-     dedupe against XDG state by exact (PR, head, reviewer).
+      private draft work items, pin the **exact** `headRefOid`, reject/skip
+      draft PRs, bots, self-authored PRs, and PRs not review-requested, and
+      dedupe against **repository-scoped** XDG state (filename is a one-way hash
+      of OWNER/REPO, or the cwd when `--repo` is omitted; the raw repo/path is
+      never stored) by exact (PR, head, reviewer). An explicit `--reviewer`
+      pins read-only GitHub calls to that stored `gh` account without exposing
+      its token.
    - `precheck` — exit 0 only if eligible work exists; nonzero otherwise,
      without leaking which PRs exist.
-   - `ack` — record a completed draft outcome for an exact PR+head+reviewer
-     (and an optional latest top-level author-comment marker); a later head
-     change or a later top-level author comment reopens re-review eligibility.
+   - `ack` — record a completed draft outcome for an exact PR+head+reviewer,
+      once a run produces a completed, non-empty PRIVATE result (including a
+      BLOCKED outcome). The exact head SHA is the sole reopening signal: a same
+      head never reopens after author comments or any other activity; only a
+      changed SHA is eligible again. Never ack a stale head, an interrupted run,
+      or output-less work.
 3. **Execution productivity ledger.** Read `references/EXECUTION_PRODUCTIVITY.md`
    before recording. Use `scripts/execution-ledger.py`:
    - `record` — append one validated JSONL row (allowlist only; unknown and
@@ -78,16 +85,19 @@ for capability-first discovery.
    clears SSH environment forwarding, and never invokes a local shell.
 5. **Post-result workspace cleanup.** The configured listener prompt runs
    `scripts/orca-automation-workspace-cleanup.py watch` as its FINAL action
-   before emitting private output only when at least one substantive review is
-   complete and validated. Runs with only blocked, partial, stale-head, or
-   unvalidated work do not arm cleanup. It validates the exact automation (name
-   + marker identity + repo id) and the current new-per-run workspace, then
-   spawns a detached watcher that removes ONLY the matching worktree after a
-   run with the exact `workspaceId` reaches status `completed` with a non-empty
-   `outputSnapshot` (Orca has persisted the output). It is fail-closed: before
-   removal it re-reads the exact worktree and requires full-id equality, the
-   same repo id, and `isMainWorktree` false. Blocked, partial, stale, unposted,
-   timed-out, or ambiguous runs preserve the workspace. Orca still owns the
+   before emitting private output, armed whenever a run produces a completed,
+   non-empty PRIVATE result for the exact head - including a BLOCKED or partial
+   report (these still create a workspace that must be cleaned). It is NOT armed
+   for a stale head, an interrupted run, or output-less work. It validates the
+   exact automation (name + marker identity + repo id) and the current
+   new-per-run workspace, then spawns a detached watcher that removes ONLY the
+   matching worktree after a run with the exact `workspaceId` reaches status
+   `completed` with a non-empty `outputSnapshot` (Orca has persisted the
+   output). It is fail-closed: before removal it re-reads the exact worktree and
+   requires full-id equality, the same repo id, and `isMainWorktree` false.
+   Blocked, partial, stale, unposted, empty, timed-out, or ambiguous runs that
+   Orca does not persist as a completed run with non-empty output preserve the
+   workspace; arming the watcher never deletes immediately. Orca still owns the
    schedule and lifecycle.
 
 ## Install One Disabled Listener

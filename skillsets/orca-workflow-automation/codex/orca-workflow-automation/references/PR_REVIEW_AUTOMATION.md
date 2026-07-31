@@ -35,6 +35,13 @@ Every work item is pinned to the precise `headRefOid` re-fetched at scan time.
 Dedup and `ack` are keyed by exact **(PR number, head SHA, reviewer)**. A PR
 whose head SHA is missing or cannot be pinned is rejected, never guessed.
 
+Ack state is **repository-scoped**: the state filename is a truncated one-way
+SHA-256 of the explicit `OWNER/REPO` (or the resolved cwd when `--repo` is
+omitted), so two repositories never share or collide on ack state. The raw
+repo/path is never stored in or printed from the state file - only the hash
+appears in the filename, and records carry only PR number, head SHA, reviewer
+login, and timestamps.
+
 ## Eligibility Gates (reject/skip)
 
 A PR is eligible only when **all** hold:
@@ -48,17 +55,28 @@ A PR is eligible only when **all** hold:
 
 ## Duplicate Suppression And Reopening
 
-- **Same reviewer + same exact head + no later top-level author comment** → already
-  reviewed; suppressed.
-- **Top-level author comment after the ack** at the same head → re-review
-  reopened. Inline review-thread replies are not inferred by this helper.
+- **Same reviewer + same exact head** → already reviewed; suppressed, regardless
+  of author comments or any other activity.
 - **Head change** (different exact SHA) → re-review eligible.
+
+The exact head SHA is the **sole reopening signal**: a later top-level author
+comment at the same head does NOT reopen re-review. Only a changed SHA does.
+
+### Ack Semantics
+
+`ack` is recorded once a run produces a completed, non-empty PRIVATE result for
+the exact **(PR number, head SHA, reviewer)**, **including a BLOCKED outcome**.
+This is what suppresses that head from being processed again. Never ack a stale
+head (head changed mid-run), an interrupted run, or output-less work; those
+leave the head eligible for a later retry.
 
 ## Self-Review Prevention
 
-The active reviewer login is resolved read-only (`gh api user`). Any PR whose
-author equals that login is rejected as self-authored and never enters the
-queue.
+When `--reviewer LOGIN` is explicit, the helper pins all read-only GitHub calls
+to that stored `gh` account (`gh auth token --user LOGIN`) without printing or
+persisting the token. Otherwise the active reviewer login is resolved read-only
+(`gh api user`). Any PR whose author equals that login is rejected as
+self-authored and never enters the queue.
 
 ## Board-Backed Regression Gate
 
@@ -88,10 +106,12 @@ repo selector. One writer per worktree; no cross-PR contamination.
 
 The configured listener prompt runs
 `../scripts/orca-automation-workspace-cleanup.py watch` as its **final action**
-immediately before emitting private output, but only when at least one
-substantive review is complete and validated. A run that stops with only
-blocked, partial, stale-head, or unvalidated work does not arm cleanup. It is a
-bounded, fail-closed cleanup for the `new-per-run` workspace:
+immediately before emitting private output, armed whenever a run produces a
+completed, non-empty PRIVATE result for the exact head - **including a BLOCKED
+or partial report** (these still create a `new-per-run` workspace that must be
+cleaned). It is NOT armed for a stale head (head changed mid-run), an
+interrupted run, or output-less work. It is a bounded, fail-closed cleanup for
+the `new-per-run` workspace:
 
 - It resolves the **exact current workspace**, validates the **exact automation**
   (deterministic name + marker identity + Orca repo id), then spawns a
@@ -103,10 +123,12 @@ bounded, fail-closed cleanup for the `new-per-run` workspace:
 - Before removal it re-reads the exact worktree and requires **full-id equality**,
   the **same repo id**, and **`isMainWorktree` false**. It removes via
   `orca worktree rm --worktree id:<full-id> --force --json`.
-- Deletion is fail-closed: blocked, partial, stale, unposted, timed-out, or
-  ambiguous runs (wrong automation/repo/workspace, main worktree, missing id)
-  **preserve** the workspace. This changes nothing about output: the review
-  stays private/draft-only and is never posted, merged, or edited from here.
+- Deletion is fail-closed: blocked, partial, stale, unposted, empty, timed-out,
+  or ambiguous runs (wrong automation/repo/workspace, main worktree, missing id)
+  that Orca does not persist as a completed run with non-empty output
+  **preserve** the workspace. Arming the watcher never deletes immediately, and
+  this changes nothing about output: the review stays private/draft-only and is
+  never posted, merged, or edited from here.
 
 ## Bounded Precheck
 

@@ -31,21 +31,29 @@ review work, record safe telemetry, and attach the optional Hermes bridge.
   refuses target/name collisions, and has no bulk mode.
 - **PR review queue** (`orca-pr-review-queue.py`): read-only queue discovery via
   `gh` (argument arrays, never `shell=True`). Private/draft-only default, exact
-  head-SHA pinning, self-review prevention, same-reviewer+same-head+no-later-
-  top-level-author-comment duplicate suppression, author-comment/head-change
-  reopening, and no auto-merge. Commands: `scan`, `precheck`, `ack`.
+  head-SHA pinning, self-review prevention, repository-scoped exact-head-only
+  duplicate suppression (ack state filename is a one-way hash of OWNER/REPO, or
+  the cwd when `--repo` is omitted; raw repo/path is never stored; the head SHA
+  is the sole reopening signal: a same head never reopens after author comments
+  or any activity; only a changed SHA does), and no auto-merge. An explicit
+  reviewer pins read-only calls to that stored `gh` account. Commands:
+  `scan`, `precheck`, `ack`.
 - **Execution ledger** (`execution-ledger.py`): privacy-safe append-only JSONL
   telemetry. Allowlist-only schema (unknown/forbidden fields rejected); never
   records prompts, transcripts, env values, secrets, repo URL, branch, or SHA.
   Commands: `record`, `summary` (aggregates only after a minimum sample count).
 - **Post-result workspace cleanup** (`orca-automation-workspace-cleanup.py`):
   fail-closed cleanup for Orca `new-per-run` PR-review workspaces. The
-  configurator's prompt runs it as the final action before private output. It
-  validates the exact automation and current workspace, then spawns a detached
-  watcher that removes only the matching worktree after a run with the exact
-  workspaceId reaches status `completed` with a non-empty `outputSnapshot`
-  (Orca has persisted the output). Blocked, partial, stale, unposted, timed-out,
-  or ambiguous runs leave the workspace in place. Orca still owns lifecycle.
+  configurator's prompt runs it as the final action before private output,
+  armed whenever a run produces a completed, non-empty PRIVATE result for the
+  exact head - including a BLOCKED or partial report. It validates the exact
+  automation and current workspace, then spawns a detached watcher that removes
+  only the matching worktree after a run with the exact workspaceId reaches
+  status `completed` with a non-empty `outputSnapshot` (Orca has persisted the
+  output). Blocked, partial, stale, unposted, empty, timed-out, or ambiguous
+  runs that Orca does not persist as a completed run with non-empty output leave
+  the workspace in place; arming the watcher never deletes immediately. Orca
+  still owns lifecycle.
 
 ## Hard Boundaries
 
