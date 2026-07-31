@@ -218,6 +218,22 @@ or data issues regardless of board access.
 
 This rule is always on. It does not require the user to ask for security work.
 
+### Interactive browser and tab hygiene
+
+- For interactive browser work, load `orca-browser-safety` and use only Orca's
+  embedded browser with an isolated workspace-scoped profile, full worktree ID,
+  and the returned explicit page ID on every page-scoped command after creation.
+- Record each page created by the current agent. Reuse it only for the active
+  bounded browser slice; close it as soon as the slice is done, blocked,
+  abandoned, or superseded, then list pages for that worktree and report any
+  owned leftover.
+- Never close a page with unknown, user, pre-existing, imported/default-profile,
+  or other-agent ownership. Leave uncertain pages open and report them.
+- Never open agent browsing in a default or imported browser profile.
+- Never use personal/external browsers, Computer Use, accessibility APIs,
+  AppleScript, focus switching, or clipboard operations for browser work.
+- Headless repository-owned browser suites remain allowed as tests.
+
 - When a change touches authentication, authorization, account/tenant isolation,
   secrets, cryptography, external input, file handling, outbound requests,
   dependencies, or build/config files, apply the Security Gate in
