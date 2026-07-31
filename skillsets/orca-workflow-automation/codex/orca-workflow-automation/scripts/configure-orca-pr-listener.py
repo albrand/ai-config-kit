@@ -428,8 +428,10 @@ def build_prompt(
         lines.append("")
         lines.append(
             "FINAL ACTION (post-result workspace cleanup): run this exact command "
+            "only after at least one substantive review is complete and validated, "
             "as the very last shell action immediately before emitting your final "
-            "private output:"
+            "private output. Do not run it when the run stops with only blocked, "
+            "partial, stale-head, or unvalidated work:"
         )
         lines.append(f"  {cleanup_command}")
         lines.append(

@@ -78,8 +78,10 @@ for capability-first discovery.
    clears SSH environment forwarding, and never invokes a local shell.
 5. **Post-result workspace cleanup.** The configured listener prompt runs
    `scripts/orca-automation-workspace-cleanup.py watch` as its FINAL action
-   before emitting private output. It validates the exact automation (name +
-   marker identity + repo id) and the current new-per-run workspace, then
+   before emitting private output only when at least one substantive review is
+   complete and validated. Runs with only blocked, partial, stale-head, or
+   unvalidated work do not arm cleanup. It validates the exact automation (name
+   + marker identity + repo id) and the current new-per-run workspace, then
    spawns a detached watcher that removes ONLY the matching worktree after a
    run with the exact `workspaceId` reaches status `completed` with a non-empty
    `outputSnapshot` (Orca has persisted the output). It is fail-closed: before

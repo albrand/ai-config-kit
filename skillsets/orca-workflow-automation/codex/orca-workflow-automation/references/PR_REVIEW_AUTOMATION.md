@@ -88,8 +88,10 @@ repo selector. One writer per worktree; no cross-PR contamination.
 
 The configured listener prompt runs
 `../scripts/orca-automation-workspace-cleanup.py watch` as its **final action**
-immediately before emitting private output. It is a bounded, fail-closed cleanup
-for the `new-per-run` workspace:
+immediately before emitting private output, but only when at least one
+substantive review is complete and validated. A run that stops with only
+blocked, partial, stale-head, or unvalidated work does not arm cleanup. It is a
+bounded, fail-closed cleanup for the `new-per-run` workspace:
 
 - It resolves the **exact current workspace**, validates the **exact automation**
   (deterministic name + marker identity + Orca repo id), then spawns a

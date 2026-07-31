@@ -655,6 +655,8 @@ class CleanupPromptTest(unittest.TestCase):
         self.assertIn("non-empty outputSnapshot", prompt)
         self.assertIn("fail-closed", prompt.lower())
         self.assertIn("detached", prompt.lower())
+        self.assertIn("at least one substantive review", prompt)
+        self.assertIn("Do not run it", prompt)
 
     def test_cleanup_prompt_keeps_private_only_policy(self):
         orca = FakeOrca()
