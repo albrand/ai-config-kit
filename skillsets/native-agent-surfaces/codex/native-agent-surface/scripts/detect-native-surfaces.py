@@ -99,7 +99,80 @@ REGISTRY: list[dict[str, Any]] = [
         "discovery_command": "git rev-parse --is-inside-work-tree",
         "notes": "Used by write-isolated adapters (worktrees); not a surface itself.",
     },
+    {
+        # Orca (the Orca coding-agent desktop app) ships a `orca` binary.
+        # GNOME's screen reader is also named `orca` on Linux, so this entry is
+        # gated to Darwin to avoid a presence-only collision. Discovery remains
+        # PATH-presence only; the binary is never executed.
+        "name": "orca",
+        "category": "agent-harness",
+        "binary_names": ["orca"],
+        "host_platforms": ["Darwin"],
+        "capabilities": [
+            "workspace-lifecycle",
+            "worktree-isolation",
+            "surface-targeting",
+            "orchestration",
+            "scheduled-automations",
+            "browser-control",
+            "mobile-emulator-control",
+            "file-mutation-ownership",
+        ],
+        "adapter": "orca",
+        "runtime_capabilities": [
+            "worktree-list",
+            "worktree-cwd",
+            "terminal-list",
+            "automation-list",
+        ],
+        "discovery_command": "orca --version",
+        "notes": "Orca coding-agent desktop app. Darwin-only to avoid the Linux "
+        "GNOME screen-reader collision; resolve on PATH without executing. Orca "
+        "owns worktree/terminal/automation/browser/emulator lifecycle.",
+    },
+    {
+        # `orca-ide` is an alternate launcher that does not collide with the
+        # GNOME screen reader; allow it cross-platform when present.
+        "name": "orca-ide",
+        "category": "agent-harness",
+        "binary_names": ["orca-ide"],
+        "capabilities": [
+            "workspace-lifecycle",
+            "worktree-isolation",
+            "surface-targeting",
+            "orchestration",
+            "scheduled-automations",
+            "browser-control",
+            "mobile-emulator-control",
+            "file-mutation-ownership",
+        ],
+        "adapter": "orca",
+        "runtime_capabilities": [
+            "worktree-list",
+            "worktree-cwd",
+            "terminal-list",
+            "automation-list",
+        ],
+        "discovery_command": "orca-ide --version",
+        "notes": "Alternate Orca launcher; cross-platform. Presence only; never "
+        "executed. Same Orca capability surface as the `orca` entry.",
+    },
 ]
+
+
+def current_platform() -> str:
+    """Return the current platform.system() value (overridable in tests)."""
+    return platform.system()
+
+
+def entry_platforms(entry: dict[str, Any]) -> list[str] | None:
+    """Return the host_platforms allowlist for an entry, or None for all."""
+    raw = entry.get("host_platforms")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [raw]
+    return [str(p) for p in raw]
 
 
 class SurfaceError(Exception):
@@ -131,13 +204,34 @@ def deny_block() -> dict[str, Any]:
 
 def detect_surfaces(
     registry: Iterable[dict[str, Any]] = REGISTRY,
+    *,
+    host_platform: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Resolve each registry entry by PATH presence (never execution).
+
+    ``host_platform`` overrides the detected platform for tests. An entry with a
+    ``host_platforms`` allowlist is resolved only when the current platform is in
+    that list; otherwise it is reported as unavailable with an
+    ``unsupported_platform`` adapter status so callers can distinguish a
+    platform-collision skip from a missing binary.
+    """
+    plat = host_platform or current_platform()
     results: list[dict[str, Any]] = []
     for entry in registry:
         name = str(entry["name"])
+        allowed = entry_platforms(entry)
+        platform_ok = allowed is None or plat in allowed
         binary_names = [str(b) for b in entry.get("binary_names", [])]
-        resolved = next((b for b in (which(n) for n in binary_names) if b), None)
+        resolved = next((b for b in (which(n) for n in binary_names) if b), None) if platform_ok else None
         available = resolved is not None
+        if not platform_ok:
+            adapter_status = "unsupported-platform"
+        elif available and entry.get("adapter"):
+            adapter_status = "ready"
+        elif not available:
+            adapter_status = "missing-binary"
+        else:
+            adapter_status = "none"
         results.append(
             {
                 "name": name,
@@ -147,26 +241,26 @@ def detect_surfaces(
                 "version": None,
                 "capabilities": list(entry.get("capabilities", [])),
                 "adapter": entry.get("adapter"),
-                "adapter_status": "ready" if (available and entry.get("adapter")) else (
-                    "missing-binary" if not available else "none"
-                ),
+                "adapter_status": adapter_status,
                 "runtime_capabilities": list(entry.get("runtime_capabilities", [])),
                 "discovery_command": entry.get("discovery_command"),
+                "host_platforms": allowed,
                 "notes": entry.get("notes"),
             }
         )
     return results
 
 
-def build_report() -> dict[str, Any]:
+def build_report(*, host_platform: str | None = None) -> dict[str, Any]:
+    plat = host_platform or current_platform()
     return {
         "schema_version": SCHEMA_VERSION,
         "detected_at": _utc_now(),
         "host": {
-            "sysname": platform.system(),
+            "sysname": plat,
             "machine": platform.machine(),
         },
-        "surfaces": detect_surfaces(),
+        "surfaces": detect_surfaces(host_platform=plat),
         "environment": deny_block(),
     }
 
@@ -202,11 +296,34 @@ def selftest() -> int:
     fake.write_text(f"#!/bin/sh\ntouch {marker}\n")
     os.chmod(fake, 0o755)
 
+    # Fake `orca` and `orca-ide` binaries on PATH to prove the Darwin entry is
+    # detected by presence only (never executed), and that the same binary is
+    # NOT selected as plain `orca` on Linux (GNOME screen-reader collision).
+    orca_marker = tmp / "orca-executed"
+    orca_fake = bindir / "orca"
+    orca_fake.write_text(f"#!/bin/sh\ntouch {orca_marker}\n")
+    os.chmod(orca_fake, 0o755)
+    orca_ide_fake = bindir / "orca-ide"
+    orca_ide_fake.write_text("#!/bin/sh\ntrue\n")
+    os.chmod(orca_ide_fake, 0o755)
+
     saved_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{bindir}:{saved_path}"
     try:
         report = build_report()
         cmux = next(s for s in report["surfaces"] if s["name"] == "cmux")
+
+        # Simulated Darwin: `orca` should be detected by presence and not executed.
+        darwin_report = build_report(host_platform="Darwin")
+        orca_darwin = next(s for s in darwin_report["surfaces"] if s["name"] == "orca")
+        orca_ide_darwin = next(s for s in darwin_report["surfaces"] if s["name"] == "orca-ide")
+
+        # Simulated Linux: `orca` must NOT be selected (GNOME screen-reader
+        # collision); `orca-ide` may still qualify cross-platform.
+        linux_report = build_report(host_platform="Linux")
+        orca_linux = next(s for s in linux_report["surfaces"] if s["name"] == "orca")
+        orca_ide_linux = next(s for s in linux_report["surfaces"] if s["name"] == "orca-ide")
+
         checks = [
             ("cmux detected via fake bin", cmux["available"] is True),
             ("PATH binary was not executed", not marker.exists()),
@@ -218,6 +335,21 @@ def selftest() -> int:
             ("cmux exposes runtime_capabilities",
              bool(cmux.get("runtime_capabilities"))),
             ("json serializes cleanly", json.dumps(report) != ""),
+            ("orca detected on Darwin by presence", orca_darwin["available"] is True),
+            ("orca binary never executed on Darwin", not orca_marker.exists()),
+            ("orca adapter_status ready on Darwin", orca_darwin["adapter_status"] == "ready"),
+            ("orca declares worktree-isolation capability",
+             "worktree-isolation" in orca_darwin["capabilities"]),
+            ("orca declares scheduled-automations capability",
+             "scheduled-automations" in orca_darwin["capabilities"]),
+            ("orca-ide detected on Darwin", orca_ide_darwin["available"] is True),
+            ("orca NOT selected on Linux (screen-reader collision)",
+             orca_linux["available"] is False),
+            ("orca unsupported-platform on Linux",
+             orca_linux["adapter_status"] == "unsupported-platform"),
+            ("orca-ide still detected on Linux", orca_ide_linux["available"] is True),
+            ("report carries host_platforms metadata for orca",
+             "Darwin" in (orca_darwin.get("host_platforms") or [])),
         ]
         failed = 0
         for name, cond in checks:

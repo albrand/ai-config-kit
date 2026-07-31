@@ -47,6 +47,12 @@ Pair it with the top-level `NATIVE_AGENT_SURFACES.md` doctrine.
   declared capabilities only; provenance/version checks belong to the adapter.
 - No `shell=True`; no interpolation of prompt/result text. Any adapter-captured
   surface output is treated as untrusted.
+- Orca is now a registered adapter (worktree/terminal/automation/browser/emulator
+  lifecycle). The plain `orca` binary is Darwin-gated to avoid the Linux GNOME
+  screen-reader collision; `orca-ide` is cross-platform. Orca is detector-only
+  here and is **not** in the installer `SUPPORTED_HOSTS` auto-gating list; use an
+  explicit `--mode enabled` install. Orca workflow automation is in the separate
+  `orca-workflow-automation` skillset.
 
 ## Preference-Aware Global Installer
 

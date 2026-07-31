@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "bundle_version": 2,
+  "bundle_version": 3,
   "bundle_name": "native-agent-surfaces",
   "model_neutral": true,
-  "summary": "Model-neutral knowledge base for capability-first, host-native agent-surface discovery. The installer copies this bundle verbatim to a canonical data location and lays down a receipt-tracked Codex adapter (Codex first) on top of it. The canonical bundle is the model-neutral source of truth; tool adapters layer on top of it.",
+  "summary": "Model-neutral knowledge base for capability-first, host-native agent-surface discovery. The installer copies this bundle verbatim to a canonical data location and lays down a receipt-tracked Codex adapter (Codex first) on top of it. The canonical bundle is the model-neutral source of truth; tool adapters layer on top of it. Registered adapters: cmux, tmux, zellij, git, and Orca (the Orca coding-agent desktop app; `orca` is Darwin-gated to avoid the Linux GNOME screen-reader collision, `orca-ide` is cross-platform). Orca is detector-only here; it is not added to the installer SUPPORTED_HOSTS auto-gating and requires an explicit `enabled` mode for now.",
   "adapter_contract": {
     "adapter_skill_name": "native-agent-surface",
     "adapter_contract_reference": "references/NATIVE_SURFACE_CONTRACT.md",
