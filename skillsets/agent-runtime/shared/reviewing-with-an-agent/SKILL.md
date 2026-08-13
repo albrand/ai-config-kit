@@ -55,6 +55,25 @@ why" finds the inadequate one.
 Give it permission to be blunt and an explicit word budget. Long reviews drift
 toward restating the work back to you — say "do not restate the work" outright.
 
+## Give the reviewer something it can inspect
+
+A reviewer that cannot read your artifacts can only judge your prose about them,
+and a careful one will keep saying "revise" no matter how detailed the prose
+gets. That is not stubbornness — it is correct. Three rounds were spent this way
+before the actual blocker became visible: the reviewer ran on a different machine
+with no read access to the files under review.
+
+Put the artifacts where the reviewer already is. A diff, the before and after
+files, the framework files a claim depends on, raw command output — copied to a
+path on its own filesystem — turned three `revise` verdicts into an `accept` in
+one round, because it checked the claims itself instead of weighing an assertion.
+
+Two things follow. Say explicitly which tools it should use and where to look, or
+a reviewer told "do not use tools" in an earlier round will keep obeying that.
+And name what you still cannot make inspectable — source on another machine, a
+browser it has no access to — so the accept is scoped rather than assumed to
+cover everything.
+
 ## Take the loss
 
 The point of the round is the finding you did not want. If a reviewer says a fix
