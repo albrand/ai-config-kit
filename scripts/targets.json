@@ -1,0 +1,55 @@
+{
+  "//": [
+    "Where lessons get published, per machine and per agent.",
+    "",
+    "This is data, not code, because the answer changes every time a provider is",
+    "added and nobody should edit a script for that. Paths were measured, not",
+    "assumed: opencode's own opencode.jsonc lists which directories it reads, and",
+    "the VPS has no ~/.bb/skills because bb's server runs on the Mac.",
+    "",
+    "A directory that does not exist yet is CREATED, not skipped. The point is",
+    "that a provider installed tomorrow finds the library already waiting rather",
+    "than starting empty — which is what happened to Codex on the VPS."
+  ],
+
+  "local": [
+    {
+      "agent": "any",
+      "path": "~/.agents/skills",
+      "why": "Provider-neutral hub. opencode reads it (see opencode.jsonc skills.paths), and it is the right home for anything not tied to one vendor."
+    },
+    {
+      "agent": "claude-code",
+      "path": "~/.claude/skills"
+    },
+    {
+      "agent": "codex",
+      "path": "~/.codex/skills",
+      "why": "Also read by opencode, per its skills.paths."
+    },
+    {
+      "agent": "bb",
+      "path": "~/.bb/skills",
+      "why": "bb's own user scope. Do not write to ~/.bb/skills-generated — bb owns that."
+    }
+  ],
+
+  "remote": {
+    "vps": [
+      {
+        "agent": "codex",
+        "path": "~/.codex/skills",
+        "why": "The provider fleet members actually run under on this machine today."
+      },
+      {
+        "agent": "claude-code",
+        "path": "~/.claude/skills"
+      },
+      {
+        "agent": "any",
+        "path": "~/.agents/skills",
+        "why": "Seeded ahead of need, so opencode or another agent installed here later starts with the library instead of nothing."
+      }
+    ]
+  }
+}
