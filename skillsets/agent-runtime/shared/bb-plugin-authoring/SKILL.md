@@ -31,9 +31,25 @@ verified: 2026-08-12
 
 ## `MIGRATIONS` is append-only — the array index IS the migration id
 
-Inserting a statement in the middle renumbers every later migration and corrupts
-the ledger on already-migrated installs. Only ever append. This is not enforced;
-it fails silently and then loudly.
+Inserting a statement in the middle renumbers every later migration. This is not
+enforced and it fails in two different ways, both quiet:
+
+- If the inserted statement lands at an index the ledger already counts as
+  applied, it is **skipped forever** — the table simply never exists, and
+  nothing errors.
+- If a later `ALTER` shifts into an unapplied slot it runs a second time:
+  `duplicate column name: …`, and the plugin fails to load.
+
+Append means the **literal end of the array**, not "next to the related table"
+where it reads better. Both mistakes here came from tidiness.
+
+There is no in-place repair. A ledger keyed by position cannot be corrected by
+editing the statement at that position — if a slot was consumed by a different
+statement, append the intended one again. `IF NOT EXISTS` makes the duplicate
+harmless.
+
+After any migration change, verify the table exists rather than trusting a clean
+reload: `sqlite3 <db> "select name from sqlite_master where name='<table>'"`.
 
 ## `undefined` in an RPC payload is rejected client-side
 
