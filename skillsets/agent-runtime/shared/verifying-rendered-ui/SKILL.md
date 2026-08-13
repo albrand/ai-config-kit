@@ -53,12 +53,29 @@ Width-percentage bars in a horizontal chart do **not** hit this, because a flex
 row's children have a definite width. That asymmetry is why the horizontal bars
 looked fine while the vertical ones were empty.
 
+## Never show a person an id
+
+A ledger must key on ids — titles change, names collide, and a filter has to mean
+exactly one thing. A *person* cannot read them. `thr_a1b2c3d4e5` and
+`host_f6g7h8i9j0` tell them nothing, and a panel full of them is not a dashboard.
+
+Resolve names at the reporting boundary, not in storage: rows and filter options
+carry `{id, name}`, the UI renders the name and submits the id, and the id
+survives as the tooltip so it is still reachable when you need to grep for it.
+Cache the lookups — resolving a name per row is chatty and the answer is stable
+within a session — and fall back to the id rather than to "unknown", so a row is
+never anonymous.
+
+The same applies to enum-ish values a person did not choose: a provider is
+"Claude", not `claude-code`.
+
 ## Verify the whole loop, not the last step
 
 Three things have to be true and they fail independently:
 
 1. **The data arrives** — check the payload, not the render.
 2. **The marks have geometry** — measure them.
-3. **The control changes the data** — switch the dimension or filter and confirm
+3. **A person can read it** — no bare ids on any surface.
+4. **The control changes the data** — switch the dimension or filter and confirm
    the returned series actually differs. A selector that renders but rebinds
    nothing looks perfect in a snapshot.
