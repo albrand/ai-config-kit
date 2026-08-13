@@ -69,6 +69,28 @@ never anonymous.
 The same applies to enum-ish values a person did not choose: a provider is
 "Claude", not `claude-code`.
 
+## Check your harness before you blame the widget
+
+A failing interaction test is evidence about *two* things — the UI and the tool
+driving it — and it is tempting to conclude only the first.
+
+The concrete trap: Chrome's `Input.dispatchKeyEvent` needs a **`text`** field for
+a key to activate anything. Send `{type:"keyDown", key:"Enter"}` without it and
+Chrome delivers keydown and keyup but no char event, so Enter on a focused
+button does nothing. The page looks broken and is not. Keys that produce no
+character (Tab, Escape, arrows) correctly omit `text` and should be sent as
+`rawKeyDown`.
+
+Before concluding a control is unusable, prove the harness can drive a control
+you *know* works. Otherwise you will replace a working widget and write a
+confident, wrong explanation of why — a reviewer caught exactly that here, with
+"native selects are normally keyboard-operable; blaming OS popups is not
+sufficient root-cause evidence".
+
+State what you observed and what you did not establish. "Enter did not activate
+it under my harness" is true; "native selects cannot be driven by keyboard" was
+not.
+
 ## Verify the whole loop, not the last step
 
 Three things have to be true and they fail independently:
