@@ -65,6 +65,18 @@ authorization inside a portable template.
 
 ## Invocation Pattern
 
+**Where a thread-based harness is available, delegate as a thread.** Under bb
+that is `bb thread spawn --provider acp-opencode …` or a fleet member with
+`providerId: "acp-opencode"`. Only a thread reports its token consumption; a
+subprocess emits no usage event, so its cost is charged to the calling agent and
+the delegated model reads as unused in every cost report. That misattribution is
+not cosmetic — it has already produced a review recommending the removal of a
+delegation directive on the grounds that nobody was using it.
+
+The subprocess form below remains correct and authorized wherever no such
+harness exists. When you use it, state that the run is unaccounted rather than
+letting the absence be read as evidence.
+
 Prefer the wrapper and lean config in
 `skillsets/adaptive-model-orchestration/`. A direct invocation has this shape:
 

@@ -40,6 +40,16 @@ is unused across 18 turns, retire the directive mandating it" — confidently, a
 wrongly, because the evidence it needed could not exist. **Absence from a
 provider report is never evidence of non-use.**
 
+## `--agent build`, never `--agent general`
+
+In opencode 1.17.12 `general` is a **subagent** name, not an agent. Passing it
+makes the CLI warn and silently fall back to the default agent — so the run
+proceeds under something other than what you asked for, and a later timeout or
+odd result is ambiguous to diagnose.
+
+Treat `--pure`, `--variant`, `--agent` and agent names as feature-gated: probe
+the installed version before depending on any of them.
+
 ## Its numbers are estimates, and say so
 
 ACP providers report no token usage at all. bb receives only a
