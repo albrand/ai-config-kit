@@ -74,6 +74,33 @@ And name what you still cannot make inspectable — source on another machine, a
 browser it has no access to — so the accept is scoped rather than assumed to
 cover everything.
 
+## Prove the continuation, do not assume it
+
+Thread reuse is easy to build and easy to get silently wrong, and the failure is
+invisible from the outside: you keep getting thoughtful reviews, so nothing looks
+broken. What you are actually getting is a fresh reviewer every round.
+
+It happened here. `threads.send` **requires a `mode` field**; without it every
+send returned 400, a `catch` swallowed it, and the code fell through to spawning
+a new thread. Thirty-two one-turn review threads accumulated while every round
+faced a reviewer that had never seen the previous one — and the wasted rounds
+were misread as the reviewer being difficult.
+
+A second trap sits right behind it: waiting for `idle` on a thread that is
+**already idle** returns instantly, so the read returns the PREVIOUS answer as
+though it were the new one. That is worse than respawning, because a stale reply
+reads as a considered one. Wait for `active` first, and require the output to
+have changed before accepting it.
+
+Test continuation directly rather than inferring it from a plausible reply:
+
+    round 1: "remember the number 4471"
+    round 2: "what number did I ask you to remember? If you have no previous
+              message from me, say NO PRIOR CONTEXT."
+
+If it cannot answer, you have been talking to strangers. Check the turn count on
+the stored thread too — one turn per topic means every round spawned.
+
 ## Send the whole bundle, and know when to stop
 
 Two failure modes, opposite and both expensive.
