@@ -74,6 +74,33 @@ And name what you still cannot make inspectable — source on another machine, a
 browser it has no access to — so the accept is scoped rather than assumed to
 cover everything.
 
+## Send the whole bundle, and know when to stop
+
+Two failure modes, opposite and both expensive.
+
+**Sending subsets.** If you stage a different slice each round, every round
+surfaces the one file you left out, and you will mistake that for the reviewer
+moving the goalposts. Assemble everything the claim depends on — implementation,
+the helper it calls, the tests, the directive, raw output — and send it once.
+
+**Staging a stale copy.** An excerpt captured before your last edit is worse
+than no excerpt: the reviewer correctly rejects code that does not match your
+claim, and the round is spent on your bookkeeping. Capture from the live file at
+send time and *assert* on the capture — "this slice must contain `parseVerdict`
+and must not contain the old regex" — so a stale slice throws instead of
+shipping.
+
+**Knowing when to stop.** A reviewer that cannot read your repository will
+eventually object to provenance rather than to the work: it cannot confirm an
+excerpt is the live implementation. That objection is correct and unanswerable by
+sending more excerpts. When the verdict stops moving and the remaining gap is
+access rather than quality, say so plainly and stop — the fix is to give the
+reviewer a checkout, not another round.
+
+Track what the rounds bought. If each one is still finding real defects, keep
+going; that is the loop working. When they start finding only what you failed to
+attach, the loop has become bookkeeping.
+
 ## Take the loss
 
 The point of the round is the finding you did not want. If a reviewer says a fix
