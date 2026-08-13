@@ -63,6 +63,12 @@ For a directive, planning, architecture, or challenge pass, include the
 authorization required by the active environment. Do not manufacture
 authorization inside a portable template.
 
+## Concurrency
+
+At most **10 concurrent instances** per session. Track the live count and queue
+beyond it. Reuse a session only to continue the same plan step; otherwise spawn
+fresh, so stale context never leaks between steps.
+
 ## Invocation Pattern
 
 **Where a thread-based harness is available, delegate as a thread.** Under bb
