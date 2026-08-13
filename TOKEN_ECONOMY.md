@@ -314,3 +314,12 @@ just one.
   (`https://github.com/rtk-ai/rtk`, 2026); reported 60-90% session savings.
 - Microsoft LLMLingua - small-model prompt compression at 20x ratio with
   ~1.5-point reasoning-task degradation.
+
+## Filter tool output before it enters context
+
+Chatty output is context you pay for on every subsequent turn. Summarise
+`git status`, package installs, logs and pass-counts down to what changed.
+
+Keep verbatim: `git diff`, test failures, build errors, security findings, and
+anything you will quote back to the user. Those are the cases where a summary
+loses the evidence that made the output worth reading.
