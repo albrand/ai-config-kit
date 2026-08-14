@@ -108,6 +108,34 @@ is either blocked or done and does not know it.
 **Check:** ask every idle member for what it has NOW, even partial. Retire or
 redirect anything that answers with nothing twice.
 
+## Cleanup has to happen on the path that actually runs
+
+An orchestrator was told to retire idle children. It did — twenty times. Every
+one of those threads was still alive an hour later, because `fleet_member_retire`
+updated a row and never touched the thread, and retired rows are hidden from the
+supervision meant to watch them. The supervisor that would have caught it was
+correct code on a path nothing called.
+
+Worse, the two places that *did* try to close a thread wrote
+`archive(...).catch(() => undefined)`, so a failed archive and a successful one
+were the same event.
+
+**Check:** for any cleanup, name the call the agent actually makes and verify
+the effect there — not in the helper you would have used. Never swallow the
+error from a close: an unclosed child that nothing is watching is strictly worse
+than a visible failure.
+
+## Read what a child had before you close it
+
+A retired member's last output is the only trace of work that never reached the
+board. Closing eighteen of them without reading first would have thrown away one
+child's report that it died on a provider API error mid-response — the only
+explanation for a card that never moved.
+
+**Check:** capture the last output as a note before archiving, and hand it back
+to whoever ordered the retirement. "Retire it" and "it produced nothing worth
+keeping" are two different findings.
+
 ## Shared context goes stale and then lies
 
 A member wrote "card #6 complete, no scheduler semantics changed" into group
