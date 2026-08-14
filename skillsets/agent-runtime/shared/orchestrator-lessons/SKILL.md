@@ -108,6 +108,30 @@ is either blocked or done and does not know it.
 **Check:** ask every idle member for what it has NOW, even partial. Retire or
 redirect anything that answers with nothing twice.
 
+## Healthy agents are not a moving board
+
+The most expensive failure so far was not an agent that broke. It was a group
+where every agent was fine: members spawned, routed correctly by work kind,
+reporting, retiring cleanly. And the board held **eleven cards in review against
+eleven done**, the oldest sitting five and a half hours, with exactly **one**
+review-kind member spawned across forty-nine spawns.
+
+Nothing was wrong with any agent. The work simply stopped moving, because
+`in_review` and `blocked` are the two states no member will ever clear — the
+member that finished the card has already reported and been retired. Watching
+members cannot see this: a card rots precisely when its agent is healthy and
+gone.
+
+"Somebody is working" and "the board is moving" are different claims. A group
+with six busy members and eleven stalled cards satisfies the first and fails the
+task it was given.
+
+**Check:** every cycle, read `in_review` and `blocked` by DWELL TIME, not by
+count. Anything older than about an hour is stalled. Review it yourself or spawn
+a `review`-kind member; clear the block, re-scope it, or escalate it. A card is
+not done because someone finished the work — it is done when it has been
+accepted and moved.
+
 ## Cleanup has to happen on the path that actually runs
 
 An orchestrator was told to retire idle children. It did — twenty times. Every
