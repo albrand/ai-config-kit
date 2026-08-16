@@ -1,12 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "zai-coding-plan/glm-5.2",
+  "model": "zai-coding-plan/glm-5.3",
   "small_model": "zai-coding-plan/glm-5-turbo",
   "default_agent": "glm-advisor",
   "share": "disabled",
   "provider": {
     "zai-coding-plan": {
-      "whitelist": ["glm-5.2", "glm-5-turbo"],
+      "whitelist": ["glm-5.3", "glm-5-turbo"],
       "options": { "timeout": 300000, "chunkTimeout": 60000 }
     }
   },
@@ -14,7 +14,7 @@
     "glm-advisor": {
       "description": "One-pass tool-free critique over a compact evidence packet",
       "mode": "primary",
-      "model": "zai-coding-plan/glm-5.2",
+      "model": "zai-coding-plan/glm-5.3",
       "temperature": 0.1,
       "steps": 2,
       "permission": "deny"
@@ -30,7 +30,7 @@
     "glm-audit": {
       "description": "Read-only repository analysis and verification",
       "mode": "primary",
-      "model": "zai-coding-plan/glm-5.2",
+      "model": "zai-coding-plan/glm-5.3",
       "temperature": 0.1,
       "steps": 24,
       "permission": { "*": "deny", "read": "allow", "glob": "allow", "grep": "allow", "list": "allow", "lsp": "allow" }
@@ -38,7 +38,7 @@
     "glm-quality": {
       "description": "Bounded implementation under a parent-owned plan",
       "mode": "primary",
-      "model": "zai-coding-plan/glm-5.2",
+      "model": "zai-coding-plan/glm-5.3",
       "temperature": 0.2,
       "steps": 80,
       "permission": { "*": "allow", "task": "deny", "external_directory": "deny", "webfetch": "deny", "websearch": "deny" }

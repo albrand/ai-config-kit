@@ -13,7 +13,7 @@ shift 3
 
 bin=${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || true)}
 config_dir=${OPENCODE_SIDECAR_CONFIG_DIR:-$HOME/.config/opencode-sidecar}
-quality_model=${OPENCODE_QUALITY_MODEL:-zai-coding-plan/glm-5.2}
+quality_model=${OPENCODE_QUALITY_MODEL:-zai-coding-plan/glm-5.3}
 fast_model=${OPENCODE_FAST_MODEL:-zai-coding-plan/glm-5-turbo}
 
 [[ -n $bin && -x $bin ]] || { printf '%s\n' "opencode executable not found" >&2; exit 69; }
