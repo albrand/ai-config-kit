@@ -28,7 +28,7 @@ The router already puts it on the top rung for `implementation`, `bulk` and
 **Unaccountable — invisible by construction:**
 
 ```
-opencode run "…" --agent build -m zai-coding-plan/glm-5.2
+opencode run "…" --agent build -m zai-coding-plan/glm-5.3
 ```
 
 A subprocess creates no bb thread, emits no events, and can never appear in any

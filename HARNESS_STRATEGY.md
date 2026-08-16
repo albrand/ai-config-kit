@@ -168,7 +168,7 @@ files, tests, runtime evidence, and accepted criteria outrank prior memory.
 
 For non-trivial planning or architecture, run an independent planning or
 architecture critique through another model or counterpart when available and
-useful. Prefer configured routes such as a local sidecar or opencode/GLM 5.2
+useful. Prefer configured routes such as a local sidecar or opencode/GLM 5.3
 as examples, but keep the gate model-agnostic and use single-agent
 self-critique when no counterpart is available.
 
