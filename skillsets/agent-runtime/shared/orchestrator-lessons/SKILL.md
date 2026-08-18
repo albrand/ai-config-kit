@@ -149,6 +149,47 @@ the effect there — not in the helper you would have used. Never swallow the
 error from a close: an unclosed child that nothing is watching is strictly worse
 than a visible failure.
 
+## Idle is not unwanted — ask what points at it
+
+Fleet archived `thr_example1` at 23:43 on 2026-08-16. Every signal agreed: a
+member named `pr-listener`, retired two days earlier, not running, not in any
+board, holding a worktree for nothing. The drain pass closed it exactly as
+designed.
+
+It was also line 17 of a bb automation —
+`auto__example/pr-listener-dispatch.py`, `THREAD = "thr_example1"`
+— and every scheduled run since has failed with "review thread lookup failed".
+
+The check asked whether the thread was still RUNNING. Nothing asked whether
+anything still POINTED AT IT, and those have different answers. A thread that
+something dispatches into once a day is indistinguishable from an abandoned one
+for the other twenty-three hours; the quieter it is, the more certain the
+cleanup becomes. This survives review because every reviewer checks the
+reasoning about liveness, and the reasoning about liveness is correct.
+
+Then the fix went wrong in the other direction, which is the part worth keeping.
+Matching hard-coded ids was obvious, so that shipped first — and the very next
+change removed the last id from that script, replacing it with resolution by
+title. The guard now reported "nothing points at" the one thread it existed to
+protect. Meanwhile it *did* block on an id that appeared only inside a
+postmortem comment, pinning a deleted thread forever and punishing the habit of
+writing incidents down. One rule, both errors live at once: blocking on threads
+nothing needed, missing the thread something did.
+
+Two smaller traps. Absence of a reference is only evidence when you actually
+looked — an unreadable directory has to refuse, not close, or you have rebuilt
+the bug behind a passing check. And a reference in *runtime state* is the
+opposite of a dependency: those ids are threads the automation spawned, and
+blocking on them wedges cleanup against the very threads it exists for.
+
+**Check:** before any irreversible cleanup, ask what NAMES the thing — by id and
+by every other handle it can be resolved by — in code rather than in prose, and
+refuse when the scan cannot complete. `bb fleet references <threadId>` answers
+this for threads. State the rule you chose and test BOTH directions: a rule that
+fixes the false negative and quietly keeps the false positive reads as a fix and
+is half of one. Liveness tells you whether something is using it *now*; only a
+reference tells you whether something is going to.
+
 ## Read what a child had before you close it
 
 A retired member's last output is the only trace of work that never reached the
