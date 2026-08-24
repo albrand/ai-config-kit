@@ -228,6 +228,14 @@ This rule is always on. It does not require the user to ask for security work.
 
 ### Interactive browser and tab hygiene
 
+- Enumerate the browser adapter's instances before creating one. When ordinary
+  navigation or inspection tools lazily acquire and reuse a thread-owned
+  instance, do not call an explicit open command as a standard first step.
+  Keep at most one owned instance per thread; close it before replacing it to
+  change isolation, and close it when the bounded browser slice terminates.
+- Lookup, status, refresh, release, and close operations must be non-creating.
+  If one creates a replacement tab, stop and report an adapter lifecycle defect
+  instead of retrying.
 - For interactive browser work, load `orca-browser-safety` and use only Orca's
   embedded browser with an isolated workspace-scoped profile, full worktree ID,
   and the returned explicit page ID on every page-scoped command after creation.

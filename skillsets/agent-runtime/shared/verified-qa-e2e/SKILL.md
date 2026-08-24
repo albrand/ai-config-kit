@@ -103,6 +103,27 @@ validation provenance.
 Encountering friction, reaching a login page, drafting a plausible checklist,
 or successfully updating the tracker is not completion.
 
+## Browser instance lifecycle
+
+Treat an interactive browser instance as one bounded resource owned by the
+current thread, not as a disposable preamble to every browser action.
+
+- Enumerate instances before the first browser action. Reuse the one owned by
+  this thread; never target an unowned or other-thread instance.
+- Ordinary navigation, snapshot, click, wait, and flow tools acquire or reuse
+  the thread instance automatically. Do not call `browser_open` before them.
+  Use `browser_open` only when the browser adapter requires an explicit
+  isolated cookie jar or label and the thread owns no instance yet.
+- A thread may own one instance at a time. To change cookie isolation, close
+  the owned instance first and then create its replacement; a second instance
+  is not a focus, retry, or navigation mechanism.
+- Close the owned instance when the bounded browser slice passes, fails, is
+  blocked, abandoned, or superseded. Preserve it only when a declared immediate
+  follow-up, such as an authorized manual-login handoff, needs the same tab.
+- Listing, refreshing, releasing, or closing an instance must never create a
+  replacement tab. If the adapter does that, stop and report a browser lifecycle
+  defect rather than retrying.
+
 ## Manual browser login handoff
 
 When authentication requires the user to sign in manually in a browser the
