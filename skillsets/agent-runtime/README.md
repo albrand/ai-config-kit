@@ -1,15 +1,18 @@
 # Agent runtime
 
-Lessons about running agents: the SDK calls that mislead, the host policies that
-look like agent bugs, how to delegate to a non-Anthropic provider so its cost is
-accountable, and the traps in authoring plugins.
+Lessons and executable guards about running agents: the SDK calls that mislead,
+the host policies that look like agent bugs, how to delegate to a
+non-Anthropic provider so its cost is accountable, the traps in authoring
+plugins, and the evidence gate that prevents unverified QA instructions or UI
+E2E completion claims.
 
 ## `shared/` — a lesson written once
 
 The rest of this repo uses `skillsets/<topic>/<provider>/<name>/SKILL.md`, which
 forces a copy per provider and leaves near-duplicate `claude/` and `codex/`
 trees to drift apart. These lessons are true of *every* agent, so they live in
-`shared/` and `scripts/publish.mjs` fans them out to each agent's skill
+`shared/` and `scripts/publish.mjs` fans each complete skill directory—including
+bundled references, scripts, fixtures, and tests—out to each agent's skill
 directory on each machine.
 
 ## Portability is enforced, not hoped for

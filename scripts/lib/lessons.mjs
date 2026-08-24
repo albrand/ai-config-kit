@@ -31,6 +31,7 @@ function readLessonDirs(root, origin) {
     .filter((e) => e.isDirectory())
     .map((e) => ({
       name: e.name,
+      dir: path.join(root, e.name),
       file: path.join(root, e.name, "SKILL.md"),
       origin,
     }))

@@ -27,6 +27,10 @@ Load order:
    - Codex skill-library setup, skill context-budget warnings, plugin-heavy installs, or skill add/update/remove work: also read `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` and `skillsets/skill-library-router/README.md`. Read the Codex router skill and indexer script when installing or updating the router.
    - Cross-agent or multi-tool coordination: also read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
    - Iterative quality work: also read `QUALITY_CONVERGENCE.md`.
+   - Browser/interface E2E, manual QA instructions, QA-ready transitions, or
+     tester journeys involving authentication, seeded identities, roles,
+     portals, links/tokens, permissions, or test data: load `verified-qa-e2e`
+     and use its deterministic evidence gate before publication or completion.
    - Debugging or failures: also read `QUALITY_GATES.md` and the debugging/report templates in `TEMPLATES.md`.
    - Review or PR work: also read `REVIEW_AND_PR_FRAMEWORK.md`. For high-signal PR review, diff review, merge readiness, or public review comments, also read `skillsets/pr-review/README.md` and `skillsets/pr-review/references/pr-review-output-contract.md`.
    - Security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, or the commands `/adversarial-security-sweep` or `/pentest-specialist`: also read `SECURITY_AND_PENTEST.md`, `skillsets/security-review/README.md`, and `skillsets/security-review/references/security-review-contract.md`.
@@ -136,6 +140,10 @@ Execution rules:
 - Use quality convergence when first-pass validation is insufficient or the work needs high confidence.
 - Do not iterate blindly: set target, max iterations, evidence requirements, and stop reason.
 - Completion requires evidence: artifact plus validation.
+- Reasoning effort may change exploration depth, latency, and cost, but never
+  the task's correctness bar, authorization boundary, evidence contract,
+  stopping criteria, or allowed terminal state. Do not route work to a lane
+  that cannot meet the same gates.
 - Report passed, failed, blocked, skipped, and not-run checks separately.
 - Do not imply unrun checks passed.
 - Keep closed-scope details out of shared framework files.

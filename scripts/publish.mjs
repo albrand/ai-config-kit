@@ -53,6 +53,37 @@ const check = args.has("--check");
 
 const lessons = () => collectLessons(ROOT);
 
+const TEXT_RESOURCE_EXTENSIONS = new Set([
+  ".cjs", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".toml", ".txt",
+  ".yaml", ".yml",
+]);
+
+function lessonFiles(lesson) {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".DS_Store" || entry.name === "__pycache__") continue;
+      const absolute = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) {
+        const relative = path.relative(lesson.dir, absolute);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          throw new Error(`${lesson.name}: resource escapes skill directory: ${absolute}`);
+        }
+        files.push({ absolute, relative });
+      }
+    }
+  };
+  walk(lesson.dir);
+  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+}
+
+function renderedResource(file) {
+  const bytes = fs.readFileSync(file.absolute);
+  if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(file.relative))) return bytes;
+  return Buffer.from(substitute(bytes.toString("utf8"), OVERLAY).text, "utf8");
+}
+
 /**
  * A lesson without a description never fires — skills load by description match.
  * A lesson without `verify` cannot be rechecked and will quietly rot. Both are
@@ -93,6 +124,18 @@ function validate(list) {
       /\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/,
     );
     if (secret) problems.push(`${lesson.name}: looks like a secret (${secret[1].slice(0, 8)}…)`);
+    for (const resource of lessonFiles(lesson)) {
+      if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(resource.relative))) continue;
+      const body = fs.readFileSync(resource.absolute, "utf8");
+      const resourceSecret = body.match(
+        /\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/,
+      );
+      if (resourceSecret) {
+        problems.push(
+          `${lesson.name}/${resource.relative}: looks like a secret (${resourceSecret[1].slice(0, 8)}…)`,
+        );
+      }
+    }
   }
   return problems;
 }
@@ -102,14 +145,24 @@ function publishLocal(list) {
   for (const target of LOCAL_TARGETS) {
     for (const lesson of list) {
       const destDir = path.join(target.dir, lesson.name);
-      const dest = path.join(destDir, "SKILL.md");
-      const next = substitute(fs.readFileSync(lesson.file, "utf8"), OVERLAY).text;
-      const current = fs.existsSync(dest) ? fs.readFileSync(dest, "utf8") : null;
-      if (current === next) continue;
-      changes.push(`${current === null ? "add" : "update"} ${target.label}/${lesson.name}`);
-      if (check) continue;
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.writeFileSync(dest, next);
+      const existed = fs.existsSync(path.join(destDir, "SKILL.md"));
+      let lessonChanged = false;
+      for (const resource of lessonFiles(lesson)) {
+        const dest = path.join(destDir, resource.relative);
+        const next = renderedResource(resource);
+        const current = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
+        if (current?.equals(next)) continue;
+        lessonChanged = true;
+        if (check) continue;
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, next);
+        if ((fs.statSync(resource.absolute).mode & 0o111) !== 0) {
+          fs.chmodSync(dest, 0o755);
+        }
+      }
+      if (lessonChanged) {
+        changes.push(`${existed ? "update" : "add"} ${target.label}/${lesson.name}`);
+      }
     }
   }
   return changes;
@@ -129,8 +182,7 @@ function publishLocal(list) {
  *
  * The hashing is one ssh round trip for the whole machine, not one per file.
  */
-function remoteHashes(host, dirs, names) {
-  const targets = dirs.flatMap((dir) => names.map((n) => `${dir}/${n}/SKILL.md`));
+function remoteHashes(host, targets) {
   // `md5 -q` on macOS, `md5sum` on Linux; emit "<path> <hash>" or nothing.
   const script = targets
     .map(
@@ -156,32 +208,41 @@ function publishRemote(list, host) {
   }
   const dirs = entries.map((e) => e.path);
 
-  const existing = remoteHashes(
-    host,
-    dirs,
-    list.map((l) => l.name),
+  const targets = dirs.flatMap((dir) =>
+    list.flatMap((lesson) =>
+      lessonFiles(lesson).map((resource) => `${dir}/${lesson.name}/${resource.relative}`),
+    ),
   );
+  const existing = remoteHashes(host, targets);
 
   const changes = [];
   const drifted = [];
   for (const dir of dirs) {
     for (const lesson of list) {
-      const body = substitute(fs.readFileSync(lesson.file, "utf8"), OVERLAY).text;
-      const want = createHash("md5").update(body).digest("hex");
-      const target = `${dir}/${lesson.name}/SKILL.md`;
-      const have = existing.get(target);
+      let lessonChanged = false;
+      let lessonExisted = true;
+      for (const resource of lessonFiles(lesson)) {
+        const body = renderedResource(resource);
+        const want = createHash("md5").update(body).digest("hex");
+        const target = `${dir}/${lesson.name}/${resource.relative}`;
+        const have = existing.get(target);
 
-      if (have === want) continue;
-      if (have) drifted.push(`${host}:${target}`);
-      changes.push(`${have ? "overwrite" : "add"} ${host}:${dir}/${lesson.name}`);
-      if (check) continue;
+        if (have === want) continue;
+        lessonChanged = true;
+        if (!have) lessonExisted = false;
+        else drifted.push(`${host}:${target}`);
+        if (check) continue;
 
-      // Heredoc with a quoted marker: no expansion, no escaping games.
-      // Trim the trailing newline: the heredoc supplies the one before the
-      // marker, so passing body verbatim wrote an extra blank line and made
-      // every remote copy differ from source on every run.
-      const script = `mkdir -p ${dir}/${lesson.name} && cat > ${target} <<'BB_LESSON_EOF'\n${body.replace(/\n$/, "")}\nBB_LESSON_EOF`;
-      execFileSync("ssh", [host, script], { stdio: ["ignore", "ignore", "inherit"] });
+        const mode = (fs.statSync(resource.absolute).mode & 0o111) !== 0 ? "755" : "644";
+        const script = `mkdir -p ${path.posix.dirname(target)} && base64 -d > ${target} && chmod ${mode} ${target}`;
+        execFileSync("ssh", [host, script], {
+          input: body.toString("base64"),
+          stdio: ["pipe", "ignore", "inherit"],
+        });
+      }
+      if (lessonChanged) {
+        changes.push(`${lessonExisted ? "overwrite" : "add"} ${host}:${dir}/${lesson.name}`);
+      }
     }
   }
 
@@ -213,8 +274,13 @@ if (problems.length > 0) {
 // cannot run and the lesson will report as unverifiable.
 const unresolved = new Map();
 for (const lesson of list) {
-  const { missing } = substitute(fs.readFileSync(lesson.file, "utf8"), OVERLAY);
-  if (missing.length > 0) unresolved.set(lesson.name, missing);
+  const missing = new Set();
+  for (const resource of lessonFiles(lesson)) {
+    if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(resource.relative))) continue;
+    const result = substitute(fs.readFileSync(resource.absolute, "utf8"), OVERLAY);
+    for (const key of result.missing) missing.add(key);
+  }
+  if (missing.size > 0) unresolved.set(lesson.name, [...missing]);
 }
 if (unresolved.size > 0) {
   console.warn(`Unresolved placeholders (add them to ${OVERLAY_PATH}):`);

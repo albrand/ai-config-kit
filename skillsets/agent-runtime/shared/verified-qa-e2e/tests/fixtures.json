@@ -1,0 +1,102 @@
+[
+  {
+    "id": "valid-vendor-portal",
+    "expected": true,
+    "packet": {
+      "schema_version": 1,
+      "operation": "publish_qa_instructions",
+      "actor": { "verified": true, "persona": "vendor", "surface": "Vendor Portal", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "visible vendor link", "evidence": "snapshot-entry" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference" }
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [{ "name": "portal link", "available": true, "obtained_by": "visible control", "evidence": "snapshot-link" }]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [{ "page": "Work", "control": "Accept Dispatch", "surface": "Vendor Portal", "observed": true, "evidence": "snapshot-work" }]
+      },
+      "external": { "authorized": true, "authorization_evidence": "current user request", "target": "TICKET-1", "previewed": true },
+      "terminal": { "status": "passed", "evidence": "snapshot-complete" }
+    }
+  },
+  {
+    "id": "seeded-account-not-checked",
+    "expected": false,
+    "required_codes": ["AUTH_UNRESOLVED", "TEST_IDENTITY_NOT_CHECKED", "JOURNEY_NOT_WALKED"],
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": { "verified": true, "persona": "member", "surface": "Application", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "login screen", "evidence": "snapshot-login" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "logged_out",
+        "evidence": "snapshot-login",
+        "test_identity_discovery": { "checked": false, "found": false, "attempted": false, "evidence": "" }
+      },
+      "prerequisites": { "verified": true, "evidence": "none beyond auth", "items": [] },
+      "journey": { "walked": false, "same_actor": true, "same_surface": true, "evidence": "", "steps": [] },
+      "terminal": { "status": "blocked", "evidence": "login page only" }
+    }
+  },
+  {
+    "id": "portal-prerequisite-unreachable",
+    "expected": false,
+    "required_codes": ["PREREQUISITES_UNVERIFIED", "PREREQUISITE_UNAVAILABLE", "JOURNEY_NOT_WALKED"],
+    "packet": {
+      "schema_version": 1,
+      "operation": "publish_qa_instructions",
+      "actor": { "verified": true, "persona": "vendor", "surface": "Vendor Portal", "environment": "development" },
+      "entrypoint": { "verified": false, "route": "assumed token URL", "evidence": "source route only" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "blocked",
+        "evidence": "no tester link",
+        "test_identity_discovery": { "checked": true, "found": false, "attempted": false, "evidence": "repository search" }
+      },
+      "prerequisites": {
+        "verified": false,
+        "evidence": "portal link unavailable",
+        "items": [{ "name": "vendor portal link", "available": false, "obtained_by": "unknown", "evidence": "missing control" }]
+      },
+      "journey": { "walked": false, "same_actor": true, "same_surface": true, "evidence": "", "steps": [] },
+      "external": { "authorized": true, "authorization_evidence": "current user request", "target": "TICKET-1", "previewed": true },
+      "terminal": { "status": "blocked", "evidence": "portal link unavailable" }
+    }
+  },
+  {
+    "id": "labels-from-wrong-surface",
+    "expected": false,
+    "required_codes": ["SURFACE_DRIFT", "STEP_SURFACE_MISMATCH"],
+    "packet": {
+      "schema_version": 1,
+      "operation": "publish_qa_instructions",
+      "actor": { "verified": true, "persona": "vendor", "surface": "Vendor Portal", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "operations console vendor record", "evidence": "snapshot-operations" },
+      "authentication": { "required": false, "state": "not_required", "evidence": "operations session" },
+      "prerequisites": { "verified": true, "evidence": "operations record", "items": [] },
+      "journey": {
+        "walked": true,
+        "same_actor": false,
+        "same_surface": false,
+        "evidence": "operations console screenshot",
+        "steps": [{ "page": "Vendors / Technicians", "control": "Copy", "surface": "Operations Console", "observed": true, "evidence": "snapshot-operations" }]
+      },
+      "external": { "authorized": true, "authorization_evidence": "current user request", "target": "TICKET-1", "previewed": true },
+      "terminal": { "status": "passed", "evidence": "tracker update only" }
+    }
+  }
+]

@@ -89,6 +89,10 @@ or data issues regardless of board access.
 - Avoid speculative, duplicate, or idle agents.
 - Keep architectural judgment, ambiguity resolution, escalation, and final review in the master thread.
 - Route bounded work to the smallest capable model or agent when model routing is available.
+- Reasoning effort is a resource choice, not a correctness profile. Every model
+  and effort level inherits the same outcome criteria, evidence requirements,
+  authorization boundaries, stop conditions, and prohibited shortcuts. If a
+  lane cannot satisfy those gates, do not route the task there.
 - Use the configured local sidecar first for bounded no-tool cognition when it is
   configured and reachable: classification, extraction, terse summarization,
   prompt compression, naming, JSON shaping, and first-pass critique over compact
@@ -184,6 +188,10 @@ or data issues regardless of board access.
 - Distinguish passed, failed, blocked, skipped, and not run.
 - Do not imply unrun checks passed.
 - Report residual risk and missing evidence.
+- Before publishing QA instructions, moving work to a QA-ready state, or
+  claiming browser/interface E2E complete, load `verified-qa-e2e` and pass its
+  bundled deterministic evidence gate. A missing or failing gate blocks that
+  publication or completion claim at every reasoning effort level.
 
 10. Challenge directives and resist bias.
 
