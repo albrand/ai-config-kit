@@ -242,6 +242,32 @@ This rule is always on. It does not require the user to ask for security work.
   AppleScript, focus switching, or clipboard operations for browser work.
 - Headless repository-owned browser suites remain allowed as tests.
 
+### Manual login handoff in a shared browser window (provider-neutral)
+
+- Before any interactive login handoff, enumerate existing browser
+  instances/tabs for the current thread. Reuse the single instance this thread
+  already owns; if it owns none, create exactly one. Never create another to
+  solve focus.
+- Close only duplicate instances this thread created and owns. Never close
+  unknown, user-owned, pre-existing, or other-agent tabs; report them instead.
+- Repeatedly opening the same URL is not a focus strategy; it multiplies tabs
+  in a shared window.
+- A takeover or control grant over a shared browser window exposes every tab
+  in that window and cannot prove the target tab is foregrounded. Do not call
+  it a dedicated tab/window, and do not claim the exact login page is open
+  unless adapter/tool evidence proves it. Disclose the exposed tab count and
+  the observed target title.
+- Never type, paste, or handle credentials, even offered ones. The user
+  performs the sign-in.
+- Release the instance after sign-in, then verify the authenticated state
+  headlessly (snapshot bound to the same instance) before continuing.
+- Stop and report on bot challenges, user decline or timeout, or snapshots
+  that contradict the assumed state.
+- Before requesting such a handoff or later claiming completion, run the
+  `verified-qa-e2e` gate with the `manual_login` evidence contract; the JSON is
+  self-attested shape checking only, and adapter control-plane/tool evidence
+  stays authoritative.
+
 - When a change touches authentication, authorization, account/tenant isolation,
   secrets, cryptography, external input, file handling, outbound requests,
   dependencies, or build/config files, apply the Security Gate in

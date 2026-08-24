@@ -78,10 +78,13 @@ shape in `references/evidence-contract.md`, then run:
 node <this-skill-directory>/scripts/qa-e2e-gate.mjs check <evidence.json>
 ```
 
-The gate supports `publish_qa_instructions` and `claim_e2e_complete`. Exit zero
-authorizes that exact action. A non-zero result lists missing evidence and
-blocks it. If the script is missing or cannot run, report `QA/E2E guard
-unavailable`; do not publish QA instructions or claim the interface journey is
+The gate supports `publish_qa_instructions`, `claim_e2e_complete`, and
+`request_manual_browser_login`. Exit zero authorizes that exact action and
+nothing broader. A passing `request_manual_browser_login` authorizes only the
+interim manual-login handoff; it is never a PASSED E2E state and never
+authorizes publication or a completion claim. A non-zero result lists missing
+evidence and blocks it. If the script is missing or cannot run, report `QA/E2E
+guard unavailable`; do not publish QA instructions or claim the interface journey is
 complete.
 
 The evidence packet remains private. External Jira, Linear, pull-request, or
@@ -99,6 +102,51 @@ validation provenance.
 
 Encountering friction, reaching a login page, drafting a plausible checklist,
 or successfully updating the tracker is not completion.
+
+## Manual browser login handoff
+
+When authentication requires the user to sign in manually in a browser the
+agent controls, treat the handoff as a guarded interim operation, not as
+progress toward completion. Before the gate can authorize
+`request_manual_browser_login`, actor and entrypoint evidence must already
+exist, authentication must be required, both initial and current authentication
+state must be `logged_out`, repository test identity discovery must have run
+(with separate attempt evidence for any discovered identity), and
+evidence must show why manual interaction is necessary. The `manual_login`
+contract in `references/evidence-contract.md` then binds the request to one
+concrete browser instance.
+
+Runtime behavior, provider-neutral:
+
+- Enumerate browser instances first (`browser_instances` or the platform
+  equivalent). Reuse the single instance the current thread already owns. If
+  it owns none, open exactly one; never create another to solve focus.
+- Close only duplicate instances this thread created and owns. Never close
+  unknown, user-owned, pre-existing, or other-agent tabs; report them instead.
+- Repeatedly calling `browser_open` is not a focus strategy. It multiplies
+  tabs in a shared window and is the recorded failure mode this gate exists to
+  prevent.
+- A takeover/control grant on a shared Chrome window exposes every tab in that
+  window and cannot prove the target tab is foregrounded. Never call it a
+  dedicated tab or window, and never state the exact login page is open unless
+  adapter evidence proves it. Disclose the exposed tab count and the observed
+  target title.
+- Never type, paste, fill, or otherwise handle credentials, even when the user
+  offers them. The user performs the sign-in.
+- After sign-in, release the instance, then verify the authenticated state
+  headlessly through a snapshot bound to the same instance before continuing
+  the journey.
+- Stop and report when a bot challenge appears, the user declines or times
+  out, or a snapshot contradicts the assumed state.
+
+The evidence packet is self-attested JSON. It checks required evidence shape
+and ordering only; it cannot prove runtime ownership or authorization. Adapter
+control-plane and tool evidence remain authoritative over any packet claim.
+
+For `publish_qa_instructions` or `claim_e2e_complete` packets that include
+`manual_login`, the gate additionally requires a post-login snapshot bound to
+the same instance with `authenticated_state_observed` and evidence, plus
+`released: true`, and rejects inconsistent instance IDs.
 
 ## Recovery after a bad publication
 

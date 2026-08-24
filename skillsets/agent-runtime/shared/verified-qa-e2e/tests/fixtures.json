@@ -12,7 +12,7 @@
         "initial_state": "logged_out",
         "state": "authenticated",
         "evidence": "snapshot-auth",
-        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference" }
+        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference", "attempt_evidence": "seeded identity attempt result" }
       },
       "prerequisites": {
         "verified": true,
@@ -97,6 +97,182 @@
       },
       "external": { "authorized": true, "authorization_evidence": "current user request", "target": "TICKET-1", "previewed": true },
       "terminal": { "status": "passed", "evidence": "tracker update only" }
+    }
+  },
+  {
+    "id": "manual-login-handoff-valid",
+    "expected": true,
+    "packet": {
+      "schema_version": 1,
+      "operation": "publish_qa_instructions",
+      "actor": { "verified": true, "persona": "vendor", "surface": "Vendor Portal", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "visible vendor link", "evidence": "snapshot-entry" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference", "attempt_evidence": "seeded identity attempt result" }
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [{ "name": "portal link", "available": true, "obtained_by": "visible control", "evidence": "snapshot-link" }]
+      },
+      "manual_login": {
+        "instance_id": "page-7f3a",
+        "thread_owned": true,
+        "reused": true,
+        "owned_instances_before": 1,
+        "instances_created": 0,
+        "instances_exposed_count": 4,
+        "necessity_evidence": "discovered identity rejected; interactive SSO is the only remaining authorized route",
+        "pre_snapshot": {
+          "instance_id": "page-7f3a",
+          "url": "https://portal.example.test/login",
+          "title": "Sign in",
+          "login_control": "Continue with SSO",
+          "evidence": "snapshot-pre-login"
+        },
+        "takeover": { "authorized": true, "evidence": "current user approval in thread", "shared_window_disclosed": true },
+        "released": true,
+        "post_snapshot": { "instance_id": "page-7f3a", "authenticated_state_observed": true, "evidence": "snapshot-authenticated" }
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [{ "page": "Work", "control": "Accept Dispatch", "surface": "Vendor Portal", "observed": true, "evidence": "snapshot-work" }]
+      },
+      "external": { "authorized": true, "authorization_evidence": "current user request", "target": "TICKET-1", "previewed": true },
+      "terminal": { "status": "passed", "evidence": "snapshot-complete" }
+    }
+  },
+  {
+    "id": "manual-login-incident-replay",
+    "expected": false,
+    "required_codes": [
+      "INSTANCE_NOT_BOUND",
+      "INSTANCE_NOT_OWNED",
+      "INSTANCE_NOT_REUSED",
+      "TAKEOVER_EXPOSURE_UNDISCLOSED",
+      "PRE_LOGIN_UNVERIFIED",
+      "POST_LOGIN_UNVERIFIED",
+      "NOT_RELEASED"
+    ],
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": { "verified": true, "persona": "member", "surface": "Application", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "login screen", "evidence": "snapshot-login" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "agent asserts login tab is open",
+        "test_identity_discovery": { "checked": true, "found": false, "attempted": false, "evidence": "repository search" }
+      },
+      "prerequisites": { "verified": true, "evidence": "none beyond auth", "items": [] },
+      "manual_login": {
+        "instance_id": "",
+        "thread_owned": false,
+        "reused": false,
+        "owned_instances_before": 1,
+        "instances_created": 1,
+        "instances_exposed_count": 30,
+        "necessity_evidence": "agent claims manual login needed",
+        "takeover": { "authorized": true, "evidence": "verbal approval", "shared_window_disclosed": false },
+        "released": false
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-after-handoff",
+        "steps": [{ "page": "Work", "control": "Accept Dispatch", "surface": "Application", "observed": true, "evidence": "snapshot-work" }]
+      },
+      "terminal": { "status": "passed", "evidence": "snapshot-complete" }
+    }
+  },
+  {
+    "id": "manual-login-request-valid",
+    "expected": true,
+    "packet": {
+      "schema_version": 1,
+      "operation": "request_manual_browser_login",
+      "actor": { "verified": true, "persona": "vendor", "surface": "Vendor Portal", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "visible vendor link", "evidence": "snapshot-entry" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "logged_out",
+        "evidence": "snapshot-login",
+        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference", "attempt_evidence": "seeded identity attempt result" }
+      },
+      "manual_login": {
+        "instance_id": "page-7f3a",
+        "thread_owned": true,
+        "reused": false,
+        "owned_instances_before": 0,
+        "instances_created": 1,
+        "instances_exposed_count": 3,
+        "necessity_evidence": "discovered identity rejected; interactive SSO is the only remaining authorized route",
+        "pre_snapshot": {
+          "instance_id": "page-7f3a",
+          "url": "https://portal.example.test/login",
+          "title": "Sign in",
+          "login_control": "Continue with SSO",
+          "evidence": "snapshot-pre-login"
+        },
+        "takeover": { "authorized": true, "evidence": "current user approval in thread", "shared_window_disclosed": true }
+      }
+    }
+  },
+  {
+    "id": "manual-login-instance-mismatch",
+    "expected": false,
+    "required_codes": ["INSTANCE_ID_MISMATCH", "POST_LOGIN_UNVERIFIED", "PRE_LOGIN_UNVERIFIED"],
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": { "verified": true, "persona": "member", "surface": "Application", "environment": "development" },
+      "entrypoint": { "verified": true, "route": "login screen", "evidence": "snapshot-login" },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": { "checked": true, "found": true, "attempted": true, "evidence": "seed-reference", "attempt_evidence": "seeded identity attempt result" }
+      },
+      "prerequisites": { "verified": true, "evidence": "none beyond auth", "items": [] },
+      "manual_login": {
+        "instance_id": "page-7f3a",
+        "thread_owned": true,
+        "reused": true,
+        "owned_instances_before": 1,
+        "instances_created": 0,
+        "instances_exposed_count": 2,
+        "necessity_evidence": "discovered identity rejected; interactive SSO is the only remaining authorized route",
+        "pre_snapshot": {
+          "instance_id": "page-99c1",
+          "url": "https://app.example.test/login",
+          "title": "Sign in",
+          "login_control": "Continue with SSO",
+          "evidence": "snapshot-pre-login"
+        },
+        "takeover": { "authorized": true, "evidence": "current user approval in thread", "shared_window_disclosed": true },
+        "released": true,
+        "post_snapshot": { "instance_id": "page-99c1", "authenticated_state_observed": true, "evidence": "snapshot-authenticated" }
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-after-handoff",
+        "steps": [{ "page": "Work", "control": "Accept Dispatch", "surface": "Application", "observed": true, "evidence": "snapshot-work" }]
+      },
+      "terminal": { "status": "passed", "evidence": "snapshot-complete" }
     }
   }
 ]
