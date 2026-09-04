@@ -151,14 +151,14 @@ than a visible failure.
 
 ## Idle is not unwanted — ask what points at it
 
-Fleet archived `thr_example1` at 23:43 on 2026-08-16. Every signal agreed: a
+Fleet archived a thread at 23:43 on 2026-08-16. Every signal agreed: a
 member named `pr-listener`, retired two days earlier, not running, not in any
 board, holding a worktree for nothing. The drain pass closed it exactly as
 designed.
 
-It was also line 17 of a bb automation —
-`auto__example/pr-listener-dispatch.py`, `THREAD = "thr_example1"`
-— and every scheduled run since has failed with "review thread lookup failed".
+It was also line 17 of a bb automation — a dispatch script with that thread id
+hardcoded as `THREAD = "..."` — and every scheduled run since has failed with
+"review thread lookup failed".
 
 The check asked whether the thread was still RUNNING. Nothing asked whether
 anything still POINTED AT IT, and those have different answers. A thread that
