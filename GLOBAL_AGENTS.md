@@ -392,3 +392,88 @@ For review tasks, close with:
 2. Open questions.
 3. Validation performed.
 4. Residual risk.
+
+**Worktree lifecycle (always-on)** — a worktree is a checkout, not an archive. It
+exists to hold work in progress; when that work ends, the directory goes and the
+git history stays. Measured on this machine 2026-09-01: ~120 registered
+worktrees across `~/projects`, most 1.6–2.5 GB, and a sampled worktree
+was 1.5 GB of `node_modules` inside 1.6 GB total — 94% dependencies, not code.
+
+Know what removal actually costs before you hesitate. `git worktree remove`
+deletes a working directory; it does NOT delete commits. Objects and refs live
+in the shared parent repo, so a removed worktree on branch `X` comes back with
+`git worktree add <path> X` — no clone, no remote round trip. Exactly two things
+are unrecoverable, and they are the only things worth protecting:
+
+1. uncommitted work — dirty tracked files, or untracked non-ignored files;
+2. commits on a detached HEAD that no branch and no remote ref contains.
+
+The second is the case that must justify itself. A worktree with no branch
+associated and nothing holding its commits is the only kind that needs a stated
+reason to occupy the disk — write that reason into a `.keep-worktree` file in
+the worktree root, which the collector treats as permanent protection.
+
+Your obligations, in order:
+
+- **Delete your own worktree when the work ends** — PR merged, branch abandoned,
+  review finished, task closed. Do not leave it for the collector; the routine is
+  a backstop for the case where you crash, not a substitute for closing out.
+  `git -C <repo> worktree remove <path>` (never `--force`; a plain `remove`
+  refuses on a dirty tree, which is a free safety net).
+- **Commit or push before you finish** so the only unrecoverable class never
+  applies to your work. A clean worktree on a real branch is always disposable.
+- **Never create a detached-HEAD worktree that outlives its command.** If you
+  need one for a review at an exact SHA, remove it in the same task, or give it a
+  branch so a ref holds the commits.
+- **Never remove a worktree you did not create**, and never one that is dirty,
+  is another agent's environment, or carries `.keep-worktree`.
+
+The routine: `worktree-gc` (at `~/projects/local-bin/worktree-gc`) runs nightly
+via launchd. Default is a dry run; `--apply` acts. It strips dependency and build
+directories from anything idle past 3 days and removes clean, ref-held worktrees
+idle past 7 days, printing the exact `git worktree add` line that restores each
+one. It refuses to touch dirty trees, unreferenced detached HEADs, the primary
+checkout, the tree it is running in, any path owned by a live bb environment, and
+anything marked `.keep-worktree`. Run `worktree-gc` yourself before calling a
+task done, the same way you sweep threads with `bb fleet orphans`.
+
+**No feature flags without an explicit ask (always-on)** — if it is merged, it
+runs. Never introduce a new gate whose default state stops newly merged
+behavior from executing in the target environments. This has been said before
+and violated again, so treat it as a hard stop, not a preference.
+
+The test is not "is there a conditional" — it is **"does the merged code
+actually run?"** If a reviewer merges your PR and the behavior is still off,
+you have broken this rule.
+
+Banned unless the user asks for a flag, in those words, for that change:
+
+- env-var toggles that default off (`ENABLE_X`, `X_ENABLED`, …)
+- deployment-environment guards on new paths — `resolveDeploymentEnv() ===
+  'production' || !env.FLAG` is exactly the shape that ships dead code
+- config booleans, percentage rollouts, dark launches, kill switches on new work
+- `if (false)`, commented-out wiring, a route registered but never mounted,
+  a worker written but never scheduled
+
+**Not covered by this rule** — do not over-apply it and do not strip these:
+
+- authentication, authorization and permission checks
+- per-tenant or per-plan entitlements that are a product requirement
+- credentials, endpoints, and environment-specific configuration
+- flags that already exist in the codebase. A mature codebase can easily carry a
+  dozen, some with hundreds of references. Removing them is its own destructive
+  change and needs its own ask. Assume their defaults have not been audited, and
+  treat them as out of scope until they are.
+
+**When the change feels too risky to land live**, the answer is a smaller PR, or
+not merging yet. It is never merging it dead. "I gated it so it is safe to
+merge" is the reasoning this rule exists to stop — an unshippable change that
+looks shipped is worse than an honest unmerged branch.
+
+**If the user does ask for a flag**, it carries a removal ticket and a
+default-on date in the PR body. A flag with no removal plan is permanent.
+
+**Enforcement pattern that works** — when a PR removes a flag, have it assert the
+flag cannot come back: `assert.doesNotMatch(source, /ENABLE_THE_FLAG/u)`. When you
+remove a gate on request, add the assertion so a later agent cannot quietly
+reintroduce it.
