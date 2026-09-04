@@ -20,10 +20,27 @@
 
 import { execFileSync } from "node:child_process";
 
+/**
+ * Machine-specific configuration comes from the environment, never a default.
+ *
+ * A hardcoded hostname or service name is one machine's answer wearing the
+ * costume of a general one: it makes this script look portable while silently
+ * pointing every other host at somebody else's box. Failing loudly on an unset
+ * variable is the honest behaviour.
+ */
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`${name} is not set. It names a host-specific resource, so there is no safe default.`);
+    process.exit(2);
+  }
+  return value;
+}
+
 /** The ssh alias in ~/.ssh/config, not a bare IP: the host is Tailscale-only. */
 const HOST = process.env.BB_AGENT_SYNC_HOST || "vps";
-const SERVICE =
-  process.env.BB_AGENT_SYNC_SERVICE || "bb-host-daemon.service";
+/** Machine-specific: the systemd unit name differs per host, so it has no default. */
+const SERVICE = requireEnv("BB_AGENT_SYNC_SERVICE");
 const DRY_RUN = process.env.BB_AGENT_SYNC_DRY_RUN === "1";
 
 function run(command, args, options = {}) {
