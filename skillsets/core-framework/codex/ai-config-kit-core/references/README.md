@@ -17,6 +17,7 @@ concept quickly.
 | Install it for a chat-only assistant | [Use The Kit In A Chat-Only AI Tool](#use-the-kit-in-a-chat-only-ai-tool) |
 | Install the Codex skill index/router | [Import The Skill Library Router](#import-the-skill-library-router), then `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` |
 | Install the UX design agent | [Import The UX Design Agent Skillset](#import-the-ux-design-agent-skillset), then `UX_DESIGN_AGENT_IMPORT_PROMPT.md` |
+| Search local UI/UX design intelligence | `skillsets/ux-design-intelligence/`, then invoke `$ui-ux-pro-max` |
 | Understand instruction precedence | [Core Mental Model](#core-mental-model), then `FRAMEWORK_MANIFEST.md` |
 | Understand anti-bias and causal-overfitting controls | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
@@ -38,6 +39,7 @@ It provides:
 - A manifest that lists required files, load profiles, harness capabilities, and readiness checks.
 - A paste-ready Skill Library Router import prompt for keeping large Codex skill libraries indexed and accessible.
 - A paste-ready UX Design Agent import prompt for installing the Codex skill and Claude Code command.
+- A vendored UI/UX intelligence skill with searchable local pattern, accessibility, typography, color, chart, icon, and stack guidance.
 - Global agent behavior that can be installed at user or workspace level.
 - Repo-level instruction templates for local architecture, validation, and workflow rules.
 - Tool adapters for AGENTS-compatible tools, Claude Code, Gemini CLI, Cursor, and generic chat assistants.
@@ -235,6 +237,7 @@ question.
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
+| `skillsets/ux-design-intelligence/` | MIT-licensed `ui-ux-pro-max` research layer with local datasets and search helpers; complements the UX design agent while preserving existing product tokens and brand authority. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 | `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
 | `skillsets/security-review/` | Executable defensive-security skillset: the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference. Paired with `SECURITY_AND_PENTEST.md`. |
@@ -315,7 +318,8 @@ Use for Figma-first UX design workflows, layout creation, product UI shaping, de
 8. The relevant Codex skill or Claude Code command:
    - `skillsets/ux-design-agent/codex/ux-design-agent/SKILL.md`
    - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
-9. External evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, and product docs
+9. `skillsets/ux-design-intelligence/shared/ui-ux-pro-max/SKILL.md` when focused local UI/UX research would help; its recommendations remain subordinate to the existing design source of truth
+10. External evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, and product docs
 
 ### Skill Library Router Profile
 

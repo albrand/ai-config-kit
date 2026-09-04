@@ -53,6 +53,7 @@ Support files:
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
+- `skillsets/ux-design-intelligence/`: vendored, MIT-licensed `ui-ux-pro-max` research skill with local datasets and search helpers; it complements the UX workflow and may not overwrite an existing brand or design system by default.
 - `skillsets/ecosystem-terraform/`: executable AI-runbook skillset for roadmap, technology, and hardening bootstrap, including Codex skill mirrors and Claude Code slash commands.
 - `skillsets/pr-review/`: executable high-signal PR review skillset, including a Codex skill, Claude Code `/code-review` command, and shared output contract.
 - `skillsets/security-review/`: executable defensive-security skillset — the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference.
@@ -175,7 +176,8 @@ Use for Figma-first UX design workflows, layout creation, product UI shaping, de
 8. The relevant Codex skill or Claude Code command:
    - `skillsets/ux-design-agent/codex/ux-design-agent/SKILL.md`
    - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
-9. External source evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, product docs, and design-tool access
+9. `skillsets/ux-design-intelligence/shared/ui-ux-pro-max/SKILL.md` when focused pattern, accessibility, typography, color, chart, icon, or stack research would strengthen the work without replacing the existing design source of truth
+10. External source evidence required by the request: Figma files, Figma libraries, brand guidelines, screenshots, repos, component docs, tokens, Storybook, accessibility requirements, product docs, and design-tool access
 
 ### Skill Library Router Profile
 

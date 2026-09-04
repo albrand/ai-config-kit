@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI/UX Pro Max"
+  short_description: "Search local UI and UX design intelligence"
+  default_prompt: "Use $ui-ux-pro-max to research and review this interface while preserving its existing brand and design system."
