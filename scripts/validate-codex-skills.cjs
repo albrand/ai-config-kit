@@ -111,6 +111,21 @@ function validateOpenAiMetadata(skillDir, file) {
   }
 }
 
+// These standalone bundles promise the same delivery contract. Check the
+// packaged bytes, not phrases within the prose.
+const deliverySource = fs.readFileSync(path.join(root, 'DELIVERY_QUALITY.md'));
+for (const packagePath of [
+  'core-framework/codex/ai-config-kit-core',
+  'ux-design-agent/codex/ux-design-agent',
+  'ux-design-agent',
+  'ux-design-intelligence/shared/ui-ux-pro-max',
+]) {
+  const copy = path.join(skillsets, packagePath, 'references/DELIVERY_QUALITY.md');
+  if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(deliverySource)) {
+    errors.push(`${copy}: missing or differs from canonical DELIVERY_QUALITY.md`);
+  }
+}
+
 const files = walk(skillsets).sort();
 for (const absolute of files) {
   const relative = path.relative(root, absolute);

@@ -183,11 +183,11 @@ or data issues regardless of board access.
 
 - Run the strongest practical validation for the changed surface.
 - Select test and validation evidence by ownership and boundary using
-  `TEST_OWNERSHIP.md`; do not treat any layer as a blanket all-changes-need-tests
-  mandate.
-- Distinguish passed, failed, blocked, skipped, and not run.
-- Do not imply unrun checks passed.
-- Report residual risk and missing evidence.
+  `TEST_OWNERSHIP.md`, made useful by `DELIVERY_QUALITY.md` (acceptance
+  examples, defect checks, rendered UI evidence, honest completion maps);
+  no layer is a blanket all-changes-need-tests mandate.
+- Distinguish passed, failed, blocked, skipped, and not run; never imply
+  unrun checks passed, and report residual risk and missing evidence.
 - Before publishing QA instructions, moving work to a QA-ready state, or
   claiming browser/interface E2E complete, load `verified-qa-e2e` and pass its
   bundled deterministic evidence gate. A missing or failing gate blocks that
@@ -389,7 +389,7 @@ Do not include closed-scope context in the global layer:
 For implementation tasks, close with:
 
 1. What changed.
-2. What was validated.
+2. What was validated, mapping each required outcome to observed result and evidence (`DELIVERY_QUALITY.md`).
 3. What was not validated.
 4. Residual risk or next step.
 

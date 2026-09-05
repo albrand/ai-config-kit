@@ -30,6 +30,7 @@ force-loading everything. Files live in the installed framework directory
 | Security review, hardening, vulnerability discovery, threat modeling, supply-chain/dependency risk, `/adversarial-security-sweep`, `/pentest-specialist` | `SECURITY_AND_PENTEST.md`, `skillsets/security-review/README.md`, `skillsets/security-review/references/security-review-contract.md`, `skillsets/security-review/references/supply-chain-iocs.md`. Active testing requires the authorization gate in `SECURITY_AND_PENTEST.md` — do not run it from the generic quality-gate path. |
 | Validation depth, gate levels (0-4), bugfix/UI/API/data/security gates | `QUALITY_GATES.md` |
 | Deciding what test or validation evidence a change actually owes | `TEST_OWNERSHIP.md` |
+| Choosing useful delivery evidence and honest completion: acceptance examples, defect checks, rendered UI verification, per-outcome claims | `DELIVERY_QUALITY.md` |
 | Iterative improvement, scoring, breakpoints, stop conditions | `QUALITY_CONVERGENCE.md` |
 | Architecture review, boundaries, state/data/security/perf doctrine | `ARCHITECTURE_AND_CODE_QUALITY.md` |
 | Model routing, delegation, cache rules, escalation, workflow tracks | `HARNESS_STRATEGY.md` |
@@ -60,7 +61,7 @@ force-loading everything. Files live in the installed framework directory
 
 ## Profiles (load several at once)
 
-- **Implementation:** `OPERATING_MODEL` + `ARCHITECTURE_AND_CODE_QUALITY` + `QUALITY_GATES`.
+- **Implementation:** `OPERATING_MODEL` + `ARCHITECTURE_AND_CODE_QUALITY` + `QUALITY_GATES` + `DELIVERY_QUALITY` (test evidence and completion claims).
 - **Debugging:** Implementation + `QUALITY_GATES` (bugfix gate) + `TEMPLATES` (debug report).
 - **Review/PR:** `REVIEW_AND_PR_FRAMEWORK` + `QUALITY_GATES` + `ARCHITECTURE_AND_CODE_QUALITY`.
 - **Security review:** `SECURITY_AND_PENTEST` + `QUALITY_GATES` (Security Gate) + `HARNESS_STRATEGY` security routing tier when delegating lens work + `skillsets/security-review/README.md` + `skillsets/security-review/references/security-review-contract.md` + `skillsets/security-review/references/supply-chain-iocs.md`. Active testing also needs the authorization basis for the target.

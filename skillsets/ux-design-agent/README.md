@@ -28,6 +28,7 @@ This is an AI-runbook skillset.
 | --- | --- |
 | `codex/ux-design-agent/SKILL.md` | Codex skill for both UX workflows: design-maker (live mockup, source of truth, signoff, Figma + board handoff) and prototype-consumption/backlog-shaping (PO). |
 | `codex/ux-design-agent/references/output-contract.md` | Installed Codex reference checklist. |
+| `references/DELIVERY_QUALITY.md` and its Codex bundle copy | Canonical delivery protocol for acceptance examples, useful evidence, and rendered UI checks. |
 | `codex/ux-design-agent/agents/openai.yaml` | Codex UI metadata. |
 | `claude/commands/ux-design-agent.md` | Claude Code slash command mirror for `/ux-design-agent`. |
 | `references/output-contract.md` | Shared output and validation contract. |
@@ -37,18 +38,19 @@ This is an AI-runbook skillset.
 Codex:
 
 1. Copy `codex/ux-design-agent/SKILL.md` to `<CODEX_HOME>/skills/ux-design-agent/SKILL.md`.
-2. Copy `codex/ux-design-agent/references/output-contract.md` to `<CODEX_HOME>/skills/ux-design-agent/references/output-contract.md`.
+2. Copy the complete `codex/ux-design-agent/references/` directory to `<CODEX_HOME>/skills/ux-design-agent/references/`, including `DELIVERY_QUALITY.md` and `output-contract.md`.
 3. Copy `codex/ux-design-agent/agents/openai.yaml` to `<CODEX_HOME>/skills/ux-design-agent/agents/openai.yaml` when the Codex UI metadata format is used.
 
 Claude Code:
 
 1. Copy `claude/commands/ux-design-agent.md` to `~/.claude/commands/ux-design-agent.md` or a project `.claude/commands/` folder.
+   Copy `references/DELIVERY_QUALITY.md` to `skills/ux-design-agent/references/DELIVERY_QUALITY.md` under that same selected `.claude/` directory; it is a command resource, not an additional slash command.
 2. Run `/ux-design-agent <product, Figma, repo, or design-system prompt>`.
 3. Ensure design-execution tooling (Claude Design — in practice a connected Figma MCP server and its companion skills) is available for actual visual design generation or design-file work. If it is unavailable, produce a paste-ready design brief and Figma execution plan instead of pretending the design was created.
 
 Generic AI:
 
-1. Paste this README plus `references/output-contract.md`.
+1. Paste this README plus `references/output-contract.md` and `references/DELIVERY_QUALITY.md`.
 2. Provide the product prompt, Figma links or exports, repo path if relevant, brand inputs, and target audience.
 3. Ask the AI to follow the workflow and report capability gaps before design or repo writes.
 

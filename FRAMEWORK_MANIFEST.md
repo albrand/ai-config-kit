@@ -39,6 +39,7 @@ Core files:
 - `ARCHITECTURE_AND_CODE_QUALITY.md`: architecture, security, state, data, and quality review doctrine.
 - `QUALITY_GATES.md`: validation levels and truth-reporting rules.
 - `TEST_OWNERSHIP.md`: ownership- and boundary-based test-evidence decision gate; defers blanket all-changes-need-tests mandates to the smallest falsifiable evidence for the owning surface.
+- `DELIVERY_QUALITY.md`: canonical acceptance-first delivery doctrine - useful test evidence and defect checks, UI creation and rendered verification, honest per-outcome completion claims; bundled byte-identical in the core-framework, ux-design-agent, and ux-design-intelligence skillsets.
 - `SECURITY_AND_PENTEST.md`: authorized defensive-security doctrine — supply-chain hardening, threat modeling, vulnerability lifecycle, multi-pass reinforcement, authorization gate, dual-use guardrails, and security routing.
 - `QUALITY_CONVERGENCE.md`: iterative targets, scoring, feedback loops, breakpoints, and stop conditions.
 - `REVIEW_AND_PR_FRAMEWORK.md`: review posture and PR evidence requirements.
@@ -130,6 +131,7 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 8. `QUALITY_GATES.md`
 8a. `TEST_OWNERSHIP.md` when deciding what test or validation evidence a change requires
 8b. `SECURITY_AND_PENTEST.md` when the change touches auth, access control, secrets, crypto, external input, outbound requests, dependencies, or build/config files
+8c. `DELIVERY_QUALITY.md` before selecting test evidence, shipping behavior, or designing/reviewing UI
 9. `QUALITY_CONVERGENCE.md` when quality targets require iteration
 10. `TOKEN_ECONOMY.md` when delegating, designing sub-agent prompts, coordinating another AI tool, or evaluating cost
 11. `TEMPLATES.md` when a structured plan or report is useful

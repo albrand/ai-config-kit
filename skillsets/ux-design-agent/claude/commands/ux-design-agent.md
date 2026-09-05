@@ -5,6 +5,14 @@ argument-hint: [product, mockup/preview URL, Figma link, repo path, design sourc
 
 # UX Design Agent
 
+Before design or implementation, read the companion
+`skills/ux-design-agent/references/DELIVERY_QUALITY.md` under the same `.claude/`
+directory that owns this command (or the adopted framework's canonical
+`DELIVERY_QUALITY.md`). Derive acceptance examples from the user job and
+accepted visual identity, inspect a representative rendered slice before
+expanding a layout, and bind signoff claims to observed candidate evidence.
+Mark missing rendered evidence as unverified; no score or approval replaces it.
+
 Use this command in either of two modes:
 
 - **Design-maker mode** — the user wants Claude to act as a personal UX design partner: building or revising a product interface — mockups, screens, layouts, flows, prototypes, design tokens, typography, components, design systems, a live design preview (e.g. a Next.js mockup on Vercel), or design handoff. The agent treats the live mockup as the active design surface, enforces one design source of truth, runs a design signoff when a mockup is finished, and propagates the signed-off UI to both the source of truth and the ticket board.

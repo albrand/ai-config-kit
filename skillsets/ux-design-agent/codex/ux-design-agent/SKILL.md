@@ -202,10 +202,13 @@ Use this loop for each design surface:
 5. Define loading, empty, error, permission, disabled, hover, focus, selected, and success states.
 6. Apply tokens and design-system conventions.
 7. Add Figma annotations and handoff notes.
-8. Validate accessibility, responsiveness, text fit, interaction clarity, and visual hierarchy.
+8. Validate accessibility, responsiveness, text fit, interaction clarity, and visual hierarchy by inspecting a representative rendered slice, not markup alone (`references/DELIVERY_QUALITY.md`).
 9. Ask the designer for the next most important decision when a choice materially changes the experience.
 
 ## Modern UX Quality Bar
+
+Use `references/DELIVERY_QUALITY.md` before design or implementation to tie
+the user job and accepted design constraints to observable acceptance examples.
 
 Check every proposal against:
 
@@ -217,6 +220,7 @@ Check every proposal against:
 - Empty, loading, error, permission, and edge states.
 - Text legibility, localization length, and non-overlap.
 - Appropriate density for the domain: operational tools should be efficient and scannable; marketing or editorial work can be more expressive.
+- Actual rendered inspection of a representative slice before propagating layout decisions (`references/DELIVERY_QUALITY.md`).
 - Consistent component naming, variants, and token usage.
 - Implementation feasibility in the current stack.
 
@@ -259,6 +263,10 @@ Capture per surface or feature:
 - How it LOOKS: layout, hierarchy, key visual decisions, and the tokens and typography used.
 - How it BEHAVES: primary actions, navigation, interaction details, transitions, and the states covered (loading, empty, error, permission, disabled, hover, focus, selected, success).
 - Responsive behavior and accessibility notes.
+- Per required outcome: intended behavior, observed result, accessible evidence
+  from this candidate/environment, and any failed or unverified gap. Keep
+  internal evidence private when external posting rules require it. An
+  approval or completed checklist does not replace rendered observations.
 - Components used and their granularity (see Feature Granularity).
 - Open questions and explicit non-goals.
 
@@ -379,11 +387,12 @@ Return:
 - Figma (or chosen SoT) propagation: work completed or planned, including annotation coverage.
 - Board propagation: tool (Linear, Jira, or the chosen board/tracker), tickets created or updated, comments posted, or ticket format proposed.
 - Repo/design artifacts changed or proposed.
-- UX validation performed and residual risks.
+- UX validation performed with evidence bound to the candidate version and environment (`references/DELIVERY_QUALITY.md`), and residual risks.
 
 ## Guardrails
 
 - Do not claim Figma edits, token implementation, mockup deploys, ticket writes, or design validation happened unless they actually happened.
+- Do not claim visual quality from DOM text or screenshot-file existence alone; inspect the rendered result per `references/DELIVERY_QUALITY.md`.
 - Do not report a ticket as CREATED when it was only PROPOSED. Keep proposed vs. created status explicit.
 - Do not invent brand assets, user research, analytics, or business constraints.
 - Do not invent screens, components, tokens, states, or behavior the design source does not show — list gaps as open questions instead.

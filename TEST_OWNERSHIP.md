@@ -96,6 +96,13 @@ from `QUALITY_GATES.md`: reference/link scan, manifest inventory check when
 framework files change, closed-scope scan, markdown/format lint when available,
 and encoding/ASCII check when required. Do not add unit tests for prose.
 
+For material changes to instructions that control agent behavior, also run a
+few fresh, bounded task trials against raw artifacts. Compare the previous
+instructions when available, include a valid small-change counterexample,
+and keep the evaluator's expected diagnosis out of the task brief. Inspect
+actions and evidence, not just the final wording; structural checks alone
+cannot establish better delivery or a measured reliability improvement.
+
 ## Decision Gate: Smallest Falsifiable Evidence
 
 For every change, run this gate and record the chosen evidence:
@@ -112,6 +119,11 @@ For every change, run this gate and record the chosen evidence:
    existing tool, contract check, or Level 0 check that already covers it.
 
 The gate selects evidence; it never mandates a specific test layer universally.
+
+Falsification: the selected evidence must be able to fail for the right
+reason. Apply the defect-check and persistence-readback rules in
+`DELIVERY_QUALITY.md`; a check that survives the seeded defect provides no
+evidence for the claim it is meant to cover.
 
 ## Manual QA
 

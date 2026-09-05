@@ -17,3 +17,15 @@ repository owns. Select the smallest falsifiable evidence at the owning boundary
 This governs new validation and does not automatically delete existing tests.
 Manual QA is valid for visual or one-shot outcomes, but it is not durable
 protection for a high-risk owned invariant.
+
+Falsification: the selected evidence must be able to fail for the right
+reason. Apply the defect-check and persistence-readback rules in
+`DELIVERY_QUALITY.md`; a check that survives the seeded defect provides no
+evidence for the claim it is meant to cover.
+
+For material changes to instructions that control agent behavior, also run a
+few fresh, bounded task trials against raw artifacts. Compare the previous
+instructions when available, include a valid small-change counterexample,
+and keep the evaluator's expected diagnosis out of the task brief. Inspect
+actions and evidence, not just the final wording; structural checks alone
+cannot establish better delivery or a measured reliability improvement.
