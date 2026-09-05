@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scope Advisor"
+  short_description: "Check plans and results against the complete user request"
+  default_prompt: "Use $scope-advisor to check this plan or result against the complete request for omissions, additions, and unsupported assumptions."

@@ -248,10 +248,12 @@ question.
 | `GLOBAL_AGENTS.md` | Global collaboration and execution baseline for agent behavior. |
 | `OPERATING_MODEL.md` | Full lifecycle for intake, discovery, planning, routing, implementation, integration, self-review, validation, and close-out. |
 | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` | Discursive rationale, examples, and gains for challenging directives, journals, memories, cached conclusions, and prior patterns as evidence rather than authority. |
+| `SCOPE_DISCIPLINE.md` | Canonical scope-discipline contract: scope record from the original request and accepted revisions, necessary-versus-optional classification, bounded read-only scope-advisor protocol, and continuity across delegation and compaction. |
 | `REPO_AGENTS_TEMPLATE.md` | Repo-root instruction template with placeholders for local rules. |
 | `AI_TOOL_ADAPTERS.md` | Setup guide for generic assistants, AGENTS-compatible tools, Cursor, Gemini CLI, Claude Code, Codex, and other tools. |
 | `adapters/` | Copyable bootstrap files for specific AI tools. |
 | `adapters/claude-agent-framework-skill/` | Optional Claude Code install path: the `agent-framework` router skill (task-to-file map plus load profiles) paired with an always-on `CORE.md` import, for progressive disclosure instead of eager full-import. |
+| `adapters/BB.md` | Thin bb bootstrap to copy to a workspace `.bb/AGENTS.md`; loads `CORE.md` plus task-relevant docs and documents bb's own `AGENTS.md` and skills discovery. |
 | `SKILLS_CATALOG.md` | Recommended global skills, repo-local skill examples, skill shape, promotion rules, and anti-patterns. |
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
@@ -276,6 +278,7 @@ question.
 | `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
 | `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, OpenCode/GLM example profile, portable wrappers, and package manifest. |
 | `skillsets/core-framework/` | Self-contained Codex entrypoint with bundled ai-config-kit references. |
+| `skillsets/scope-advisory/` | Portable Codex and bb scope-advisor skill bundling the canonical `SCOPE_DISCIPLINE.md` contract. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
@@ -492,6 +495,7 @@ Adapters should be short bootstrap files. They should point to the framework, no
 | Claude Code (eager full import) | `adapters/CLAUDE.md` | Target repo root as `CLAUDE.md` |
 | Claude Code (lightweight core + router) | `CORE.md` plus `adapters/claude-agent-framework-skill/SKILL.md` | `@docs/agent-framework/CORE.md` in `CLAUDE.md`; skill at `~/.claude/skills/agent-framework/SKILL.md` or `.claude/skills/agent-framework/SKILL.md` |
 | Gemini CLI | `adapters/GEMINI.md` | Target repo root as `GEMINI.md` |
+| bb workspaces | `adapters/BB.md` | Target workspace `.bb/AGENTS.md`; skills at `.bb/skills/<name>/SKILL.md` |
 | Cursor | `adapters/cursor-agent-framework.mdc` | Target repo `.cursor/rules/agent-framework.mdc` |
 | Generic chat assistant | `CONFIG_KIT_AI_PROMPT.md` | Paste into chat before attaching files |
 | Generic short fallback | `adapters/GENERIC_AI_PROMPT.md` | Paste only when the full prompt is too large |

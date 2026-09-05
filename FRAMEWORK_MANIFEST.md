@@ -20,6 +20,11 @@ Core files:
 - `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`: rationale, examples, and gains
   for challenging directives, memories, journals, cached conclusions, and prior
   patterns as evidence rather than authority.
+- `SCOPE_DISCIPLINE.md`: canonical scope-discipline contract — scope record from
+  the original request and accepted revisions, necessary-versus-optional
+  classification with evidence and proportionate impact, bounded read-only
+  scope-advisor protocol, and continuity across delegation, continuation, and
+  compaction.
 - `REPO_AGENTS_TEMPLATE.md`: repo-root instruction template.
 - `SKILLS_CATALOG.md`: global and repo-local skill design rules.
 - `AGENT_ORCHESTRATION.md`: delegated-agent roles, contracts, and cleanup.
@@ -50,6 +55,7 @@ Support files:
 - `skillsets/context-acceleration/`: optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability.
 - `skillsets/adaptive-model-orchestration/`: portable Codex skill, OpenCode/GLM example profile, peer wrappers, package manifest, and offline-install guidance.
 - `skillsets/core-framework/`: self-contained explicit-only Codex entrypoint with bundled framework references.
+- `skillsets/scope-advisory/`: portable scope-advisor Codex skill bundling the canonical `SCOPE_DISCIPLINE.md` contract; see `skillsets/scope-advisory/README.md` for bb and standard client install paths.
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
 - `skillsets/module-delivery/`: standalone AI-runbook skillset for module delivery planning, including Codex and Claude Code entrypoints.
 - `skillsets/ux-design-agent/`: Figma-first AI-runbook skillset for UX designers, design tokens, design-system conventions, component-library guidance, and code-aware design handoff.
@@ -66,6 +72,7 @@ Support files:
   reasoning-invariant `verified-qa-e2e` evidence gate and its regression
   fixtures. Bundled references, scripts, and tests publish with each skill.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
+- `adapters/BB.md`: thin bb bootstrap for a workspace `.bb/AGENTS.md`; loads `CORE.md` plus task-relevant docs and documents bb's own `AGENTS.md` and `.bb/skills/` discovery.
 - `adapters/claude-agent-framework-skill/`: optional Claude Code install path — the `agent-framework` router skill (task-to-file map plus load profiles) that pairs with an always-on `CORE.md` import. Alternative to the eager `adapters/CLAUDE.md` import list, not a replacement for it.
 - `config-kit.zip` or `Archive.zip`: distributable archive. `config-kit.zip` is
   the conventional name; `Archive.zip` is a legacy tracked name in some

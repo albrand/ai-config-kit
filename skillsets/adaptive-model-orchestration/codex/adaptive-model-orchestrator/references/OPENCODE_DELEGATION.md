@@ -49,6 +49,11 @@ operator decisions.
 
 Send only what the mode requires:
 
+- the original request as a faithful excerpt that preserves the relevant
+  requested outcomes, or a reference demonstrably accessible to the recipient
+  (a fresh-session delegate must actually be able to read it);
+- the accepted scope revision, the parent outcome, and this unit's bounded
+  responsibility;
 - `objective` and sidecar role;
 - ordered plan for executor mode;
 - in-scope paths and `do_not_touch` paths;

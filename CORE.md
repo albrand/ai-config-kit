@@ -60,6 +60,14 @@ re-plan instead of pushing on.
 - Do not widen behavior to hide a deeper unsupported case.
 - Preserve user or teammate changes in dirty worktrees.
 - Protect shared code: fix in place, grep for imports before deleting/inlining.
+- Treat the complete user request and its accepted revisions as the scope:
+  include necessary supporting work only with an evidence-based connection and
+  proportionate impact, keep optional additions as proposals, and ask only for
+  material unresolved ambiguity.
+
+`SCOPE_DISCIPLINE.md` owns the full contract (scope record, classification,
+bounded read-only advisor). Load it for material ambiguity, complex delegation,
+or suspected drift.
 
 ## Protected Scope (No Silent Regression)
 

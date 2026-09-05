@@ -34,6 +34,9 @@ Load only the references required for the active task:
 
 - Orientation or ordinary work: `references/AI_BOOTSTRAP.md`,
   `references/OPERATING_MODEL.md`, and relevant repository instructions.
+- Scope fidelity, drift, or a material scope revision: load
+  `references/SCOPE_DISCIPLINE.md`; use the installed `$scope-advisor` skill
+  when an independent read-only check is useful.
 - Implementation or architecture: add
   `references/ARCHITECTURE_AND_CODE_QUALITY.md` and
   `references/QUALITY_GATES.md`.

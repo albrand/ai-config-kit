@@ -211,9 +211,11 @@ question.
 | `GLOBAL_AGENTS.md` | Global collaboration and execution baseline for agent behavior. |
 | `OPERATING_MODEL.md` | Full lifecycle for intake, discovery, planning, routing, implementation, integration, self-review, validation, and close-out. |
 | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` | Discursive rationale, examples, and gains for challenging directives, journals, memories, cached conclusions, and prior patterns as evidence rather than authority. |
+| `SCOPE_DISCIPLINE.md` | Canonical scope-discipline contract: scope record from the original request and accepted revisions, necessary-versus-optional classification, bounded read-only scope-advisor protocol, and continuity across delegation and compaction. |
 | `REPO_AGENTS_TEMPLATE.md` | Repo-root instruction template with placeholders for local rules. |
 | `AI_TOOL_ADAPTERS.md` | Setup guide for generic assistants, AGENTS-compatible tools, Cursor, Gemini CLI, Claude Code, Codex, and other tools. |
 | `adapters/` | Copyable bootstrap files for specific AI tools. |
+| `adapters/BB.md` | Thin bb bootstrap to copy to a workspace `.bb/AGENTS.md`; loads `CORE.md` plus task-relevant docs and documents bb's own `AGENTS.md` and skills discovery. |
 | `SKILLS_CATALOG.md` | Recommended global skills, repo-local skill examples, skill shape, promotion rules, and anti-patterns. |
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
@@ -234,6 +236,7 @@ question.
 | `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
 | `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, OpenCode/GLM example profile, portable wrappers, and package manifest. |
 | `skillsets/core-framework/` | Self-contained Codex entrypoint with bundled ai-config-kit references. |
+| `skillsets/scope-advisory/` | Portable Codex and bb scope-advisor skill bundling the canonical `SCOPE_DISCIPLINE.md` contract. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
 | `skillsets/module-delivery/` | Separate AI-runbook skillset for turning a module idea into phases, PR-sized tickets, resource links, risks, owners, and validation gates. |
 | `skillsets/ux-design-agent/` | Figma-first AI-runbook skillset for UX designers: layouts, design tokens, design-system conventions, component-library guidance, annotations, and code-aware handoff. |
