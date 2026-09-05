@@ -51,7 +51,11 @@ Send only what the mode requires:
 
 - the original request as a faithful excerpt that preserves the relevant
   requested outcomes, or a reference demonstrably accessible to the recipient
-  (a fresh-session delegate must actually be able to read it);
+  (a fresh-session delegate must actually be able to read it); the full
+  original request must remain accessible to the recipient even when the brief
+  uses a faithful excerpt; if that access would exceed the recipient's
+  authorized context, keep that work local or rescope the delegated unit
+  instead of treating the excerpt as sufficient;
 - the accepted scope revision, the parent outcome, and this unit's bounded
   responsibility;
 - `objective` and sidecar role;

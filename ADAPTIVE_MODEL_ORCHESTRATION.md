@@ -69,7 +69,11 @@ demonstrably accessible to the recipient (a fresh-session delegate must actually
 be able to read it); the accepted scope revision; the parent outcome; the unit's
 bounded responsibility, role, scope, `do_not_touch`, source evidence, acceptance
 criteria, exact checks, security and data invariants, output cap, stop
-conditions, and fallback. `SCOPE_DISCIPLINE.md` owns the scope-record and
+conditions, and fallback. The full original request must remain accessible to
+the recipient even when the brief uses a faithful excerpt; if that access
+would exceed the recipient's authorized context, keep that work local or
+rescope the delegated unit instead of treating the excerpt as sufficient.
+`SCOPE_DISCIPLINE.md` owns the scope-record and
 handoff contract behind these fields. Keep direction acyclic: a sidecar must
 not call the coordinator or recursively create another orchestration layer.
 
