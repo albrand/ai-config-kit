@@ -195,6 +195,13 @@ Agents should:
 - Identify follow-up work without silently implementing it.
 - Avoid widening behavior to hide a deeper unsupported case.
 - Preserve user or teammate changes in dirty worktrees.
+- Treat the complete user request and accepted revisions as the scope record:
+  necessary supporting work needs an evidence-based connection and
+  proportionate impact, optional additions stay proposals, and only material
+  unresolved ambiguity justifies a question.
+
+`SCOPE_DISCIPLINE.md` owns the full contract, including the bounded
+scope-advisor protocol and scope continuity across handoffs and compaction.
 
 ## Reporting Standard
 

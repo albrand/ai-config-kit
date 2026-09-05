@@ -270,6 +270,13 @@ Keep repo-level instructions about:
 - Style guide.
 - Domain rules.
 
+Task scope follows `SCOPE_DISCIPLINE.md`: the complete user request and its
+accepted revisions define the scope, necessary supporting work needs an
+evidence-based connection and proportionate impact, optional additions stay
+proposals, and only material unresolved ambiguity justifies a question. Use the
+bounded read-only scope-advisor protocol for substantial ambiguity, complex
+delegation, or suspected drift.
+
 ## Closed-Scope Protection
 
 Do not include closed-scope context in the global layer:

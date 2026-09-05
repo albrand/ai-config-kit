@@ -63,11 +63,19 @@ than assuming a model name or effort level exists.
 - External family sidecar: supplies cross-family critique, read-only audit, or
   bounded execution under an architected plan.
 
-Every delegated unit needs a compact brief: objective, role, scope,
-`do_not_touch`, source evidence, acceptance criteria, exact checks, security and
-data invariants, output cap, stop conditions, and fallback. Keep direction
-acyclic: a sidecar must not call the coordinator or recursively create another
-orchestration layer.
+Every delegated unit needs a compact brief: the original request as a faithful
+excerpt that preserves the relevant requested outcomes, or a reference
+demonstrably accessible to the recipient (a fresh-session delegate must actually
+be able to read it); the accepted scope revision; the parent outcome; the unit's
+bounded responsibility, role, scope, `do_not_touch`, source evidence, acceptance
+criteria, exact checks, security and data invariants, output cap, stop
+conditions, and fallback. The full original request must remain accessible to
+the recipient even when the brief uses a faithful excerpt; if that access
+would exceed the recipient's authorized context, keep that work local or
+rescope the delegated unit instead of treating the excerpt as sufficient.
+`SCOPE_DISCIPLINE.md` owns the scope-record and
+handoff contract behind these fields. Keep direction acyclic: a sidecar must
+not call the coordinator or recursively create another orchestration layer.
 
 ## Verified Example Profile: Codex + OpenCode/GLM
 

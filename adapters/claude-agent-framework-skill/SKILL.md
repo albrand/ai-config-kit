@@ -23,6 +23,7 @@ force-loading everything. Files live in the installed framework directory
 | Always-on baseline: regression protection, cost-first routing, skill router, MCP scoping | `GLOBAL_AGENTS.md` |
 | Full task lifecycle, source-of-truth detail, gear-change reset | `OPERATING_MODEL.md` |
 | Challenging directives/memory/patterns as evidence, avoiding causal overfitting | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
+| Checking a plan, delegated brief, or ongoing result against the complete user request (scope fidelity, drift, material scope revision, bounded scope-advisor protocol) | `SCOPE_DISCIPLINE.md`, `skillsets/scope-advisory/` |
 | Reusing a sibling-project pattern; keeping the scan metadata-first and limited to configured workspace roots (`AGENT_WORKSPACE_ROOTS`, adoption settings, explicit user input) | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md`; `REPO_ADOPTION_PLAYBOOK.md` to configure the roots |
 | Delegating to an OpenCode sidecar: handoff contract, capability gate, modes, effort/max-ultra routing | `ADAPTIVE_MODEL_ORCHESTRATION.md`, `OPENCODE_DELEGATION.md` |
 | Code review, self-review, PR preparation, readiness decision | `REVIEW_AND_PR_FRAMEWORK.md` |

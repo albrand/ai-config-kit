@@ -88,6 +88,17 @@ docs/agent-framework/
 
 If the tool supports nested instruction files, use additional nested `AGENTS.md` files only for local overrides.
 
+## bb
+
+bb is a provider-independent agent harness with its own injection and skill discovery.
+
+Recommended setup:
+
+- Copy `adapters/BB.md` into the target workspace as `.bb/AGENTS.md`.
+- bb injects its data-dir `AGENTS.md` and the workspace `.bb/AGENTS.md` itself; there is no parent-directory walk for those bb-specific locations, and native provider instruction paths are separate.
+- Skills load from `.bb/skills/<name>/SKILL.md`; project skills outrank user skills, which outrank builtins, and same-source duplicate names collide and are dropped.
+- Inspect the live configuration with `bb guide agent-configuration` and `bb skill list --environment <id> --json`; do not assume inheritance.
+
 ## Cursor
 
 Cursor supports project rules in `.cursor/rules` and user rules in settings. Current Cursor docs also describe `AGENTS.md` as a markdown alternative to project rules.
@@ -218,6 +229,20 @@ State which validation gates apply.
 Do not edit files yet.
 ```
 
+## Modern Skill-Path Compatibility
+
+Compact reference for project skill locations and instruction behavior across current hosts. It documents discovery only — the kit ships no executable adapters or detectors for these hosts, and keeps model/capability choices discovery-based.
+
+| Host | Project skill paths | Notes |
+| --- | --- | --- |
+| Codex | `.agents/skills` | Metadata, then body, then relevant resources. https://learn.chatgpt.com/docs/customization/overview |
+| Cursor | `.agents/skills`, `.cursor/skills` | User/global skills do not automatically appear on every remote/cloud host. https://cursor.com/docs/skills |
+| VS Code Copilot | `.github/skills`, `.claude/skills`, `.agents/skills` | https://code.visualstudio.com/docs/agent-customization/agent-skills |
+| Windsurf/Cascade | `.windsurf/skills`, `.agents/skills` | Directory-scoped `AGENTS.md`. https://docs.devin.ai/desktop/cascade/skills and https://docs.devin.ai/desktop/cascade/agents-md |
+| Zed (ACP) | Agent-owned | External agents own their own skills/config; Zed skills do not apply to them. https://zed.dev/docs/ai/external-agents#configuration-boundaries |
+| bb | `.bb/skills/<name>/SKILL.md` | Project > user > builtin precedence; same-source duplicate names are dropped; `AGENTS.md` injection is bb-owned (see the bb section). |
+| Portable format | https://agentskills.io/specification | Keep skill format portable and hosts model-agnostic. |
+
 ## Adapter Maintenance
 
 - Keep adapters short.
@@ -231,6 +256,11 @@ Do not edit files yet.
 These public docs were checked when this adapter guide was written:
 
 - Cursor Rules: https://docs.cursor.com/context/rules
+- Cursor Skills: https://cursor.com/docs/skills
+- VS Code Copilot agent skills: https://code.visualstudio.com/docs/agent-customization/agent-skills
+- Windsurf/Cascade skills and `AGENTS.md`: https://docs.devin.ai/desktop/cascade/skills and https://docs.devin.ai/desktop/cascade/agents-md
+- Zed external agents configuration boundaries: https://zed.dev/docs/ai/external-agents#configuration-boundaries
+- Portable Agent Skills specification: https://agentskills.io/specification
 - Gemini CLI `GEMINI.md`: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
 - Claude Code memory: https://docs.anthropic.com/en/docs/claude-code/memory
 - Codex and `AGENTS.md`: https://openai.com/index/introducing-codex/
