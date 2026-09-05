@@ -167,9 +167,12 @@ release, or skill/agent workflow.
 9. Verify before completion.
 
 - Run the strongest practical validation for the changed surface.
-- Distinguish passed, failed, blocked, skipped, and not run.
-- Do not imply unrun checks passed.
-- Report residual risk and missing evidence.
+- Select test and validation evidence by ownership and boundary using
+  `TEST_OWNERSHIP.md`, made useful by `DELIVERY_QUALITY.md` (acceptance
+  examples, defect checks, rendered UI evidence, honest completion maps);
+  no layer is a blanket all-changes-need-tests mandate.
+- Distinguish passed, failed, blocked, skipped, and not run; never imply
+  unrun checks passed, and report residual risk and missing evidence.
 
 10. Challenge directives and resist bias.
 
@@ -294,7 +297,7 @@ Do not include closed-scope context in the global layer:
 For implementation tasks, close with:
 
 1. What changed.
-2. What was validated.
+2. What was validated, mapping each required outcome to observed result and evidence (`DELIVERY_QUALITY.md`).
 3. What was not validated.
 4. Residual risk or next step.
 

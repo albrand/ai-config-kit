@@ -67,21 +67,11 @@ The next iteration should use the previous feedback directly. Do not restart fro
 
 ## Scoring
 
-Use numeric scoring only when it improves clarity.
-
-Suggested scale:
-
-- `0-59`: not acceptable.
-- `60-74`: incomplete or risky.
-- `75-84`: usable with known gaps.
-- `85-94`: strong enough for normal completion.
-- `95-100`: high-confidence, low residual risk.
-
-Recommended default target:
-
-- Normal code change: `85`.
-- Security, data, auth, release, or high-risk work: `90`.
-- Strict user request or critical workflow: `95`.
+Numeric scores are optional and only rank improvement priorities. Required
+outcomes and existing gates stay pass/fail/blocked and are never averaged
+into a score; a high score must never make a missing or failing required
+outcome pass. Define any scale and thresholds per task instead of assuming
+fixed readiness numbers.
 
 Scores must be backed by evidence. Do not use a score as a substitute for reporting actual checks.
 
@@ -104,7 +94,8 @@ Stop early when:
 - Quality plateaus for two consecutive iterations.
 - The fix would require expanding scope beyond the user request.
 
-When stopped before target, report the current score, evidence, blocker, and smallest next decision.
+When stopped before target, report unmet required outcomes, evidence, blocker,
+and smallest next decision. Include a score only if the task used one.
 
 ## Breakpoints
 

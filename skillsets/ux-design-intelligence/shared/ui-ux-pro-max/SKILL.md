@@ -61,6 +61,14 @@ If `python3` is not found, try `python`, then `py -3`. Requires Python 3.x and n
 
 ## Workflow
 
+Before choosing a design or implementing UI, read
+`references/DELIVERY_QUALITY.md`. Start from the user's job and observable
+acceptance examples, preserve the product's visual identity, and inspect a
+representative rendered slice before expanding a substantial new layout.
+Treat available components and search results as options. Every proposed field,
+control and interaction must serve the requested job and have product evidence;
+label unsupported additions as optional proposals rather than assumed behavior.
+
 ## Query Contract
 
 Choose the smallest search mode that fits the request:
@@ -230,3 +238,5 @@ Then synthesize the design system + detailed searches and implement.
 ## Before Delivering App UI
 
 Read `references/pro-rules.md` and run through its canonical Pre-Delivery Checklist. It covers icon/visual-element discipline, interaction feedback, light/dark contrast, safe-area layout, and accessibility — scoped to native/mobile app UI (iOS/Android/React Native/Flutter).
+
+The canonical cross-platform delivery protocol — acceptance examples, rendered verification bound to the delivered candidate, per-outcome completion claims — is `references/DELIVERY_QUALITY.md`; treat the checklist above as the mobile-specific layer. Target the platforms, devices, and themes the product actually supports, and do not demand adding unsupported ones.

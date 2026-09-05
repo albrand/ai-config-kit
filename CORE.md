@@ -135,9 +135,9 @@ drop stale context and re-ground in current evidence.
 
 ## Verification Before Completion
 
-- Run the strongest practical validation for the changed surface.
-- Distinguish passed, failed, blocked, skipped, and not run. Never imply an
-  unrun check passed.
+- Run the strongest practical validation for the changed surface, selected
+  with `TEST_OWNERSHIP.md` and made useful by `DELIVERY_QUALITY.md`.
+- Distinguish passed, failed, blocked, skipped, and not run; never imply an unrun check passed.
 - Report what changed, what was validated, what was not, and residual risk.
 - Report unavailable or blocked harness capabilities instead of pretending.
 
@@ -152,7 +152,7 @@ drop stale context and re-ground in current evidence.
 
 Invoke the `agent-framework` skill (or read the file directly) when the task
 needs depth this core does not cover: review/PR, quality gates, test-evidence
-ownership, debugging, harness routing and delegation, cost-first model routing,
+ownership, delivery-quality claims, debugging, harness routing and delegation, cost-first model routing,
 sibling-project pattern scans under configured workspace roots, cross-agent
 coordination, token economy, architecture doctrine, quality convergence,
 board-backed regression protection, skillset workflows, templates, or framework

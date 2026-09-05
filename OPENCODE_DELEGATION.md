@@ -131,10 +131,18 @@ artifacts:
 validation:
   - check: <command>
     result: pass | fail | blocked | skipped | not_run
+    required_outcome: <what this check must prove>
+    observed: <behavior or output actually seen>
+    artifact: <evidence path or inline excerpt>
+    binding: <candidate SHA/version, environment, known limitation>
 gates_preserved: <quality and security gates, or blocker>
 residual_risk: <short>
 next_step: <short or null>
 ```
+
+`binding` may be stated once in shared task context instead of repeated per
+entry, and trivial tasks do not need a private JSON object per check. The
+schema records evidence; it does not enforce it.
 
 The coordinator re-reads changes, verifies load-bearing claims, reruns the
 important checks, and resolves disagreements. OpenCode output is execution or

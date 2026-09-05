@@ -24,6 +24,7 @@ concept quickly.
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
 | Plan implementation work | [Load Profiles](#load-profiles), then `OPERATING_MODEL.md` |
 | Decide what test evidence a change needs | `TEST_OWNERSHIP.md`, then `QUALITY_GATES.md` |
+| Improve delivered behavior and UI quality | `DELIVERY_QUALITY.md` |
 | Review PRs | [Review And PR Profile](#review-and-pr-profile), then `skillsets/pr-review/` |
 | Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
@@ -59,6 +60,7 @@ It provides:
 - An adaptive multi-model doctrine and installable Codex/OpenCode profile for
   risk-based effort selection, cross-family critique, and max/ultra escalation.
 - Quality gates for docs, code, UI, API, data, security, deployment, and review work.
+- A delivery-quality doctrine for acceptance-first examples, useful test evidence, rendered UI verification, and honest completion claims.
 - A quality convergence loop for work that needs measured improvement across iterations.
 - Session journaling guidance for resumable local work.
 - Continuous skill learning guidance so repeated lessons become durable rules, skills, or automated gates.
@@ -267,6 +269,7 @@ question.
 | `ARCHITECTURE_AND_CODE_QUALITY.md` | Generic architecture review, boundary principles, code quality doctrine, state/data/security/performance review, and self-review checklist. |
 | `QUALITY_GATES.md` | Validation levels, evidence rules, docs/code/UI/API/data/security/release gates, and validation report template. |
 | `TEST_OWNERSHIP.md` | Ownership- and boundary-based test-evidence decision gate that replaces blanket all-changes-need-tests mandates. |
+| `DELIVERY_QUALITY.md` | Canonical acceptance-first delivery doctrine: useful tests and defect checks, UI creation and rendered verification, honest per-outcome completion claims. |
 | `QUALITY_CONVERGENCE.md` | Controlled iteration loop with dimensions, targets, scoring, breakpoints, evidence packets, and stop conditions. |
 | `REVIEW_AND_PR_FRAMEWORK.md` | Review posture, criteria, finding format, self-review, PR preparation, approval standard, and PR body template. |
 | `FRAMEWORK_PATTERNS.md` | Neutral reusable patterns for collaboration, source-of-truth order, impact mapping, debugging, big changes, review, journaling, validation, skills, routing, and convergence. |
@@ -320,6 +323,7 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 6. `HARNESS_STRATEGY.md`
 7. `ARCHITECTURE_AND_CODE_QUALITY.md`
 8. `QUALITY_GATES.md`
+8a. `DELIVERY_QUALITY.md` before selecting test evidence, shipping behavior, or designing/reviewing UI
 9. `QUALITY_CONVERGENCE.md` when quality targets require iteration
 10. `TOKEN_ECONOMY.md` when delegation, cross-agent coordination, prompt compression, or cost control matters
 11. `TEMPLATES.md` when a structured plan or report is useful

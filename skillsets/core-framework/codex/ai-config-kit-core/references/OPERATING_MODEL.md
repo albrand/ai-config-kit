@@ -44,6 +44,8 @@ When layers conflict:
 3. Planning.
 
 - State objective, scope, non-goals, assumptions, approach, validation, and rollback.
+- Derive compact acceptance examples before implementation per
+  `DELIVERY_QUALITY.md`.
 - State phase gates, breakpoints, and stop conditions for high-risk work.
 - Decide what stays local and what can be delegated.
 - Decide whether cross-agent coordination, model routing, cache, or fresh reasoning applies.
@@ -98,6 +100,7 @@ When layers conflict:
 8. Validation.
 
 - Run focused checks first.
+- Bind validation evidence to the delivered candidate (`DELIVERY_QUALITY.md`).
 - Run broader checks when risk or repo rules require them.
 - Capture exact outcomes.
 - Use quality convergence when validation shows the first pass is not enough.
@@ -109,6 +112,8 @@ When layers conflict:
 - Report skipped or blocked checks.
 - Report the next required workflow step when there is one.
 - Report residual risk.
+- Map each required outcome to observed result and evidence per
+  `DELIVERY_QUALITY.md`.
 - Close or update any local session journal if used.
 
 ## Gear-Change Reset

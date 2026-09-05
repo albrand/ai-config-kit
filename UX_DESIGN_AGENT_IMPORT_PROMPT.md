@@ -27,8 +27,10 @@ Source of truth:
 - Required source files:
   - `skillsets/ux-design-agent/README.md`
   - `skillsets/ux-design-agent/references/output-contract.md`
+  - `skillsets/ux-design-agent/references/DELIVERY_QUALITY.md`
   - `skillsets/ux-design-agent/codex/ux-design-agent/SKILL.md`
   - `skillsets/ux-design-agent/codex/ux-design-agent/references/output-contract.md`
+  - `skillsets/ux-design-agent/codex/ux-design-agent/references/DELIVERY_QUALITY.md`
   - `skillsets/ux-design-agent/codex/ux-design-agent/agents/openai.yaml`
   - `skillsets/ux-design-agent/claude/commands/ux-design-agent.md`
 - Helpful framework files, when available:
@@ -56,6 +58,8 @@ Codex import:
      to `<CODEX_HOME>/skills/ux-design-agent/SKILL.md`
    - `skillsets/ux-design-agent/codex/ux-design-agent/references/output-contract.md`
      to `<CODEX_HOME>/skills/ux-design-agent/references/output-contract.md`
+   - `skillsets/ux-design-agent/codex/ux-design-agent/references/DELIVERY_QUALITY.md`
+     to `<CODEX_HOME>/skills/ux-design-agent/references/DELIVERY_QUALITY.md`
    - `skillsets/ux-design-agent/codex/ux-design-agent/agents/openai.yaml`
      to `<CODEX_HOME>/skills/ux-design-agent/agents/openai.yaml`
 4. If the active Codex runtime does not support UI metadata, still copy `openai.yaml` when the file can live beside the skill, but report that UI metadata support was not verified.
@@ -65,6 +69,10 @@ Claude Code import:
    - User-level default: `~/.claude/commands/ux-design-agent.md`
    - Project-level alternative: `<repo>/.claude/commands/ux-design-agent.md`
 2. Copy `skillsets/ux-design-agent/claude/commands/ux-design-agent.md` to the selected command target.
+   Copy `skillsets/ux-design-agent/references/DELIVERY_QUALITY.md` to
+   `skills/ux-design-agent/references/DELIVERY_QUALITY.md` under that same
+   selected `.claude/` directory. Include this companion in overwrite checks
+   and byte-for-byte verification.
 3. Verify that the installed command invokes `/ux-design-agent` and says Claude Code orchestrates while Claude Design or equivalent design-execution tooling handles visual design work when available.
 4. Do not claim Claude Design, Figma MCP, or any design-execution tool is connected unless you verified it in the active environment.
 
@@ -92,5 +100,5 @@ Safety rules:
 Use this when the assistant already has the config kit loaded:
 
 ```text
-Import the UX Design Agent skillset from `https://github.com/albrand/ai-config-kit` or from the attached/readable local config-kit package if I provided one. Install the Codex skill from `skillsets/ux-design-agent/codex/ux-design-agent/` into `<CODEX_HOME or ~/.codex>/skills/ux-design-agent/`, including `SKILL.md`, `references/output-contract.md`, and `agents/openai.yaml`. Install the Claude Code command from `skillsets/ux-design-agent/claude/commands/ux-design-agent.md` into `~/.claude/commands/ux-design-agent.md` or the approved project `.claude/commands/` folder. Inspect existing targets before overwriting, ask before replacing customized files, verify installed files against the source, report skipped or blocked steps, and do not mutate Figma, repos, cloud resources, trackers, secrets, or component libraries during import.
+Import the UX Design Agent skillset from `https://github.com/albrand/ai-config-kit` or from the attached/readable local config-kit package if I provided one. Install the Codex skill from `skillsets/ux-design-agent/codex/ux-design-agent/` into `<CODEX_HOME or ~/.codex>/skills/ux-design-agent/`, including `SKILL.md`, the complete `references/` directory, and `agents/openai.yaml`. Install the Claude Code command from `skillsets/ux-design-agent/claude/commands/ux-design-agent.md` into `~/.claude/commands/ux-design-agent.md` or the approved project `.claude/commands/` folder. Also install its delivery protocol companion at `skills/ux-design-agent/references/DELIVERY_QUALITY.md` under the same selected `.claude/` directory. Inspect existing targets before overwriting, ask before replacing customized files, verify installed files against the source, report skipped or blocked steps, and do not mutate Figma, repos, cloud resources, trackers, secrets, or component libraries during import.
 ```

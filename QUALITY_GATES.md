@@ -53,6 +53,7 @@ For every non-trivial task, identify:
 - Artifact produced.
 - Requirement or source of truth it satisfies.
 - Validation evidence.
+- Outcome map per `DELIVERY_QUALITY.md`: required outcome, observed result, evidence reference, candidate/environment, limitation.
 - Remaining gap.
 
 If there is no evidence, there is no completion. A confident assessment without an artifact and validation path should be reported as unverified.
@@ -140,7 +141,8 @@ For bugs:
 3. Identify root cause or state leading hypothesis.
 4. Add regression protection when practical and when the repository owns the
    failing behavior; select the smallest falsifiable evidence per
-   `TEST_OWNERSHIP.md`.
+   `TEST_OWNERSHIP.md`, and show it fails for the correct reason on the
+   pre-fix version where practical (`DELIVERY_QUALITY.md` defect check).
 5. Re-run original reproducer.
 6. Run one adjacent regression check when feasible.
 
@@ -155,6 +157,9 @@ For UI changes:
 - Check loading, empty, error, and success states when relevant.
 - Check keyboard and accessibility expectations when relevant.
 - Check responsive behavior when relevant.
+- Verify the rendered result on the actual supported runtime - inspected
+  screenshot plus geometry/interaction evidence, bound to the candidate
+  version - per `DELIVERY_QUALITY.md`.
 
 ## API Gate
 

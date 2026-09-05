@@ -102,7 +102,7 @@ Use these additions when they are relevant to the changed surface:
 
 - If PR intent, domain language, or acceptance criteria are ambiguous, ask one targeted question or state the assumption before continuing.
 - Use domain glossary files, `CONTEXT.md`, `CONTEXT-MAP.md`, and ADRs when available. Do not re-litigate an ADR unless the diff exposes real friction.
-- For bugfix PRs, look for a reproduced failure and regression protection. A test, script, replay, or smoke path can be enough if it proves the original failure no longer reproduces.
+- For bugfix PRs, look for a reproduced failure and regression protection. A test, script, replay, or smoke path can be enough if it proves the original failure no longer reproduces. Prefer protection that failed on the pre-fix version where practical (`DELIVERY_QUALITY.md` defect check).
 - Prefer tests that verify behavior through public interfaces. Treat tests coupled to private implementation details as weak evidence unless the repo intentionally tests that layer.
 - When architecture is in scope, look for shallow pass-through modules, scattered concepts, weak test seams, and interfaces whose invariants are unclear. Report only issues tied to changed behavior or merge risk.
 - When follow-up work is requested, split it into vertical slices that are independently grabbable, demoable or verifiable, and sized for one PR.
@@ -145,8 +145,8 @@ Check:
 - State flow: no stale state, duplicate reloads, or cache drift.
 - Data flow: no overfetching, missing filters, or broken pagination.
 - Security: boundaries preserved.
-- Tests: right layer and meaningful assertions.
-- Validation: commands actually ran and results are truthful.
+- Tests: right layer and meaningful assertions that can fail for the right reason (defect checks per `DELIVERY_QUALITY.md`).
+- Validation: commands actually ran, results are truthful, and evidence is bound to the candidate under review (`DELIVERY_QUALITY.md`).
 
 ## Finding Format
 

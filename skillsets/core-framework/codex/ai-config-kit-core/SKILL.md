@@ -7,7 +7,9 @@ description: Route into the albrand/ai-config-kit operating framework and load o
 
 Load `references/TEST_OWNERSHIP.md` before selecting tests or validation for an
 implementation, review, quality-gate, migration, config, dependency, or generated
-artifact change.
+artifact change. Load `references/DELIVERY_QUALITY.md` alongside it before
+deriving acceptance examples, writing or judging checks, designing or reviewing
+UI, or claiming completion.
 
 Use the bundled framework as an on-demand operating library. Keep current system,
 developer, user, and repository instructions authoritative. Treat framework rules
@@ -39,7 +41,8 @@ Load only the references required for the active task:
   when an independent read-only check is useful.
 - Implementation or architecture: add
   `references/ARCHITECTURE_AND_CODE_QUALITY.md` and
-  `references/QUALITY_GATES.md`.
+  `references/QUALITY_GATES.md`; add `references/DELIVERY_QUALITY.md` for
+  acceptance examples, defect checks, and rendered UI evidence.
 - Debugging: add `references/QUALITY_GATES.md`; require evidence, reproduction
   when feasible, a root-cause account, a focused fix, and regression protection.
 - Review or PR work: use the installed `$high-signal-pr-review` skill. Load

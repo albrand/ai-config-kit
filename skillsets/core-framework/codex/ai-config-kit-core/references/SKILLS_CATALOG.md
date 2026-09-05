@@ -93,6 +93,7 @@ The framework should incorporate useful public skill patterns as neutral practic
 - Ticketing should use vertical slices: each ticket should be independently grabbable, demoable or verifiable, and sized for one PR.
 - Issue triage should use explicit states: not enough information, ready for an agent, ready for a human, will not do, or the repo's local equivalents.
 - Implementation workflows should preserve feedback loops: diagnosis before fixes, red-green-refactor when practical, and validation tied to behavior.
+- Delivery work should derive acceptance examples first, add only checks that catch an owned failure, inspect a rendered slice before propagating UI layout, and close with a per-outcome evidence map (`DELIVERY_QUALITY.md`).
 - Architecture hardening should look for shallow modules, scattered concepts, weak test seams, and places where deeper interfaces improve locality and AI navigability.
 - Long work should produce compact handoffs instead of carrying raw transcripts forward.
 - Directive and pattern learning should challenge journals, memories, cached
