@@ -12,6 +12,7 @@ Read the framework before substantial repository work:
 @docs/agent-framework/CROSS_AGENT_COORDINATION.md
 @docs/agent-framework/HARNESS_STRATEGY.md
 @docs/agent-framework/TOKEN_ECONOMY.md
+@docs/agent-framework/TOKEN_EFFICIENT_ORCHESTRATION.md
 @docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md
 @docs/agent-framework/QUALITY_GATES.md
 @docs/agent-framework/QUALITY_CONVERGENCE.md

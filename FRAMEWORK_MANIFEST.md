@@ -44,6 +44,7 @@ Core files:
 - `QUALITY_CONVERGENCE.md`: iterative targets, scoring, feedback loops, breakpoints, and stop conditions.
 - `REVIEW_AND_PR_FRAMEWORK.md`: review posture and PR evidence requirements.
 - `TOKEN_ECONOMY.md`: empirical token-cost recipes (model tier mapping, prompt compression, output filtering, memory hygiene). Complements `HARNESS_STRATEGY.md`.
+- `TOKEN_EFFICIENT_ORCHESTRATION.md`: reconciliation of cost-minimising orchestration with the standing evidence bar — delegation that returns measurements rather than verdicts, effort as a resource choice that never lowers outcome criteria, context hygiene with a non-prunable change ledger and an OpenHands-style `keep_first` floor, and guardrails that assert on target state rather than a process's own exit code.
 - `TEMPLATES.md`: copyable output templates.
 
 Support files:
@@ -134,6 +135,7 @@ Use for code, docs, config, workflow, or generated-artifact changes:
 8c. `DELIVERY_QUALITY.md` before selecting test evidence, shipping behavior, or designing/reviewing UI
 9. `QUALITY_CONVERGENCE.md` when quality targets require iteration
 10. `TOKEN_ECONOMY.md` when delegating, designing sub-agent prompts, coordinating another AI tool, or evaluating cost
+10a. `TOKEN_EFFICIENT_ORCHESTRATION.md` when a cost-minimising or token-sparing mandate is in force, or when pruning context, setting retries against a metered dependency, or deciding what a delegate must return
 11. `TEMPLATES.md` when a structured plan or report is useful
 12. `SESSION_JOURNALING.md` if the repo uses journals
 
@@ -303,6 +305,7 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 5. `ADAPTIVE_MODEL_ORCHESTRATION.md` when multiple models, effort levels, or a sidecar are in scope
 6. `OPENCODE_DELEGATION.md` when OpenCode participates
 7. `TOKEN_ECONOMY.md`
+7a. `TOKEN_EFFICIENT_ORCHESTRATION.md`
 8. `QUALITY_GATES.md`
 9. `CONTINUOUS_SKILL_LEARNING.md`
 

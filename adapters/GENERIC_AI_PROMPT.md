@@ -16,7 +16,7 @@ Before implementation:
 4. Read and follow `OPERATING_MODEL.md`.
 5. Read the repo-specific instructions provided by the user.
 6. For delegation, model routing, cache, or escalation, read `AGENT_ORCHESTRATION.md` and `HARNESS_STRATEGY.md`.
-7. For coordinating with another AI tool, read `CROSS_AGENT_COORDINATION.md` and `TOKEN_ECONOMY.md`.
+7. For coordinating with another AI tool, read `CROSS_AGENT_COORDINATION.md`, `TOKEN_ECONOMY.md`, and `TOKEN_EFFICIENT_ORCHESTRATION.md`.
 8. For code quality, read `ARCHITECTURE_AND_CODE_QUALITY.md`.
 9. For validation, read `QUALITY_GATES.md`.
 10. For iterative quality improvement, read `QUALITY_CONVERGENCE.md`.
