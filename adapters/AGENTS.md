@@ -15,6 +15,7 @@ Before substantial repository work, read:
 7. `docs/agent-framework/CROSS_AGENT_COORDINATION.md`
 8. `docs/agent-framework/HARNESS_STRATEGY.md`
 9. `docs/agent-framework/TOKEN_ECONOMY.md`
+9a. `docs/agent-framework/TOKEN_EFFICIENT_ORCHESTRATION.md`
 10. `docs/agent-framework/CONTEXT_ACCELERATION.md` when the repo adopts a
     graph, generated wiki, symbol index, code-review graph, or similar
     accelerator

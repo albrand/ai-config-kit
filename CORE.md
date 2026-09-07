@@ -158,7 +158,7 @@ coordination, token economy, architecture doctrine, quality convergence,
 board-backed regression protection, skillset workflows, templates, or framework
 adoption. The skill maps task type to the exact file.
 
-Two routes are mandatory, not optional:
+Three routes are mandatory, not optional:
 
 - **Security work** — security review, hardening, vulnerability discovery,
   threat modeling, supply-chain/dependency risk, or any active testing: load
@@ -171,3 +171,10 @@ Two routes are mandatory, not optional:
   documentation package before trusting generated claims. Verify freshness,
   scope, privacy boundary, and artifact policy; generated output is advisory
   until primary sources confirm it.
+- **Cost-minimising mandate** — any instruction to spare tokens, minimise
+  reasoning effort, prune context, or delegate aggressively: load
+  `TOKEN_EFFICIENT_ORCHESTRATION.md` with it. Cost discipline never lowers the
+  outcome bar, and the failure modes it prevents are silent — success claimed
+  from an exit code that lied, a delegate returning a verdict instead of a
+  measurement, an agent pruning the record of its own changes and then
+  diagnosing its own damage as an external fault.

@@ -1,5 +1,9 @@
 # Token Economy
 
+See `TOKEN_EFFICIENT_ORCHESTRATION.md` for the limits on cheapening work:
+what a delegate must return, when minimum effort is prohibited, what may never be
+pruned, and why an exit code is not a deterministic check.
+
 Concrete recipes for reducing token spend across master, delegated agent, and
 cross-agent work. Complement to `HARNESS_STRATEGY.md`: strategy says *what* to
 route, this file says *what saves measurable cost when you route*.

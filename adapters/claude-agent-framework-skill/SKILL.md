@@ -37,6 +37,7 @@ force-loading everything. Files live in the installed framework directory
 | Delegated-agent roles, contracts, anti-drift, lifecycle/cleanup | `AGENT_ORCHESTRATION.md` |
 | Coordinating another AI tool (Claude/Codex/etc.), comms plan, fallback | `CROSS_AGENT_COORDINATION.md` |
 | Token/cost decisions, model-tier mapping, prompt/output compression | `TOKEN_ECONOMY.md` |
+| Cost-minimising mandate in force; pruning context; retries against a metered dependency; what a delegate must return | `TOKEN_EFFICIENT_ORCHESTRATION.md` |
 | Copyable output templates (plan, ADR, spec, PR body, reports, briefs) | `TEMPLATES.md` |
 | Designing or triggering a skill | `SKILLS_CATALOG.md` |
 | Reusable, tool-neutral configuration patterns | `FRAMEWORK_PATTERNS.md` |
