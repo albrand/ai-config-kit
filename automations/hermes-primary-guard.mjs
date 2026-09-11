@@ -135,7 +135,11 @@ function probeOk(url) {
     const code = run(
       `curl -s -o /dev/null -w '%{http_code}' --max-time 40 -X POST ` +
         `-H 'Content-Type: application/json' -d ${JSON.stringify(body)} ` +
-        `${url.replace("/v1/models", "/v1/chat/completions")}`,
+        // aperture serves completions at the ROOT (/chat/completions), which is
+        // also what Hermes calls with its base_url; /v1/chat/completions is a
+        // 404 there, so the old probe marked GLM unavailable even with quota
+        // left (found 2026-09-11).
+        `${url.replace("/v1/models", "/chat/completions")}`,
       90_000,
     );
     return code === "200";
