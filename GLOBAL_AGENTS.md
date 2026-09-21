@@ -5,14 +5,14 @@ Use this as the user-level baseline for AI coding agents.
 <!-- delivery-first:begin -->
 **Delivery first (always-on; outranks every process rule in this file)** — the
 goal is a correct change running in production, fast. Merge authority belongs to
-the code, its focused tests, and a run of the changed workflow. Every other gate
-(Hermes, counterpart review, orchestration, evidence packaging) is advisory: fix
-a concrete defect it names, ignore objections about format or packaging, and
-never hold a merge waiting for its `accept`. Measured 2026-09-21: Hermes
+the code, its focused tests, and a run of the changed workflow. Hermes reviews every
+PR before merge, and a PR never merges while Hermes names a defect in it: fix
+it, then re-run on the same `--topic` until that defect is no longer named.
+Defects block. Hermes objections about evidence format, packaging or method,
+with no defect named, do not: note them and merge. Measured 2026-09-21: Hermes
 accepted 131 of 1,149 verdicts; 164 of 279 topics were never accepted, and the
-accepted ones took 7.4 rounds on average. Only auth/permissions, secrets, data
-migration or deletion, and a production release need one independent review
-before merge, and even there only a named defect blocks.
+accepted ones took 7.4 rounds on average, mostly over evidence, not bugs.
+Counterpart review and orchestration are advisory the same way.
 
 - One ticket, one PR. Never split a fix into several PRs unless the parts ship
   independently; each split multiplies reviews, screenshots and rebases.
