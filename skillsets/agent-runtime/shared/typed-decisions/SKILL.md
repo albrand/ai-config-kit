@@ -163,9 +163,11 @@ python3 $L report                                  # overturn rate per point, ti
   measured source with no measurement, text that looks like a secret. Fix the
   decision; don't route around the ledger.
 - **Hermes verdicts are imported automatically.** `import-hermes` reads the
-  fleet plugin's stored verdicts (read-only) each day. It resolves each
-  `accept` as overturned when a revise/reject on the same topic follows
-  within 7 days. That is a proxy, labelled as one.
+  fleet plugin's stored verdicts (read-only) each day. An `accept` with no
+  revise/reject on the same topic within 7 days resolves `held` (a labelled
+  proxy). An `accept` followed by an objection is only **flagged**. Stored
+  verdicts can't tell a real overturn from new work under a reused topic, so
+  `report` lists the flags. Resolve one when you know which it was.
 - The daily agent-hooks run imports, then fails `check` if the ledger is
   corrupt or nothing has been recorded for 14 days.
 

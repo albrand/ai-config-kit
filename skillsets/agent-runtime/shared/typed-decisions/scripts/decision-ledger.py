@@ -18,10 +18,11 @@ Commands:
            (--ref finds the one unresolved decision whose ref contains TEXT)
   import-hermes [--db PATH] [--window-days 7]
            read the fleet plugin's stored Hermes verdicts (read-only) as
-           decisions, and resolve each `accept`: overturned if a non-accept
-           verdict on the same topic follows within the window, held if none
-           does once the window has passed. That is a proxy, and the report
-           labels it as one.
+           decisions. An `accept` with no non-accept verdict on the same topic
+           within the window resolves `held` (a labelled proxy). An `accept`
+           followed by an objection is only FLAGGED: stored verdicts cannot
+           tell a real overturn from new work under a reused topic, so a
+           person or agent resolves it with evidence.
   report   [--point P] [--min 20]
   check    [--stale-days 14]   ledger parses, outcomes reference decisions,
                                and it is actually in use
@@ -203,7 +204,14 @@ def cmd_import_hermes(a):
     by_topic = {}
     for vid, at, topic, verdict, _ in rows:
         by_topic.setdefault(topic or "", []).append((at, vid, verdict))
-    resolved = []
+    # An objection after an accept is NOT written as an overturn. Reading the
+    # 16 such cases on 2026-09-21 showed the stored verdicts cannot tell a real
+    # overturn ("NOT validated before I reported it") from new work filed under
+    # a reused topic (the next promotion hop, a delta re-review) -- and the
+    # claim text does not separate them either. So those are flagged for a
+    # person or agent to resolve with evidence; only the silent case resolves.
+    flagged = flags(read_events()[0])
+    resolved, flags_new = [], []
     for topic, seq in by_topic.items():
         if not topic:
             continue  # no topic, no way to follow the decision forward
@@ -216,19 +224,25 @@ def cmd_import_hermes(a):
                      if dt.datetime.fromtimestamp(a2 / 1000, dt.timezone.utc) - t <= window]
             objection = next((x for x in later if x[2] != "accept"), None)
             if objection:
-                when = dt.datetime.fromtimestamp(objection[0] / 1000, dt.timezone.utc).date()
-                ev = {"type": "outcome", "id": did, "ts": now_iso(), "outcome": "overturned",
-                      "evidence": f"proxy: {objection[2]} on the same topic {when} (hermes-{objection[1]}), within {a.window_days}d"}
+                if did not in flagged:
+                    when = dt.datetime.fromtimestamp(objection[0] / 1000, dt.timezone.utc).date()
+                    flags_new.append({"type": "flag", "id": did, "ts": now_iso(),
+                                      "reason": f"{objection[2]} on the same topic {when} (hermes-{objection[1]}) "
+                                                f"within {a.window_days}d: overturn or new work? resolve by hand"})
+                    flagged.add(did)
             elif now - t > window:
                 ev = {"type": "outcome", "id": did, "ts": now_iso(), "outcome": "held",
                       "evidence": f"proxy: no non-accept verdict on the same topic within {a.window_days}d"}
-            else:
-                continue
-            resolved.append(ev)
-            outcomes[did] = ev
-    if new or resolved:
-        append(new + resolved)
-    print(f"import-hermes: {len(new)} new decision(s), {len(resolved)} outcome(s) from {len(rows)} stored verdict(s)")
+                resolved.append(ev)
+                outcomes[did] = ev
+    if new or resolved or flags_new:
+        append(new + resolved + flags_new)
+    print(f"import-hermes: {len(new)} new decision(s), {len(resolved)} held, {len(flags_new)} flagged for review, "
+          f"from {len(rows)} stored verdict(s)")
+
+
+def flags(events):
+    return {e["id"] for e in events if e.get("type") == "flag"}
 
 
 def cmd_report(a):
@@ -261,9 +275,12 @@ def cmd_report(a):
             if tier == "medium" and rate == 0:
                 notes.append(f"{point}/{answer}: medium tier never overturned in {r['resolved']} -- "
                              "candidate to act without the verify step (a human decision)")
-            if point == "hermes-review" and answer == "accept":
-                notes.append(f"hermes-review accept: {rate:.0%} of {r['resolved']} resolved accepts were followed by "
-                             "an objection on the same topic (proxy; topics are sometimes reused for new work)")
+    open_flags = [e for e in events if e.get("type") == "flag" and e["id"] not in outcomes
+                  and (not a.point or decisions.get(e["id"], {}).get("point") == a.point)]
+    if open_flags:
+        notes.append(f"{len(open_flags)} decision(s) flagged for review, unresolved -- resolve each with evidence:")
+        for e in open_flags[:20]:
+            notes.append(f"  {e['id']}: {e['reason']}")
     if bad:
         notes.append(f"{len(bad)} unparseable line(s): {bad[:5]}")
     for n in notes:
@@ -375,7 +392,9 @@ def falsify():
     run("import-hermes", "--db", db)  # idempotent
     d, o = index(read_events()[0])
     expect("hermes import is idempotent", len(d) == 4)
-    expect("accept followed by reject is overturned", o.get("hermes-1", {}).get("outcome") == "overturned")
+    expect("accept followed by reject is flagged, not auto-overturned",
+           "hermes-1" not in o and "hermes-1" in flags(read_events()[0]))
+    expect("flag is written once across imports", sum(1 for e in read_events()[0] if e.get("type") == "flag") == 1)
     expect("accept with no later objection is held", o.get("hermes-4", {}).get("outcome") == "held")
     expect("revise is not auto-resolved", "hermes-3" not in o)
 
