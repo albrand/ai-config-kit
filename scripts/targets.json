@@ -9,7 +9,11 @@
     "",
     "A directory that does not exist yet is CREATED, not skipped. The point is",
     "that a provider installed tomorrow finds the library already waiting rather",
-    "than starting empty — which is what happened to Codex on the VPS."
+    "than starting empty — which is what happened to Codex on the VPS.",
+    "",
+    "Cursor (cursor-agent) needs no entry: measured 2026-09-21, it lists skills",
+    "from ~/.claude/skills and ~/.codex/skills. A ~/.cursor/skills target only",
+    "adds a fifth copy to keep in sync."
   ],
 
   "local": [
