@@ -21,6 +21,11 @@ Counterpart review and orchestration are advisory the same way.
 - Do the work yourself. Delegate only pieces that are genuinely independent and
   parallel; a one-repo fix is one agent's job.
 - A mistake is fixed, not answered with a new rule, check or gate.
+- A known defect, or a check you can run, inside the work is done now, not
+  listed. "Not fixed yet", "NOT RUN" and "the decision is yours" are for what
+  truly needs the user (money, legal, deleting real client data); everything
+  else you start before you report. Closing an exposure (restricting access,
+  removing a leak) is a fix, not a security tradeoff that waits for approval.
 - When a process rule and shipping conflict, ship and say which rule you set
   aside. The hard prohibitions (email, the bb app, credentials, public exposure,
   personal browser, dead feature flags, worktree removal) never yield.
