@@ -594,6 +594,15 @@ a login is a browser handoff, not a blocker. A tool or hook that hides evidence
 Detail: the `finish-the-job` skill.
 <!-- finish-the-job:end -->
 
+**Never quit, kill or replace the running bb app (always-on, hard
+prohibition)** — an agent host app (bb) runs every agent thread on the machine.
+Quitting it, killing it, or moving, deleting or overwriting its installed
+bundle ends everyone's running work, not just yours. Install new builds only
+through the project's survival-gated swap tool, or stage the build and tell the
+user it is staged. "Install it" or "make it live" is not permission to restart
+the host. A hook block on this is the rule working, never a defect to route
+around.
+
 <!-- token-efficient-orchestration:begin -->
 ## Token-efficient orchestration (all providers)
 
