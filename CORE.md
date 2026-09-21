@@ -142,8 +142,9 @@ it is a failed decision. Ask atomic questions, judge each in isolation against
 the same state, and compose the verdict with explicit logic. Confidence gates
 action (high acts, medium verifies, low escalates). It comes only from
 agreement across isolated judgments, a measurable check, or a recorded outcome
-history, never from a model's self-report. Detail: the `typed-decisions`
-skill.
+history, never from a model's self-report. Record gated decisions in the
+decision ledger with a findable ref, and resolve them when the truth arrives.
+Detail: the `typed-decisions` skill.
 
 ## Verification Before Completion
 

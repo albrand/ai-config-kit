@@ -73,7 +73,9 @@ Support files:
   into every configured agent directory by `scripts/publish.mjs`, including the
   reasoning-invariant `verified-qa-e2e` evidence gate and its regression
   fixtures, and `typed-decisions` (typed, atomic, isolated decisions gated on
-  measured confidence). Bundled references, scripts, and tests publish with
+  measured confidence). It bundles `scripts/decision-ledger.py`, an
+  append-only per-machine ledger of gated decisions and their outcomes, which
+  also imports stored Hermes verdicts read-only. Bundled references, scripts, and tests publish with
   each skill. `publish.mjs` refuses (exit 3) to overwrite a copy edited in
   place, meaning one matching no version in git history, unless `--force`
   backs it up first.

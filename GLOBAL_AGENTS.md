@@ -496,5 +496,7 @@ confidence — high acts, medium verifies, low escalates — and take confidence
 only from agreement across isolated judgments, a measurable check, or a recorded
 outcome history, never from a model's self-report. Typed is not correct: high
 confidence still gets the checks irreversible, security and release work
-require. Full detail: the `typed-decisions` skill.
+require. Record each gated decision in the decision ledger with a findable
+`--ref`, and resolve it (held or overturned) when the truth arrives, even when
+the decision was another agent's. Full detail: the `typed-decisions` skill.
 <!-- typed-decisions:end -->
