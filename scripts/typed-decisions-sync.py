@@ -126,8 +126,10 @@ TARGETS = {
     "finish-the-job": homes("finish-the-job"),
     "scope-advisor": [f"{KIT}/skillsets/scope-advisory/codex/scope-advisor/SKILL.md"] + homes("scope-advisor"),
     # shared kit skills reach every home through scripts/publish.mjs
-    "reviewing-with-an-agent": [f"{KIT}/skillsets/agent-runtime/shared/reviewing-with-an-agent/SKILL.md"],
-    "delegating-to-glm": [f"{KIT}/skillsets/agent-runtime/shared/delegating-to-glm/SKILL.md"],
+    "reviewing-with-an-agent": [f"{KIT}/skillsets/agent-runtime/shared/reviewing-with-an-agent/SKILL.md"]
+                               + homes("reviewing-with-an-agent"),
+    "delegating-to-glm": [f"{KIT}/skillsets/agent-runtime/shared/delegating-to-glm/SKILL.md"]
+                         + homes("delegating-to-glm"),
     "pr-review": [f"{KIT}/skillsets/pr-review/codex/high-signal-pr-review/SKILL.md",
                   f"{KIT}/skillsets/pr-review/claude/commands/code-review.md",
                   "~/.claude/commands/code-review.md"] + homes("high-signal-pr-review"),
@@ -186,26 +188,30 @@ def jobs():
             yield key, p, skill_block(key)
 
 
-def run(check, resolve=H):
+def run(check, resolve=H, say=print):
     bad = 0
     for key, p, want in jobs():
         if p is None:
-            print(f"MISSING-TARGETS {key}"); bad += 1; continue
+            say(f"MISSING-TARGETS {key}"); bad += 1; continue
         path = resolve(p)
         if not os.path.exists(path):
-            print(f"NO-FILE {key} {p}"); bad += 1; continue
+            say(f"NO-FILE {key} {p}"); bad += 1; continue
         text = open(path).read()
         new = upsert(text, want, key == "global")
         if new == text:
             continue
         if check:
-            print(f"STALE   {key:24} {p}"); bad += 1
+            say(f"STALE   {key:24} {p}"); bad += 1
         else:
-            open(path, "w").write(new); print(f"written {key:24} {p}")
+            open(path, "w").write(new); say(f"written {key:24} {p}")
     for h in HOMES:
         if not os.path.exists(resolve(f"{h}/typed-decisions/SKILL.md")):
-            print(f"NO-SKILL {h}/typed-decisions"); bad += 1
+            say(f"NO-SKILL {h}/typed-decisions"); bad += 1
     return bad
+
+
+def quiet(_msg):
+    """Sandbox runs report through the case verdicts, not raw lines."""
 
 
 def falsify():
@@ -224,22 +230,29 @@ def falsify():
                 os.makedirs(os.path.dirname(resolve(f"{h}/typed-decisions/SKILL.md")), exist_ok=True)
                 shutil.copy(src, resolve(f"{h}/typed-decisions/SKILL.md"))
         failures = []
-        if run(True, resolve) != 0:
+        base = run(True, resolve, quiet)
+        print(f"falsify: sandbox mirror of live tree -> {base} gap(s) (want 0)")
+        if base != 0:
             failures.append("sandbox mirror of the live tree is not green")
-        for label, p in [("global block removed from one file", GLOBALS[3]),
-                         ("global block reworded in one file", GLOBALS[0]),
-                         ("skill block removed from one copy", TARGETS["meaningful-tests"][0])]:
+        cases = [("global block removed from one file", GLOBALS[3]),
+                 ("global block reworded in one file", GLOBALS[0]),
+                 ("skill block removed from one copy", TARGETS["meaningful-tests"][0])]
+        for label, p in cases:
             f = resolve(p)
             orig = open(f).read()
             damaged = (orig.replace("never from a model's self-report", "from the model")
                        if "reworded" in label else PAT.sub("", orig))
             assert damaged != orig, f"falsify case did not apply: {label}"
             open(f, "w").write(damaged)
-            if run(True, resolve) == 0:
+            got = run(True, resolve, quiet)
+            print(f"falsify: {label} -> {got} gap(s) (want >0)")
+            if got == 0:
                 failures.append(f"{label}: check stayed green")
             open(f, "w").write(orig)
         os.remove(resolve(f"{HOMES[0]}/typed-decisions/SKILL.md"))
-        if run(True, resolve) == 0:
+        got = run(True, resolve, quiet)
+        print(f"falsify: skill missing from one home -> {got} gap(s) (want >0)")
+        if got == 0:
             failures.append("skill missing from one home: check stayed green")
         for msg in failures:
             print("FALSIFY-FAIL " + msg)
@@ -252,7 +265,8 @@ def falsify():
 if __name__ == "__main__":
     if "--falsify" in sys.argv:
         live = run(True)
-        sys.exit(1 if (live or falsify()) else 0)
+        print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
+        sys.exit(1 if (falsify() or live) else 0)
     bad = run("--check" in sys.argv)
     if not bad:
         print("typed-decisions: in place everywhere")
