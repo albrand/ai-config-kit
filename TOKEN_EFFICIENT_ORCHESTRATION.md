@@ -64,6 +64,15 @@ worker reporting which model it ran is the one field that cannot settle "did the
 cheap tier cause this?" — so the orchestrator stamps the assignment at dispatch
 and never trusts self-report for it.
 
+**Amendment — a decision comes back typed.** When the delegated job is a
+decision (classify, triage, pass/fail, does this reproduce), the brief declares
+the answer space and the delegate returns
+`{ question, answer, evidence, confidence_source }`. The answer must come from
+that space. `confidence_source` is `agreement`, `check` or `history`, plus the
+measurement. An out-of-space answer, or a confidence that cites only the
+delegate's own opinion, is a failed delegate. See the `typed-decisions`
+skill.
+
 **Amendment — parsing logs is diagnosis, not clerical work.** "Do not parse raw
 terminal logs" applies to routine output. When diagnosing, the log *is* the
 evidence: stage timings, row counts, and byte counts identified a real

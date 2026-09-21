@@ -72,7 +72,16 @@ Support files:
 - `skillsets/agent-runtime/`: provider-neutral shared runtime skills published
   into every configured agent directory by `scripts/publish.mjs`, including the
   reasoning-invariant `verified-qa-e2e` evidence gate and its regression
-  fixtures. Bundled references, scripts, and tests publish with each skill.
+  fixtures, and `typed-decisions` (typed, atomic, isolated decisions gated on
+  measured confidence). Bundled references, scripts, and tests publish with
+  each skill. `publish.mjs` refuses (exit 3) to overwrite a copy edited in
+  place, meaning one matching no version in git history, unless `--force`
+  backs it up first.
+- `scripts/typed-decisions-sync.py`: keeps the typed-decisions contract where
+  every model reads it. It covers the always-on block in each global
+  instruction file, a skill-specific block in every copy of each
+  decision-owning skill, and the skill in every agent home. `--check` fails on
+  any gap; `--falsify` proves the check can fail.
 - `adapters/`: tool-specific bootstrap files that point at the framework.
 - `adapters/BB.md`: thin bb bootstrap for a workspace `.bb/AGENTS.md`; loads `CORE.md` plus task-relevant docs and documents bb's own `AGENTS.md` and `.bb/skills/` discovery.
 - `adapters/claude-agent-framework-skill/`: optional Claude Code install path — the `agent-framework` router skill (task-to-file map plus load profiles) that pairs with an always-on `CORE.md` import. Alternative to the eager `adapters/CLAUDE.md` import list, not a replacement for it.

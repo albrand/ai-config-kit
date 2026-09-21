@@ -1,6 +1,24 @@
 # Proposal — typed decision primitives (from TypeSafe Jev) — 2026-09-21
 
-**Status: proposed, nothing applied.**
+**Status: items 1–3 applied 2026-09-21. Item 4 waits until the gates see
+real use. Item 5 needs the owner's decision.**
+
+Applied as:
+
+- the `typed-decisions` shared skill, published to every agent home, local
+  and VPS;
+- an always-on block in every global instruction file;
+- a "Typed decisions here" block in each decision-owning skill
+  (meaningful-tests, finish-the-job, scope-advisor, reviewing-with-an-agent,
+  delegating-to-glm, high-signal-pr-review and `/code-review`,
+  adversarial-security-sweep, plan-arbiter, hermes-assisted-pr-review,
+  harness-routing);
+- the typed-decision amendment in TOKEN_EFFICIENT_ORCHESTRATION protocol 1;
+- `scripts/typed-decisions-sync.py --check --falsify`, run daily by the
+  agent-hooks checks.
+
+`issue-triage-state-machine` has no skill file yet, so the triage rule lives
+in the `typed-decisions` skill only.
 
 ## Source
 

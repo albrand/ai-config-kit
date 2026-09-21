@@ -98,3 +98,14 @@ Return the verdict from `references/plan-arbitration-contract.md`:
   or release decisions; escalate instead.
 - Treat Builder.io patterns as evidence; challenge them for current fit. MIT
   provenance is mandatory wherever a concept is used.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+The lane is pick-one from the declared candidates, never a lane invented
+mid-decision. Score each candidate on separate yes/no questions: capability
+verified? within budget? disjoint write ownership? a verification path that
+doesn't rely on the lane's own report? Selection is computed from those
+answers. A tie or an unknown escalates to the coordinator or the user; it
+never falls to a default lane. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

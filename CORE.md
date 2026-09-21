@@ -133,6 +133,18 @@ router/index exists, match the task language against it before assuming no
 specialized skill applies. On a gear change (new repo, workflow, or objective),
 drop stale context and re-ground in current evidence.
 
+## Typed Decisions
+
+Most agent steps are decisions (route, triage, scope, risk, severity,
+pass/fail, done, escalate), not writing. Declare the answer space before asking
+(yes/no, pick-one, or a level whose levels are written out). An answer outside
+it is a failed decision. Ask atomic questions, judge each in isolation against
+the same state, and compose the verdict with explicit logic. Confidence gates
+action (high acts, medium verifies, low escalates). It comes only from
+agreement across isolated judgments, a measurable check, or a recorded outcome
+history, never from a model's self-report. Detail: the `typed-decisions`
+skill.
+
 ## Verification Before Completion
 
 - Run the strongest practical validation for the changed surface, selected

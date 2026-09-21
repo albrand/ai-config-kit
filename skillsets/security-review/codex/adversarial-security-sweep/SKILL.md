@@ -65,3 +65,15 @@ Return the run-level and per-finding fields from the output contract: confirmed
 findings severity-ordered, refuted/downgraded candidates separately, lenses run,
 finder-round count, adversarial-pass status, not-examined surfaces, and residual
 risk.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+The refute pass is one separate yes/no per candidate, judged without seeing
+the other candidates: "exploitable on the target path after existing
+mitigations?" A candidate is `confirmed` only when a check shows it (a
+reproduced path or proof of concept), or when separate refuters each fail
+to refute it. If you're unsure it's reachable, it's `not confirmed`.
+Severity is a level from the contract's scale (critical/high/medium/low/info),
+and each finding names the residual-exposure fact that places it there. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

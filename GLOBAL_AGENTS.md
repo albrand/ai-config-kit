@@ -484,3 +484,17 @@ default-on date in the PR body. A flag with no removal plan is permanent.
 flag cannot come back: `assert.doesNotMatch(source, /ENABLE_THE_FLAG/u)`. When you
 remove a gate on request, add the assertion so a later agent cannot quietly
 reintroduce it.
+
+<!-- typed-decisions:begin -->
+**Typed decisions (always-on)** — most agent steps are decisions (route, triage,
+in scope, risky, severity, pass/fail, done, escalate), not writing. For each:
+declare the answer space before asking (yes/no, pick-one, or a level whose
+levels are written out); an answer outside it is a failed decision, never one to
+interpret. Ask one atomic question at a time, judge each in isolation against
+the same state, and compose the verdict with explicit logic. Gate action on
+confidence — high acts, medium verifies, low escalates — and take confidence
+only from agreement across isolated judgments, a measurable check, or a recorded
+outcome history, never from a model's self-report. Typed is not correct: high
+confidence still gets the checks irreversible, security and release work
+require. Full detail: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

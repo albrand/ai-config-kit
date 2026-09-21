@@ -86,3 +86,21 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
 ## Output
 
 Use the operator close-out shape from `pr-review-output-contract.md`. Findings first, then open questions, operator validation, review scope, dropped candidates when useful, and residual risk. Do not copy operator validation into PR surfaces.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+Judge each candidate finding separately, against the diff and ticket, with
+two typed questions:
+
+1. Finding class (pick-one): `compile-or-runtime-break | wrong-changed-path-behavior
+   | broken-contract (auth/data/security/API/env) | missing-required-validation
+   | scoped-instruction-violation | none`. `none` is dropped. That is the
+   high-signal filter, applied as a fixed list rather than a mood.
+2. "Reproduces on the changed path?" (yes/no), backed by evidence. No
+   evidence → not reported.
+
+The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
+none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
+grade it as a whole. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

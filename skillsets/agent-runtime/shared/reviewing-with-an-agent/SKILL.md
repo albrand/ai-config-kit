@@ -134,3 +134,17 @@ The point of the round is the finding you did not want. If a reviewer says a fix
 is `PARTIAL` and you can see why, fix it rather than arguing the label — and if
 you disagree on evidence, say so in the same thread, where the disagreement is
 on the record and the reviewer can answer it.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+Ask the reviewer for typed output, and say so in the brief:
+
+- verdict: pick-one `accept | revise | reject`;
+- per finding: a separate yes/no, "reproduces on the changed path?", with
+  the evidence (command, file:line, observed output).
+
+"Looks mostly fine" is outside that space: re-ask in the same conversation,
+don't interpret it. Several reviewers who each reached the same answer on
+their own is a confidence source. A reviewer saying it is "confident" is not. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

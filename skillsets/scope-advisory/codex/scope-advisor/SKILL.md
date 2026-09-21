@@ -23,3 +23,19 @@ instruction hierarchy and the task's existing authorization boundaries.
 Advice is read-only. This skill cannot approve scope expansion, mutate files,
 or invoke other agents; the coordinator stays responsible for scope and
 completion.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+Don't judge scope as a whole. For each requirement in the scope record, answer
+three separate yes/no questions against the record (not the conversation):
+`covered?`, `added-unrequested?`, `rests on an assumption only the user can
+settle?`. The verdict is then computed:
+
+- any `covered = no` or `added-unrequested = yes` → `revise`
+- else any material user-only assumption → `clarification`
+- else → `aligned`
+
+Any other verdict is outside the declared space and counts as a failed
+check: re-run it. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

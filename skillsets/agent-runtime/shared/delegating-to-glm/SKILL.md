@@ -80,3 +80,13 @@ Verify with `bb provider list`. Note it only proves bb *knows* the provider;
 `hosts.providerCliStatus` is what proves a CLI is installed on a given machine,
 and it does not cover ACP agents at all, so on a remote machine treat an ACP
 provider as unverifiable.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+When the delegated job is a decision (classify, triage, pass/fail, does this
+reproduce), put the declared answer space in the brief and require
+`{question, answer, evidence, confidence_source}` back. An answer outside the
+space, or a confidence resting only on the delegate's own opinion, is a
+failed delegate. Re-ask or escalate. Contract: the `typed-decisions` skill.
+<!-- typed-decisions:end -->

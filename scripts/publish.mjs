@@ -17,9 +17,12 @@
 //   node publish.mjs              publish locally, report what changed
 //   node publish.mjs --check      report differences without writing
 //   node publish.mjs --remote vps also publish to a machine over ssh
+//   node publish.mjs --force      also replace copies edited in place (backed up first)
 //
 // Publishing is idempotent and one-directional: the repo is the source of
-// truth, and a target that has drifted is overwritten. Edit lessons here.
+// truth. A target holding an earlier library version is updated; a target
+// edited in place (matches no version in git history) is refused and reported,
+// exit 3, until it is back-ported or --force backs it up and replaces it.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -50,6 +53,93 @@ const OVERLAY = loadOverlay();
 
 const args = new Set(process.argv.slice(2));
 const check = args.has("--check");
+const force = args.has("--force");
+
+const md5 = (buf) => createHash("md5").update(buf).digest("hex");
+
+/**
+ * Every version of a resource the library has ever published, as rendered hashes.
+ *
+ * "Differs from the library" used to mean "overwrite", which cannot tell an
+ * older published copy (safe to replace) from an edit someone made in place
+ * (destroyed with nobody told). On 2026-09-21 an in-place orchestrator-lessons
+ * edit was one publish away from being erased in all four homes. A copy whose
+ * hash matches a version in git history is stale; anything else is an edit.
+ */
+const knownCache = new Map();
+function knownVersions(resource) {
+  if (knownCache.has(resource.absolute)) return knownCache.get(resource.absolute);
+  const known = new Set([md5(renderedResource(resource))]);
+  const rel = path.relative(ROOT, resource.absolute);
+  try {
+    const shas = execFileSync("git", ["-C", ROOT, "log", "--format=%H", "--", rel], {
+      encoding: "utf8",
+    }).split("\n").filter(Boolean);
+    for (const sha of shas) {
+      let body;
+      try {
+        body = execFileSync("git", ["-C", ROOT, "show", `${sha}:${rel}`]);
+      } catch {
+        continue;
+      }
+      known.add(md5(body));
+      if (TEXT_RESOURCE_EXTENSIONS.has(path.extname(rel))) {
+        known.add(md5(Buffer.from(substitute(body.toString("utf8"), OVERLAY).text, "utf8")));
+      }
+    }
+  } catch {
+    // No git history available: only the current version is known, so every
+    // differing copy is treated as an edit. Refusing is the safe direction.
+  }
+  knownCache.set(resource.absolute, known);
+  return known;
+}
+
+/**
+ * The same question when hashes cannot answer it: a copy rendered under an
+ * older overlay value (a placeholder whose path moved) matches no current
+ * rendering, yet it is still a library version. Match it against every
+ * historical source with each {{PLACEHOLDER}} as a one-line wildcard.
+ */
+const templateCache = new Map();
+function historicTemplates(resource) {
+  if (templateCache.has(resource.absolute)) return templateCache.get(resource.absolute);
+  const rel = path.relative(ROOT, resource.absolute);
+  const texts = [fs.readFileSync(resource.absolute, "utf8")];
+  try {
+    const shas = execFileSync("git", ["-C", ROOT, "log", "--format=%H", "--", rel], {
+      encoding: "utf8",
+    }).split("\n").filter(Boolean);
+    for (const sha of shas) {
+      try {
+        texts.push(execFileSync("git", ["-C", ROOT, "show", `${sha}:${rel}`], { encoding: "utf8" }));
+      } catch {
+        // file absent at that commit
+      }
+    }
+  } catch {
+    // no history: current source only
+  }
+  const patterns = texts
+    .filter((t) => /\{\{[A-Z0-9_]+\}\}/.test(t))
+    .map((t) => new RegExp(
+      "^" + t.split(/\{\{[A-Z0-9_]+\}\}/).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\n]*?") + "$",
+    ));
+  templateCache.set(resource.absolute, patterns);
+  return patterns;
+}
+
+function isKnownVersion(resource, hash, fetchBody) {
+  if (knownVersions(resource).has(hash)) return true;
+  if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(resource.relative))) return false;
+  const patterns = historicTemplates(resource);
+  if (patterns.length === 0) return false;
+  const body = fetchBody().toString("utf8");
+  return patterns.some((re) => re.test(body));
+}
+
+const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
+const edited = [];
 
 const lessons = () => collectLessons(ROOT);
 
@@ -152,6 +242,16 @@ function publishLocal(list) {
         const next = renderedResource(resource);
         const current = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
         if (current?.equals(next)) continue;
+        if (current && !isKnownVersion(resource, md5(current), () => current)) {
+          edited.push(`${target.label}/${lesson.name}/${resource.relative}`);
+          if (!force) continue;
+          if (!check) {
+            const backup = path.join(os.homedir(), ".cache", "agent-library", "pre-publish", STAMP,
+              target.agent, lesson.name, resource.relative);
+            fs.mkdirSync(path.dirname(backup), { recursive: true });
+            fs.writeFileSync(backup, current);
+          }
+        }
         lessonChanged = true;
         if (check) continue;
         fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -228,13 +328,21 @@ function publishRemote(list, host) {
         const have = existing.get(target);
 
         if (have === want) continue;
+        let backup = "";
+        if (have && !isKnownVersion(resource, have,
+          () => execFileSync("ssh", [host, `cat ${target}`]))) {
+          edited.push(`${host}:${target}`);
+          if (!force) continue;
+          const saved = `~/.cache/agent-library/pre-publish/${STAMP}/${target.replace(/^~\//, "")}`;
+          backup = `mkdir -p ${path.posix.dirname(saved)} && cp ${target} ${saved} && `;
+        }
         lessonChanged = true;
         if (!have) lessonExisted = false;
         else drifted.push(`${host}:${target}`);
         if (check) continue;
 
         const mode = (fs.statSync(resource.absolute).mode & 0o111) !== 0 ? "755" : "644";
-        const script = `mkdir -p ${path.posix.dirname(target)} && base64 -d > ${target} && chmod ${mode} ${target}`;
+        const script = `${backup}mkdir -p ${path.posix.dirname(target)} && base64 -d > ${target} && chmod ${mode} ${target}`;
         execFileSync("ssh", [host, script], {
           input: body.toString("base64"),
           stdio: ["pipe", "ignore", "inherit"],
@@ -247,11 +355,9 @@ function publishRemote(list, host) {
   }
 
   if (drifted.length > 0) {
-    console.warn(
-      `\nDrift: ${drifted.length} remote copy(ies) differed from the library and ${check ? "would be" : "were"} replaced:`,
+    console.log(
+      `\n${drifted.length} remote copy(ies) held an earlier library version and ${check ? "would be" : "were"} updated.`,
     );
-    for (const d of drifted) console.warn(`  · ${d}`);
-    console.warn("If any of that was a real edit, recover it from the machine before the next run.\n");
   }
   return changes;
 }
@@ -296,6 +402,18 @@ if (remoteFlag !== -1) {
   changes.push(...publishRemote(list, host));
 }
 
+if (edited.length > 0) {
+  console.warn(
+    force
+      ? `\nEdited in place — backed up to ~/.cache/agent-library/pre-publish/${STAMP}/ on each machine, then overwritten:`
+      : "\nEdited in place — matches no version in the library's history, so NOT overwritten:",
+  );
+  for (const e of edited) console.warn(`  · ${e}`);
+  if (!force) {
+    console.warn("Back-port the edit into the repo, or rerun with --force to back it up and replace it.\n");
+  }
+}
+
 console.log(`${list.length} lesson(s) validated.`);
 if (changes.length === 0) {
   console.log("Everything already up to date.");
@@ -303,3 +421,5 @@ if (changes.length === 0) {
   console.log(check ? "Would change:" : "Published:");
   for (const c of changes) console.log(`  ${c}`);
 }
+
+if (edited.length > 0 && !force) process.exit(3);
