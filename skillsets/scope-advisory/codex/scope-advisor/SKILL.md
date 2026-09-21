@@ -38,4 +38,6 @@ settle?`. The verdict is then computed:
 
 Any other verdict is outside the declared space and counts as a failed
 check: re-run it. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point scope-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

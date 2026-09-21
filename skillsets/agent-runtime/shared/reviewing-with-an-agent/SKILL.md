@@ -147,4 +147,6 @@ Ask the reviewer for typed output, and say so in the brief:
 "Looks mostly fine" is outside that space: re-ask in the same conversation,
 don't interpret it. Several reviewers who each reached the same answer on
 their own is a confidence source. A reviewer saying it is "confident" is not. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point review-finding` per finding), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

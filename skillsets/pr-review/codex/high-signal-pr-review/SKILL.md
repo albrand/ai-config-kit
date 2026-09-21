@@ -157,4 +157,6 @@ two typed questions:
 The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
 none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
 grade it as a whole. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point review-finding` per finding and `--point pr-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

@@ -154,7 +154,9 @@ confidence — high acts, medium verifies, low escalates — and take confidence
 only from agreement across isolated judgments, a measurable check, or a recorded
 outcome history, never from a model's self-report. Typed is not correct: high
 confidence still gets the checks irreversible, security and release work
-require. Full detail: the `typed-decisions` skill.
+require. Record each gated decision in the decision ledger with a findable
+`--ref`, and resolve it (held or overturned) when the truth arrives, even when
+the decision was another agent's. Full detail: the `typed-decisions` skill.
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.
@@ -165,9 +167,26 @@ PAT = re.compile(r"<!-- typed-decisions:begin -->.*?<!-- typed-decisions:end -->
 ANCHOR = "<!-- token-efficient-orchestration:end -->"
 
 
+# Ledger point each skill records to; see the typed-decisions skill, section 9.
+RECORD = {
+    "meaningful-tests": "`--point test-verdict`, one record per goal",
+    "finish-the-job": "`--point done` with the computed answer",
+    "scope-advisor": "`--point scope-verdict`",
+    "reviewing-with-an-agent": "`--point review-finding` per finding",
+    "delegating-to-glm": "the delegate's decision under its own point",
+    "pr-review": "`--point review-finding` per finding and `--point pr-verdict`",
+    "security-sweep": "`--point security-finding` per candidate",
+    "plan-arbiter": "`--point route`",
+    "hermes-assisted": "nothing by hand: Hermes verdicts are imported daily",
+    "harness-routing": "`--point route`",
+}
+
+
 def skill_block(key):
+    record = (f"\n\nRecord it in the decision ledger ({RECORD[key]}), with a `--ref` a later agent "
+              "can find, and resolve it when the truth arrives.")
     return ("<!-- typed-decisions:begin -->\n## Typed decisions here\n\n"
-            + SECTIONS[key] + " " + FOOT + "\n<!-- typed-decisions:end -->")
+            + SECTIONS[key] + " " + FOOT + record + "\n<!-- typed-decisions:end -->")
 
 
 def upsert(text, want, is_global):

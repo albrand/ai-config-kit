@@ -61,4 +61,6 @@ reproduced path or proof of concept), or when separate refuters each fail
 to refute it. If you're unsure it's reachable, it's `not confirmed`.
 Severity is a level from the contract's scale (critical/high/medium/low/info),
 and each finding names the residual-exposure fact that places it there. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point security-finding` per candidate), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

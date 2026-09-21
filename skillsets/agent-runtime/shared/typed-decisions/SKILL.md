@@ -91,10 +91,10 @@ is a control that never fires.
 - **Check:** a target-state read that settles it (file contents, test on
   the changed path, remote SHA, HTTP status). A check that settles the
   question beats any number of judges.
-- **Outcome history:** a log of past decisions at this point and whether
-  each held up (finding confirmed/refuted, triage bounced back). This is the
-  only honest way to tune thresholds. Until one exists, thresholds are human
-  choices and must be labelled that way.
+- **Outcome history:** the decision ledger (below), which records past
+  decisions at this point and whether each held up. This is the only honest
+  way to tune thresholds. Until a row has enough resolved decisions,
+  thresholds are human choices and must be labelled that way.
 
 Humans set the thresholds and the acceptable risk. The agent never lowers a
 threshold to get a decision through.
@@ -134,6 +134,52 @@ only the delegate's own opinion, is a failed delegate. Re-ask or escalate;
 don't interpret. This extends "a delegate returns measurements, not a
 verdict": the answer may be a verdict only when it arrives with its
 measurement.
+
+## 9. Record it: the decision ledger
+
+A gated decision nobody records can never be checked. Record it when you make
+it, and resolve it when the truth arrives, which is often in a later session
+or by a different agent. The ledger is append-only JSON lines at
+`~/.local/state/agent-decisions/ledger.jsonl`, per machine.
+
+```sh
+L=~/.agents/skills/typed-decisions/scripts/decision-ledger.py
+python3 $L record --point test-verdict --answer PASS --space "PASS|FAIL|BLOCKED|NOT RUN" \
+  --source check --tier high --measurement "persona completed signup, read at target" \
+  --ref "repo@<sha> signup"                        # prints the decision id
+python3 $L resolve --ref "repo@<sha> signup" --point test-verdict \
+  --outcome overturned --evidence "signup broken for the same persona on <sha>"
+python3 $L report                                  # overturn rate per point, tier, answer
+```
+
+- **Always put a `--ref` a later agent can find**, such as the PR number,
+  SHA, ticket or topic. Resolving goes by ref, since nobody remembers ids.
+- **Resolve when you learn the truth, even about someone else's decision.**
+  A finding later refuted, a PASS that later broke, a triage that bounced
+  back, a scope verdict the user rejected: each is an `overturned`. A decision
+  the next step relied on without trouble is `held`.
+- **It refuses what the contract forbids** (exit 2): an answer outside the
+  declared space, `--source none` with tier high/medium (a self-report), a
+  measured source with no measurement, text that looks like a secret. Fix the
+  decision; don't route around the ledger.
+- **Hermes verdicts are imported automatically.** `import-hermes` reads the
+  fleet plugin's stored verdicts (read-only) each day. It resolves each
+  `accept` as overturned when a revise/reject on the same topic follows
+  within 7 days. That is a proxy, labelled as one.
+- The daily agent-hooks run imports, then fails `check` if the ledger is
+  corrupt or nothing has been recorded for 14 days.
+
+| Decision point | `--point` | Answer space |
+| --- | --- | --- |
+| Test verdict per goal | `test-verdict` | `PASS\|FAIL\|BLOCKED\|NOT RUN` |
+| Review finding | `review-finding` | `confirmed\|refuted` |
+| PR review verdict | `pr-verdict` | `APPROVE\|REQUEST_CHANGES\|COMMENT` |
+| Security candidate | `security-finding` | `confirmed\|not-confirmed` |
+| Scope verdict | `scope-verdict` | `aligned\|revise\|clarification` |
+| Lane / model route | `route` | the declared lanes |
+| Done / stop | `done` | `done\|not-done\|blocked` |
+| Triage | `triage` | `needs-info\|ready-for-agent\|ready-for-human\|wontfix` |
+| Hermes review (imported) | `hermes-review` | `accept\|revise\|reject` |
 
 ## Where this already applies
 
