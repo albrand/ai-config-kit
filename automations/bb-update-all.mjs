@@ -180,10 +180,10 @@ console.log(results.map((r) => `  ${r}`).join("\n") || "  (nothing to report)");
 if (problems.length > 0) {
   console.error(`\nUPDATE PROBLEMS\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   try {
-    execFileSync("osascript", [
-      "-e",
-      'display notification "One or more agent CLIs could not be updated. See the run output." ' +
-        'with title "bb update failed" sound name "Basso"',
+    execFileSync(`${process.env.HOME}/.local/bin/bb-notify`, [
+      "bb update failed",
+      "One or more agent CLIs could not be updated. See the run output.",
+      "bb-update-all",
     ]);
   } catch {
     /* the exit code carries it */

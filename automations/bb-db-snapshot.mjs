@@ -102,9 +102,10 @@ function main() {
       ].join("\n") + "\n",
     );
     try {
-      execFileSync("osascript", [
-        "-e",
-        'display notification "Projects or threads disappeared from bb.db. A pre-loss snapshot exists." with title "bb data loss detected" sound name "Basso"',
+      execFileSync(`${process.env.HOME}/.local/bin/bb-notify`, [
+        "bb data loss detected",
+        "Projects or threads disappeared from bb.db. A pre-loss snapshot exists.",
+        "bb-db-snapshot",
       ]);
     } catch {
       /* the stdout line is the record that matters */

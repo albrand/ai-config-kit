@@ -253,10 +253,10 @@ if (problems.length === 0) {
 } else {
   console.error(`\nREMOTE UPDATE PATH BROKEN\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   try {
-    execFileSync("osascript", [
-      "-e",
-      'display notification "Remote agents will not be able to self-update. See the automation run." ' +
-        'with title "bb update path broken" sound name "Basso"',
+    execFileSync(`${process.env.HOME}/.local/bin/bb-notify`, [
+      "bb update path broken",
+      "Remote agents will not be able to self-update. See the automation run.",
+      "bb-remote-update-health",
     ]);
   } catch {
     // A missing notification must not mask the failure; the exit code carries it.
