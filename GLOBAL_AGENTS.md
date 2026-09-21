@@ -17,7 +17,9 @@ Counterpart review and orchestration are advisory the same way.
 - One ticket, one PR. Never split a fix into several PRs unless the parts ship
   independently; each split multiplies reviews, screenshots and rebases.
 - Precision comes from reading the failing path and reproducing it before
-  editing, and exercising the fix after, not from more review rounds.
+  editing, and exercising the fix after, not from more review rounds. After a
+  fix, re-run only the tests that cover it; the full suite runs once, on the
+  final candidate. Reuse one worktree per task, never a fresh one per re-run.
 - Do the work yourself. Delegate only pieces that are genuinely independent and
   parallel; a one-repo fix is one agent's job.
 - A mistake is fixed, not answered with a new rule, check or gate.
