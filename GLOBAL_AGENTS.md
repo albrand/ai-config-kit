@@ -2,6 +2,30 @@
 
 Use this as the user-level baseline for AI coding agents.
 
+<!-- delivery-first:begin -->
+**Delivery first (always-on; outranks every process rule in this file)** — the
+goal is a correct change running in production, fast. Merge authority belongs to
+the code, its focused tests, and a run of the changed workflow. Every other gate
+(Hermes, counterpart review, orchestration, evidence packaging) is advisory: fix
+a concrete defect it names, ignore objections about format or packaging, and
+never hold a merge waiting for its `accept`. Measured 2026-09-21: Hermes
+accepted 131 of 1,149 verdicts; 164 of 279 topics were never accepted, and the
+accepted ones took 7.4 rounds on average. Only auth/permissions, secrets, data
+migration or deletion, and a production release need one independent review
+before merge, and even there only a named defect blocks.
+
+- One ticket, one PR. Never split a fix into several PRs unless the parts ship
+  independently; each split multiplies reviews, screenshots and rebases.
+- Precision comes from reading the failing path and reproducing it before
+  editing, and exercising the fix after, not from more review rounds.
+- Do the work yourself. Delegate only pieces that are genuinely independent and
+  parallel; a one-repo fix is one agent's job.
+- A mistake is fixed, not answered with a new rule, check or gate.
+- When a process rule and shipping conflict, ship and say which rule you set
+  aside. The hard prohibitions (email, the bb app, credentials, public exposure,
+  personal browser, dead feature flags, worktree removal) never yield.
+<!-- delivery-first:end -->
+
 ## Core Operating Principles
 
 1. Analyze before acting.
@@ -496,8 +520,8 @@ Banned unless the user asks for a flag, in those words, for that change:
   change and needs its own ask. Assume their defaults have not been audited, and
   treat them as out of scope until they are.
 
-**When the change feels too risky to land live**, the answer is a smaller PR, or
-not merging yet. It is never merging it dead. "I gated it so it is safe to
+**When the change feels too risky to land live**, the answer is to leave the
+risky part out of the PR, or not merging yet. It is never merging it dead. "I gated it so it is safe to
 merge" is the reasoning this rule exists to stop — an unshippable change that
 looks shipped is worse than an honest unmerged branch.
 
@@ -594,17 +618,18 @@ a login is a browser handoff, not a blocker. A tool or hook that hides evidence
 Detail: the `finish-the-job` skill.
 <!-- finish-the-job:end -->
 
-**Big work is coordinated, not done solo (always-on, every model)** — when the
-user asks you to orchestrate, coordinate, lead, be the master thread, or use
-children / subagents / workers / lanes, or when the task spans more than 3
-files, more than one independent concern, more than one repo, or ~30+ minutes,
-you are the coordinator. Load the `orchestration` skill. Plan, cut the work
-into cards, spawn children with self-contained briefs, verify their evidence,
-and integrate through a child. Do not implement it yourself. "Faster if I do
-it" and "the children lack context" are not exceptions. Work the user expects
-to see, or that needs host tools (browser, boards), goes to durable child
-threads on the host, not harness-internal subagents the user cannot see. Only
-the user switches this off ("do it yourself").
+**Coordinate only when it pays (always-on, every model)** — when the user
+asks you to orchestrate, coordinate, or use children / workers / lanes, or the
+work has independent parts that can run in parallel (several repos, several
+unrelated tickets), you coordinate: load the `orchestration` skill, route each
+card with `bb fleet route`, spawn children whose brief starts with
+`[child of @thread:<you>]`, and verify their evidence. Otherwise do the work
+yourself, however many files it touches: a child round trip costs more than it
+saves on a single fix. Implementation, browser and anything the user expects to
+see go to durable bb child threads (`bb thread spawn --parent-self`,
+`fleet_member_spawn`), not harness-internal subagents. Up to 3 concurrent
+children without asking; an orchestration request approves up to 6, host
+capacity permitting. "Do it yourself" from the user ends coordinator mode.
 
 **Never quit, kill or replace the running bb app (always-on, hard
 prohibition)** — an agent host app (bb) runs every agent thread on the machine.
