@@ -5,13 +5,30 @@ description: >
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
 verify: "test -n \"$HOME\""
-verified: 2026-08-14
+verified: 2026-09-21
 ---
 
 # Lessons an orchestrator keeps having to relearn
 
 Every entry here cost real rounds. They are written as the check to run, not as
 advice, because advice does not fire and a check does.
+
+## Find colliding work before you write, and own it once found
+
+On 2026-09-20 a sibling thread was fixing the same product onboarding bug in
+parallel. The orchestrator noticed it and kept working alongside it; the user
+had to say "coordinate", "orchestrate" and "divide to conquer" five times.
+
+**Check, at the start and whenever a thread stops or goes quiet:**
+`bb thread list`, `bb fleet groups`, `bb fleet tasks` and `bb fleet orphans`,
+looking for the same repo, ticket or branch. If one exists, you own coordinating it: tell it which slice
+it holds, give each slice one writer, route new children with
+`bb fleet route` at the reasoning level the user asked for, and resume stopped
+children yourself. A stopped child is your next action, not a status line.
+
+A peer's "rebased, green" is a claim. Read the remote SHA and the check result
+yourself: that day a peer's green rebase never reached GitHub, and your own
+`git push` was silently refused by a pre-push gate.
 
 ## Verify the thing you did not change
 
