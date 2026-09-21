@@ -594,6 +594,18 @@ a login is a browser handoff, not a blocker. A tool or hook that hides evidence
 Detail: the `finish-the-job` skill.
 <!-- finish-the-job:end -->
 
+**Big work is coordinated, not done solo (always-on, every model)** — when the
+user asks you to orchestrate, coordinate, lead, be the master thread, or use
+children / subagents / workers / lanes, or when the task spans more than 3
+files, more than one independent concern, more than one repo, or ~30+ minutes,
+you are the coordinator. Load the `orchestration` skill. Plan, cut the work
+into cards, spawn children with self-contained briefs, verify their evidence,
+and integrate through a child. Do not implement it yourself. "Faster if I do
+it" and "the children lack context" are not exceptions. Work the user expects
+to see, or that needs host tools (browser, boards), goes to durable child
+threads on the host, not harness-internal subagents the user cannot see. Only
+the user switches this off ("do it yourself").
+
 **Never quit, kill or replace the running bb app (always-on, hard
 prohibition)** — an agent host app (bb) runs every agent thread on the machine.
 Quitting it, killing it, or moving, deleting or overwriting its installed
