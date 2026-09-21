@@ -444,6 +444,30 @@ checkout, the tree it is running in, any path owned by a live bb environment, an
 anything marked `.keep-worktree`. Run `worktree-gc` yourself before calling a
 task done, the same way you sweep threads with `bb fleet orphans`.
 
+**Shared host capacity (always-on)** — every agent on this host shares one disk,
+ten cores and the same worktrees; the concurrency limit (100) does not protect
+the machine, each agent's discipline does. On 2026-09-16, 22.7 GB of duplicate
+`node_modules` (34 copies of one lockfile) filled the disk and jammed every
+thread; load 145 made new threads fail with "startup timed out"; and two
+responders wrote into one PR worktree at once. Full detail: the
+`shared-host-capacity` skill.
+
+- **Dependencies: clone, never reinstall.** Hydrate a Node worktree with
+  `~/.local/bin/wt-deps` (APFS copy-on-write clone keyed on the lockfile; falls
+  back to `npm ci`/yarn itself; pnpm keeps its store). Never symlink
+  `node_modules`: a symlink resolves outside the worktree and produces phantom
+  type errors.
+- **One writer per PR, branch and worktree.** Stay in the worktree you created or
+  were given; cross-repo work gets its own worktree, never a sibling's. On
+  "Workspace collision detected", stop editing, find the other thread, and let
+  one of you stand down; the survivor re-reads `git diff` before committing.
+- **Automations single-flight per target** and never treat their own agent's
+  push as completion while its thread is still running.
+- **CPU: validate focused**, kill every process tree you start, and use native
+  toolchains (`$HOME/.dotnet/dotnet` arm64, never `/usr/local/share/dotnet/x64`).
+- **Disk: below 20 GB free, start no new installs or builds**; run `worktree-gc`
+  and report.
+
 **No feature flags without an explicit ask (always-on)** — if it is merged, it
 runs. Never introduce a new gate whose default state stops newly merged
 behavior from executing in the target environments. This has been said before
