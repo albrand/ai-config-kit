@@ -54,6 +54,22 @@
         "path": "~/.agents/skills",
         "why": "Seeded ahead of need, so opencode or another agent installed here later starts with the library instead of nothing."
       }
+    ],
+    "hsrpc-wsl": [
+      {
+        "agent": "codex",
+        "path": "~/.codex/skills",
+        "why": "The estudai agent fleet runs on this host."
+      },
+      {
+        "agent": "claude-code",
+        "path": "~/.claude/skills"
+      },
+      {
+        "agent": "any",
+        "path": "~/.agents/skills",
+        "why": "Provider-neutral seed for agents on this host."
+      }
     ]
   }
 }
