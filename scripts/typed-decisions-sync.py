@@ -31,7 +31,11 @@ outside that space, and count as FAIL. PASS needs a check: the persona
 completed the goal, read at target state. BLOCKED needs the named blocker.
 Judge each goal separately; one goal passing never lifts another. The overall
 claim is computed, not felt: any FAIL means not done, and any NOT RUN means
-you may not write "tested".""",
+you may not write "tested".
+
+Jev (`typed-decisions` section 10) may answer the semantic sub-questions (does this evidence show the
+persona reaching the goal? does this report name a blocker?) as one more
+isolated judge. It never produces PASS on its own: PASS still needs the check.""",
 
 "finish-the-job": """"Am I done?" is a decision, so type it. Answer each yes/no with a check
 behind it, not a feeling:
@@ -44,7 +48,11 @@ behind it, not a feeling:
 
 Stopping is allowed only when every answer comes out clean. "Blocked" is
 allowed only with the named blocker. Feeling done is a self-report, not a
-check.""",
+check.
+
+Batch the semantic questions (in-scope work left, given the request and a
+summary of what changed?) into one Jev call (`typed-decisions` section 10). The mechanical ones stay
+checks.""",
 
 "scope-advisor": """Don't judge scope as a whole. For each requirement in the scope record, answer
 three separate yes/no questions against the record (not the conversation):
@@ -56,7 +64,12 @@ settle?`. The verdict is then computed:
 - else → `aligned`
 
 Any other verdict is outside the declared space and counts as a failed
-check: re-run it.""",
+check: re-run it.
+
+Run the three questions for every requirement in one Jev call (`typed-decisions` section 10):
+`--yn covered`, `--yn added_unrequested`, `--yn user_only_assumption`, with the
+scope record and a result summary as state. Answer them yourself too.
+Agreement is `agreement(N=2)`; a disagreement means re-read that requirement.""",
 
 "reviewing-with-an-agent": """Ask the reviewer for typed output, and say so in the brief:
 
@@ -66,13 +79,21 @@ check: re-run it.""",
 
 "Looks mostly fine" is outside that space: re-ask in the same conversation,
 don't interpret it. Several reviewers who each reached the same answer on
-their own is a confidence source. A reviewer saying it is "confident" is not.""",
+their own is a confidence source. A reviewer saying it is "confident" is not.
+
+Jev (`typed-decisions` section 10) is a cheap extra reviewer for the per-finding yes/no: same
+packet, isolated, calibrated. Count it toward agreement. Never let it replace
+a reviewer on a release or security verdict.""",
 
 "delegating-to-glm": """When the delegated job is a decision (classify, triage, pass/fail, does this
 reproduce), put the declared answer space in the brief and require
 `{question, answer, evidence, confidence_source}` back. An answer outside the
 space, or a confidence resting only on the delegate's own opinion, is a
-failed delegate. Re-ask or escalate.""",
+failed delegate. Re-ask or escalate.
+
+For pure classification, Jev (`typed-decisions` section 10) is faster and cheaper than a GLM
+delegate and returns the typed answer natively. Prefer it unless the decision
+needs reasoning or tools.""",
 
 "pr-review": """Judge each candidate finding separately, against the diff and ticket, with
 two typed questions:
@@ -86,7 +107,12 @@ two typed questions:
 
 The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
 none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole.""",
+grade it as a whole.
+
+Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
+batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
+evidence, but a Jev `no` on reproduction sends that finding back for a check
+before you report it. Keep code and ticket excerpts minimal, never secret.""",
 
 "security-sweep": """The refute pass is one separate yes/no per candidate, judged without seeing
 the other candidates: "exploitable on the target path after existing
@@ -94,26 +120,42 @@ mitigations?" A candidate is `confirmed` only when a check shows it (a
 reproduced path or proof of concept), or when separate refuters each fail
 to refute it. If you're unsure it's reachable, it's `not confirmed`.
 Severity is a level from the contract's scale (critical/high/medium/low/info),
-and each finding names the residual-exposure fact that places it there.""",
+and each finding names the residual-exposure fact that places it there.
+
+Add Jev (`typed-decisions` section 10) as one more blind refuter per candidate, and use `--level`
+with the contract's anchors for severity. Jev alone never confirms a finding:
+that stays a check or independent refuters.""",
 
 "plan-arbiter": """The lane is pick-one from the declared candidates, never a lane invented
 mid-decision. Score each candidate on separate yes/no questions: capability
 verified? within budget? disjoint write ownership? a verification path that
 doesn't rely on the lane's own report? Selection is computed from those
 answers. A tie or an unknown escalates to the coordinator or the user; it
-never falls to a default lane.""",
+never falls to a default lane.
+
+Put each yes/no, and the final pick (`--pick` over the declared lanes with
+one-line descriptions), to Jev (`typed-decisions` section 10) as an isolated second judge. A
+disagreement with your own selection escalates.""",
 
 "hermes-assisted": """Ask Hermes for a verdict from `accept | revise | reject`, with per-finding
 evidence. Any other shape counts as no verdict, recorded as advisor
 unavailable/unusable. Under this skill's failure rules, that never blocks a
 verdict you have evidenced yourself. Agreement between Hermes and your own
-separate judgment is a confidence source. Hermes saying it is sure is not.""",
+separate judgment is a confidence source. Hermes saying it is sure is not.
+
+Jev (`typed-decisions` section 10) can pre-screen each finding's yes/no before the Hermes pass.
+Jev and your own judgment agreeing is `agreement(N=2)`, whether or not
+Hermes is available.""",
 
 "harness-routing": """The model or lane is pick-one from the declared tiers. Decide it from
 separate yes/no questions (reversible? mechanically verifiable? touches
 security/auth/data/release? unexplained failure?), not a holistic "this feels
 simple". Any risk trigger = yes removes the minimum-effort tiers. Low
-confidence escalates up a tier, never down.""",
+confidence escalates up a tier, never down.
+
+Put the risk-trigger yes/nos to Jev in one call (`typed-decisions` section 10), with the task summary
+as state. Treat any trigger at p >= 0.25 as yes (conservative); that removes
+the minimum-effort tiers.""",
 }
 
 HOMES = ["~/.agents/skills", "~/.bb/skills", "~/.claude/skills", "~/.codex/skills"]
@@ -134,7 +176,8 @@ TARGETS = {
                   f"{KIT}/skillsets/pr-review/claude/commands/code-review.md",
                   "~/.claude/commands/code-review.md"] + homes("high-signal-pr-review"),
     "security-sweep": [f"{KIT}/skillsets/security-review/codex/adversarial-security-sweep/SKILL.md",
-                       f"{KIT}/skillsets/security-review/claude/commands/adversarial-security-sweep.md"
+                       f"{KIT}/skillsets/security-review/claude/commands/adversarial-security-sweep.md",
+                       "~/.claude/commands/adversarial-security-sweep.md"
                        ] + homes("adversarial-security-sweep"),
     "plan-arbiter": [f"{KIT}/skillsets/cmux-hermes-orchestration/codex/plan-arbiter/SKILL.md",
                      f"{KIT}/skillsets/cmux-hermes-orchestration/claude/commands/plan-arbiter.md",
@@ -156,7 +199,11 @@ outcome history, never from a model's self-report. Typed is not correct: high
 confidence still gets the checks irreversible, security and release work
 require. Record each gated decision in the decision ledger with a findable
 `--ref`, and resolve it (held or overturned) when the truth arrives, even when
-the decision was another agent's. Full detail: the `typed-decisions` skill.
+the decision was another agent's. Run semantic atomic judgments on Jev,
+the System One decision model (`typed-decisions` section 10, `jev.py`):
+batched, isolated, recorded as `system-one`. Never in a blocking hook, never
+with secrets or personal data, and alone never enough for an irreversible
+or security call. Full detail: the `typed-decisions` skill.
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.

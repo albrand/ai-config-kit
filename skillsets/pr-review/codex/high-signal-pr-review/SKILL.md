@@ -19,6 +19,8 @@ the target is not a postable PR, or posting is blocked.
    - Still review AI-generated PRs when the user asks for it.
    - For queue sweeps, enumerate live open PRs plus any review-required PRs and PRs whose latest non-bot comment or review-thread reply is not from the active reviewer. Treat an author reply or any head change after a review or change-request thread as a trigger to re-review the current head instead of reusing stale blocker text. Deduplicate by PR number, skip closed PRs, and record draft or access-blocked PRs instead of silently dropping them.
    - When the user has authorized merge-after-approval, merge PRs that are already approved or that this review approves only after live mergeability, required checks, unresolved conversations, branch currency, and reviewer identity constraints are verified. Do not merge self-authored PRs, draft PRs, blocked PRs, PRs with unresolved high-signal findings, or PRs whose approval/merge state cannot be verified.
+   - When the user delegates review or approval on their behalf as a tech lead, treat that delegation as the active authority for the technical verdict. Do not request product-owner, CODEOWNERS-team, architecture-committee, or similar additional approval. If a current explicit repository rule or ticket names another approval, record it separately as governance or merge metadata; do not use it to avoid or replace the requested technical verdict.
+   - Keep governance ownership separate from technical correctness. Review code, tickets, repository docs, tests, and contracts; do not replace a technical approve/request-changes decision with a request for a higher approval level.
 3. If the task involves existing PR comments, fetch live top-level comments, reviews, review comments, review threads, head SHA, review decision, and current checks before editing or replying. Map each comment to fixed, evidence-backed reply, not applicable, or still blocked.
 4. Resolve instruction scope:
    - Root instructions.
@@ -29,9 +31,11 @@ the target is not a postable PR, or posting is blocked.
    - Extract the business rules the PR is trying to satisfy: user workflow, role/permission rules, data lifecycle, external contracts, acceptance criteria, non-goals, and previously working behavior that must remain intact.
    - Build a small review matrix: `business rule / source / changed code / expected behavior / validation evidence`. Use ticket fields, product docs, domain docs, screenshots, API contracts, backend controllers/DTOs, tests, and existing behavior as sources.
    - If the business rule or acceptance criteria are unclear and the uncertainty changes the review verdict, ask one targeted question or mark the PR **NEEDS DISCUSSION**. Do not substitute generic engineering preference for missing business intent.
+   - Trace collateral behavior in the affected screen, including loading, empty, error, retry, transition, stale-data, and mutation-failure states. When behavior crosses repository boundaries, inspect the related frontend/backend PRs, DTOs, routes, schemas, and tests before judging the contract.
 6. Apply **proportional** board-backed regression checking. Board access is
    mandatory only when a board is configured or linked for the repository, or
    when risk/product/release scope makes board-backed invariants material.
+   - Treat the board as evidence for ticket intent and protected behavior, not as an extra approval hierarchy. A delegated tech-lead review must not solicit separate product-owner or CODEOWNERS sign-off; record any explicit branch/release requirement separately from the technical verdict.
    - When a board applies, inventory all visible board tickets, not only the PR's
      linked issue: key, title, type, status, sprint/release, component/area,
      acceptance criteria, linked PR/release evidence, and QA/Done evidence when
@@ -43,9 +47,10 @@ the target is not a postable PR, or posting is blocked.
      until disproven with code evidence and targeted validation.
    - Keep **code findings distinct from board readiness**: report concrete code,
      contract, security, and data findings even when board access is missing. A
-     missing or incomplete board blocks only the board-backed invariants that
-     need it (`Board regression gate blocked / NOT READY` for those), never the
-     code review. Do not let board inventory expand re-review blocking scope
+     missing or incomplete board blocks only a technical conclusion whose
+     acceptance criteria or protected behavior cannot be established from the
+     ticket text, repository docs, linked PRs, tests, or other current evidence.
+     It does not automatically block delegated technical approval. Do not let board inventory expand re-review blocking scope
      without a causal delta path (see the delta-first re-review contract).
    - When no board is configured or linked, state that and rely on code,
      contract, and runtime evidence instead of blocking on a board that was never
@@ -126,7 +131,8 @@ the target is not a postable PR, or posting is blocked.
 - Do not add AI attribution or generated-by signatures to PR surfaces.
 - Do not claim tests or CI passed unless you ran them or inspected their actual output.
 - Do not approve a PR with unresolved security, data, runtime, or required-validation uncertainty.
-- Do not approve or mark a PR ready when the board-backed regression gate is blocked, incomplete, or shows a plausible regression.
+- Do not invent product-owner, CODEOWNERS, committee, or board-role approval requirements. Under delegated tech-lead authority, decide the technical verdict from current tickets, docs, code, tests, collateral screen effects, and cross-repository contracts.
+- Do not approve when missing board evidence leaves a material technical or acceptance-criteria uncertainty unresolved, or when current evidence shows a plausible protected-behavior regression. Missing board access alone is not an automatic veto when equivalent current evidence establishes the relevant behavior.
 
 ## Output
 
@@ -156,7 +162,12 @@ two typed questions:
 
 The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
 none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole. Contract: the `typed-decisions` skill.
+grade it as a whole.
+
+Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
+batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
+evidence, but a Jev `no` on reproduction sends that finding back for a check
+before you report it. Keep code and ticket excerpts minimal, never secret. Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (`--point review-finding` per finding and `--point pr-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

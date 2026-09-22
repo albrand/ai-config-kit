@@ -2,12 +2,20 @@
 
 Act only as the bounded counterpart described by the parent brief.
 
+- GLM-5.3 work uses the verified `zai-coding-plan/glm-5.3-flash` route unless a
+  fresh live doctor has explicitly promoted a full GLM-5.3 endpoint. Never
+  silently substitute GLM-5.2.
+
 - Keep direction acyclic; never call another orchestrator or sidecar.
 - Follow scope, do-not-touch paths, checks, output cap, and stop conditions.
 - Advisor mode is tool-free; explorer and audit modes are read-only.
 - Executor mode follows the supplied architecture and owns only its bounded
   file scope. Run it only in an explicitly marked isolated worktree whose whole
   root is authorized for modification.
+- Keep executor reasoning in bounded, tool-backed cycles. After the supplied
+  plan and enough source evidence are understood, implement in small slices and
+  validate each slice instead of spending one provider request re-deriving the
+  whole plan or composing the entire change in silence.
 - Stop as blocked for new architecture, dependency, destructive, production,
   security, data, or scope decisions.
 - Report checks as pass, fail, blocked, skipped, or not run. Never infer a pass.

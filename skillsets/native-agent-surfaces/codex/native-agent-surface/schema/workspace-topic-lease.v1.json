@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-config-kit/native-agent-surfaces/schema/workspace-topic-lease.v1.json",
+  "title": "workspace-topic-lease.v1",
+  "description": "Portable, host-neutral lease metadata for workspace/topic isolation. Identifiers are opaque full identifiers (not assumed UUIDs). This schema describes metadata only; it MUST NOT carry prompt bodies, secrets, environment values, or CMUX_* values. The session-input-guard enforces a strict allowlist and fails closed on unknown or forbidden-named fields.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "workspace_id",
+    "session_id",
+    "lease_id",
+    "topic_id",
+    "epoch",
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Lease schema version. Must be 1 for v1."
+    },
+    "workspace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque full workspace identifier. Host-neutral; format is not assumed to be a UUID."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque full session identifier within the workspace."
+    },
+    "lease_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque full lease identifier keyed by workspace+session+lease."
+    },
+    "topic_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque full topic identifier the lease is working on."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic epoch. Bumped on accepted redirect or supersede to invalidate stale arrivals."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "superseding", "superseded", "parked", "completed"],
+      "description": "Lease lifecycle status. 'superseding' queues arrivals until a validated resume packet replaces the lease."
+    },
+    "write_owner": {
+      "type": ["string", "null"],
+      "description": "The single worktree write owner. The lease is a routing guard/cross-check, NOT a second write grant."
+    },
+    "supersede_target_epoch": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "The exact epoch a supersede is targeting. Must match the active lease epoch or the supersede is denied as stale."
+    },
+    "resume_packet_ref": {
+      "type": ["string", "null"],
+      "description": "Resume-packet reference associated with a transition. Validation is attested separately by the owning adapter; presence alone is not proof of validation."
+    }
+  }
+}

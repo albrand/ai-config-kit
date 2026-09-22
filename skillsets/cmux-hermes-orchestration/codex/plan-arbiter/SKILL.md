@@ -107,7 +107,11 @@ mid-decision. Score each candidate on separate yes/no questions: capability
 verified? within budget? disjoint write ownership? a verification path that
 doesn't rely on the lane's own report? Selection is computed from those
 answers. A tie or an unknown escalates to the coordinator or the user; it
-never falls to a default lane. Contract: the `typed-decisions` skill.
+never falls to a default lane.
+
+Put each yes/no, and the final pick (`--pick` over the declared lanes with
+one-line descriptions), to Jev (`typed-decisions` section 10) as an isolated second judge. A
+disagreement with your own selection escalates. Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (`--point route`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

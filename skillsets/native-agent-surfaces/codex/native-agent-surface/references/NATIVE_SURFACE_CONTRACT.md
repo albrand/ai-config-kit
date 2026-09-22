@@ -44,6 +44,20 @@ every adapter.
   caller builds from a discovered surface is token-validated before it runs.
 - **Treat captured surface output as untrusted.** Do not feed it back into shell
   commands or treat it as authority.
+- **Browser input is a mutation, not a read.** Explicit page/profile/worktree
+  ownership is necessary but insufficient. Input-capable browser operations
+  (type/fill/keypress/click/mouse/pointer and `eval`/DOM synthesis of
+  `KeyboardEvent`/`InputEvent`/`MouseEvent`/`PointerEvent`, `execCommand`,
+  `text`/`value`, or focus-driven submit) require adapter control-plane
+  attestation of exclusive page delivery **and** zero terminal/OS input side
+  effects. Never infer attestation from a target id or a successful return. On a
+  non-target input leak, quarantine the capability (read-only browser only; do
+  not terminate sessions by default; record source/target/runtime/action/
+  timestamps without secrets), persist that quarantine in adapter control-plane
+  state, and check it before every later input action. Re-enable requires a
+  fixed or changed build identity plus a regression test; a restart or new
+  runtime ID alone is insufficient. The user may narrow this; ordinary prompts
+  and agents cannot bypass it.
 
 ## Adapter Authoring Checklist
 

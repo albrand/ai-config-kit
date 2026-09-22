@@ -3,4 +3,4 @@ interface:
   short_description: "Delta-first PR review with validated findings"
   default_prompt: "Use $high-signal-pr-review to review the current PR with delta-first scope and validated findings."
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

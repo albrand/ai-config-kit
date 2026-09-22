@@ -8,14 +8,15 @@ description: >
   that allows or blocks. Makes the answer typed, atomic, independently judged,
   and gated on confidence that was measured rather than claimed.
 verify: "test -n \"$HOME\""
-verified: 2026-09-21
+verified: 2026-09-22
 ---
 
 # Typed decisions
 
 Adapted from TypeSafe AI's "System One" model, Jev. Jev never generates text:
 it takes *state + typed questions* and returns an answer from a fixed answer
-space, with a probability, in one pass. We take the method, not the model.
+space, with a probability, in one pass. We take the method, and where the
+judgment is semantic we run it on the model too (section 10).
 
 Most agent steps are not writing. They are decisions: route this, is this in
 scope, is this risky, does this finding reproduce, is this done. Handled as
@@ -95,6 +96,10 @@ is a control that never fires.
   decisions at this point and whether each held up. This is the only honest
   way to tune thresholds. Until a row has enough resolved decisions,
   thresholds are human choices and must be labelled that way.
+- **System One:** a calibrated decision model (Jev) answering the typed
+  question in isolation, recorded as `system-one`. It is a trained probability,
+  not a verbalized one, but its calibration in your domain is proven only by
+  outcome history. Section 10 sets its limits.
 
 Humans set the thresholds and the acceptable risk. The agent never lowers a
 threshold to get a decision through.
@@ -128,8 +133,8 @@ When a delegate's job is a decision, it returns
 {question, answer (from the declared space), evidence, confidence_source}
 ```
 
-`confidence_source` is `agreement`, `check` or `history`, plus the
-measurement. An answer outside the declared space, or a confidence that cites
+`confidence_source` is `agreement`, `check`, `history` or `system-one`, plus
+the measurement. An answer outside the declared space, or a confidence that cites
 only the delegate's own opinion, is a failed delegate. Re-ask or escalate;
 don't interpret. This extends "a delegate returns measurements, not a
 verdict": the answer may be a verdict only when it arrives with its
@@ -183,6 +188,81 @@ python3 $L report                                  # overturn rate per point, ti
 | Triage | `triage` | `needs-info\|ready-for-agent\|ready-for-human\|wontfix` |
 | Hermes review (imported) | `hermes-review` | `accept\|revise\|reject` |
 
+## 10. Run it on System One (Jev)
+
+The owner approved using TypeSafe's hosted System One model, Jev, for agent
+decisions. It does natively what sections 2–5 ask for: a typed answer from a
+declared space, isolated per question, with a *trained, calibrated* probability
+instead of a sentence about confidence. It is fast and cheap enough to ask
+often. Use it.
+
+```sh
+J=~/.agents/skills/typed-decisions/scripts/jev.py      # same path in every skill home
+python3 $J --state-file packet.json \
+  --yn    auth   "Does \`diff\` change authentication or authorization?" \
+  --pick  triage "Where does \`issue\` go next?" "needs-info=no repro or expected result|ready-for-agent|ready-for-human|wontfix" \
+  --level sev    "How severe is the risk in \`diff\`?" "cosmetic|minor, workaround exists|broken feature|data loss or auth bypass" \
+  --record --point "triage=triage" --ref "repo#123"
+```
+
+`--yn` → probability of yes; `--pick` → one option plus the distribution;
+`--level` → one written anchor plus the distribution. `--spec file.json` takes
+a raw TypeSafe questions map (structured instructions, criteria objects).
+The endpoint comes from `TYPESAFE_BASE_URL` (on this setup:
+`{{SYSTEM_ONE_BASE_URL}}`, which injects the key; `TYPESAFE_API_KEY` can be any
+placeholder there).
+
+**Use Jev when all of these hold:** section 1 says it is a decision; the
+judgment is about *meaning* (reading a diff, ticket, message, log, finding),
+not something a command can settle; the needed state fits in one packet; and
+an expert would answer it in seconds. **Don't** use it for System-2 work
+(multi-step reasoning, arithmetic, running code, tracing call graphs), for deep
+specialist domains without validation, or for generation.
+
+**Where it pays on this setup:**
+
+| Decision point | Jev question |
+| --- | --- |
+| `scope-advisor` | per requirement: `--yn covered`, `--yn added_unrequested`; the verdict is still computed |
+| review / security refute pass | per candidate: `--yn reproduces "Does \`finding\` hold on the changed lines in \`diff\`?"`, as one more blind judge |
+| severity | `--level` with the skill's written anchors |
+| triage | `--pick` over the declared triage states |
+| route / lane | `--pick` over the declared lanes, each with a one-line description |
+| counterpart trigger | one `--yn` per risk trigger in one call; "run a counterpart" is their OR |
+| done / stop | `--yn` per semantic stop reason (e.g. "does this report name a blocker?"); PASS still needs a check |
+
+**How to ask well:** put the facts in `state` as named JSON fields and refer to
+them in backticks. Batch every independent question about the same packet into
+one call: they run in parallel, can't see each other, and cost one round trip.
+Ask a second call only when an earlier answer decides what to fetch next.
+Write criteria that separate the options, and include a no-match option when
+none may fit. Read the live guide before designing a new gate:
+`https://docs.typesafe.ai/llms.txt`.
+
+**Confidence and tiers.** Record Jev answers with `--source system-one`
+(`--record` does it). `jev.py` assigns the tier from human-set thresholds
+(yes/no: p ≥ 0.90 or ≤ 0.10 high, ≥ 0.75 or ≤ 0.25 medium; pick/level:
+confidence ≥ 0.85 high, ≥ 0.60 medium). Then:
+
+- **Reversible and low-stakes:** a high tier may act.
+- **Irreversible, security, data, auth, release:** Jev alone caps at medium.
+  It still needs the check those rules require.
+- **Agreement:** your own isolated judgment plus Jev on the same packet is
+  `agreement(N=2)`. Agree → record `--source agreement`; disagree → low →
+  escalate. That makes Jev the cheapest independent second judge you have.
+- **Tune from history, not taste:** `decision-ledger.py report --source
+  system-one`. Once a point has ~20 resolved decisions, move its thresholds
+  to what the overturn rate supports, and say so.
+
+**Privacy:** the state leaves this machine. Send the minimal packet: a diff
+hunk, ticket text, a redacted log. Never send credentials, personal data,
+patient or client records, or production data. `jev.py` refuses state that
+looks like a secret; personal data is on you.
+
+**Failure** (exit 3, service down or quota): don't invent an answer. Judge it
+yourself, record `--source none --tier low`, and escalate if it gates
+anything.
+
 ## Where this already applies
 
 These decision points run on this contract. When you are at one, use its
@@ -213,6 +293,10 @@ declared space:
 ## Not this
 
 - Not for generation (code, docs, prose), which stays open-ended.
-- No external decision-model dependency. Using a hosted System-One model in
-  hooks is a separate, owner-approved decision.
+- Not a blocking hook. A System One call is a network round trip that can fail
+  or hit a quota; a PreToolUse gate that depends on it fails closed on every
+  tool call. Use it in skill steps and advisory reports, never as the only
+  thing standing between an agent and a tool.
+- Not a substitute for a check. When a command can settle the question, run
+  the command.
 - No self-reported confidence as a gate, anywhere.

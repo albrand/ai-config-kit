@@ -37,7 +37,12 @@ settle?`. The verdict is then computed:
 - else → `aligned`
 
 Any other verdict is outside the declared space and counts as a failed
-check: re-run it. Contract: the `typed-decisions` skill.
+check: re-run it.
+
+Run the three questions for every requirement in one Jev call (`typed-decisions` section 10):
+`--yn covered`, `--yn added_unrequested`, `--yn user_only_assumption`, with the
+scope record and a result summary as state. Answer them yourself too.
+Agreement is `agreement(N=2)`; a disagreement means re-read that requirement. Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (`--point scope-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

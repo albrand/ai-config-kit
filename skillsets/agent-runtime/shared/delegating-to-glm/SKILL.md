@@ -88,7 +88,11 @@ When the delegated job is a decision (classify, triage, pass/fail, does this
 reproduce), put the declared answer space in the brief and require
 `{question, answer, evidence, confidence_source}` back. An answer outside the
 space, or a confidence resting only on the delegate's own opinion, is a
-failed delegate. Re-ask or escalate. Contract: the `typed-decisions` skill.
+failed delegate. Re-ask or escalate.
+
+For pure classification, Jev (`typed-decisions` section 10) is faster and cheaper than a GLM
+delegate and returns the typed answer natively. Prefer it unless the decision
+needs reasoning or tools. Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (the delegate's decision under its own point), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

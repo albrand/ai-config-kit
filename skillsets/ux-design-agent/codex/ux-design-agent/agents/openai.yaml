@@ -10,4 +10,4 @@ dependencies:
       description: "Figma MCP server for reading and updating Figma designs, variables, components, and annotations. A board MCP (Linear, Jira, or the user-selected board/tracker) and Vercel tooling are used for ticket handoff and mockup previews when connected, and are detected at runtime rather than required."
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

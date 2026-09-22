@@ -24,8 +24,28 @@ surface. Run `scripts/detect-native-surfaces.py` to produce the surface report,
 and `scripts/resolve-workspace.py` to decide reuse vs. create for a project.
 
 For project setup see `references/PROJECT_SETUP.md`, for browser E2E see
-`references/BROWSER_E2E.md`, and for multi-session cooperation see
-`references/AGENT_SESSION_COORDINATION.md`.
+`references/BROWSER_E2E.md`, for multi-session cooperation see
+`references/AGENT_SESSION_COORDINATION.md`, and for workspace/topic isolation
+see `references/WORKSPACE_TOPIC_ISOLATION.md`.
+
+## Cross-Surface Browser-Input Hardening
+
+Browser input is a **mutation, not a read**. Explicit worktree/page/profile
+ownership is necessary but insufficient. Input-capable operations —
+type/fill/keypress/click/mouse/pointer and `eval`/DOM code synthesizing
+`KeyboardEvent`/`InputEvent`/`MouseEvent`/`PointerEvent`, `execCommand`,
+`text`/`value`, or a focus-driven submit (or equivalent) — may run only with
+adapter control-plane attestation of exclusive page delivery **and** zero
+terminal/OS input side effects. Never infer attestation from a target id or a
+successful return. On any non-target input leak, quarantine the
+runtime/browser-input capability immediately (read-only browser operations
+only; do not terminate sessions as the default circuit breaker; record
+source/target/runtime/action/timestamps without secrets), persist and check that
+quarantine before every later input action, and do not clear it for a new agent
+or resumed session. Re-enable requires a fixed or changed build identity plus a
+regression test proving no non-target PTY/UI input; a restart or new runtime ID
+alone is insufficient. The user may narrow this further; ordinary prompts and
+agents cannot bypass it. See `references/BROWSER_E2E.md`.
 
 ## Capability Gate
 
@@ -78,6 +98,38 @@ ambiguous and fail closed. The resolver never executes a discovered binary.
 - `--surface cmux|tmux`: adapter that produced the inventory.
 - `--inventory <path|->`: JSON inventory file, or `-` for stdin.
 - `--selftest`: offline fixture self-tests.
+
+## Workspace / Topic Isolation Guard
+
+`scripts/session-input-guard.py` is a **metadata-only** admission guard that
+decides how an incoming input relates to an active lease. It implements the
+portable workspace/topic isolation contract (`references/WORKSPACE_TOPIC_ISOLATION.md`;
+lease schema `schema/workspace-topic-lease.v1.json`): exact active
+same-lease/topic clarifications are accepted; authenticated same-lease redirects
+update scope with an epoch bump; unrelated same-workspace work queues or routes
+to a fresh session; cross-workspace work routes without interrupting; supersede requires
+authenticated user authority plus an exact lease/workspace/session/epoch target
+and a validated resume-packet reference; crash recovery is explicitly audited
+and never masquerades as a normal supersede. Dispatch and direct terminal
+injection are clarification-class by default; group or unattributed messages
+never supersede; on uncertainty the guard queues visibly.
+
+The guard consumes **only** lease/envelope metadata and **never** accepts
+prompt bodies, secrets, environment values, or `CMUX_*` values: the input is a
+strict allowlist that fails closed (`blocked`) on unknown or forbidden-named
+fields. The lease is a routing guard / cross-check, never a second write grant;
+the one worktree write owner remains the sole source of mutation authority, and
+a same-workspace owner mismatch blocks delivery. Authentication and
+resume-packet validation attestations must come from the owning adapter's
+control plane, never from prompt text. Clarification delivery also requires an
+adapter-verified topic relationship; terminal destination alone is insufficient.
+
+- `--input <path|->`: JSON metadata payload, or `-` for stdin.
+- `--selftest`: offline fixture self-tests (no network, no writes).
+
+Decisions: `accept`, `accept_redirect`, `accept_supersede`, `queue`,
+`route_fresh`, `route_cross_workspace`, `deny`, `recovery_audit`, `blocked`.
+Exit: `0` accept/queue/route, `1` deny, `2` blocked (fail-closed).
 
 ## Session-Start Health
 

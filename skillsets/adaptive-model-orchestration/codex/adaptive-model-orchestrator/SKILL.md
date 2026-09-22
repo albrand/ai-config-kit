@@ -9,6 +9,28 @@ Keep the active Codex thread as coordinator and final authority. Read
 `references/ADAPTIVE_MODEL_ORCHESTRATION.md` before routing and
 `references/OPENCODE_DELEGATION.md` before using OpenCode.
 
+At every lane start and end, retry, timeout, cancellation, provider switch,
+restart, and closeout, load `agent-spend-guard` and run its cross-provider
+ownership/spend audit. This applies equally to Codex, Claude Code, and
+ACP/OpenCode. Never infer “no leak” from a clean turn status, a stopped UI
+spinner, or a provider's self-reported exit alone.
+
+## BB restart and upgrade survival gate
+
+When coordinating a BB daemon/app restart or upgrade, treat worker
+detach/adoption as a hard fork invariant. The coordinator must carry a survivor
+packet with the active thread/turn, worker PID/PGID, and provider-registry entry;
+the restart must leave that worker alive and the next daemon must adopt the same
+worker and turn without replaying output or creating a duplicate turn. Validate
+the persisted thread state, worker identity, registry/adoption state, and
+exactly-once completion events after the new daemon is ready. A successful
+process exit or new daemon PID is not proof. Never stop active agents merely to
+make an upgrade pass; if adoption fails, stop the rollout and report the exact
+blocker. The first-install registry-format migration is the only documented
+exception and requires the no-running-thread gate. Use the fork runbook at
+`docs/fork/3143-agents-outlive-daemon.md`, and label real Electron quit/reopen
+evidence separately from source-level or unit-test evidence.
+
 ## Capability Gate
 
 1. Read current user, repository, privacy, and mutation constraints first.
@@ -79,10 +101,34 @@ Both wrappers are examples and fail closed when a capability is missing. Use
 environment overrides documented in the scripts rather than editing credentials
 or machine paths into the package.
 
+OpenCode calls run through the bundled managed runner. Every run has a bounded
+30-minute outer wall-clock deadline by default; callers may set a shorter or
+longer explicit deadline with `OPENCODE_RUN_DEADLINE_MS`. Provider request
+timeout, stream chunk timeout, agent step ceiling, tool counts, and outer JSON
+silence remain distinct signals. To resume the same plan step, set
+`OPENCODE_RETAIN_SESSION=1` together
+with `OPENCODE_SESSION_ID` (or `OPENCODE_CONTINUE=1`); do not reuse sessions
+across unrelated work.
+
+Managed runs inherit `BB_DATA_DIR` and write ownership leases under
+`$BB_DATA_DIR/opencode-context/leases`. The lease records the BB thread and
+environment IDs plus the child PID. Keep those fields intact: the host daemon
+uses them to protect active or restart-adopted threads and to reclaim only old,
+orphaned process groups. A run without BB thread ownership is never eligible
+for automatic reclamation; use `bb memory status` and `bb memory gc` for the
+measured status and bounded cleanup path.
+
 Executor modes additionally require `OPENCODE_ALLOW_WRITES=1` and a marker file
 named `.ai-config-kit-sidecar-write-scope` at the workdir root. Create the marker
 only in a dedicated isolated worktree whose entire contents are safe for the
 sidecar to modify; prompt-level file scopes are not an enforcement boundary.
+
+Never interrupt a healthy run solely because it exceeded an expected read,
+tool, validation, elapsed-time, or outer-silence count. Stop only for verified
+scope/security/destructive drift, a provider or fatal protocol error, caller
+cancellation, or a predeclared wall deadline. After a stop, wait for managed
+runner quiescence evidence and confirm the worktree is stable before editing or
+reassigning it.
 
 ## Integrate
 

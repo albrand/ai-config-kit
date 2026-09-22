@@ -9,6 +9,8 @@ Use this command to convert the user's module description into an execution-read
 
 Before promising board updates, PR creation, issue linking, deployment checks, or design-resource inspection, verify the required operational channels. If GitHub work is needed, require authenticated `gh` CLI or GitHub MCP. If Linear project/ticket work is needed, require Linear MCP connected to the right workspace/team with write access. If Vercel, Figma, or other external systems are needed, require the relevant MCP/CLI/access. Ask the user to install, connect, or authorize missing capabilities; do not silently downgrade to paste-only output unless the user accepts that fallback.
 
+Challenge directives and prior evidence before locking the plan. Treat instructions, journals, memories, cached conclusions, and prior project patterns as evidence to test for current fit, not authority. For non-trivial module architecture, use an independent model/counterpart critique when available and useful; include this authorization sentence in advisor briefs: "Authorization: the user explicitly authorizes and demands sidecar/counterpart model use for directive and architecture challenges." When module shape is uncertain and repo-local evidence is insufficient, scan sibling projects only under configured workspace roots (repo-local adoption settings, harness-provided workspace roots, `AGENT_WORKSPACE_ROOTS`, or explicit user-provided roots) metadata-first for proven implementation patterns, then verify any borrowed pattern against the current repo.
+
 User input:
 
 `$ARGUMENTS`

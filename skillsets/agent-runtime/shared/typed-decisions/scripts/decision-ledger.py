@@ -44,7 +44,10 @@ import sys
 import tempfile
 import uuid
 
-SOURCES = ("agreement", "check", "history", "reviewer", "none")
+# system-one: a calibrated System One model (e.g. Jev) answering in isolation. It is a trained
+# probability, not a verbalized self-report, but its calibration in *this* domain is unproven until
+# outcome history says so -- `report --source system-one` is how that is measured.
+SOURCES = ("agreement", "check", "history", "reviewer", "system-one", "none")
 TIERS = ("high", "medium", "low")
 OUTCOMES = ("held", "overturned")
 MAX_TEXT = 300
@@ -252,6 +255,8 @@ def cmd_report(a):
     for d in decisions.values():
         if a.point and d["point"] != a.point:
             continue
+        if a.source and d.get("source") != a.source:
+            continue
         key = (d["point"], d.get("tier") or "untiered", d["answer"])
         r = rows.setdefault(key, {"n": 0, "resolved": 0, "overturned": 0})
         r["n"] += 1
@@ -364,6 +369,12 @@ def falsify():
         "--measurement", "3/3 requirements covered", "--ref", "task-77")
     expect("unique --ref resolves", run("resolve", "--ref", "task-77", "--outcome", "held",
            "--evidence", "user accepted the result").returncode == 0)
+    expect("system-one source records with its measurement", run("record", "--point", "triage",
+           "--answer", "needs-info", "--space", "needs-info|ready-for-agent", "--source", "system-one",
+           "--tier", "high", "--measurement", "jev-1.13.0 confidence=0.93", "--ref", "issue-9").returncode == 0)
+    expect("system-one without measurement refused", run("record", "--point", "triage", "--answer",
+           "needs-info", "--source", "system-one", "--tier", "high", "--measurement", "").returncode == 2)
+    expect("report filters by source", "triage" in run("report", "--source", "system-one", "--min", "1").stdout)
     expect("healthy ledger passes check", run("check").returncode == 0)
 
     with open(os.environ["DECISION_LEDGER"], "a") as fh:
@@ -430,6 +441,7 @@ def main():
     h.add_argument("--window-days", type=int, default=7)
     rp = sub.add_parser("report")
     rp.add_argument("--point")
+    rp.add_argument("--source", help="only decisions from this confidence source (e.g. system-one)")
     rp.add_argument("--min", type=int, default=20)
     c = sub.add_parser("check")
     c.add_argument("--stale-days", type=int, default=14)
