@@ -173,6 +173,37 @@ class LeaseTest(unittest.TestCase):
             module.LeaseStore(link).acquire(self.target)
         self.assertEqual(error.exception.code, "unsafe_root")
 
+    def test_validation_batching_contract_is_present_in_source_docs(self):
+        repo_root = SCRIPT_DIR.parents[4]
+        orchestration = repo_root / "AGENT_ORCHESTRATION.md"
+        mirrored = repo_root / "skillsets/core-framework/codex/ai-config-kit-core/references/AGENT_ORCHESTRATION.md"
+        if not orchestration.exists() or not mirrored.exists():
+            self.skipTest("published skill copy has no source checkout")
+        orchestration_required = (
+            "full scoped edit set",
+            "cheap targeted checks",
+            "complete failure cluster",
+            "bounded retry",
+            "skipped or deferred gate",
+            "once each",
+        )
+        for path in (orchestration, mirrored):
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            for phrase in orchestration_required:
+                self.assertIn(phrase, text, f"{phrase!r} missing from {path}")
+        skill = SCRIPT_DIR.parent / "SKILL.md"
+        text = " ".join(skill.read_text(encoding="utf-8").split())
+        skill_required = (
+            "full scoped edit set",
+            "cheap targeted checks",
+            "complete failure cluster",
+            "at most once per repair",
+            "skipped or deferred gates",
+            "once for the final candidate",
+        )
+        for phrase in skill_required:
+            self.assertIn(phrase, text, f"{phrase!r} missing from {skill}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

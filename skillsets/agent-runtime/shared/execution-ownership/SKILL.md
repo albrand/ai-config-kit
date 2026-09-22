@@ -59,3 +59,13 @@ Do not bypass `held`, `stale`, or `error` to start duplicate work. The lease
 prevents concurrent ownership on the configured host; it does not replace
 workflow-level fencing, remote coordination, or recovery of a crashed task's
 partial side effects.
+
+## Batch validation around the lease
+
+Finish the full scoped edit set before acquiring an expensive lint, build, or
+full-pipeline lease. While iterating, use only cheap targeted checks for the
+changed path. Acquire each expensive gate once for the final candidate and
+record its result. If one fails, fix the complete failure cluster and rerun
+only that failed gate, at most once per repair; do not rerun successful gates
+or launch duplicates. Stop after a second failure and record the gate as
+failed. Record skipped or deferred gates with the reason.

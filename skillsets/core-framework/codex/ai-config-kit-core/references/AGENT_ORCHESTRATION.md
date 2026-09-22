@@ -203,6 +203,17 @@ process group exits. The lease records PID/pgid and optional `owner_thread`
 metadata from `BB_THREAD_ID`, but remains usable outside BB when that metadata
 is absent.
 
+## Validation batching
+
+Validation follows the candidate, not each intermediate edit. Before starting
+an expensive gate, complete the full scoped edit set and record the intended
+gates. During iteration, run only cheap targeted checks for the changed path.
+On the final candidate, run lint, build, and the full pipeline once each; do
+not launch duplicate expensive gates. If a gate fails, fix its complete
+failure cluster, then rerun only that failed gate with a bounded retry (one
+repair rerun per gate); stop and escalate if it still fails. Record every
+skipped or deferred gate and why it was not run.
+
 ## Anti-Patterns
 
 - Delegating the immediate blocking task and waiting idly.
