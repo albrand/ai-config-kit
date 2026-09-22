@@ -74,7 +74,9 @@ Support files:
   reasoning-invariant `verified-qa-e2e` evidence gate and its regression
   fixtures, `typed-decisions` (typed, atomic, isolated decisions gated on
   measured confidence), and `execution-ownership` (a fail-closed, host-local
-  single-flight lease keyed by repository/worktree/branch/commit/operation).
+  single-flight lease keyed by repository/worktree/branch/commit/operation plus
+  a durable gate/review ledger that refuses repeated successful gates, bounds
+  repair reruns, records measurable evidence, and expires silent reviews).
   It bundles `scripts/decision-ledger.py`, an
   append-only per-machine ledger of gated decisions and their outcomes, which
   also imports stored Hermes verdicts read-only. Bundled references, scripts, and tests publish with

@@ -5,7 +5,7 @@ description: >
   agent work that must not run concurrently for the same repository, worktree,
   branch, commit, and operation. Acquires a fail-closed host lease with owner
   metadata, heartbeat renewal, deterministic stale handling, and release.
-verify: "python3 skillsets/agent-runtime/shared/execution-ownership/tests/execution_ownership_test.py"
+verify: "python3 skillsets/agent-runtime/shared/execution-ownership/tests/execution_ownership_test.py && python3 skillsets/agent-runtime/shared/execution-ownership/tests/gate_runner_test.py"
 verified: 2026-09-21
 ---
 
@@ -59,6 +59,41 @@ Do not bypass `held`, `stale`, or `error` to start duplicate work. The lease
 prevents concurrent ownership on the configured host; it does not replace
 workflow-level fencing, remote coordination, or recovery of a crashed task's
 partial side effects.
+
+## Durable gate and review accountability
+
+The lease alone is not a completion record: `release` intentionally removes
+ephemeral ownership state. Before an expensive gate, create a durable run with
+`gate-runner.py start` using the same canonical target. The runner persists
+whether that exact gate passed, failed, or timed out. A later `start` returns
+`already_passed`, `held`, or `repair_required` and must not spawn the gate on
+those outcomes. Pair it with the lease around the actual process.
+
+If a gate already passed before this ledger was installed, use `adopt` with
+the existing artifact and measurement to record that fact; do not rerun a
+successful gate merely to populate the ledger.
+
+```sh
+RUNNER=scripts/gate-runner.py
+python3 "$RUNNER" start --repo /absolute/repository \
+  --worktree /absolute/worktree --branch fix/example \
+  --commit 0123456789abcdef0123456789abcdef01234567 --gate lint
+python3 "$RUNNER" checkpoint --run-id RUN_ID --phase edit-complete \
+  --command 'git diff --check' --measurement 'exit=0' --artifact /absolute/evidence
+python3 "$RUNNER" finish --run-id RUN_ID --status passed --exit-code 0 \
+  --command 'lint command' --measurement 'target-state=recorded' --artifact /absolute/evidence
+```
+
+`finish` requires a command, a measurement, and an existing regular artifact;
+exit code zero alone is never enough. A failed gate may be repaired exactly
+once with `repair --repair-ref`, then must stop after a second failure. Reviews
+use `review-start` (300 seconds by default, 900 seconds maximum) and
+`review-check`; expiry becomes the durable `timed_out` state instead of an
+unbounded wait. `status` reports `stale` after 900 seconds without a
+checkpoint, and `close` refuses while a gate or review is still running.
+All states are JSON, atomic, locked, permission-tight, and fail closed on
+malformed or ambiguous paths. These are typed process states, not model
+confidence or a self-reported verdict.
 
 ## Batch validation around the lease
 

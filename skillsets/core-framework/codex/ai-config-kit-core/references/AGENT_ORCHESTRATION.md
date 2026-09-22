@@ -203,6 +203,17 @@ process group exits. The lease records PID/pgid and optional `owner_thread`
 metadata from `BB_THREAD_ID`, but remains usable outside BB when that metadata
 is absent.
 
+The lease is ephemeral and does not remember that a gate passed. Pair it with
+`skillsets/agent-runtime/shared/execution-ownership/scripts/gate-runner.py`:
+`start` records the canonical target and refuses `already_passed`, `held`, or
+`repair_required`; `finish` requires a command, measurement, and existing
+artifact; `adopt` records a previously evidenced success without rerunning it;
+`repair` allows one rerun only; and `status` exposes stale progress.
+Use `review-start` and `review-check` for a bounded review wait (300 seconds by
+default, 900 seconds maximum); expiry is persisted as `timed_out`, not treated
+as an indefinitely pending review. These typed transitions are executable
+controls, not a process self-report or model confidence.
+
 ## Validation batching
 
 Validation follows the candidate, not each intermediate edit. Before starting
