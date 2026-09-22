@@ -185,6 +185,24 @@ After delegated work returns:
 - Run or record validation.
 - Close the agent if no longer needed.
 
+## Expensive execution ownership
+
+Before spawning a process for an expensive gate, build, release, migration, or
+other single-flight operation, invoke the shared `execution-ownership` lease
+with the canonical repository/worktree/branch/commit/operation target:
+
+```sh
+python3 scripts/execution-ownership.py [target options] acquire
+```
+
+Only `acquired` or `reclaimed` permits the process spawn. `held`, `stale`, and
+`error` are hard stops: do not start duplicate work, bypass the lease, or
+reclaim an ambiguous owner. Keep the returned owner ID and heartbeat the lease
+through long work; release it in an unconditional cleanup path after the
+process group exits. The lease records PID/pgid and optional `owner_thread`
+metadata from `BB_THREAD_ID`, but remains usable outside BB when that metadata
+is absent.
+
 ## cmux + Hermes Bounded Delegation
 
 When an operator has adopted cmux as the local surface and Hermes as the remote
