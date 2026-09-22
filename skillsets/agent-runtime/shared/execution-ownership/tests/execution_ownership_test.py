@@ -177,8 +177,6 @@ class LeaseTest(unittest.TestCase):
         repo_root = SCRIPT_DIR.parents[4]
         orchestration = repo_root / "AGENT_ORCHESTRATION.md"
         mirrored = repo_root / "skillsets/core-framework/codex/ai-config-kit-core/references/AGENT_ORCHESTRATION.md"
-        if not orchestration.exists() or not mirrored.exists():
-            self.skipTest("published skill copy has no source checkout")
         orchestration_required = (
             "full scoped edit set",
             "cheap targeted checks",
@@ -188,10 +186,13 @@ class LeaseTest(unittest.TestCase):
             "once each",
         )
         for path in (orchestration, mirrored):
+            if not path.exists():
+                continue
             text = " ".join(path.read_text(encoding="utf-8").split())
             for phrase in orchestration_required:
                 self.assertIn(phrase, text, f"{phrase!r} missing from {path}")
         skill = SCRIPT_DIR.parent / "SKILL.md"
+        self.assertTrue(skill.is_file(), f"local skill is missing: {skill}")
         text = " ".join(skill.read_text(encoding="utf-8").split())
         skill_required = (
             "full scoped edit set",
