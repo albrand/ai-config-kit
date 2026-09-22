@@ -169,7 +169,18 @@ def points(spec, qids):
     return m
 
 
-def record(a, qs, model, answers):
+def agent_id():
+    """Who asked: JEV_AGENT, else the bb thread, else the runtime session (for velocity per agent)."""
+    if os.environ.get("JEV_AGENT"):
+        return os.environ["JEV_AGENT"]
+    runtime = ("claude" if os.environ.get("CLAUDECODE") else "codex" if os.environ.get("CODEX_THREAD_ID")
+               else "opencode" if os.environ.get("OPENCODE") else "shell")
+    who = (os.environ.get("BB_THREAD_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")[:8]
+           or os.environ.get("CODEX_THREAD_ID", "")[:8])
+    return f"{runtime}:{who}" if who else runtime
+
+
+def record(a, qs, model, answers, latency_ms, tokens):
     pmap = points(a.point, list(answers))
     for qid, out in answers.items():
         if qid not in pmap:
@@ -178,7 +189,10 @@ def record(a, qs, model, answers):
         ref = a.ref if len(pmap) == 1 else f"{a.ref} #{qid}"
         cmd = [sys.executable, LEDGER, "record", "--point", pmap[qid], "--answer", out["answer"],
                "--space", space_of(qs[qid]), "--source", "system-one", "--tier", out["tier"],
-               "--measurement", meas, "--ref", ref]
+               "--measurement", meas, "--ref", ref, "--agent", agent_id(),
+               "--latency-ms", str(latency_ms), "--batch", str(len(answers))]
+        if tokens is not None:
+            cmd += ["--tokens", str(tokens)]
         r = subprocess.run(cmd, capture_output=True, text=True)
         out["ledger"] = r.stdout.strip() if r.returncode == 0 else f"refused: {r.stderr.strip()[:200]}"
 
@@ -208,17 +222,22 @@ def main():
         print(f"jev: refused: {e}", file=sys.stderr); return 2
     if a.dry_run or os.environ.get("JEV_DRY_RUN") == "1":
         print(json.dumps(body, indent=1)); return 0
+    t0 = time.monotonic()
     try:
         resp = call(body, a.timeout)
     except RuntimeError as e:
         print(f"jev: service failure: {e}", file=sys.stderr); return 3
+    latency_ms = int((time.monotonic() - t0) * 1000)
     if a.raw:
         print(json.dumps(resp)); return 0
     model = resp.get("model", a.model)
     answers = {qid: shape(ans) for qid, ans in resp.get("answers", {}).items()}
+    usage = resp.get("usage") or {}
+    tokens = (usage.get("input_tokens", 0) + usage.get("output_tokens", 0)) if usage else None
     if a.record:
-        record(a, qs, model, answers)
-    print(json.dumps({"model": model, "answers": answers, "usage": resp.get("usage")}, indent=1))
+        record(a, qs, model, answers, latency_ms, tokens)
+    print(json.dumps({"model": model, "answers": answers, "usage": resp.get("usage"),
+                      "latency_ms": latency_ms}, indent=1))
     return 0
 
 

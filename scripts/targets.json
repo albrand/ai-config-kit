@@ -59,7 +59,7 @@
       {
         "agent": "codex",
         "path": "~/.codex/skills",
-        "why": "The estudai agent fleet runs on this host."
+        "why": "An agent fleet runs on this host."
       },
       {
         "agent": "claude-code",

@@ -263,6 +263,16 @@ looks like a secret; personal data is on you.
 yourself, record `--source none --tier low`, and escalate if it gates
 anything.
 
+**Velocity.** Every `--record` call also stores the call's `latency_ms`,
+`tokens`, `batch` and the asking agent. `decision-ledger.py velocity` reports
+per-decision cost by source, system-one decisions per day, the latest
+benchmark, and the model time and tokens saved so far. `jev-bench.py` refreshes
+the benchmark: labelled decision cases answered by Jev and by `claude -p`
+models, each at its cheapest (one call per state, no tools, API time only),
+scored for accuracy as well as speed. Quote velocity from that report, never
+from memory, and re-run the bench when a model changes. A faster method that
+loses accuracy is not an improvement.
+
 ## Where this already applies
 
 These decision points run on this contract. When you are at one, use its

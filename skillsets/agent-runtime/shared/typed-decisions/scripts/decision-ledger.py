@@ -8,12 +8,20 @@ be checked against how often decisions at that tier were later overturned.
 Events are JSON lines in one file, never rewritten:
   {"type": "init", ...}
   {"type": "decision", "id", "ts", "point", "answer", "space", "source", "tier",
-   "measurement", "ref", "agent"}
+   "measurement", "ref", "agent", ["latency_ms", "tokens", "batch"]}
   {"type": "outcome", "id", "ts", "outcome": "held"|"overturned", "evidence"}
+
+latency_ms and tokens are for the whole call that produced the decision; batch is
+how many decisions that call answered, so per-decision cost is value / batch.
 
 Commands:
   record   --point P --answer A [--space "a|b|c"] --source S [--tier T]
-           --measurement TEXT [--ref TEXT] [--agent TEXT]      -> prints id
+           --measurement TEXT [--ref TEXT] [--agent TEXT]
+           [--latency-ms N --tokens N --batch N]               -> prints id
+  velocity [--days 14] [--bench-dir DIR]
+           per-decision latency and tokens by source from live records, the
+           latest jev-bench.py comparison against LLM-reasoned decisions, and
+           the time saved so far (live system-one decisions x bench delta)
   resolve  ID | --ref TEXT [--point P]  --outcome held|overturned --evidence TEXT
            (--ref finds the one unresolved decision whose ref contains TEXT)
   import-hermes [--db PATH] [--window-days 7]
@@ -116,7 +124,21 @@ def append(events):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def build_decision(point, answer, space, source, tier, measurement, ref="", agent="", id_=None, ts=None):
+def cost_fields(latency_ms=None, tokens=None, batch=None):
+    out = {}
+    for name, v in (("latency_ms", latency_ms), ("tokens", tokens), ("batch", batch)):
+        if v is None:
+            continue
+        if not isinstance(v, int) or v < 0 or (name == "batch" and v < 1):
+            raise Refused(f"{name} must be a non-negative integer (batch >= 1)")
+        out[name] = v
+    if out and "latency_ms" not in out:
+        raise Refused("tokens/batch without latency_ms: record the call's latency too")
+    return out
+
+
+def build_decision(point, answer, space, source, tier, measurement, ref="", agent="", id_=None, ts=None,
+                   latency_ms=None, tokens=None, batch=None):
     if not SLUG.match(point or ""):
         raise Refused("point must be a short lowercase slug, e.g. test-verdict")
     options = [s.strip() for s in space.split("|")] if space else None
@@ -133,7 +155,8 @@ def build_decision(point, answer, space, source, tier, measurement, ref="", agen
         raise Refused("a confidence source needs its measurement (command, result, count)")
     return {"type": "decision", "id": id_ or uuid.uuid4().hex[:12], "ts": ts or now_iso(),
             "point": point, "answer": answer, "space": options, "source": source, "tier": tier,
-            "measurement": measurement, "ref": clean(ref, "ref"), "agent": clean(agent, "agent")}
+            "measurement": measurement, "ref": clean(ref, "ref"), "agent": clean(agent, "agent"),
+            **cost_fields(latency_ms, tokens, batch)}
 
 
 def index(events):
@@ -147,7 +170,8 @@ def index(events):
 
 
 def cmd_record(a):
-    ev = build_decision(a.point, a.answer, a.space, a.source, a.tier, a.measurement, a.ref, a.agent)
+    ev = build_decision(a.point, a.answer, a.space, a.source, a.tier, a.measurement, a.ref, a.agent,
+                        latency_ms=a.latency_ms, tokens=a.tokens, batch=a.batch)
     append([ev])
     print(ev["id"])
 
@@ -293,6 +317,79 @@ def cmd_report(a):
     print(f"(notes appear once a row has >= {a.min} resolved decisions; thresholds stay human-set)")
 
 
+def bench_dir(a_dir=None):
+    return a_dir or os.environ.get("DECISION_VELOCITY_DIR") or os.path.join(
+        os.path.dirname(ledger_path()), "velocity")
+
+
+def pct(values, q):
+    if not values:
+        return None
+    v = sorted(values)
+    return v[min(len(v) - 1, int(round(q * (len(v) - 1))))]
+
+
+def latest_bench(d):
+    if not os.path.isdir(d):
+        return None
+    runs = sorted(f for f in os.listdir(d) if f.startswith("bench-") and f.endswith(".json"))
+    return json.load(open(os.path.join(d, runs[-1]))) if runs else None
+
+
+def cmd_velocity(a):
+    events, _ = read_events()
+    decisions, _ = index(events)
+    timed = {}
+    for d in decisions.values():
+        if "latency_ms" in d:
+            b = d.get("batch", 1)
+            t = timed.setdefault(d.get("source"), {"ms": [], "tok": []})
+            t["ms"].append(d["latency_ms"] / b)
+            if "tokens" in d:
+                t["tok"].append(d["tokens"] / b)
+    print("live decisions with a measured cost (per decision = call / batch):")
+    if not timed:
+        print("  none yet: jev.py --record writes latency_ms, tokens and batch")
+    else:
+        print(f"  {'source':12} {'n':>6} {'ms p50':>8} {'ms p90':>8} {'tokens p50':>11}")
+        for src, t in sorted(timed.items()):
+            tok = pct(t["tok"], 0.5)
+            print(f"  {src:12} {len(t['ms']):6} {pct(t['ms'], 0.5):8.0f} {pct(t['ms'], 0.9):8.0f} "
+                  f"{(f'{tok:.0f}' if tok is not None else '-'):>11}")
+    now = dt.datetime.now(dt.timezone.utc)
+    days = {}
+    for d in decisions.values():
+        if d.get("source") == "system-one":
+            age = (now - parse_ts(d["ts"])).days
+            if age < a.days:
+                day = parse_ts(d["ts"]).date().isoformat()
+                days[day] = days.get(day, 0) + 1
+    n_s1 = sum(1 for d in decisions.values() if d.get("source") == "system-one")
+    print(f"\nsystem-one decisions per day, last {a.days} days (total all time: {n_s1}):")
+    for day in sorted(days):
+        print(f"  {day} {days[day]:5} {'#' * min(days[day], 60)}")
+    b = latest_bench(bench_dir(a.bench_dir))
+    if not b:
+        print("\nno benchmark yet: run jev-bench.py to compare against LLM-reasoned decisions")
+        return
+    print(f"\nbenchmark {b['ts']} ({b['decisions']} labelled decisions, {b['states']} states; "
+          "LLM side = API time only, no tools, minimal prompt: its cheapest possible form):")
+    print(f"  {'method':16} {'accuracy':>9} {'ms/decision':>12} {'tokens/decision':>16} {'x slower than jev':>18}")
+    jev = b["methods"].get("jev")
+    for name, m in b["methods"].items():
+        slower = (m["ms_per_decision"] / jev["ms_per_decision"]) if jev and name != "jev" else None
+        print(f"  {name:16} {m['accuracy']:9.0%} {m['ms_per_decision']:12.0f} {m['tokens_per_decision']:16.0f} "
+              f"{(f'{slower:.1f}x' if slower else '-'):>18}")
+    base = [m for n, m in b["methods"].items() if n != "jev"]
+    if jev and base:
+        fastest = min(base, key=lambda m: m["ms_per_decision"])
+        saved_ms = n_s1 * max(0, fastest["ms_per_decision"] - jev["ms_per_decision"])
+        saved_tok = n_s1 * max(0, min(m["tokens_per_decision"] for m in base) - jev["tokens_per_decision"])
+        print(f"\nsaved so far vs the fastest LLM baseline, {n_s1} system-one decisions: "
+              f"{saved_ms / 60000:.1f} min of model time, {saved_tok:,.0f} tokens "
+              "(a floor: in-agent reasoning also pays context and thinking the bench strips out)")
+
+
 def check(stale_days, path=None):
     """Return a list of problems; empty means healthy."""
     events, bad = read_events(path)
@@ -375,6 +472,15 @@ def falsify():
     expect("system-one without measurement refused", run("record", "--point", "triage", "--answer",
            "needs-info", "--source", "system-one", "--tier", "high", "--measurement", "").returncode == 2)
     expect("report filters by source", "triage" in run("report", "--source", "system-one", "--min", "1").stdout)
+    expect("cost fields record", run("record", "--point", "triage", "--answer", "ready-for-agent", "--space",
+           "needs-info|ready-for-agent", "--source", "system-one", "--tier", "high", "--measurement",
+           "jev-1.13.0 confidence=0.95", "--latency-ms", "900", "--tokens", "400", "--batch", "3").returncode == 0)
+    expect("negative latency refused", run("record", "--point", "x", "--answer", "a", "--source", "check",
+           "--measurement", "m", "--latency-ms", "-1").returncode == 2)
+    expect("tokens without latency refused", run("record", "--point", "x", "--answer", "a", "--source", "check",
+           "--measurement", "m", "--tokens", "5").returncode == 2)
+    vel = run("velocity", "--bench-dir", tmp).stdout
+    expect("velocity reports per-decision cost", "system-one" in vel and " 300 " in vel)
     expect("healthy ledger passes check", run("check").returncode == 0)
 
     with open(os.environ["DECISION_LEDGER"], "a") as fh:
@@ -430,6 +536,9 @@ def main():
     r.add_argument("--measurement", default="")
     r.add_argument("--ref", default="")
     r.add_argument("--agent", default="")
+    r.add_argument("--latency-ms", type=int)
+    r.add_argument("--tokens", type=int)
+    r.add_argument("--batch", type=int)
     s = sub.add_parser("resolve")
     s.add_argument("id", nargs="?")
     s.add_argument("--ref")
@@ -445,10 +554,13 @@ def main():
     rp.add_argument("--min", type=int, default=20)
     c = sub.add_parser("check")
     c.add_argument("--stale-days", type=int, default=14)
+    v = sub.add_parser("velocity")
+    v.add_argument("--days", type=int, default=14)
+    v.add_argument("--bench-dir")
     a = p.parse_args()
     try:
         rc = {"record": cmd_record, "resolve": cmd_resolve, "import-hermes": cmd_import_hermes,
-              "report": cmd_report, "check": cmd_check}[a.cmd](a)
+              "report": cmd_report, "check": cmd_check, "velocity": cmd_velocity}[a.cmd](a)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         sys.exit(2)
