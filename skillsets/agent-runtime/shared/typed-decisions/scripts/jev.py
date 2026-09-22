@@ -20,7 +20,8 @@ Output: one JSON object {model, answers: {id: {type, answer, p|confidence, tier,
 Tiers use the human-set thresholds below until the ledger's outcome history for a
 point says otherwise (`decision-ledger.py report`, source system-one).
 
-Environment: TYPESAFE_BASE_URL (API root; default https://api.typesafe.ai) and
+Environment: TYPESAFE_BASE_URL (API root; default: the gateway set at publish,
+else https://api.typesafe.ai) and
 TYPESAFE_API_KEY (a placeholder is fine behind a gateway that injects the key).
 JEV_DRY_RUN=1 or --dry-run prints the request instead of sending it.
 
@@ -99,8 +100,21 @@ def load_state(a):
         return raw
 
 
+# Filled in at publish time from the machine overlay, so a process without the shell
+# profile (cron, launchd, a GUI-launched agent) still reaches the shared gateway.
+PUBLISHED_BASE = "{{SYSTEM_ONE_BASE_URL}}"
+
+
+def base_url():
+    if os.environ.get("TYPESAFE_BASE_URL"):
+        return os.environ["TYPESAFE_BASE_URL"].rstrip("/")
+    if not PUBLISHED_BASE.startswith("{{"):
+        return PUBLISHED_BASE.rstrip("/")
+    return "https://api.typesafe.ai"
+
+
 def call(body, timeout):
-    base = os.environ.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").rstrip("/")
+    base = base_url()
     key = os.environ.get("TYPESAFE_API_KEY", "")
     req = urllib.request.Request(base + "/v1/systemone", data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json",
