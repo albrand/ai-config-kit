@@ -72,6 +72,20 @@ class GateRunnerTest(unittest.TestCase):
         self.assertEqual(module.cmd_review_start(self.store, self.state(action="review-start", run_id=run_id, timeout_seconds=5)), 0)
         self.clock.value += 5
         self.assertEqual(module.cmd_review_check(self.store, self.state(action="review-check", run_id=run_id)), module.EXIT_TIMED_OUT)
+        state = self.store.read(run_id)
+        self.assertEqual(state["review"]["status"], "timed_out")
+        self.assertEqual(state["gate"]["status"], "timed_out")
+        self.assertEqual(module.cmd_close(self.store, self.state(action="close", run_id=run_id, outcome="timed_out", **self.ev(module.EXIT_TIMED_OUT))), 0)
+
+    def test_review_finish_sets_terminal_gate_state_and_allows_close(self):
+        args = self.state(action="start", **self.target); self.assertEqual(module.cmd_start(self.store, args), 0)
+        run_id = self.store.all_states()[0]["run_id"]
+        self.assertEqual(module.cmd_review_start(self.store, self.state(action="review-start", run_id=run_id, timeout_seconds=5)), 0)
+        self.assertEqual(module.cmd_review_finish(self.store, self.state(action="review-finish", run_id=run_id, status="failed", **self.ev(1))), 0)
+        state = self.store.read(run_id)
+        self.assertEqual(state["review"]["status"], "failed")
+        self.assertEqual(state["gate"]["status"], "failed")
+        self.assertEqual(module.cmd_close(self.store, self.state(action="close", run_id=run_id, outcome="failed", **self.ev(1))), 0)
 
     def test_stale_checkpoint_is_observable_and_evidence_is_required(self):
         args = self.state(action="start", **self.target); self.assertEqual(module.cmd_start(self.store, args), 0)

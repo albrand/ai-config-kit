@@ -326,7 +326,19 @@ def cmd_review_check(store: Store, args: argparse.Namespace) -> int:
         if not review or review["status"] != "waiting":
             raise GuardError("review_not_waiting", "review is not waiting", EXIT_INVALID)
         if store.clock() >= review["deadline_unix"]:
-            review.update({"status": "timed_out", "timed_out_at": now_iso(store.clock())})
+            timed_out_at = now_iso(store.clock())
+            review.update({"status": "timed_out", "timed_out_at": timed_out_at})
+            state["gate"].update({
+                "status": "timed_out",
+                "finished_at": timed_out_at,
+                "exit_code": EXIT_TIMED_OUT,
+                "evidence": {
+                    "command": "review-check",
+                    "measurement": "review deadline exceeded",
+                    "artifact": "",
+                    "at": timed_out_at,
+                },
+            })
             state["last_checkpoint_at"] = review["timed_out_at"]
             state["last_checkpoint_unix"] = store.clock()
             store.write(state)
@@ -346,6 +358,7 @@ def cmd_review_finish(store: Store, args: argparse.Namespace) -> int:
         if not review or review["status"] != "waiting":
             raise GuardError("invalid_transition", "review is not waiting", EXIT_INVALID)
         review.update({"status": args.status, "finished_at": item["at"], "evidence": item})
+        state["gate"].update({"status": args.status, "finished_at": item["at"], "exit_code": 0 if args.status == "passed" else 1, "evidence": item})
         state["last_checkpoint_at"] = item["at"]
         state["last_checkpoint_unix"] = store.clock()
         store.write(state)
