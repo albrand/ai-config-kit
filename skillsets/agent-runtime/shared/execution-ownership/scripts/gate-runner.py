@@ -348,6 +348,29 @@ def cmd_review_check(store: Store, args: argparse.Namespace) -> int:
         return EXIT_HELD
 
 
+def reconcile_terminal_review(state: dict) -> bool:
+    """Repair states written by versions that forgot to close the gate."""
+    review = state.get("review")
+    gate = state.get("gate")
+    if not review or not gate or review.get("status") not in {"passed", "failed", "timed_out"}:
+        return False
+    if gate.get("status") != "running":
+        return False
+    finished_at = review.get("finished_at") or review.get("timed_out_at") or state.get("last_checkpoint_at")
+    gate.update({
+        "status": review["status"],
+        "finished_at": finished_at,
+        "exit_code": 0 if review["status"] == "passed" else (EXIT_TIMED_OUT if review["status"] == "timed_out" else 1),
+        "evidence": review.get("evidence") or {
+            "command": "review-check",
+            "measurement": "reconciled terminal review state",
+            "artifact": "",
+            "at": finished_at,
+        },
+    })
+    return True
+
+
 def cmd_review_finish(store: Store, args: argparse.Namespace) -> int:
     if args.status not in {"passed", "failed"}:
         raise GuardError("invalid_status", "review status must be passed or failed", EXIT_INVALID)
@@ -369,6 +392,8 @@ def cmd_review_finish(store: Store, args: argparse.Namespace) -> int:
 def cmd_status(store: Store, args: argparse.Namespace) -> int:
     with store.locked():
         state = store.read(args.run_id)
+        if reconcile_terminal_review(state):
+            store.write(state)
         stale = store.active_stale(state)
     result = {"status": "stale" if stale else state["status"], "run_id": args.run_id,
               "gate": state["gate"], "review": state["review"], "last_checkpoint_at": state["last_checkpoint_at"],
@@ -383,6 +408,8 @@ def cmd_close(store: Store, args: argparse.Namespace) -> int:
     item = evidence(args)
     with store.locked():
         state = store.read(args.run_id)
+        if reconcile_terminal_review(state):
+            store.write(state)
         if state["gate"]["status"] == "running" or (state["review"] and state["review"]["status"] == "waiting"):
             raise GuardError("active_work", "cannot close while a gate or review is running", EXIT_HELD)
         if state["gate"]["status"] != args.outcome:

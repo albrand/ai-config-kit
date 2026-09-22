@@ -87,6 +87,16 @@ class GateRunnerTest(unittest.TestCase):
         self.assertEqual(state["gate"]["status"], "failed")
         self.assertEqual(module.cmd_close(self.store, self.state(action="close", run_id=run_id, outcome="failed", **self.ev(1))), 0)
 
+    def test_status_reconciles_legacy_terminal_review_before_reporting(self):
+        args = self.state(action="start", **self.target); self.assertEqual(module.cmd_start(self.store, args), 0)
+        run_id = self.store.all_states()[0]["run_id"]
+        state = self.store.read(run_id)
+        state["review"] = {"status": "failed", "finished_at": "1970-01-01T00:16:41+00:00", "evidence": self.ev(1)}
+        self.store.write(state)
+        self.assertEqual(module.cmd_status(self.store, self.state(action="status", run_id=run_id)), 0)
+        self.assertEqual(self.store.read(run_id)["gate"]["status"], "failed")
+        self.assertEqual(module.cmd_close(self.store, self.state(action="close", run_id=run_id, outcome="failed", **self.ev(1))), 0)
+
     def test_stale_checkpoint_is_observable_and_evidence_is_required(self):
         args = self.state(action="start", **self.target); self.assertEqual(module.cmd_start(self.store, args), 0)
         run_id = self.store.all_states()[0]["run_id"]
