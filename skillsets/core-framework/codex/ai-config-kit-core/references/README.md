@@ -515,11 +515,8 @@ Adaptive sidecar and fast-lane rule:
 
 Codex concurrency and freshness rule:
 
-- When Codex exposes a configurable thread ceiling, prefer:
-
-  ```toml
-  max_concurrent_threads_per_session = 16
-  ```
+- Treat subagent concurrency as finite. Use a limit supported by the active
+  host or provider, and check that it is actually enforced.
 
 - Treat completed, stale, or prior-workflow subagents as consumed context:
   capture any needed output or resume packet, close them when the tool permits,

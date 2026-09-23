@@ -77,7 +77,7 @@ Defaults:
   work to the fastest capable model verified in the live catalog. Before using
   a stronger tier, record why the fast lane is insufficient.
 - Treat subagent concurrency as finite. In Codex environments that expose a
-  thread ceiling, prefer `max_concurrent_threads_per_session = 16` unless local
+  thread ceiling, prefer a supported limit of 16 concurrent threads unless local
   policy sets a stricter limit.
 - Close completed, idle, stale, or prior-workflow agents after capturing any
   needed result or resume packet, and open fresh agents for new delegated work

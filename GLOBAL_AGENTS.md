@@ -143,7 +143,7 @@ or data issues regardless of board access.
   available reasoning path.
 - Treat subagent concurrency as a finite external runtime budget. In Codex
   environments that expose a thread ceiling, prefer
-  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  a supported limit of 16 concurrent threads unless local policy sets a stricter
   limit.
 - Treat sub-agent lifecycle freshness as mandatory: once an agent completes,
   becomes stale, or belongs to a previous workflow, capture any needed result

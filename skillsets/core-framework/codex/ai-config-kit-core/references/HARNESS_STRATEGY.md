@@ -395,7 +395,7 @@ Subagent concurrency is a finite external runtime budget, not an unlimited
 resource.
 
 - In Codex environments that expose a thread ceiling, prefer
-  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  a supported limit of 16 concurrent threads unless local policy sets a stricter
   limit.
 - Do not spawn speculative agents just because delegation is available.
 - Close completed, idle, stale, or prior-workflow agents immediately after
