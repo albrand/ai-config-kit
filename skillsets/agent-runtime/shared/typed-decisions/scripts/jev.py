@@ -118,6 +118,7 @@ def call(body, timeout):
     key = os.environ.get("TYPESAFE_API_KEY", "")
     req = urllib.request.Request(base + "/v1/systemone", data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json",
+                                          "User-Agent": "TypeSafeJev/1.0",
                                           **({"Authorization": f"Bearer {key}"} if key else {})})
     last = None
     for attempt in range(2):                      # bounded: 2 attempts, then fail loudly
