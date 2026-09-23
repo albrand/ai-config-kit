@@ -315,7 +315,7 @@ Fallback rule:
 
 - If sub-agents, cross-agent counterpart access, model routing, MCP routing, or cache are unavailable, keep the same lifecycle locally: decompose, execute small slices, validate, self-review, and report capability gaps.
 - If Codex sub-agents are available and the environment exposes a configurable
-  thread ceiling, record whether `max_concurrent_threads_per_session = 16` or a
+  thread ceiling, record whether a supported limit of 16 concurrent threads or a
   stricter local value is active.
 - When sub-agents are used, verify the lifecycle rule: capture needed output
   from completed, stale, or prior-workflow agents, close them when the tool
@@ -418,7 +418,7 @@ Run these after changing the kit:
   frontmatter limits, bundled references, package manifests, and executable
   modes without requiring provider credentials.
 - Subagent lifecycle check: confirm Codex or compatible installs set an
-  appropriate thread ceiling such as `max_concurrent_threads_per_session = 16`
+  appropriate thread ceiling such as a supported limit of 16 concurrent threads
   and close completed, stale, or prior-workflow agents before opening fresh
   delegated contexts.
 - Archive check: rebuild and list `config-kit.zip` when it is the active

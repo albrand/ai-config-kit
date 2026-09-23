@@ -232,12 +232,8 @@ Recommended setup:
   fastest capable model as the default bounded tool/file sidecar tier when
   useful and cheap to validate. Use `ADAPTIVE_MODEL_ORCHESTRATION.md` for
   max/ultra escalation.
-- If Codex exposes a configurable thread ceiling, prefer this top-level config
-  unless local policy sets a stricter limit:
-
-  ```toml
-  max_concurrent_threads_per_session = 16
-  ```
+- Treat subagent concurrency as finite. Use a limit supported by the active
+  host or provider, and check that it is actually enforced.
 
 - Treat completed, stale, or prior-workflow subagents as consumed context:
   capture needed output, close them when the tool permits, and open fresh

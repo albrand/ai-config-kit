@@ -110,7 +110,7 @@ Execution rules:
 - Do not assume a user has multiple AI memberships, working authentication, or permission to use another tool. Treat blocked counterpart access as a normal capability gap.
 - If those capabilities are unavailable, keep the same lifecycle locally and report the limitation.
 - Treat subagent concurrency as a finite runtime budget. In Codex environments
-  that expose a thread ceiling, prefer `max_concurrent_threads_per_session = 16`
+  that expose a thread ceiling, prefer a supported limit of 16 concurrent threads
   unless local policy sets a stricter limit.
 - Treat sub-agent lifecycle freshness as mandatory: once an agent completes,
   becomes stale, or belongs to a previous workflow, capture any needed output or

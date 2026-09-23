@@ -166,7 +166,7 @@ You are not alone in the codebase. Do not revert or overwrite changes outside yo
 - Treat agent slots and thread capacity as a finite external runtime budget.
 - Do not spawn speculative agents.
 - In Codex environments that expose a thread ceiling, prefer
-  `max_concurrent_threads_per_session = 16` unless local policy sets a stricter
+  a supported limit of 16 concurrent threads unless local policy sets a stricter
   limit.
 - Close completed, idle, stale, or prior-workflow agents after capturing any
   needed output.
