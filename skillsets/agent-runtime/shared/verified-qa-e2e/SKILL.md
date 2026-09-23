@@ -3,7 +3,7 @@ name: verified-qa-e2e
 description: >
   Use before writing, replacing, or publishing QA instructions in Jira, Linear,
   or another tracker; before moving work to Ready for QA or calling interface
-  end-to-end testing complete; and whenever a tester journey depends on login,
+  end-to-end testing complete or blocked; and whenever a tester journey depends on login,
   seeded accounts, role-specific portals, generated links, tokens, permissions,
   or test data. Prevents plausible instructions from being published for the
   wrong persona, wrong product surface, or an unreachable workflow.
@@ -56,6 +56,17 @@ Advance in order. Do not draft or publish early and validate afterward.
 4. `PREREQUISITES_AVAILABLE`
    - Prove every required link, token, permission, role, test record, and timing
      condition is obtainable by the intended tester.
+   - When a prerequisite appears missing, inspect the current screen and follow
+     its visible setup or connection path as this persona would. Check the
+     effect and authorization before actions that grant access or affect live
+     data. Record the control used and the result; a fixture or source search
+     cannot replace an authorized UI attempt.
+   - If that path needs user consent or a sign-in, obtain the applicable
+     browser takeover approval and resume the same journey afterward. Use the
+     manual-login gate only when its logged-out conditions match. Pending
+     consent is not a final blocker.
+     Never infer consent for email access from permission to test; never open a
+     compose surface or send a message without approval for that message.
    - Engineering-prepared data may be a prerequisite, but do not turn its setup
      into a technical QA step.
 5. `FLOW_WALKED`
@@ -78,8 +89,10 @@ shape in `references/evidence-contract.md`, then run:
 node <this-skill-directory>/scripts/qa-e2e-gate.mjs check <evidence.json>
 ```
 
-The gate supports `publish_qa_instructions`, `claim_e2e_complete`, and
-`request_manual_browser_login`. Exit zero authorizes that exact action and
+The gate supports `publish_qa_instructions`, `claim_e2e_complete`,
+`claim_e2e_blocked`, and `request_manual_browser_login`. Run
+`claim_e2e_blocked` before calling a reached prerequisite a blocker. Exit zero
+authorizes that exact claim and
 nothing broader. A passing `request_manual_browser_login` authorizes only the
 interim manual-login handoff; it is never a PASSED E2E state and never
 authorizes publication or a completion claim. A non-zero result lists missing
@@ -98,7 +111,10 @@ validation provenance.
 - `FAILED`: the intended journey reached a reproducible product failure with
   evidence from the correct actor and surface.
 - `BLOCKED`: the first missing prerequisite is named and the relevant discovery
-  paths were exhausted. Do not publish executable QA steps for a blocked flow.
+  paths were exhausted, including the visible user path. A pending request for
+  permission or login is an interim state; resume after the response. A product
+  control that fails is `FAILED`, even when the defect predates this change.
+  Do not publish executable QA steps for a blocked flow.
 
 Encountering friction, reaching a login page, drafting a plausible checklist,
 or successfully updating the tracker is not completion.
