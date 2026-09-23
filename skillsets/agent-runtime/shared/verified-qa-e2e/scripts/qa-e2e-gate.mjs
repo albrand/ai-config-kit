@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 const OPERATIONS = new Set([
   "publish_qa_instructions",
   "claim_e2e_complete",
+  "claim_e2e_blocked",
   "request_manual_browser_login",
 ]);
 const INITIAL_AUTH_STATES = new Set(["authenticated", "logged_out"]);
@@ -42,7 +43,7 @@ export function evaluateEvidence(packet) {
       failure(
         "OPERATION",
         "operation",
-        "operation must be publish_qa_instructions, claim_e2e_complete, or request_manual_browser_login",
+        "operation must be publish_qa_instructions, claim_e2e_complete, claim_e2e_blocked, or request_manual_browser_login",
       ),
     );
   }
@@ -57,6 +58,7 @@ export function evaluateEvidence(packet) {
   requireText(packet.entrypoint?.evidence, "ENTRYPOINT_EVIDENCE_MISSING", "entrypoint.evidence", "entry-point evidence is required");
 
   const isRequest = packet.operation === "request_manual_browser_login";
+  const isBlocked = packet.operation === "claim_e2e_blocked";
 
   if (isRequest && packet.authentication?.required !== true) {
     failures.push(
@@ -87,6 +89,10 @@ export function evaluateEvidence(packet) {
             "a manual login request requires the current authentication state to be logged_out",
           ),
         );
+      }
+    } else if (isBlocked) {
+      if (!INITIAL_AUTH_STATES.has(packet.authentication?.state)) {
+        failures.push(failure("AUTH_STATE_UNKNOWN", "authentication.state", "a blocked claim needs the observed authenticated or logged_out state"));
       }
     } else if (packet.authentication?.state !== "authenticated") {
       failures.push(
@@ -287,7 +293,29 @@ export function evaluateEvidence(packet) {
     }
   }
 
-  if (!isRequest) {
+  if (isBlocked) {
+    const blocker = packet.blocker;
+    requireText(blocker?.goal, "BLOCKER_GOAL_MISSING", "blocker.goal", "name the user outcome that could not be attempted");
+    requireText(blocker?.point, "BLOCKER_POINT_MISSING", "blocker.point", "name the visible screen and control where progress stopped");
+    requireText(blocker?.evidence, "BLOCKER_EVIDENCE_MISSING", "blocker.evidence", "cite a current observation on the intended surface");
+    const route = blocker?.visible_route;
+    if (route === "attempted") {
+      requireText(blocker?.attempt_evidence, "VISIBLE_ROUTE_NOT_PROVEN", "blocker.attempt_evidence", "cite the UI action and observed result, not code inspection");
+      requireText(blocker?.stop_reason, "STOP_REASON_MISSING", "blocker.stop_reason", "name what prevented the user from continuing");
+    } else if (route === "none") {
+      requireText(blocker?.route_inspection_evidence, "VISIBLE_ROUTE_NOT_INSPECTED", "blocker.route_inspection_evidence", "cite inspection of the relevant user-facing controls");
+      requireText(blocker?.setup_discovery_evidence, "SETUP_NOT_CHECKED", "blocker.setup_discovery_evidence", "cite authorized setup or test-data discovery");
+      requireText(blocker?.stop_reason, "STOP_REASON_MISSING", "blocker.stop_reason", "name why no authorized user route exists");
+    } else if (route === "denied") {
+      requireText(blocker?.denial_evidence, "PERMISSION_DENIAL_NOT_PROVEN", "blocker.denial_evidence", "cite the explicit refusal or permission denial");
+    } else {
+      failures.push(failure("VISIBLE_ROUTE_UNRESOLVED", "blocker.visible_route", "visible_route must be attempted, none, or denied; a pending user action is not a blocked verdict"));
+    }
+    if (packet.terminal?.status !== "blocked") {
+      failures.push(failure("TERMINAL_NOT_BLOCKED", "terminal.status", "a blocked claim requires terminal status blocked"));
+    }
+    requireText(packet.terminal?.evidence, "TERMINAL_EVIDENCE_MISSING", "terminal.evidence", "terminal-state evidence is required");
+  } else if (!isRequest) {
     requireTrue(packet.prerequisites?.verified, "PREREQUISITES_UNVERIFIED", "prerequisites.verified", "all tester prerequisites must be verified");
     requireText(packet.prerequisites?.evidence, "PREREQUISITE_EVIDENCE_MISSING", "prerequisites.evidence", "prerequisite evidence is required");
     if (!Array.isArray(packet.prerequisites?.items)) {
@@ -493,6 +521,22 @@ function selftest() {
     const badCodes = badResult.failures.map((item) => item.code);
     if (!badCodes.includes("NOT_RELEASED") || !badCodes.includes("INSTANCE_ID_MISMATCH") || !badCodes.includes("POST_LOGIN_UNVERIFIED")) {
       throw new Error(`manual publish failure codes missing at ${effort}`);
+    }
+
+    const blocked = validFixture("claim_e2e_blocked");
+    blocked.blocker = {
+      goal: "finish onboarding with connected data",
+      point: "Connect data screen, Connect Google control",
+      evidence: "snapshot-connect-data",
+      visible_route: "attempted",
+      attempt_evidence: "click and provider rejection snapshot",
+      stop_reason: "authorized test account rejected",
+    };
+    blocked.terminal = { status: "blocked", evidence: "provider rejection snapshot" };
+    if (!evaluateEvidence(blocked).ok) throw new Error(`valid blocked fixture failed at ${effort}`);
+    delete blocked.blocker.attempt_evidence;
+    if (!evaluateEvidence(blocked).failures.some(({ code }) => code === "VISIBLE_ROUTE_NOT_PROVEN")) {
+      throw new Error(`source-only blocker passed at ${effort}`);
     }
   }
   process.stdout.write(JSON.stringify({ ok: true, reasoning_invariant: true, efforts }) + "\n");

@@ -602,8 +602,14 @@ already shipped a broken product here:
    lead your response with it.
 2. **The unit of test is the workflow, not the diff.** A change inside a
    workflow is tested only when the *entire* workflow completes end to end,
-   including steps you did not touch and breakage that predates you. Delta-first
-   review governs what blocks a PR; it never governs what you may call tested.
+   including steps you did not touch and breakage that predates you. When a
+   user-facing prerequisite appears missing, inspect and try the visible setup
+   path as the intended persona before calling the journey blocked. A pending
+   login or consent handoff is not a final verdict; resume the same journey
+   afterward. Source searches and focused tests cannot replace the UI attempt.
+   Preserve explicit permission boundaries, including separate approval for
+   each email message. Delta-first review governs what blocks a PR; it never
+   governs what you may call tested.
 3. **Agreement is not a control.** If you can recognise something as
    unacceptable when the user challenges it, you were obliged to call it
    unacceptable when you first saw it. Never let the user be the one who runs

@@ -77,6 +77,42 @@ when deciding pass or fail. When `initial_state` is `authenticated`, test-identi
 discovery may be omitted. When it is `logged_out`, discovery evidence is required
 before requesting user interaction or declaring authentication blocked.
 
+## Claiming a reached prerequisite blocked
+
+Use `claim_e2e_blocked` only after reaching the intended entry point. The
+packet still needs `actor`, `entrypoint`, and `authentication` evidence, but
+does not pretend the whole journey was walked. Add:
+
+```json
+"blocker": {
+  "goal": "finish onboarding with connected data",
+  "point": "Connect data screen, Connect Google control",
+  "evidence": "current screen snapshot reference",
+  "visible_route": "attempted",
+  "attempt_evidence": "browser click and resulting screen reference",
+  "stop_reason": "the authorized test account was rejected by the provider"
+},
+"terminal": {
+  "status": "blocked",
+  "evidence": "provider rejection reference"
+}
+```
+
+`visible_route` is `attempted`, `none`, or `denied`:
+
+- `attempted`: cite the actual user-facing action and result. Code inspection
+  alone cannot fill `attempt_evidence`.
+- `none`: cite both inspection of the relevant controls
+  (`route_inspection_evidence`) and authorized setup or test-data discovery
+  (`setup_discovery_evidence`), plus `stop_reason`.
+- `denied`: cite an explicit refusal or permission denial in
+  `denial_evidence`. A request that is merely pending is not a terminal blocker.
+
+A broken or missing product control that the user needs is a `FAILED` journey,
+not a `BLOCKED` prerequisite. The gate checks evidence shape, not whether a
+browser action truly occurred or whether a defect was classified honestly;
+compare every reference with the browser trace before reporting the verdict.
+
 ## Manual browser login handoff
 
 `request_manual_browser_login` is an interim authorization gate. Before it can

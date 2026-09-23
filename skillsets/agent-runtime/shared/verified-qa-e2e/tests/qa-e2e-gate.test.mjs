@@ -60,6 +60,38 @@ for (const effort of efforts) {
   assert.ok(missingAttemptCodes.includes("TEST_IDENTITY_ATTEMPT_EVIDENCE_MISSING"), `manual request accepted without identity-attempt evidence at ${effort}`);
 }
 
+const blockedBase = structuredClone(fixtures.find((fixture) => fixture.id === "valid-vendor-portal").packet);
+blockedBase.operation = "claim_e2e_blocked";
+blockedBase.blocker = {
+  goal: "finish onboarding with connected data",
+  point: "Connect data screen, Connect Google control",
+  evidence: "current screen snapshot",
+  visible_route: "attempted",
+  attempt_evidence: "browser click and provider rejection snapshot",
+  stop_reason: "authorized test account rejected by provider",
+};
+blockedBase.terminal = { status: "blocked", evidence: "provider rejection snapshot" };
+delete blockedBase.external;
+delete blockedBase.prerequisites;
+delete blockedBase.journey;
+assert.equal(evaluateEvidence(blockedBase).ok, true, "a reached and attempted prerequisite can be blocked");
+
+const codeOnlyBlock = structuredClone(blockedBase);
+delete codeOnlyBlock.blocker.attempt_evidence;
+assert.ok(evaluateEvidence(codeOnlyBlock).failures.some(({ code }) => code === "VISIBLE_ROUTE_NOT_PROVEN"),
+  "a source-only Connect data investigation cannot claim the E2E walk blocked");
+
+const pendingConsent = structuredClone(blockedBase);
+pendingConsent.blocker.visible_route = "pending_consent";
+assert.ok(evaluateEvidence(pendingConsent).failures.some(({ code }) => code === "VISIBLE_ROUTE_UNRESOLVED"),
+  "pending consent is an interim handoff, not a blocked verdict");
+
+const deniedConsent = structuredClone(blockedBase);
+deniedConsent.blocker.visible_route = "denied";
+delete deniedConsent.blocker.attempt_evidence;
+deniedConsent.blocker.denial_evidence = "user explicitly declined this connection";
+assert.equal(evaluateEvidence(deniedConsent).ok, true, "explicit consent denial can block the journey");
+
 process.stdout.write(
   JSON.stringify({ ok: true, fixtures: fixtures.length, efforts, evaluations: fixtures.length * efforts.length }) + "\n",
 );
