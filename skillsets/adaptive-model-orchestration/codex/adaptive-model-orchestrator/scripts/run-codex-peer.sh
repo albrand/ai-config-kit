@@ -13,9 +13,9 @@ prompt=$4
 bin=${CODEX_PEER_BIN:-$(command -v codex 2>/dev/null || true)}
 
 case $family in
-  sol) model=${CODEX_SOL_MODEL:-gpt-5.6-sol} ;;
-  terra) model=${CODEX_TERRA_MODEL:-gpt-5.6-terra} ;;
-  luna) model=${CODEX_LUNA_MODEL:-gpt-5.6-luna} ;;
+  sol) model=${CODEX_SOL_MODEL:-gpt-6-sol} ;;
+  terra) model=${CODEX_TERRA_MODEL:-gpt-6-luna} ;;
+  luna) model=${CODEX_LUNA_MODEL:-gpt-6-luna} ;;
   *) model=$family ;;
 esac
 
