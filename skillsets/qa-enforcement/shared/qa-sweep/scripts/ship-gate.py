@@ -434,25 +434,53 @@ def is_ship(command, cfg=None):
 
 
 def _shell_arg_at(s, i):
-    """Argument starting at/after index i, honouring single/double quotes.
-    Returns (value, end) or (None, i). Known limit: shell variables and
-    substitutions cannot be resolved here; such targets stay unresolved
+    """One shell word starting at/after index i, with POSIX quoting semantics
+    for everything statically resolvable: backslash escapes, single quotes,
+    double quotes (backslash escapes for quote, backslash, dollar, backtick) and concatenated
+    quoted/unquoted segments (Hermes rounds 2-3, topic qa-ship-gate:
+    `qa\\ opted\\ repo` and `"/tmp/qa opted "repo` both name the same
+    directory as "/tmp/qa opted repo"). Known limit: $VAR and substitutions
+    are kept literally, not expanded; such targets stay unresolved
     (documented limitation, fail-closed in every resolvable case)."""
     n = len(s)
     while i < n and s[i] in " \t":
         i += 1
-    if i >= n:
+    if i >= n or s[i] in ";&|":
         return None, i
-    q = s[i]
-    if q in "\"'":
-        j = s.find(q, i + 1)
-        if j < 0:
-            return s[i + 1:], n
-        return s[i + 1:j], j + 1
-    j = i
-    while j < n and s[j] not in " \t;&|":
-        j += 1
-    return s[i:j], j
+    out = []
+    while i < n:
+        c = s[i]
+        if c in " \t;&|":
+            break
+        if c == "\\":
+            if i + 1 < n:
+                out.append(s[i + 1])
+                i += 2
+                continue
+            break
+        if c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                out.append(s[i + 1:])
+                i = n
+                break
+            out.append(s[i + 1:j])
+            i = j + 1
+            continue
+        if c == '"':
+            i += 1
+            while i < n and s[i] != '"':
+                if s[i] == "\\" and i + 1 < n and s[i + 1] in '"\\$`':
+                    out.append(s[i + 1])
+                    i += 2
+                else:
+                    out.append(s[i])
+                    i += 1
+            i += 1  # closing quote, or past end
+            continue
+        out.append(c)
+        i += 1
+    return ("".join(out) or None), i
 
 
 def ship_target_roots(command, cwd):
@@ -752,6 +780,34 @@ def selftest():
         {"session_id": "selftest", "tool_name": "Bash",
          "tool_input": {"command": 'git -C "%s" push origin main' % spaced_plain}, "cwd": foreign}))
     expect(p.returncode == 0, 'git -C "plain repo" (quoted, space) allowed')
+
+    # Hermes round 3 (same topic): escaped and concatenated static shell forms
+    esc = spaced.replace(" ", "\\ ")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % esc}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "git -C with backslash-escaped spaces denied")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'git -C "%s "repo push origin main' % spaced[:-5]}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "git -C with concatenated quoted segment denied")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "cd %s && git push origin main" % esc}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "cd with backslash-escaped spaces denied")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'git --work-tree="%s" -C %s push origin main' % (spaced, spaced)}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "git --work-tree quoted-space denied")
+    esc_plain = spaced_plain.replace(" ", "\\ ")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % esc_plain}, "cwd": foreign}))
+    expect(p.returncode == 0, "escaped-space plain repo allowed")
     p = hookrun(r1, "ls -la")
     expect(p.returncode == 0, "non-ship allowed when pipeline missing")
 
