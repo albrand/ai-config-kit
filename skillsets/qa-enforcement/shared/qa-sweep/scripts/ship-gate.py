@@ -454,6 +454,9 @@ def _shell_arg_at(s, i):
             break
         if c == "\\":
             if i + 1 < n:
+                if s[i + 1] == "\n":  # line continuation: removed, word continues
+                    i += 2
+                    continue
                 out.append(s[i + 1])
                 i += 2
                 continue
@@ -470,9 +473,15 @@ def _shell_arg_at(s, i):
         if c == '"':
             i += 1
             while i < n and s[i] != '"':
-                if s[i] == "\\" and i + 1 < n and s[i + 1] in '"\\$`':
-                    out.append(s[i + 1])
-                    i += 2
+                if s[i] == "\\" and i + 1 < n:
+                    if s[i + 1] == "\n":  # line continuation inside quotes: removed
+                        i += 2
+                    elif s[i + 1] in '"\\$`':
+                        out.append(s[i + 1])
+                        i += 2
+                    else:
+                        out.append(s[i])
+                        i += 1
                 else:
                     out.append(s[i])
                     i += 1
@@ -808,6 +817,28 @@ def selftest():
         {"session_id": "selftest", "tool_name": "Bash",
          "tool_input": {"command": "git -C %s push origin main" % esc_plain}, "cwd": foreign}))
     expect(p.returncode == 0, "escaped-space plain repo allowed")
+
+    # Hermes round 4 (same topic): backslash-newline continuations. Quoted
+    # continuation joins into the full spaced path; unquoted continuation
+    # joins exactly what /bin/sh joins.
+    cont = "\\" + chr(10)  # backslash + newline, inside the tested command string
+    qspaced = '"' + spaced.replace("/", "/" + cont, 2) + '"'
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % qspaced}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "git -C quoted backslash-newline continuation denied")
+    ur1 = r1.replace("/opted", "/op" + cont + "ted")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % ur1}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "unquoted continuation joins like /bin/sh and denies")
+    qplain = '"' + spaced_plain.replace("/", "/" + cont, 2) + '"'
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % qplain}, "cwd": foreign}))
+    expect(p.returncode == 0, "quoted-continuation plain repo allowed")
     p = hookrun(r1, "ls -la")
     expect(p.returncode == 0, "non-ship allowed when pipeline missing")
 
