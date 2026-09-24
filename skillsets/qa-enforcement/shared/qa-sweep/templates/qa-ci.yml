@@ -49,8 +49,8 @@ jobs:
           # --- qa-gate resolve-sha begin (exercised by ship-gate.py selftest) ---
           if [ -n "$PR_HEAD" ]; then
             printf 'sha=%s\n' "$PR_HEAD" >> "$GITHUB_OUTPUT"
-          elif printf '%s\n' "$GITHUB_REF" | grep -Eq '^refs/heads/gh-readonly-queue/.+/pr-[0-9]+-[0-9a-f]+$'; then
-            pr=$(printf '%s\n' "$GITHUB_REF" | sed -E 's#^refs/heads/gh-readonly-queue/.+/pr-([0-9]+)-[0-9a-f]+$#\1#')
+          elif printf '%s\n' "$GITHUB_REF" | grep -Eq '^(refs/heads/)?gh-readonly-queue/.+/pr-[0-9]+-[0-9a-f]+$'; then
+            pr=$(printf '%s\n' "$GITHUB_REF" | sed -E 's#^(refs/heads/)?gh-readonly-queue/.+/pr-([0-9]+)-[0-9a-f]+$#\2#')
             head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid) || head_sha=""
             if [ -z "$head_sha" ]; then
               echo "qa-ship-gate: could not resolve the head of queued PR #$pr" >&2

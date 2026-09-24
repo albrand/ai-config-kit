@@ -170,7 +170,9 @@ merge commit on the default branch, which is never the walked PR head, so the
 gate denies it until that commit is walked: walk the merged commit (against the
 environment it deployed to), commit the evidence as one `.qa/`-only commit on
 top (via a `.qa`-only PR where the branch requires one; its squash is still one
-`.qa`-only commit on top), and tag that commit.
+`.qa`-only commit on top), and tag that commit. The same holds for
+`gh workflow run` without `--ref` (it dispatches the default branch) and for a
+`--ref` that names the default branch.
 
 The local gate (PreToolUse hook, git pre-push template) checks consistency; the
 CI job is where merges are truly enforced — make it a required check. The CI

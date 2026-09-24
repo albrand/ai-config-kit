@@ -2217,6 +2217,8 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(rc == 0 and val == real_head, "v4 merge_group: real queue ref resolves the queued PR head, not the group sha (got %s)" % val[:12])
     rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/release/1.0/pr-167-" + "b" * 40, grp)
     expect(rc == 0 and val == real_head, "v4 merge_group: base branch with a slash (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "gh-readonly-queue/main/pr-167-" + "b" * 40, grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: bare branch-name ref form (got %s)" % val[:12])
     rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-999-" + "b" * 40, grp)
     expect(rc != 0 and not val, "v4 merge_group: unresolvable PR head fails the job")
     rc, val = resolve("merge_group", "refs/heads/something-else", grp)
