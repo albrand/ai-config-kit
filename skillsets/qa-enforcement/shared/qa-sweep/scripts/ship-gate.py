@@ -49,7 +49,16 @@ EVENTS = os.path.join(HOME, ".local", "state", "agent-quality", "events.jsonl")
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 # realpath: a symlinked skill dir makes the gate script no-op (its main() guard
 # compares import.meta.url to argv[1]), so always run the resolved file.
-E2E_GATE = os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs"))
+# Candidates: the flattened skill-home sibling, the kit's agent-runtime copy,
+# then the neutral hub home. First that exists wins; else the first (canonical
+# flattened) path is kept so the failure message names a concrete location.
+_E2E_CANDIDATES = [
+    os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
+    os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "..", "..", "agent-runtime", "shared",
+                                  "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
+    os.path.expanduser("~/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs"),
+]
+E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDATES[0])
 
 SHIP_PATTERNS = [
     r"\bgit\s+[^|;&]*\bpush\b",
@@ -424,6 +433,31 @@ def is_ship(command, cfg=None):
     return any(re.search(p, command) for p in pats)
 
 
+def ship_target_roots(command, cwd):
+    """Every local repo a ship command can target: the payload cwd's repo plus
+    any `git -C path`, `cd path &&`, or --work-tree path inside the command.
+    (Hermes review 2026-09-24, topic qa-ship-gate: `git -C /opted/repo push`
+    run from a foreign cwd returned allow because only the payload cwd was
+    resolved.)"""
+    roots = []
+
+    def add(p):
+        if isinstance(p, str) and p:
+            full = p if os.path.isabs(p) else os.path.normpath(os.path.join(cwd, p))
+            r = repo_root(full)
+            if r and r not in roots:
+                roots.append(r)
+
+    add(cwd)
+    for m in re.finditer(r"-C\s+(\S+)", command):
+        add(m.group(1).strip("\"'"))
+    for m in re.finditer(r"\bcd\s+([^\s;&|]+)", command):
+        add(m.group(1).strip("\"'"))
+    for m in re.finditer(r"--work-tree[=\s](\S+)", command):
+        add(m.group(1).strip("\"'"))
+    return roots
+
+
 def hook():
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     try:
@@ -441,25 +475,34 @@ def hook():
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
     cwd = payload.get("cwd") or payload.get("working_directory") or os.getcwd()
-    root = repo_root(cwd)
-    if not root or not opted_in(root):
+    targets = [r for r in ship_target_roots(command, cwd) if opted_in(r)]
+    if not targets:
         return 0
-    try:
-        cfg = load_json(os.path.join(root, ".qa", "config.json"))
-    except Exception:
-        cfg = None  # unparseable config on a ship command: check_all reports it
-    if not is_ship(command, cfg):
+    cfgs = {}
+    for root in targets:
+        try:
+            cfgs[root] = load_json(os.path.join(root, ".qa", "config.json"))
+        except Exception:
+            cfgs[root] = None  # unparseable config on a ship command: check_all reports it
+    if not is_ship(command) and not any(is_ship(command, c) for c in cfgs.values()):
         return 0
-    ok, fails, stats, _ = check_all(root)
     prov = derive_provider(payload)
-    if ok:
-        emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
+    sections, denied = [], []
+    for root in targets:
+        cfg = cfgs[root]
+        ok, fails, stats, _ = check_all(root)
+        if ok:
+            emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
+                 provider=prov)
+            continue
+        denied.append(root)
+        emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"]},
              provider=prov)
+        sections.append("[%s]\n  - %s" % (os.path.basename(root), "\n  - ".join(fails)))
+    if not denied:
         return 0
-    reason = "[qa-ship-gate] Ship denied in %s. Complete the .qa pipeline, then ship:\n  - %s" % (
-        os.path.basename(root), "\n  - ".join(fails))
-    emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"]},
-         provider=prov)
+    reason = "[qa-ship-gate] Ship denied in %s. Complete the .qa pipeline, then ship:\n%s" % (
+        ", ".join(os.path.basename(r) for r in denied), "\n".join(sections))
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}))
@@ -641,6 +684,21 @@ def selftest():
     sh("git add -A && git commit -qm init", cwd=r1)
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "ship denied when pipeline missing")
+
+    # Hermes repro (2026-09-24, topic qa-ship-gate): the command can target a
+    # repo other than the payload cwd's. Run from a foreign non-repo cwd.
+    foreign = os.path.join(tmp, "foreign")
+    os.makedirs(foreign, exist_ok=True)
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % r1}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "git -C <opted-repo> push from foreign cwd denied")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "cd %s && git push origin main" % r1}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           "cd <opted-repo> && git push from foreign cwd denied")
     p = hookrun(r1, "ls -la")
     expect(p.returncode == 0, "non-ship allowed when pipeline missing")
 
@@ -692,6 +750,10 @@ def selftest():
     sh("git add -A && git commit -qm init", cwd=r2)
     p = hookrun(r2, "git push origin main")
     expect(p.returncode == 0, "ship allowed in non-opted-in repo")
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % r2}, "cwd": foreign}))
+    expect(p.returncode == 0, "git -C <plain-repo> push from foreign cwd allowed")
 
     with open(os.path.join(qa, "inventory.jsonl"), "a") as fh:
         fh.write(json.dumps({"id": "R2", "step": "dashboard", "symptom": "widget empty", "evidence": "shot-4",
@@ -735,6 +797,10 @@ def selftest():
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 0, "green deployed check allows ship [%s]" % p.stderr.strip()[:160])
 
+    p = sh('python3 "%s" hook' % GATE, cwd=tmp, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": "git -C %s push origin main" % r1}, "cwd": tmp}))
+    expect(p.returncode == 0, "git -C push allowed once pipeline complete [%s]" % p.stderr.strip()[:120])
     doc = json.load(open(os.path.join(qa, "clusters.json")))
     doc["clusters"].append({"id": "CL-9", "hypothesis": "x", "repro_command": "y", "repro_failed_once": True})
     json.dump(doc, open(os.path.join(qa, "clusters.json"), "w"))
