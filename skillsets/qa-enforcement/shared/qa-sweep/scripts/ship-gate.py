@@ -97,7 +97,30 @@ def read_lines(path):
         return [ln for ln in (raw.strip() for raw in fh) if ln]
 
 
-def emit(event, repo, sha="", data=None):
+def derive_provider(payload):
+    """Provider from the hook payload itself (measured 2026-09-24):
+    Claude PreToolUse carries transcript_path under ~/.claude/projects,
+    prompt_id, tool_use_id 'toolu_*'; Codex carries transcript_path under
+    ~/.codex/sessions (rollout-*), model and turn_id. Env vars are the
+    fallback; empty only when nothing identifies the caller."""
+    tp = str(payload.get("transcript_path") or payload.get("transcriptPath") or "")
+    if "/.codex/sessions/" in tp or "/rollout-" in tp:
+        return "codex"
+    if "/.claude/projects/" in tp:
+        return "claude-code"
+    if payload.get("turn_id") is not None or payload.get("model"):
+        return "codex"
+    if payload.get("prompt_id") is not None or str(payload.get("tool_use_id", "")).startswith("toolu_"):
+        return "claude-code"
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude-code"
+    for k in os.environ:
+        if k.startswith("CODEX_"):
+            return "codex"
+    return ""
+
+
+def emit(event, repo, sha="", data=None, provider=""):
     try:
         root = repo_root(repo) if repo else None
         branch = run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() if root else ""
@@ -111,7 +134,7 @@ def emit(event, repo, sha="", data=None):
             "branch": branch,
             "sha": (sha or (run_git(root, "rev-parse", "HEAD").stdout.strip() if root else ""))[:12],
             "thread_id": os.environ.get("BB_THREAD_ID", ""),
-            "provider": os.environ.get("QA_GATE_PROVIDER", os.environ.get("AGENT_PROVIDER", "")),
+            "provider": provider or os.environ.get("QA_GATE_PROVIDER", os.environ.get("AGENT_PROVIDER", "")),
             "data": data or {},
         }
         os.makedirs(os.path.dirname(EVENTS), exist_ok=True)
@@ -428,12 +451,15 @@ def hook():
     if not is_ship(command, cfg):
         return 0
     ok, fails, stats, _ = check_all(root)
+    prov = derive_provider(payload)
     if ok:
-        emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]})
+        emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
+             provider=prov)
         return 0
     reason = "[qa-ship-gate] Ship denied in %s. Complete the .qa pipeline, then ship:\n  - %s" % (
         os.path.basename(root), "\n  - ".join(fails))
-    emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"]})
+    emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"]},
+         provider=prov)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}))
