@@ -19,9 +19,10 @@ from the qa-speed-quality research report §2 (report at
 
 A repo opts in by committing `.qa/config.json`; from then the gate is ALWAYS
 ON for that repo (no flag, no off switch short of removing the opt-in — that
-is the design). Ship commands (`git push`, `gh pr create/merge/ready`,
-`bb fleet validate`, vercel/netlify/fly deploy, plus repo-configured regexes)
-are denied unless: every inventory row closed or fail-escalated with a
+is the design). Ship commands — v2: merges (`gh pr merge`/`gh pr ready`), pushes to protected
+refs (default branch + `protected_branches`; refspec, `HEAD:dev`, upstream,
+`--all`/`--mirror`), production deploys (`--prod`/promote/fly), plus
+repo-configured regexes — are denied unless: every inventory row closed or fail-escalated with a
 reference, every row clustered, every cluster's repro failed once, every
 cluster in plan.md, re-walk at the exact SHA being shipped all-PASS,
 qa-e2e-gate green on the evidence packet, and the configured deployed-SHA

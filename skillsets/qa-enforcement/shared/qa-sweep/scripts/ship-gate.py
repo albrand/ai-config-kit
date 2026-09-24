@@ -60,16 +60,19 @@ _E2E_CANDIDATES = [
 ]
 E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDATES[0])
 
-SHIP_PATTERNS = [
-    r"\bgit\s+[^|;&]*\bpush\b",
-    r"\bgh\s+pr\s+(create|merge|ready)\b",
-    r"\bbh\s+fleet\s+validate\b",
-    r"\bb\s+fleet\s+validate\b",
-    r"\bvercel\b[^|;&]*\b(deploy\b|--prod\b)",
-    r"\bnetlify\s+deploy\b",
-    r"\bfly(\.io)?\s+deploy\b",
-    r"\bflyctl\s+deploy\b",
-]
+# ---- v2 ship classification (2026-09-24, card 3 meu-psi pilot) --------------
+# v1 gated every push and every PR command, which deadlocked preview-based
+# flows: the re-walk must be at the shipped SHA, but the preview for that SHA
+# only exists after the push. v2 gates only what SHIPS: merges (gh pr merge,
+# gh pr ready), pushes whose destination ref is protected (default branch plus
+# .qa/config.json protected_branches), and production deploys. Feature-branch
+# pushes, gh pr create and bb fleet validate are free: that is how previews,
+# CI and review get produced. No dead patterns: every class below is exercised
+# by selftest against a canonical sample.
+
+GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                   "--super-prefix", "--exec-path", "--config-env"}
+PUSH_ALL_FLAGS = {"--all", "--mirror", "--branches"}
 
 ROW_STATUSES = ("open", "closed", "fail_escalated")
 ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity", "status")
@@ -291,11 +294,16 @@ def check_plan(root, clusters, fails):
 
 
 def rewalk_parent_ok(root, head, walked):
-    """True when `head` is exactly one .qa/-only commit on top of `walked`."""
-    parent = run_git(root, "rev-parse", "HEAD~1").stdout.strip()
+    """True when `head` (any sha present in the local repo) is exactly one
+    .qa/-only commit on top of `walked`."""
+    if not head:
+        return False
+    if run_git(root, "cat-file", "-e", head + "^{commit}").returncode != 0:
+        return False  # shipped head not present locally: cannot verify
+    parent = run_git(root, "rev-parse", head + "~1").stdout.strip()
     if not parent or parent != walked:
         return False
-    diff = run_git(root, "diff", "--name-only", "HEAD~1", "HEAD").stdout.split()
+    diff = run_git(root, "diff", "--name-only", head + "~1", head).stdout.split()
     return bool(diff) and all(d == ".qa" or d.startswith(".qa/") for d in diff)
 
 
@@ -312,8 +320,9 @@ def check_rewalk(root, wf, sha, fails, stats):
     if not doc.get("sha"):
         fails.append("rewalk.json: sha missing")
     elif sha and doc["sha"] != sha:
-        # The .qa artifacts are committed after the walk, so the pushed HEAD may
-        # be exactly one commit on top of the walked code, touching only .qa/.
+        # The .qa artifacts are committed after the walk, so the shipped commit
+        # may be exactly one commit on top of the walked code, touching only
+        # .qa/ (works for any head sha present locally, PR head included).
         if not (rewalk_parent_ok(root, sha, doc["sha"])):
             fails.append(f"rewalk.json sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}: re-walk at the new commit")
     steps = doc.get("steps")
@@ -423,16 +432,6 @@ def check_all(root, sha=None):
     return (not fails), fails, stats, cfg
 
 
-def is_ship(command, cfg=None):
-    pats = list(SHIP_PATTERNS)
-    try:
-        if cfg and isinstance(cfg.get("ship_commands"), list):
-            pats += [str(p) for p in cfg["ship_commands"]]
-    except Exception:
-        pass
-    return any(re.search(p, command) for p in pats)
-
-
 def _shell_arg_at(s, i):
     """One shell word starting at/after index i, with POSIX quoting semantics
     for everything statically resolvable: backslash escapes, single quotes,
@@ -523,10 +522,204 @@ def ship_target_roots(command, cwd):
     return roots
 
 
-def hook():
-    """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
+def command_segments(command):
+    """Top-level shell segments as token lists, split on ; | && and newlines,
+    tokenized with the same POSIX word parser the target resolver uses."""
+    segments, cur, i, n = [], [], 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c in ";|&\n":
+            j = i
+            while j < n and command[j] in ";|&\n":
+                j += 1
+            if cur:
+                segments.append(cur)
+                cur = []
+            i = j
+            continue
+        word, endpos = _shell_arg_at(command, i)
+        if word is None:
+            break
+        cur.append(word)
+        i = endpos
+    if cur:
+        segments.append(cur)
+    return segments
+
+
+def git_subcommand(args):
+    """The git subcommand: first non-option word after git, skipping global
+    options and their values (-C dir, -c k=v, --git-dir=..., ...). Card 3
+    defect (b): a -m message containing the word push must not classify."""
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return args[i + 1] if i + 1 < len(args) else None
+        if a.startswith("-"):
+            if a in GIT_VALUE_FLAGS:
+                i += 2
+                continue
+            if a.startswith("-C") and len(a) > 2:  # attached -Cdir
+                i += 1
+                continue
+            i += 1
+            continue
+        return a
+    return None
+
+
+def push_destinations(args):
+    """(mode, dsts) for a git push token list. mode 'all' for --all/--mirror/
+    --branches (every branch ships); else the destination refs from refspecs.
+    No refspec -> empty list (caller resolves the branch upstream)."""
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        i = args.index("push") + 1
+    except ValueError:
+        return None, []
+    flags, words = [], []
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            words += args[i + 1:]
+            break
+        if a.startswith("-"):
+            flags.append(a)
+            i += 1
+            continue
+        words.append(a)
+        i += 1
+    if any(f in PUSH_ALL_FLAGS or f.split("=")[0] in PUSH_ALL_FLAGS for f in flags):
+        return "all", []
+    dsts = []
+    for rs in words[1:]:  # words[0] is the remote when present
+        dst = rs.split(":", 1)[1] if ":" in rs else rs
+        if dst:
+            dsts.append(dst)
+    return None, dsts
+
+
+def normalize_ref(dst):
+    for pre in ("refs/heads/", "refs/"):
+        if dst.startswith(pre):
+            return dst[len(pre):]
+    return dst
+
+
+def default_branch(root):
+    r = run_git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+    if r and "/" in r:
+        return r.split("/", 1)[1]
+    cfg = run_git(root, "config", "--get", "init.defaultBranch").stdout.strip()
+    return cfg or "main"
+
+
+def upstream_branch(root):
+    """Upstream branch from git config. Config, not %(upstream): a configured
+    upstream works even before any fetch has created the remote-tracking ref
+    (a freshly pushed -u branch, or a config-only setup)."""
+    cur = run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if not cur or cur == "HEAD":
+        return None
+    merge = run_git(root, "config", "--get", "branch.%s.merge" % cur).stdout.strip()
+    if not merge:
+        return None
+    return normalize_ref(merge)
+
+
+def protected_refs(root, cfg):
+    prot = {default_branch(root)}
+    try:
+        extra = cfg.get("protected_branches")
+        if isinstance(extra, list):
+            prot.update(str(b) for b in extra if b)
+    except Exception:
+        pass
+    return prot
+
+
+def segment_ship_kind(seg, root, cfg):
+    """"merge" | "push" | "deploy" for one shell segment, else None."""
+    if not seg:
+        return None
+    head = seg[0]
+    if head == "git":
+        if git_subcommand(seg) != "push":
+            return None
+        mode, dsts = push_destinations(seg)
+        prot = protected_refs(root, cfg)
+        if mode == "all":
+            return "push"
+        if not dsts:
+            up = upstream_branch(root)
+            return "push" if up and normalize_ref(up) in prot else None
+        for d in dsts:
+            if normalize_ref(d) in prot:
+                return "push"
+        return None
+    if head == "gh" and len(seg) > 2 and seg[1] == "pr" and seg[2] in ("merge", "ready"):
+        return "merge"
+    if head == "vercel":
+        if "--prod" in seg or (len(seg) > 1 and seg[1] == "promote"):
+            return "deploy"
+        return None
+    if head == "netlify" and "deploy" in seg[1:3] and "--prod" in seg:
+        return "deploy"
+    if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
+        return "deploy"
+    return None
+
+
+def ship_kind(command, root, cfg):
+    """Highest-stakes ship kind anywhere in the command, for this root."""
+    kinds = [k for k in (segment_ship_kind(s, root, cfg) for s in command_segments(command)) if k]
+    try:
+        if cfg and isinstance(cfg.get("ship_commands"), list):
+            if any(re.search(str(p), command) for p in cfg["ship_commands"]):
+                kinds.append("extra")
+    except Exception:
+        pass
+    if "merge" in kinds:
+        return "merge"   # needs PR-head freshness, the stricter sha rule
+    if "push" in kinds:
+        return "push"
+    return kinds[0] if kinds else None
+
+
+def pr_merge_args(command):
+    """Token list of the first `gh pr merge`/`gh pr ready` segment, if any."""
+    for seg in command_segments(command):
+        if len(seg) > 2 and seg[0] == "gh" and seg[1] == "pr" and seg[2] in ("merge", "ready"):
+            return seg
+    return None
+
+
+def pr_head_sha(root, args):
+    """PR head sha for `gh pr merge [n]`: `gh pr view [n] --json headRefOid`.
+    None on any failure (caller falls back to the local HEAD)."""
+    if os.environ.get("QA_GATE_NO_GH"):
+        return None
+    num = next((a for a in (args[3:] if len(args) > 3 else []) if a.isdigit()), None)
+    cmd = ["gh", "pr", "view"] + ([num] if num else []) + ["--json", "headRefOid", "-q", ".headRefOid"]
+    try:
+        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
+        sha = p.stdout.strip()
+        if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
+            return sha
+    except Exception:
+        pass
+    return None
+
+
+def hook(raw=None):
+    """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
+    global _LAST_INPUT
+    try:
+        _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
+        payload = json.loads(_LAST_INPUT)
     except Exception:
         return 0
     if not isinstance(payload, dict):
@@ -549,20 +742,30 @@ def hook():
             cfgs[root] = load_json(os.path.join(root, ".qa", "config.json"))
         except Exception:
             cfgs[root] = None  # unparseable config on a ship command: check_all reports it
-    if not is_ship(command) and not any(is_ship(command, c) for c in cfgs.values()):
-        return 0
+    kinds = {root: ship_kind(command, root, cfgs[root]) for root in targets}
+    if not any(kinds.values()):
+        return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
     prov = derive_provider(payload)
+    merge_args = pr_merge_args(command)
     sections, denied = [], []
     for root in targets:
-        cfg = cfgs[root]
-        ok, fails, stats, _ = check_all(root)
+        kind = kinds[root]
+        if not kind:
+            continue
+        # Walk freshness: a merge needs the walk at the PR head SHA being
+        # merged (gh pr view), falling back to the local HEAD; pushes and
+        # deploys check the local HEAD (with the .qa-only-parent allowance).
+        sha = ""
+        if kind == "merge" and merge_args is not None:
+            sha = pr_head_sha(root, merge_args) or run_git(root, "rev-parse", "HEAD").stdout.strip()
+        ok, fails, stats, _ = check_all(root, sha or None)
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
                  provider=prov)
             continue
         denied.append(root)
-        emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"]},
-             provider=prov)
+        emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"],
+                                        "kind": kind}, provider=prov)
         sections.append("[%s]\n  - %s" % (os.path.basename(root), "\n  - ".join(fails)))
     if not denied:
         return 0
@@ -694,7 +897,7 @@ def main():
     cmd = argv[0] if argv else "check"
     rest = parse_args(argv[1:])
     if cmd == "hook":
-        return hook()
+        return hook()  # hook() stashes raw input for the crash fail-closed path
     if cmd == "stop":
         return stop()
     if cmd == "check":
@@ -727,7 +930,7 @@ def selftest():
     def mkrepo(name, optin=True):
         r = os.path.join(tmp, name)
         os.makedirs(r)
-        sh("git init -q && git config user.email t@t && git config user.name t", cwd=r)
+        sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r)
         if optin:
             os.makedirs(os.path.join(r, ".qa"))
             with open(os.path.join(r, ".qa", "config.json"), "w") as fh:
@@ -738,6 +941,12 @@ def selftest():
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
         return sh('python3 "%s" hook' % os.path.abspath(__file__), cwd=root, inp=payload)
+
+    def cfgs_of(root):
+        try:
+            return load_json(os.path.join(root, ".qa", "config.json"))
+        except Exception:
+            return None
 
     def stoprun(root, active):
         payload = json.dumps({"cwd": root, "stop_hook_active": active, "session_id": "s"})
@@ -809,7 +1018,7 @@ def selftest():
            "cd with backslash-escaped spaces denied")
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",
-         "tool_input": {"command": 'git --work-tree="%s" -C %s push origin main' % (spaced, spaced)}, "cwd": foreign}))
+         "tool_input": {"command": 'git --work-tree="%s" -C "%s" push origin main' % (spaced, spaced)}, "cwd": foreign}))
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
            "git --work-tree quoted-space denied")
     esc_plain = spaced_plain.replace(" ", "\\ ")
@@ -961,9 +1170,119 @@ def selftest():
     p = hookrun(r1, "git push origin main")
     expect("no verdict" not in p.stderr, "real gate verdict restored after removing the noop override")
 
+    # ---------------- v2: what ships (card 3 pilot) ----------------
+    import shutil as _sh
+    r3 = os.path.join(tmp, "v2opted")
+    os.makedirs(r3)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r3)
+    os.makedirs(os.path.join(r3, ".qa"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "protected_branches": ["dev", "main"]},
+              open(os.path.join(r3, ".qa", "config.json"), "w"))
+    sha3 = sh("echo x > f && git add -A && git commit -qm init && git rev-parse HEAD", cwd=r3).stdout.strip().splitlines()[-1]
+    qa3 = os.path.join(r3, ".qa")
+    json.dump({"workflow": "w1", "persona": "admin", "entry": "/", "outcome": "done",
+               "steps": ["s1"], "target": {"url": "http://x.test", "sha": sha3}},
+              open(os.path.join(qa3, "workflow.json"), "w"))
+    with open(os.path.join(qa3, "inventory.jsonl"), "w") as fh:
+        fh.write(json.dumps({"id": "R1", "step": "s1", "symptom": "bug", "evidence": "e",
+                             "predates_change": False, "severity": "high", "status": "closed"}) + "\n")
+        fh.write(json.dumps({"id": "R2", "step": "s1", "symptom": "open bug", "evidence": "e",
+                             "predates_change": False, "severity": "low", "status": "open"}) + "\n")
+    json.dump({"clusters": [{"id": "CL-1", "hypothesis": "h", "repro_command": "x", "repro_failed_once": True}],
+               "mapping": {"R1": "CL-1"}}, open(os.path.join(qa3, "clusters.json"), "w"))
+    open(os.path.join(qa3, "plan.md"), "w").write("# p\n- CL-1\n")
+    json.dump({"sha": sha3, "steps": [{"step": "s1", "verdict": "PASS", "evidence": "e"}]},
+              open(os.path.join(qa3, "rewalk.json"), "w"))
+    ev3 = json.load(open(os.path.join(qa, "evidence.json")))
+    json.dump(ev3, open(os.path.join(qa3, "evidence.json"), "w"))
+
+    p = hookrun(r3, "git push origin feature/qa-walk")
+    expect(p.returncode == 0, "v2: feature-branch push with open inventory ALLOWED")
+    p = hookrun(r3, "git push origin HEAD:dev")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr, "v2: git push HEAD:dev DENIED")
+    sh("git config branch.main.remote origin && git config branch.main.merge refs/heads/main", cwd=r3)
+    p = hookrun(r3, "git push")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr, "v2: no-refspec push with upstream main DENIED")
+    p = hookrun(r3, 'git commit -m "pre-push hook"')
+    expect(p.returncode == 0, "v2: git commit -m pre-push ALLOWED")
+    p = hookrun(r3, "bb fleet validate claim --topic t")
+    expect(p.returncode == 0, "v2: bb fleet validate ALLOWED")
+    p = hookrun(r3, "gh pr create --title x --body-file -")
+    expect(p.returncode == 0, "v2: gh pr create ALLOWED")
+    p = hookrun(r3, "vercel deploy")
+    expect(p.returncode == 0, "v2: vercel deploy (preview) ALLOWED")
+    p = hookrun(r3, "vercel deploy --prod")
+    expect(p.returncode == 2, "v2: vercel deploy --prod DENIED")
+    p = hookrun(r3, "vercel promote my-app.vercel.app")
+    expect(p.returncode == 2, "v2: vercel promote DENIED")
+    p = hookrun(r3, "git push --mirror origin")
+    expect(p.returncode == 2, "v2: git push --mirror DENIED")
+    p = hookrun(r3, "git push origin refs/heads/main")
+    expect(p.returncode == 2, "v2: git push refs/heads/main DENIED")
+    p = hookrun(r3, "git --no-pager push origin main")
+    expect(p.returncode == 2, "v2: flag-before-subcommand push DENIED")
+
+    # merges: freshness against the PR head SHA (fake gh on PATH)
+    lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
+    lines[1]["status"] = "closed"
+    with open(os.path.join(qa3, "inventory.jsonl"), "w") as fh:
+        fh.write("\n".join(json.dumps(l) for l in lines) + "\n")
+    doc = json.load(open(os.path.join(qa3, "clusters.json")))
+    doc["mapping"]["R2"] = "CL-1"
+    json.dump(doc, open(os.path.join(qa3, "clusters.json"), "w"))
+    binp = os.path.join(tmp, "bin")
+    os.makedirs(binp, exist_ok=True)
+    prhead = "f" * 40
+    fake = os.path.join(binp, "gh")
+    open(fake, "w").write("#!/bin/sh\ncase \"$*\" in *--json*) echo %s;; *) exit 1;; esac\n" % prhead)
+    os.chmod(fake, 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = binp + os.pathsep + old_path
+    doc = json.load(open(os.path.join(qa3, "rewalk.json")))
+    doc["sha"] = sha3  # local HEAD, not the PR head: stale for the merge
+    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 2 and "shipped sha" in p.stderr, "v2: gh pr merge --admin with stale walk DENIED")
+    doc["sha"] = prhead
+    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0, "v2: gh pr merge with fresh walk at PR head ALLOWED [%s]" % p.stderr.strip()[:140])
+    os.environ["PATH"] = old_path
+
+    # non-opted-in repo: everything allowed, ships included
+    p = hookrun(r2, "git push origin main")
+    expect(p.returncode == 0, "v2: non-opted push origin main ALLOWED")
+    p = hookrun(r2, "gh pr merge 22 --admin")
+    expect(p.returncode == 0, "v2: non-opted gh pr merge ALLOWED")
+
+    # no dead classification branch: every class matches a canonical command
+    segs = lambda c: command_segments(c)
+    ok_classes = (
+        segment_ship_kind(segs("git push origin main")[0], r3, cfgs_of(r3)) == "push"
+        and segment_ship_kind(segs("gh pr merge 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("vercel deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
+        and segment_ship_kind(segs("netlify deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
+        and segment_ship_kind(segs("fly deploy")[0], r3, cfgs_of(r3)) == "deploy"
+        and segment_ship_kind(segs("bb fleet validate x")[0], r3, cfgs_of(r3)) is None
+        and segment_ship_kind(segs('git commit -m "pre-push hook"')[0], r3, cfgs_of(r3)) is None
+    )
+    expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
+
     shutil.rmtree(tmp, ignore_errors=True)
     print("selftest: %d failure(s)" % len(fails))
     return 1 if fails else 0
+
+
+_LAST_INPUT = None
+
+
+def coarse_ship(text):
+    """Last-resort ship heuristic used only when hook() itself crashes: a
+    crash on a ship-looking command in an opted-in repo must DENY (fail
+    closed), never allow. Coarser than the classifier on purpose."""
+    return re.search(r"git\s+push|--mirror|gh\s+pr\s+(merge|ready)|--prod|vercel\s+promote", text)
 
 
 if __name__ == "__main__":
@@ -973,6 +1292,15 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # hook mode must never crash loudly
         if len(sys.argv) > 1 and sys.argv[1] == "hook":
+            # fail closed for ship-looking commands; everything else fails open
+            raw = globals().get("_LAST_INPUT") or ""
+            if raw and coarse_ship(raw):
+                reason = "[qa-ship-gate] gate crashed while evaluating a ship command; treated as DENIED. Complete the .qa pipeline (%s)" % exc
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                         "permissionDecision": "deny",
+                                                         "permissionDecisionReason": reason}}))
+                sys.stderr.write(reason + "\n")
+                sys.exit(2)
             sys.exit(0)
         print("fatal:", exc)
         sys.exit(1)

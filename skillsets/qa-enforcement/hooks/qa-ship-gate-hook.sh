@@ -1,0 +1,24 @@
+#!/bin/sh
+# PreToolUse adapter for the QA ship gate (Claude Code + Codex via
+# coordinator-hook-pretool.sh). Reads the hook payload on stdin.
+#   exit 0 + no output = allow; exit 2 + JSON/stderr = deny.
+# Fails OPEN except for ship commands in .qa-opted-in repos, where the python
+# gate denies on any internal error (fail closed). If python itself is
+# missing, a POSIX grep fallback still denies ship commands generically so the
+# fail-closed property does not depend on the interpreter being present.
+GATE="$HOME/.agents/skills/qa-sweep/scripts/ship-gate.py"
+input=$(cat)
+set +e
+printf '%s' "$input" | python3 "$GATE" hook
+rc=$?
+set -e
+if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
+  exit "$rc"
+fi
+# python missing or crashed before it could decide: decide by shape alone
+if printf '%s' "$input" | grep -qE '"command"[^:]*:[^"]*"(git [^"]*push|gh pr (merge|ready)|vercel[^"]*(--prod|promote)|netlify[^"]*deploy[^"]*--prod|flyctl\? deploy)'; then
+  echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[qa-ship-gate] gate could not run but a ship command was attempted; treat as denied and complete the .qa pipeline"}}' 
+  echo "[qa-ship-gate] gate could not run; ship treated as denied" >&2
+  exit 2
+fi
+exit 0

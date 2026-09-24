@@ -1,21 +1,39 @@
-# QA ship gate as a CI job (GitHub Actions template). Make it a REQUIRED
-# status check before merging: this is the layer an agent cannot forge,
-# because it re-runs the artifact checks against the pushed SHA.
+# QA ship gate as the CI layer (GitHub Actions template). v2: this is where
+# MERGES are truly enforced (the repo keeps admin bypass on branch protection).
 # Copy to .github/workflows/qa-ship-gate.yml in an opted-in repo.
+#
+# Card-3 defect (c) fixed here: checkout the PR HEAD, not GitHub's merge
+# commit, with fetch-depth 2 so the gate can accept a head that is one
+# .qa-only commit on top of the walked one. GITHUB_SHA on pull_request is the
+# merge commit and never equals the walked SHA.
 name: qa-ship-gate
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   ship-gate:
+    name: qa ship gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
+      # PR head (not the merge commit), depth 2 for the .qa-only-parent allowance
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-      - name: QA ship gate (.qa pipeline at the pushed SHA)
-        run: python3 .qa/bin/ship-gate.py check --repo . --sha "$GITHUB_SHA"
+          node-version: 22
+      - name: Install the e2e evidence gate where ship-gate looks for it
+        run: |
+          mkdir -p "$HOME/.agents/skills/verified-qa-e2e/scripts"
+          cp .qa/bin/qa-e2e-gate.mjs "$HOME/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs"
+      - name: QA ship gate (.qa pipeline at the shipped commit)
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 .qa/bin/ship-gate.py check --repo . --sha "$HEAD_SHA"

@@ -122,12 +122,24 @@ python3 <skill-dir>/scripts/ship-gate.py record escape --source sentry --ref <id
 
 ## P6 Ship
 
-The gate (host PreToolUse hook, git pre-push template, CI template) denies
-`git push`, `gh pr create/merge/ready`, `bb fleet validate` and deploy
-commands in opted-in repos until: every row closed or escalated, every row
-clustered, every cluster planned, re-walk at the shipped SHA all-PASS,
-qa-e2e-gate green, and (when configured) the deployed-SHA check green. The
-deny message is the to-do list. `.qa/` artifacts are committed: reviewers see
-the inventory in the PR and CI re-checks it — that is the layer you cannot
-self-attest. If a ship is denied, complete the pipeline; never delete
-`.qa/config.json` to dodge the gate.
+Only what SHIPS is gated (v2): **merges** (`gh pr merge` with any flags, `gh pr ready`),
+**pushes whose destination is protected** — the repo's default branch plus
+`protected_branches` in `.qa/config.json` (resolved from the refspec, `HEAD:dev`
+forms, the current branch's upstream when there is no refspec; `--all`/`--mirror`
+count as protected) — and **production deploys** (`vercel --prod` /
+`vercel deploy --prod` / `vercel promote`, `netlify deploy --prod`, `fly deploy`).
+
+Free on purpose: **feature-branch pushes** (that is how previews and CI get
+built), **`gh pr create`** (that is how the preview and the PR are produced),
+and **`bb fleet validate`** (review should see the work before the merge, not
+after). The deadlock v1 had — the re-walk must be at the shipped SHA but the
+preview for that SHA only exists after the push — is resolved: walk against
+the preview of your feature-branch push, then merge.
+
+Walk freshness for a MERGE: `rewalk.json` must sit at the PR head SHA being
+merged (`gh pr view --json headRefOid`), or one `.qa/`-only commit on top of
+it. For pushes and deploys, the shipped HEAD with the same allowance. The
+local gate (PreToolUse hook, git pre-push template) checks consistency; the
+CI job is where merges are truly enforced — make it a required check. If a
+ship is denied, complete the pipeline; never delete `.qa/config.json` to
+dodge the gate.
