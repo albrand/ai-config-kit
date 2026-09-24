@@ -45,7 +45,11 @@ import sys
 import tempfile
 
 HOME = os.path.expanduser("~")
-EVENTS = os.path.join(HOME, ".local", "state", "agent-quality", "events.jsonl")
+# QA_GATE_EVENTS_FILE overrides the sink: tests, demos and probes MUST point it
+# at a scratch file so the live events file only ever receives real activity
+# (the value panel counts these rows; selftest noise drowned it 2026-09-24).
+EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
+    HOME, ".local", "state", "agent-quality", "events.jsonl")
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 # realpath: a symlinked skill dir makes the gate script no-op (its main() guard
 # compares import.meta.url to argv[1]), so always run the resolved file.
@@ -143,6 +147,7 @@ def emit(event, repo, sha="", data=None, provider=""):
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             "event": event,
             "repo": os.path.basename(root) if root else "",
+            "repo_path": root or "",
             "branch": branch,
             "sha": (sha or (run_git(root, "rev-parse", "HEAD").stdout.strip() if root else ""))[:12],
             "thread_id": os.environ.get("BB_THREAD_ID", ""),
@@ -970,6 +975,14 @@ def selftest():
     import shutil
     tmp = tempfile.mkdtemp(prefix="qa-gate-selftest-")
     fails = []
+    # isolate the events sink: selftest rows are not real gate activity and
+    # must never reach the live file the value panel reads
+    global EVENTS
+    live_events = EVENTS
+    scratch_events = os.path.join(tmp, "events.scratch.jsonl")
+    EVENTS = scratch_events
+    old_qa_gate_events = os.environ.get("QA_GATE_EVENTS_FILE")
+    os.environ["QA_GATE_EVENTS_FILE"] = scratch_events
 
     def expect(cond, name):
         print(("ok   " if cond else "FAIL ") + name)
@@ -1378,6 +1391,11 @@ def selftest():
     expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
 
     shutil.rmtree(tmp, ignore_errors=True)
+    EVENTS = live_events
+    if old_qa_gate_events is None:
+        os.environ.pop("QA_GATE_EVENTS_FILE", None)
+    else:
+        os.environ["QA_GATE_EVENTS_FILE"] = old_qa_gate_events
     print("selftest: %d failure(s)" % len(fails))
     return 1 if fails else 0
 
