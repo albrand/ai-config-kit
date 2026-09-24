@@ -8,12 +8,19 @@ discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
   .qa/config.json     repo opt-in: personas, workflows, optional deployed_check
-  .qa/workflow.json   the task's scope: persona, entry, outcome, steps, target
-  .qa/inventory.jsonl one row per defect found on the full walk (no fixing yet)
-  .qa/clusters.json   row -> cluster, repro command, repro_failed_once: true
-  .qa/plan.md         one plan covering every cluster id
-  .qa/rewalk.json     verdict per workflow step, at the SHA being shipped
-  .qa/evidence.json   qa-e2e-gate.mjs packet (claim_e2e_complete)
+  <run>/workflow.json   the task's scope: persona, entry, outcome, steps, target
+  <run>/inventory.jsonl one row per defect found on the full walk (no fixing yet)
+  <run>/clusters.json   row -> cluster, repro command, repro_failed_once: true
+  <run>/plan.md         one plan covering every cluster id
+  <run>/rewalk.json     verdict per workflow step, at the SHA being shipped
+  <run>/evidence.json   qa-e2e-gate.mjs packet (claim_e2e_complete)
+
+A run is `.qa/runs/<branch-slug>/` (per-branch, so concurrent PRs never
+collide) or the legacy flat `.qa/`. The gate selects the run whose rewalk.sha
+equals the shipped SHA (or its parent under a .qa-only head); no match is a
+DENY naming the runs, two matches are an ambiguous DENY. Since v3 the
+artifacts are read from the SHIPPED COMMIT's tree (git show sha:path), so
+uncommitted working-tree records cannot clear a protected push or merge.
 
 Subcommands:
   hook    PreToolUse adapter (stdin JSON; exit 2 = deny, 0 = allow)
@@ -161,13 +168,100 @@ def emit(event, repo, sha="", data=None, provider=""):
         pass
 
 
-def check_config(root, fails):
-    path = os.path.join(root, ".qa", "config.json")
-    if not os.path.isfile(path):
+def branch_slug(branch):
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-") or "detached"
+
+
+def qa_reader(root, sha=None):
+    """Artifact access as (exists(rel), read(rel)) over repo-relative paths.
+    With a sha that exists locally, artifacts come from THAT COMMIT'S tree
+    (git show sha:rel) -- v3 security fix: uncommitted working-tree records
+    can no longer clear a protected push or merge; a shipped commit carries
+    its own evidence. Without a sha, the working tree (mid-sweep helpers)."""
+    if sha and run_git(root, "cat-file", "-e", sha + "^{commit}").returncode == 0:
+        def exists(rel):
+            return run_git(root, "cat-file", "-e", "%s:%s" % (sha, rel)).returncode == 0
+
+        def read(rel):
+            p = run_git(root, "show", "%s:%s" % (sha, rel))
+            if p.returncode != 0:
+                raise FileNotFoundError(rel)
+            return p.stdout
+        return {"exists": exists, "read": read}
+
+    def exists(rel):
+        return os.path.isfile(os.path.join(root, rel))
+
+    def read(rel):
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            return fh.read()
+    return {"exists": exists, "read": read}
+
+
+def qa_run_dirs(root, sha=None, rd=None):
+    """Candidate run dirs as repo-relative paths: .qa/runs/<name>/ plus the
+    legacy flat .qa/ when it holds a run (or when there are no runs at all,
+    so legacy messages still name .qa/ paths). At a sha, the listing comes
+    from that commit's tree."""
+    dirs = []
+    if sha:
+        p = run_git(root, "ls-tree", "--name-only", sha, "--", ".qa/runs/")
+        if p.returncode == 0:
+            for line in p.stdout.splitlines():
+                name = line.strip().rstrip("/").split("/")[-1]
+                if name:
+                    dirs.append(".qa/runs/" + name)
+        legacy_has = run_git(root, "cat-file", "-e", "%s:.qa/rewalk.json" % sha).returncode == 0
+    else:
+        runs = os.path.join(root, ".qa", "runs")
+        if os.path.isdir(runs):
+            dirs = [".qa/runs/" + n for n in sorted(os.listdir(runs))
+                    if os.path.isdir(os.path.join(runs, n))]
+        legacy_has = os.path.isfile(os.path.join(root, ".qa", "rewalk.json"))
+    if legacy_has or not dirs:
+        dirs.append(".qa")
+    return dirs
+
+
+def resolve_run(root, sha, rd):
+    """(dir, None) for the one run re-walked at `sha` (or at its parent under
+    a .qa/-only head); (None, failure) when none or several match. A single
+    candidate is returned as is, so the legacy flat layout and a lone run
+    behave exactly as before."""
+    cands = qa_run_dirs(root, sha, rd)
+    if len(cands) == 1:
+        return cands[0], None
+    seen, matches = [], []
+    for d in cands:
+        try:
+            walked = str(json.loads(rd["read"](d + "/rewalk.json")).get("sha") or "")
+        except Exception:
+            walked = ""
+        seen.append("%s@%s" % (d, walked[:12] or "-"))
+        if walked and (walked == sha or rewalk_parent_ok(root, sha, walked)):
+            matches.append(d)
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, "no QA run has a re-walk at %s (runs: %s)" % (str(sha)[:12], ", ".join(seen))
+    return None, "ambiguous QA runs for %s: %s (one run per branch)" % (str(sha)[:12], ", ".join(matches))
+
+
+def default_run(root):
+    """Working-tree default for mid-sweep helpers (record, cluster-check):
+    .qa/runs/<slug of current branch>/ when present, else the legacy .qa/."""
+    branch = run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    d = os.path.join(root, ".qa", "runs", branch_slug(branch))
+    return d if os.path.isdir(d) else os.path.join(root, ".qa")
+
+
+def check_config(root, rd, fails):
+    rel = ".qa/config.json"
+    if not rd["exists"](rel):
         fails.append(".qa/config.json missing (repo opt-in)")
         return None
     try:
-        cfg = load_json(path)
+        cfg = json.loads(rd["read"](rel))
     except Exception as exc:
         fails.append(f".qa/config.json unparseable: {exc}")
         return None
@@ -182,46 +276,46 @@ def check_config(root, fails):
     return cfg
 
 
-def check_workflow(root, cfg, fails):
-    path = os.path.join(root, ".qa", "workflow.json")
-    if not os.path.isfile(path):
-        fails.append(".qa/workflow.json missing (P0 scope: persona, entry, outcome, steps, target)")
+def check_workflow(qa, rd, cfg, fails):
+    rel = qa + "/workflow.json"
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (P0 scope: persona, entry, outcome, steps, target)")
         return None
     try:
-        wf = load_json(path)
+        wf = json.loads(rd["read"](rel))
     except Exception as exc:
-        fails.append(f".qa/workflow.json unparseable: {exc}")
+        fails.append(f"{rel} unparseable: {exc}")
         return None
     if not (wf.get("persona") or wf.get("personas")):
-        fails.append("workflow.json: persona missing")
+        fails.append(rel + ": persona missing")
     for key in ("entry", "outcome"):
         if not wf.get(key):
-            fails.append(f"workflow.json: {key} missing")
+            fails.append(rel + f": {key} missing")
     steps = wf.get("steps")
     if not (isinstance(steps, list) and steps and all(isinstance(s, str) and s for s in steps)):
-        fails.append("workflow.json: steps must be a non-empty list of step names")
+        fails.append(rel + ": steps must be a non-empty list of step names")
     target = wf.get("target")
     if not (isinstance(target, dict) and target.get("url") and target.get("sha")):
-        fails.append("workflow.json: target needs url and sha")
+        fails.append(rel + ": target needs url and sha")
     if cfg and isinstance(cfg.get("workflows"), list):
         names = {w.get("name") for w in cfg["workflows"] if isinstance(w, dict)}
         if wf.get("workflow") and names and wf["workflow"] not in names:
-            fails.append(f"workflow.json: '{wf['workflow']}' is not a workflow named in .qa/config.json")
+            fails.append(rel + f": '{wf['workflow']}' is not a workflow named in .qa/config.json")
     return wf
 
 
-def check_inventory(root, fails, stats):
-    path = os.path.join(root, ".qa", "inventory.jsonl")
-    if not os.path.isfile(path):
-        fails.append(".qa/inventory.jsonl missing (P1 full-walk inventory)")
+def check_inventory(qa, rd, fails, stats):
+    rel = qa + "/inventory.jsonl"
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (P1 full-walk inventory)")
         return []
     rows = []
     try:
-        for i, ln in enumerate(read_lines(path), 1):
+        for i, ln in enumerate([l for l in rd["read"](rel).splitlines() if l.strip()], 1):
             try:
                 row = json.loads(ln)
             except Exception as exc:
-                fails.append(f"inventory.jsonl line {i} unparseable: {exc}")
+                fails.append(f"{rel} line {i} unparseable: {exc}")
                 continue
             miss = [f for f in ROW_FIELDS if f not in row]
             if miss:
@@ -237,7 +331,7 @@ def check_inventory(root, fails, stats):
                 fails.append(f"inventory row {row['id']}: predates_change must be true/false")
             rows.append(row)
     except Exception as exc:
-        fails.append(f".qa/inventory.jsonl unreadable: {exc}")
+        fails.append(f"{rel} unreadable: {exc}")
         return []
     stats["rows_total"] = len(rows)
     stats["open_rows"] = sum(1 for r in rows if r["status"] == "open")
@@ -245,22 +339,22 @@ def check_inventory(root, fails, stats):
     return rows
 
 
-def check_clusters(root, rows, fails, stats):
-    path = os.path.join(root, ".qa", "clusters.json")
-    if not os.path.isfile(path):
-        fails.append(".qa/clusters.json missing (P2 clustering with red repro)")
+def check_clusters(qa, rd, rows, fails, stats):
+    rel = qa + "/clusters.json"
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (P2 clustering with red repro)")
         return None
     try:
-        doc = load_json(path)
+        doc = json.loads(rd["read"](rel))
         clusters = doc.get("clusters", [])
         mapping = doc.get("mapping", {})
     except Exception as exc:
-        fails.append(f".qa/clusters.json unparseable: {exc}")
+        fails.append(f"{rel} unparseable: {exc}")
         return None
     ids = set()
     for cl in clusters if isinstance(clusters, list) else []:
         if not (isinstance(cl, dict) and cl.get("id")):
-            fails.append("clusters.json: every cluster needs an id")
+            fails.append(rel + ": every cluster needs an id")
             continue
         ids.add(cl["id"])
         if not cl.get("hypothesis"):
@@ -270,7 +364,7 @@ def check_clusters(root, rows, fails, stats):
         if cl.get("repro_failed_once") is not True:
             fails.append(f"cluster {cl['id']}: repro_failed_once must be true (make it fail once before trusting it)")
     if not isinstance(mapping, dict):
-        fails.append("clusters.json: mapping must be an object of row-id -> cluster-id")
+        fails.append(rel + ": mapping must be an object of row-id -> cluster-id")
         mapping = {}
     for row in rows:
         cid = mapping.get(row["id"])
@@ -282,19 +376,19 @@ def check_clusters(root, rows, fails, stats):
     return doc
 
 
-def check_plan(root, clusters, fails):
-    path = os.path.join(root, ".qa", "plan.md")
-    if not os.path.isfile(path):
-        fails.append(".qa/plan.md missing (P3 one plan for every cluster)")
+def check_plan(qa, rd, clusters, fails):
+    rel = qa + "/plan.md"
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (P3 one plan for every cluster)")
         return False
     try:
-        text = open(path, encoding="utf-8").read()
+        text = rd["read"](rel)
     except Exception as exc:
-        fails.append(f".qa/plan.md unreadable: {exc}")
+        fails.append(f"{rel} unreadable: {exc}")
         return False
     for cl in (clusters or {}).get("clusters", []) if isinstance(clusters, dict) else []:
         if isinstance(cl, dict) and cl.get("id") and cl["id"] not in text:
-            fails.append(f"plan.md does not cover cluster {cl['id']}")
+            fails.append(rel + f" does not cover cluster {cl['id']}")
     return True
 
 
@@ -312,66 +406,74 @@ def rewalk_parent_ok(root, head, walked):
     return bool(diff) and all(d == ".qa" or d.startswith(".qa/") for d in diff)
 
 
-def check_rewalk(root, wf, sha, fails, stats):
-    path = os.path.join(root, ".qa", "rewalk.json")
-    if not os.path.isfile(path):
-        fails.append(".qa/rewalk.json missing (P5 re-walk of the whole workflow)")
+def check_rewalk(root, qa, rd, wf, sha, fails, stats):
+    rel = qa + "/rewalk.json"
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (P5 re-walk of the whole workflow)")
         return None
     try:
-        doc = load_json(path)
+        doc = json.loads(rd["read"](rel))
     except Exception as exc:
-        fails.append(f".qa/rewalk.json unparseable: {exc}")
+        fails.append(f"{rel} unparseable: {exc}")
         return None
     if not doc.get("sha"):
-        fails.append("rewalk.json: sha missing")
+        fails.append(rel + ": sha missing")
     elif sha and doc["sha"] != sha:
-        # The .qa artifacts are committed after the walk, so the shipped commit
-        # may be exactly one commit on top of the walked code, touching only
-        # .qa/ (works for any head sha present locally, PR head included).
         if not (rewalk_parent_ok(root, sha, doc["sha"])):
-            fails.append(f"rewalk.json sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}: re-walk at the new commit")
+            fails.append(f"{rel} sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}: re-walk at the new commit")
     steps = doc.get("steps")
     if not isinstance(steps, list) or not steps:
-        fails.append("rewalk.json: steps must be a non-empty list")
+        fails.append(rel + ": steps must be a non-empty list")
     else:
         for st in steps:
             if not isinstance(st, dict) or not st.get("step"):
-                fails.append("rewalk.json: every step needs a step name")
+                fails.append(rel + ": every step needs a step name")
                 continue
             if st.get("verdict") != "PASS":
-                fails.append(f"rewalk step '{st['step']}': verdict {st.get('verdict')!r} (only PASS clears the gate)")
+                fails.append(f"{rel} step '{st['step']}': verdict {st.get('verdict')!r} (only PASS clears the gate)")
             if not st.get("evidence"):
-                fails.append(f"rewalk step '{st['step']}': evidence missing")
+                fails.append(f"{rel} step '{st['step']}': evidence missing")
         if isinstance(wf, dict) and isinstance(wf.get("steps"), list):
             walked = {st.get("step") for st in steps if isinstance(st, dict)}
             for name in wf["steps"]:
                 if name not in walked:
-                    fails.append(f"rewalk.json: workflow step '{name}' has no verdict")
+                    fails.append(rel + f": workflow step '{name}' has no verdict")
         stats["rewalk_steps"] = len(steps)
         stats["rewalk_failed"] = sum(1 for st in steps if isinstance(st, dict) and st.get("verdict") != "PASS")
     return doc
 
 
-def check_e2e(root, cfg, fails):
-    path = os.path.join(root, ".qa", "evidence.json")
+def check_e2e(qa, rd, cfg, fails):
+    rel = qa + "/evidence.json"
     gate = (cfg or {}).get("e2e_evidence_gate") or E2E_GATE
-    if not os.path.isfile(path):
-        fails.append(".qa/evidence.json missing (qa-e2e-gate packet, claim_e2e_complete)")
+    if not rd["exists"](rel):
+        fails.append(rel + " missing (qa-e2e-gate packet, claim_e2e_complete)")
         return
     if not os.path.isfile(gate):
         fails.append(f"qa-e2e-gate.mjs not found at {gate}")
         return
     try:
-        proc = subprocess.run(["node", gate, "check", path], capture_output=True, text=True, timeout=20)
+        body = rd["read"](rel)
+    except Exception as exc:
+        fails.append(f"{rel} unreadable: {exc}")
+        return
+    tmppath = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            tf.write(body)
+            tmppath = tf.name
+        proc = subprocess.run(["node", gate, "check", tmppath], capture_output=True, text=True, timeout=20)
     except Exception as exc:
         fails.append(f"qa-e2e-gate.mjs could not run: {exc}")
         return
-    # Require a parsed {"ok": true} verdict. rc=0 alone is NOT a pass: the gate
-    # script self-check can no-op (empty output, exit 0) when invoked through a
-    # path whose realpath differs (symlinked skill dir), and a silent no-op must
-    # never read as green (caught 2026-09-24 while testing the hook path).
+    finally:
+        if tmppath:
+            try:
+                os.unlink(tmppath)
+            except Exception:
+                pass
     result, detail = None, ""
-    try:  # the gate prints one JSON document (pretty-printed); parse it whole
+    try:
         cand = json.loads((proc.stdout or "").strip())
         if isinstance(cand, dict) and "ok" in cand:
             result = cand
@@ -417,20 +519,26 @@ def check_deployed(root, cfg, sha, fails):
 
 
 def check_all(root, sha=None):
-    """Return (ok, failures, stats, cfg). Never raises."""
+    """Return (ok, failures, stats, cfg). Never raises. Artifacts are read
+    from the shipped commit's tree when sha is resolvable (v3)."""
     fails, stats = [], {"rows_total": 0, "open_rows": 0, "predates_count": 0, "clusters": 0,
                         "rewalk_steps": 0, "rewalk_failed": 0}
     cfg = None
     try:
-        cfg = check_config(root, fails)
         if not sha:
-            sha = run_git(root, "rev-parse", "HEAD").stdout.strip()
-        wf = check_workflow(root, cfg, fails)
-        rows = check_inventory(root, fails, stats)
-        clusters = check_clusters(root, rows, fails, stats)
-        check_plan(root, clusters, fails)
-        check_rewalk(root, wf, sha, fails, stats)
-        check_e2e(root, cfg, fails)
+            sha = run_git(root, "rev-parse", "HEAD").stdout.strip() or None
+        rd = qa_reader(root, sha)
+        cfg = check_config(root, rd, fails)
+        qa, err = resolve_run(root, sha, rd)
+        if err:
+            fails.append(err)
+            return (False, fails, stats, cfg)
+        wf = check_workflow(qa, rd, cfg, fails)
+        rows = check_inventory(qa, rd, fails, stats)
+        clusters = check_clusters(qa, rd, rows, fails, stats)
+        check_plan(qa, rd, clusters, fails)
+        check_rewalk(root, qa, rd, wf, sha, fails, stats)
+        check_e2e(qa, rd, cfg, fails)
         check_deployed(root, cfg, sha, fails)
     except Exception as exc:  # fail closed on anything unexpected
         fails.append(f"gate internal error: {exc}")
@@ -762,9 +870,12 @@ def hook(raw=None):
         # Walk freshness: a merge needs the walk at the PR head SHA being
         # merged (gh pr view), falling back to the local HEAD; pushes and
         # deploys check the local HEAD (with the .qa-only-parent allowance).
+        # v3: with a sha resolved, artifacts are read from that commit's tree.
         sha = ""
         if kind == "merge" and merge_args is not None:
             sha = pr_head_sha(root, merge_args) or run_git(root, "rev-parse", "HEAD").stdout.strip()
+        else:
+            sha = run_git(root, "rev-parse", "HEAD").stdout.strip()
         ok, fails, stats, _ = check_all(root, sha or None)
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
@@ -799,7 +910,7 @@ def stop():
     root = repo_root(cwd)
     if not root or not opted_in(root):
         return 0
-    path = os.path.join(root, ".qa", "inventory.jsonl")
+    path = os.path.join(default_run(root), "inventory.jsonl")
     if not os.path.isfile(path):
         return 0
     open_rows = []
@@ -842,11 +953,13 @@ def cmd_check(args):
 def cmd_clusters(args):
     root = repo_root(args.get("repo") or os.getcwd()) or os.path.abspath(args.get("repo") or os.getcwd())
     fails, stats = [], {"clusters": 0, "rows_total": 0, "open_rows": 0, "predates_count": 0}
-    cfg = check_config(root, fails)
-    check_workflow(root, cfg, fails)
-    rows = check_inventory(root, fails, stats)
-    clusters = check_clusters(root, rows, fails, stats)
-    check_plan(root, clusters, fails)
+    rd = qa_reader(root, None)
+    cfg = check_config(root, rd, fails)
+    qa = default_run(root)
+    check_workflow(qa, rd, cfg, fails)
+    rows = check_inventory(qa, rd, fails, stats)
+    clusters = check_clusters(qa, rd, rows, fails, stats)
+    check_plan(qa, rd, clusters, fails)
     print("PASS" if not fails else "DENY")
     for f in fails:
         print("  -", f)
@@ -857,23 +970,26 @@ def cmd_record(args):
     kind = args.get("kind")
     root = repo_root(os.getcwd())
     sha = run_git(root, "rev-parse", "HEAD").stdout.strip() if root else ""
+    qa = args.get("run") or (default_run(root) if root else os.path.join(os.getcwd(), ".qa"))
+    rd = qa_reader(root, None)
+    run_rel = os.path.relpath(qa, root) if root else qa
     if kind == "inventory-closed":
         fails, stats = [], {"rows_total": 0, "open_rows": 0, "predates_count": 0}
-        check_inventory(root, fails, stats)
+        check_inventory(qa, rd, fails, stats)
         hard = [f for f in fails if "still OPEN" in f or "missing" in f or "unparseable" in f or "unreadable" in f]
         if hard:
             print("refuse: inventory not closed:\n  - " + "\n  - ".join(hard))
             return 1
-        emit("inventory_closed", root, sha, {"rows": stats["rows_total"], "predates_count": stats["predates_count"]})
+        emit("inventory_closed", root, sha, {"rows": stats["rows_total"], "predates_count": stats["predates_count"], "run": run_rel})
         print("recorded inventory_closed rows=%d predates=%d" % (stats["rows_total"], stats["predates_count"]))
         return 0
     if kind == "rewalk":
         fails, stats = [], {"rewalk_steps": 0, "rewalk_failed": 0}
-        check_rewalk(root, None, sha, fails, stats)
+        check_rewalk(root, qa, rd, None, sha, fails, stats)
         if stats["rewalk_steps"] == 0 or any("verdict" in f or "no verdict" in f for f in fails):
             print("refuse: rewalk not green:\n  - " + "\n  - ".join(fails))
             return 1
-        emit("rewalk", root, sha, {"steps": stats["rewalk_steps"], "failed": stats["rewalk_failed"]})
+        emit("rewalk", root, sha, {"steps": stats["rewalk_steps"], "failed": stats["rewalk_failed"], "run": run_rel})
         print("recorded rewalk steps=%d failed=%d" % (stats["rewalk_steps"], stats["rewalk_failed"]))
         return 0
     if kind == "escape":
@@ -1013,6 +1129,10 @@ def selftest():
         except Exception:
             return None
 
+    def commit_qa(root):
+        sh("git add .qa && git commit -qm artifacts -- .qa", cwd=root)
+        return sh("git rev-parse HEAD", cwd=root).stdout.strip()
+
     def stoprun(root, active):
         payload = json.dumps({"cwd": root, "stop_hook_active": active, "session_id": "s"})
         return sh('python3 "%s" stop' % os.path.abspath(__file__), cwd=root, inp=payload)
@@ -1151,6 +1271,7 @@ def selftest():
                                "steps": [{"page": "Login", "control": "Submit", "surface": "Web",
                                           "observed": True, "evidence": "shot"}]},
                    "terminal": {"status": "passed", "evidence": "shot"}}, fh)
+    commit_qa(r1)  # v3: evidence must be committed; head is a .qa-only commit over sha1
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 0, "ship allowed with complete pipeline at HEAD [%s]" % p.stderr.strip()[:160])
 
@@ -1172,6 +1293,7 @@ def selftest():
     with open(os.path.join(qa, "inventory.jsonl"), "a") as fh:
         fh.write(json.dumps({"id": "R2", "step": "dashboard", "symptom": "widget empty", "evidence": "shot-4",
                              "predates_change": False, "severity": "med", "status": "open"}) + "\n")
+    commit_qa(r1)
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 2 and "R2 still OPEN" in p.stderr and "not mapped" in p.stderr,
            "open row named in deny")
@@ -1193,6 +1315,7 @@ def selftest():
     doc = json.load(open(os.path.join(qa, "clusters.json")))
     doc["mapping"]["R2"] = "CL-1"
     json.dump(doc, open(os.path.join(qa, "clusters.json"), "w"))
+    commit_qa(r1)
     p = sh('python3 "%s" record inventory-closed' % GATE, cwd=r1)
     expect(p.returncode == 0 and "rows=2" in p.stdout, "record inventory-closed accepted")
 
@@ -1200,14 +1323,18 @@ def selftest():
     cfg = json.load(open(cfgp))
     cfg["deployed_check"] = {"command": "false"}
     json.dump(cfg, open(cfgp, "w"))
+    doc = json.load(open(os.path.join(qa, "rewalk.json")))
+    doc["sha"] = sh("git rev-parse HEAD", cwd=r1).stdout.strip()
+    json.dump(doc, open(os.path.join(qa, "rewalk.json"), "w"))
+    commit_qa(r1)
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 2 and "deployed check" in p.stderr, "failing deployed check denies ship")
     cfg["deployed_check"] = {"command": "true"}
     json.dump(cfg, open(cfgp, "w"))
-    sha2 = sh("git rev-parse HEAD", cwd=r1).stdout.strip()
-    doc = json.load(open(os.path.join(qa, "rewalk.json")))
-    doc["sha"] = sha2
+    doc["sha"] = sh("git rev-parse HEAD", cwd=r1).stdout.strip()
     json.dump(doc, open(os.path.join(qa, "rewalk.json"), "w"))
+    commit_qa(r1)
+    sha2 = sh("git rev-parse HEAD", cwd=r1).stdout.strip()
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 0, "green deployed check allows ship [%s]" % p.stderr.strip()[:160])
 
@@ -1215,6 +1342,16 @@ def selftest():
         {"session_id": "selftest", "tool_name": "Bash",
          "tool_input": {"command": "git -C %s push origin main" % r1}, "cwd": tmp}))
     expect(p.returncode == 0, "git -C push allowed once pipeline complete [%s]" % p.stderr.strip()[:120])
+    # v3 security: a NEW code commit makes the committed evidence stale; an
+    # uncommitted rewalk claiming the new sha must NOT clear the push
+    sh("echo later > later.txt && git add later.txt && git commit -qm later-code", cwd=r1)
+    doc = json.load(open(os.path.join(qa, "rewalk.json")))
+    doc["sha"] = sh("git rev-parse HEAD", cwd=r1).stdout.strip()
+    json.dump(doc, open(os.path.join(qa, "rewalk.json"), "w"))  # written, NOT committed
+    p = hookrun(r1, "git push origin main")
+    expect(p.returncode == 2 and "shipped sha" in p.stderr,
+           "v3: uncommitted rewalk cannot clear a protected push")
+    sh("git checkout -q -- .qa", cwd=r1)
     doc = json.load(open(os.path.join(qa, "clusters.json")))
     doc["clusters"].append({"id": "CL-9", "hypothesis": "x", "repro_command": "y", "repro_failed_once": True})
     json.dump(doc, open(os.path.join(qa, "clusters.json"), "w"))
@@ -1228,10 +1365,15 @@ def selftest():
     cfg = json.load(open(cfgp))
     cfg["e2e_evidence_gate"] = noop
     json.dump(cfg, open(cfgp, "w"))
+    commit_qa(r1)
+    doc = json.load(open(os.path.join(qa, "rewalk.json")))
+    doc["sha"] = sh("git rev-parse HEAD~1", cwd=r1).stdout.strip()
+    json.dump(doc, open(os.path.join(qa, "rewalk.json"), "w"))
     p = hookrun(r1, "git push origin main")
     expect(p.returncode == 2 and "no verdict" in p.stderr, "silent no-op e2e gate is a deny")
     del cfg["e2e_evidence_gate"]
     json.dump(cfg, open(cfgp, "w"))
+    commit_qa(r1)
     p = hookrun(r1, "git push origin main")
     expect("no verdict" not in p.stderr, "real gate verdict restored after removing the noop override")
 
@@ -1261,6 +1403,7 @@ def selftest():
     with open(os.path.join(qa4, "inventory.jsonl"), "w") as fh:  # open inventory
         fh.write(json.dumps({"id": "R1", "step": "s1", "symptom": "open bug", "evidence": "e",
                              "predates_change": False, "severity": "high", "status": "open"}) + "\n")
+    sh("git add .qa && git commit -qm open-inv -- .qa", cwd=r4)
     p = sh("git push origin HEAD:refs/heads/feature/qa-walk", cwd=r4)
     ref = sh("git --git-dir=%s rev-parse --verify -q refs/heads/feature/qa-walk" % bare)
     expect(p.returncode == 0 and ref.stdout.strip(),
@@ -1283,6 +1426,10 @@ def selftest():
               open(os.path.join(qa4, "rewalk.json"), "w"))
     ev4 = json.load(open(os.path.join(qa, "evidence.json")))
     json.dump(ev4, open(os.path.join(qa4, "evidence.json"), "w"))
+    doc = json.load(open(os.path.join(qa4, "rewalk.json")))
+    doc["sha"] = sh("git rev-parse HEAD", cwd=r4).stdout.strip()
+    json.dump(doc, open(os.path.join(qa4, "rewalk.json"), "w"))
+    sh("git add .qa && git commit -qm walk -- .qa", cwd=r4)
     p = sh("git push origin HEAD:dev", cwd=r4)
     ref = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare)
     expect(p.returncode == 0 and ref.stdout.strip(),
@@ -1309,6 +1456,7 @@ def selftest():
                              "predates_change": False, "severity": "high", "status": "closed"}) + "\n")
         fh.write(json.dumps({"id": "R2", "step": "s1", "symptom": "open bug", "evidence": "e",
                              "predates_change": False, "severity": "low", "status": "open"}) + "\n")
+    sh("git add .qa && git commit -qm open-inv -- .qa", cwd=r3)
     json.dump({"clusters": [{"id": "CL-1", "hypothesis": "h", "repro_command": "x", "repro_failed_once": True}],
                "mapping": {"R1": "CL-1"}}, open(os.path.join(qa3, "clusters.json"), "w"))
     open(os.path.join(qa3, "plan.md"), "w").write("# p\n- CL-1\n")
@@ -1366,6 +1514,7 @@ def selftest():
     expect(p.returncode == 2 and "shipped sha" in p.stderr, "v2: gh pr merge --admin with stale walk DENIED")
     doc["sha"] = prhead
     json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
+    commit_qa(r3)
     p = hookrun(r3, "gh pr merge 22 --admin")
     expect(p.returncode == 0, "v2: gh pr merge with fresh walk at PR head ALLOWED [%s]" % p.stderr.strip()[:140])
     os.environ["PATH"] = old_path
@@ -1389,6 +1538,180 @@ def selftest():
         and segment_ship_kind(segs('git commit -m "pre-push hook"')[0], r3, cfgs_of(r3)) is None
     )
     expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
+
+    # ---------------- v3: per-run namespacing (change request) ----------------
+    # Contract: evidence ships as .qa-only artifacts commits over the walked
+    # code (the parent rule), so A/B below are artifacts commits:
+    #   base -> codeA -> A(runs/a@codeA) -> codeB -> B(runs/a+b@codeB) -> codeC
+    def write_run(repo, run, sha, status="closed"):
+        d = os.path.join(repo, ".qa", "runs", run)
+        os.makedirs(d, exist_ok=True)
+        json.dump({"workflow": "w1", "persona": "admin", "entry": "/", "outcome": "o",
+                   "steps": ["s1"], "target": {"url": "http://x.test", "sha": sha}},
+                  open(os.path.join(d, "workflow.json"), "w"))
+        with open(os.path.join(d, "inventory.jsonl"), "w") as fh:
+            fh.write(json.dumps({"id": "R1", "step": "s1", "symptom": "b", "evidence": "e",
+                                 "predates_change": False, "severity": "high", "status": status}) + "\n")
+        json.dump({"clusters": [{"id": "CL-1", "hypothesis": "h", "repro_command": "x",
+                                 "repro_failed_once": True}], "mapping": {"R1": "CL-1"}},
+                  open(os.path.join(d, "clusters.json"), "w"))
+        open(os.path.join(d, "plan.md"), "w").write("# p\n- CL-1\n")
+        json.dump({"sha": sha, "steps": [{"step": "s1", "verdict": "PASS", "evidence": "e"}]},
+                  open(os.path.join(d, "rewalk.json"), "w"))
+        ev = json.load(open(os.path.join(qa, "evidence.json")))
+        json.dump(ev, open(os.path.join(d, "evidence.json"), "w"))
+
+    def check_sha(repo, sha):
+        return sh('python3 "%s" check --repo %s --sha %s' % (GATE, repo, sha), cwd=repo)
+
+    r5 = os.path.join(tmp, "runsrepo")
+    os.makedirs(r5)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r5)
+    os.makedirs(os.path.join(r5, ".qa"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "protected_branches": ["dev", "main"]}, open(os.path.join(r5, ".qa", "config.json"), "w"))
+    open(os.path.join(r5, "f.txt"), "w").write("x")
+    sh("git add -A && git commit -qm base", cwd=r5)  # opt-in committed with the base
+    sh("echo a >> f.txt && git add -A && git commit -qm codeA", cwd=r5)
+    codeA = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    write_run(r5, "a", codeA)
+    sh("git add .qa && git commit -qm A", cwd=r5)
+    shaA = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    sh("echo b >> f.txt && git add -A && git commit -qm codeB", cwd=r5)
+    codeB = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    write_run(r5, "b", codeB)
+    sh("git add .qa && git commit -qm B", cwd=r5)
+    shaB = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    sh("echo c >> f.txt && git add -A && git commit -qm codeC", cwd=r5)
+    shaC = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+
+    p = check_sha(r5, shaA)
+    expect(p.returncode == 0, "v3 case1: check at A reads runs/a [%s]" % " ".join(p.stdout.split())[:130])
+    p = check_sha(r5, shaB)
+    expect(p.returncode == 0, "v3 case1: check at B reads runs/b [%s]" % " ".join(p.stdout.split())[:130])
+    p = check_sha(r5, shaC)
+    expect(p.returncode == 1 and "no QA run has a re-walk at" in p.stdout and ".qa/runs/a@" in p.stdout
+           and ".qa/runs/b@" in p.stdout, "v3 case3: no run at C names both runs")
+
+    # case2: .qa-only head on top of A that adds another run walked at A
+    sh("git checkout -q -b qa-only %s" % shaA, cwd=r5)
+    write_run(r5, "a2", shaA)
+    sh("git add .qa && git commit -qm add-run", cwd=r5)
+    headA2 = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    p = check_sha(r5, headA2)
+    expect(p.returncode == 0, "v3 case2: .qa-only head adding a run passes at the head [%s]" % " ".join(p.stdout.split())[:120])
+    sh("git checkout -q main", cwd=r5)
+
+    # case4: a head whose tree carries two runs both walked at its parent -> ambiguous
+    sh("git checkout -q -b ambtest %s" % shaB, cwd=r5)
+    doc = json.load(open(os.path.join(r5, ".qa", "runs", "b", "rewalk.json")))
+    doc["sha"] = shaB
+    json.dump(doc, open(os.path.join(r5, ".qa", "runs", "b", "rewalk.json"), "w"))
+    write_run(r5, "amb", shaB)
+    sh("git add .qa && git commit -qm amb", cwd=r5)
+    headAmb = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    p = check_sha(r5, headAmb)
+    expect(p.returncode == 1 and "ambiguous QA runs" in p.stdout,
+           "v3 case4: two runs at the same sha are an ambiguous deny")
+    sh("git checkout -q main", cwd=r5)
+
+    # case6: legacy .qa/rewalk.json at an older sha coexists during migration
+    json.dump({"sha": "0" * 40, "steps": []}, open(os.path.join(r5, ".qa", "rewalk.json"), "w"))
+    sh("git add .qa && git commit -qm legacy", cwd=r5)
+    p = check_sha(r5, shaB)
+    expect(p.returncode == 0, "v3 case6: legacy rewalk coexists; run at B still selected [%s]" % " ".join(p.stdout.split())[:110])
+    sh("git rm -q .qa/rewalk.json && git commit -qm rm-legacy", cwd=r5)
+
+    # case7: branches p1/p2 each carry their own run; merged tree passes both
+    sh("git checkout -q -b p2 main", cwd=r5)
+    sh("echo p2 >> f.txt && git add -A && git commit -qm p2-code", cwd=r5)
+    codeP2 = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    write_run(r5, "p2", codeP2)
+    sh("git add .qa && git commit -qm p2-run", cwd=r5)
+    shaP2 = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    sh("git checkout -q -b p1 main", cwd=r5)
+    sh("echo p1 >> f.txt && git add -A && git commit -qm p1-code", cwd=r5)
+    codeP1 = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    write_run(r5, "p1", codeP1)
+    sh("git add .qa && git commit -qm p1-run", cwd=r5)
+    shaP1 = sh("git rev-parse HEAD", cwd=r5).stdout.strip()
+    sh("git checkout -q main", cwd=r5)
+    sh("git merge -q --no-edit p1 >/dev/null 2>&1 && git merge -q --no-edit p2 >/dev/null 2>&1", cwd=r5)
+    p1_ok = check_sha(r5, shaP1).returncode == 0
+    p = check_sha(r5, shaP2)
+    expect(p1_ok and p.returncode == 0,
+           "v3 case7: both branches' runs live on the merged tree [%s]" % " ".join(p.stdout.split())[:110])
+
+    # case8: prepush to a protected ref; bin + template installed
+    bare5 = os.path.join(tmp, "remote5.git")
+    sh("git init -q --bare -b main %s" % bare5)
+    sh("git remote add r5 %s" % bare5, cwd=r5)
+    sh("git push -q r5 main", cwd=r5)
+    os.makedirs(os.path.join(r5, ".qa", "bin"), exist_ok=True)
+    shutil.copy(GATE, os.path.join(r5, ".qa", "bin", "ship-gate.py"))
+    shutil.copy(os.path.normpath(os.path.join(SKILL_DIR, "..", "templates", "pre-push")),
+                os.path.join(r5, ".git", "hooks", "pre-push"))
+    os.chmod(os.path.join(r5, ".git", "hooks", "pre-push"), 0o755)
+    sh("git add .qa && git commit -qm bin", cwd=r5)
+    sh("git push -q r5 main", cwd=r5)
+    sh("git branch -f dev %s" % shaA, cwd=r5)
+    p = sh("git push r5 dev", cwd=r5)
+    expect(p.returncode == 0, "v3 case8: prepush to protected at A allowed (a@codeA, b@codeB) [%s]" % p.stderr.strip()[:120])
+    sh("git push -q r5 --delete dev", cwd=r5)
+    sh("git branch -f dev %s" % shaC, cwd=r5)
+    p = sh("git push r5 dev", cwd=r5)
+    expect(p.returncode != 0 and "no QA run has a re-walk at" in p.stderr,
+           "v3 case8: prepush at C denied with the no-run message")
+    sh("git branch -q -D dev", cwd=r5)
+
+    # case9: default run selection on a branch (own repo: deterministic)
+    r7 = os.path.join(tmp, "featrepo")
+    os.makedirs(r7)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+       "mkdir -p .qa/runs/feat-x && git add -A && git commit -qm base && git checkout -q -b feat/x", cwd=r7)
+    d7 = os.path.join(r7, ".qa", "runs", "feat-x")
+    open(os.path.join(d7, "inventory.jsonl"), "w").write(json.dumps(
+        {"id": "R1", "step": "s", "symptom": "b", "evidence": "e", "predates_change": False,
+         "severity": "h", "status": "closed"}) + "\n")
+    p = sh('python3 "%s" record inventory-closed' % GATE, cwd=r7)
+    expect(p.returncode == 0 and "rows=1" in p.stdout, "v3 case9: record on feat/x reads runs/feat-x [%s]" % p.stdout.strip()[:80])
+    found_run = ""
+    if os.path.exists(scratch_events):
+        for ln in open(scratch_events).read().splitlines()[::-1]:
+            d = json.loads(ln)
+            if d.get("event") == "inventory_closed" and d.get("repo") == "featrepo":
+                found_run = d.get("data", {}).get("run", "")
+                break
+    expect(found_run == ".qa/runs/feat-x", "v3 case9: event carries run=.qa/runs/feat-x (got %r)" % found_run)
+    p = sh('python3 "%s" record inventory-closed --run .qa/runs/feat-x' % GATE, cwd=r7)
+    expect(p.returncode == 0 and "rows=1" in p.stdout, "v3 case9: --run overrides")
+
+    # case10: guarded template (no config -> pass; config without bin -> named deny)
+    r6 = os.path.join(tmp, "guardrepo")
+    os.makedirs(r6)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+       "git add -A && git commit -qm i", cwd=r6)
+    bare6 = os.path.join(tmp, "remote6.git")
+    sh("git init -q --bare -b main %s" % bare6)
+    sh("git remote add r6 %s && git push -q r6 main" % bare6, cwd=r6)
+    shutil.copy(os.path.normpath(os.path.join(SKILL_DIR, "..", "templates", "pre-push")),
+                os.path.join(r6, ".git", "hooks", "pre-push"))
+    os.chmod(os.path.join(r6, ".git", "hooks", "pre-push"), 0o755)
+    sh("echo y >> f && git add -A && git commit -qm two", cwd=r6)
+    p = sh("git push r6 HEAD:dev", cwd=r6)
+    expect(p.returncode == 0, "v3 case10: hook with NO .qa/config.json passes a dev push")
+    os.makedirs(os.path.join(r6, ".qa"), exist_ok=True)
+    json.dump({"personas": ["a"], "workflows": [{"name": "w"}], "protected_branches": ["dev", "main"]},
+              open(os.path.join(r6, ".qa", "config.json"), "w"))
+    p = sh("git push r6 HEAD:dev", cwd=r6)
+    expect(p.returncode != 0 and ".qa/bin/ship-gate.py is missing" in p.stderr,
+           "v3 case10: config present, bin missing -> named deny")
+    os.makedirs(os.path.join(r6, ".qa", "bin"), exist_ok=True)
+    shutil.copy(GATE, os.path.join(r6, ".qa", "bin", "ship-gate.py"))
+    sh("echo z >> f && git add -A && git commit -qm three", cwd=r6)
+    p = sh("git push r6 HEAD:dev", cwd=r6)
+    expect(p.returncode != 0 and ("no QA run" in p.stderr or "missing" in p.stderr),
+           "v3 case10: hook+config+bin with no pipeline denies")
 
     shutil.rmtree(tmp, ignore_errors=True)
     EVENTS = live_events
