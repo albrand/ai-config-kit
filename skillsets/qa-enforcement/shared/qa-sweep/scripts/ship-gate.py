@@ -609,8 +609,10 @@ def normalize_ref(dst):
     return dst
 
 
-def default_branch(root):
-    r = run_git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+def default_branch(root, remote="origin"):
+    r = run_git(root, "symbolic-ref", "--short", "refs/remotes/%s/HEAD" % remote).stdout.strip()
+    if not r and remote != "origin":
+        r = run_git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
     if r and "/" in r:
         return r.split("/", 1)[1]
     cfg = run_git(root, "config", "--get", "init.defaultBranch").stdout.strip()
@@ -880,6 +882,54 @@ def cmd_record(args):
     return 1
 
 
+def prepush(remote="origin"):
+    """git pre-push layer: reads the ref lines on stdin and denies only pushes
+    whose destination is protected (remote default branch + protected_branches).
+    Feature-branch pushes, tags and deletions pass untouched (a PR needs its
+    preview built before anyone can walk it). Ported from the meu-psi pilot's
+    verified hook; the destination logic is ship-gate's own, so there is one
+    parser (v2 template defect: the old template ran the full check on every
+    push and re-created the v1 deadlock)."""
+    root = repo_root(os.getcwd())
+    if not root or not opted_in(root):
+        return 0
+    try:
+        cfg = load_json(os.path.join(root, ".qa", "config.json"))
+    except Exception:
+        cfg = None
+    prot = protected_refs(root, cfg) if cfg else {default_branch(root, remote)}
+    prot.add(default_branch(root, remote))
+    pushes, failures = [], []
+    for ln in sys.stdin.read().splitlines():
+        parts = ln.split()
+        if len(parts) != 4:
+            continue
+        lref, lsha, rref, _rsha = parts
+        if not any(c != "0" for c in lsha):
+            continue  # deletion: passes (branch protection on the server owns deletes)
+        branch = normalize_ref(rref)
+        if branch in prot:
+            pushes.append((branch, lsha))
+    if not pushes:
+        return 0
+    denied = False
+    for branch, lsha in pushes:
+        ok, fails, stats, _ = check_all(root, lsha)
+        if ok:
+            emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"],
+                                            "kind": "push", "ref": branch}, provider=derive_provider({}))
+            continue
+        denied = True
+        emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"],
+                                        "kind": "push", "ref": branch}, provider=derive_provider({}))
+        failures.append("[%s -> %s]\n  - %s" % (lsha[:12], branch, "\n  - ".join(fails)))
+    if not denied:
+        return 0
+    sys.stderr.write("[qa-ship-gate] Push to a protected branch denied. Complete the .qa pipeline for the "
+                     "pushed commit, or push a feature branch:\n" + "\n".join(failures) + "\n")
+    return 1
+
+
 def parse_args(argv):
     args, key = {}, None
     for a in argv:
@@ -907,6 +957,8 @@ def main():
     if cmd == "record":
         rest["kind"] = argv[1] if len(argv) > 1 else ""
         return cmd_record(rest)
+    if cmd == "prepush":
+        return prepush(argv[1] if len(argv) > 1 else "origin")
     if cmd == "selftest":
         return selftest()
     print(__doc__)
@@ -1169,6 +1221,61 @@ def selftest():
     json.dump(cfg, open(cfgp, "w"))
     p = hookrun(r1, "git push origin main")
     expect("no verdict" not in p.stderr, "real gate verdict restored after removing the noop override")
+
+    # ---------------- pre-push template: real pushes to a bare remote ----------------
+    bare = os.path.join(tmp, "remote.git")
+    sh("git init -q --bare -b main %s" % bare)
+    r4 = os.path.join(tmp, "pushrepo")
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=None) if False else None
+    os.makedirs(r4)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r4)
+    sh("git remote add origin %s && git remote set-head origin main" % bare, cwd=r4)
+    os.makedirs(os.path.join(r4, ".qa", "bin"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "protected_branches": ["dev", "main"]},
+              open(os.path.join(r4, ".qa", "config.json"), "w"))
+    open(os.path.join(r4, "f.txt"), "w").write("x")
+    sh("git add -A && git commit -qm init", cwd=r4)
+    sh("git push -q origin main", cwd=r4)  # seed remote before the hook is installed
+    sh("echo y >> f.txt && git add -A && git commit -qm two", cwd=r4)  # give HEAD:main something to send
+    shutil.copy(os.path.normpath(os.path.join(SKILL_DIR, "..", "templates", "pre-push")), os.path.join(r4, ".git", "hooks", "pre-push"))
+    os.chmod(os.path.join(r4, ".git", "hooks", "pre-push"), 0o755)
+    shutil.copy(os.path.abspath(__file__), os.path.join(r4, ".qa", "bin", "ship-gate.py"))
+    sha4 = sh("git rev-parse HEAD", cwd=r4).stdout.strip()
+    qa4 = os.path.join(r4, ".qa")
+    json.dump({"workflow": "w1", "persona": "admin", "entry": "/", "outcome": "o", "steps": ["s1"],
+               "target": {"url": "http://x.test", "sha": sha4}}, open(os.path.join(qa4, "workflow.json"), "w"))
+    with open(os.path.join(qa4, "inventory.jsonl"), "w") as fh:  # open inventory
+        fh.write(json.dumps({"id": "R1", "step": "s1", "symptom": "open bug", "evidence": "e",
+                             "predates_change": False, "severity": "high", "status": "open"}) + "\n")
+    p = sh("git push origin HEAD:refs/heads/feature/qa-walk", cwd=r4)
+    ref = sh("git --git-dir=%s rev-parse --verify -q refs/heads/feature/qa-walk" % bare)
+    expect(p.returncode == 0 and ref.stdout.strip(),
+           "prepush template: feature push with open inventory passes and lands")
+    p = sh("git push origin HEAD:dev", cwd=r4)
+    ref = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare)
+    expect(p.returncode != 0 and not ref.stdout.strip() and "R1 still OPEN" in p.stderr,
+           "prepush template: push to dev with open inventory denied, nothing landed")
+    p = sh("git push origin HEAD:main", cwd=r4)
+    expect(p.returncode != 0 and "R1 still OPEN" in p.stderr,
+           "prepush template: push to main with open inventory denied")
+    # complete the pipeline at HEAD -> dev allowed
+    with open(os.path.join(qa4, "inventory.jsonl"), "w") as fh:
+        fh.write(json.dumps({"id": "R1", "step": "s1", "symptom": "fixed", "evidence": "e",
+                             "predates_change": False, "severity": "high", "status": "closed"}) + "\n")
+    json.dump({"clusters": [{"id": "CL-1", "hypothesis": "h", "repro_command": "x", "repro_failed_once": True}],
+               "mapping": {"R1": "CL-1"}}, open(os.path.join(qa4, "clusters.json"), "w"))
+    open(os.path.join(qa4, "plan.md"), "w").write("# p\n- CL-1\n")
+    json.dump({"sha": sha4, "steps": [{"step": "s1", "verdict": "PASS", "evidence": "e"}]},
+              open(os.path.join(qa4, "rewalk.json"), "w"))
+    ev4 = json.load(open(os.path.join(qa, "evidence.json")))
+    json.dump(ev4, open(os.path.join(qa4, "evidence.json"), "w"))
+    p = sh("git push origin HEAD:dev", cwd=r4)
+    ref = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare)
+    expect(p.returncode == 0 and ref.stdout.strip(),
+           "prepush template: push to dev with fresh walk allowed [%s]" % p.stderr.strip()[:140])
+    p = sh("git push origin :refs/heads/feature/qa-walk", cwd=r4)  # deletion passes (pilot parity)
+    expect(p.returncode == 0, "prepush template: deletion passes")
 
     # ---------------- v2: what ships (card 3 pilot) ----------------
     import shutil as _sh

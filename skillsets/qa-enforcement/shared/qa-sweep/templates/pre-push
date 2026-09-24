@@ -1,14 +1,12 @@
 #!/bin/sh
-# QA ship gate: git pre-push hook template (the only layer that also binds
-# opencode/GLM and any agent without PreToolUse hooks).
-# Install into an opted-in repo:
+# QA ship gate, git pre-push layer: the one that also binds agents without
+# PreToolUse hooks (opencode/GLM included). Install once per clone:
 #   cp <skill-dir>/templates/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
-# Requires .qa/bin/ship-gate.py (copied there at opt-in).
-sha=""
-while read -r lref lsha rref rsha; do
-  case "$lsha" in
-    *[!0]*) sha="$lsha"; break ;;
-  esac
-done
-[ -n "$sha" ] || sha=$(git rev-parse HEAD)
-exec python3 "$(git rev-parse --show-toplevel)/.qa/bin/ship-gate.py" check --repo "$(git rev-parse --show-toplevel)" --sha "$sha"
+# (or vendor it as .qa/hooks/pre-push and set core.hooksPath, like the meu-psi pilot).
+#
+# v2: feature-branch pushes pass untouched -- a PR needs its preview built
+# before anyone can walk it. Only pushes whose destination is protected (the
+# remote default branch plus .qa/config.json protected_branches) must carry a
+# complete .qa pipeline for the commit they send. The destination logic lives
+# inside ship-gate.py itself (`prepush`), so this file has no parser of its own.
+exec python3 "$(git rev-parse --show-toplevel)/.qa/bin/ship-gate.py" prepush "$@"
