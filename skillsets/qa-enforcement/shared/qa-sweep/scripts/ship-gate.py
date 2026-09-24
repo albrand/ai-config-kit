@@ -433,12 +433,34 @@ def is_ship(command, cfg=None):
     return any(re.search(p, command) for p in pats)
 
 
+def _shell_arg_at(s, i):
+    """Argument starting at/after index i, honouring single/double quotes.
+    Returns (value, end) or (None, i). Known limit: shell variables and
+    substitutions cannot be resolved here; such targets stay unresolved
+    (documented limitation, fail-closed in every resolvable case)."""
+    n = len(s)
+    while i < n and s[i] in " \t":
+        i += 1
+    if i >= n:
+        return None, i
+    q = s[i]
+    if q in "\"'":
+        j = s.find(q, i + 1)
+        if j < 0:
+            return s[i + 1:], n
+        return s[i + 1:j], j + 1
+    j = i
+    while j < n and s[j] not in " \t;&|":
+        j += 1
+    return s[i:j], j
+
+
 def ship_target_roots(command, cwd):
     """Every local repo a ship command can target: the payload cwd's repo plus
-    any `git -C path`, `cd path &&`, or --work-tree path inside the command.
-    (Hermes review 2026-09-24, topic qa-ship-gate: `git -C /opted/repo push`
-    run from a foreign cwd returned allow because only the payload cwd was
-    resolved.)"""
+    any `git -C path`, `cd path &&`, or --work-tree path inside the command,
+    with quoting honoured (paths with spaces included). Hermes review
+    2026-09-24, topic qa-ship-gate: two rounds - first only the payload cwd
+    was resolved, then whitespace-split regexes truncated quoted paths."""
     roots = []
 
     def add(p):
@@ -449,12 +471,18 @@ def ship_target_roots(command, cwd):
                 roots.append(r)
 
     add(cwd)
-    for m in re.finditer(r"-C\s+(\S+)", command):
-        add(m.group(1).strip("\"'"))
-    for m in re.finditer(r"\bcd\s+([^\s;&|]+)", command):
-        add(m.group(1).strip("\"'"))
-    for m in re.finditer(r"--work-tree[=\s](\S+)", command):
-        add(m.group(1).strip("\"'"))
+    for pattern in (r"(?<![\w-])-C\s", r"\bcd\s", r"--work-tree[=\s]"):
+        pos = 0
+        while True:
+            m = re.compile(pattern).search(command, pos)
+            if not m:
+                break
+            value, end = _shell_arg_at(command, m.end())
+            if value:
+                add(value)
+                pos = max(end, m.end())
+            else:
+                pos = m.end()
     return roots
 
 
@@ -699,6 +727,31 @@ def selftest():
          "tool_input": {"command": "cd %s && git push origin main" % r1}, "cwd": foreign}))
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
            "cd <opted-repo> && git push from foreign cwd denied")
+
+    # Hermes round 2 (same topic): quoted paths containing spaces
+    spaced = os.path.join(tmp, "opted repo")
+    os.makedirs(spaced, exist_ok=True)
+    sh("git init -q && git config user.email t@t && git config user.name t", cwd=spaced)
+    os.makedirs(os.path.join(spaced, ".qa"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}]},
+              open(os.path.join(spaced, ".qa", "config.json"), "w"))
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'git -C "%s" push origin main' % spaced}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           'git -C "opted repo" (quoted, space) denied from foreign cwd')
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'cd "%s" && git push origin main' % spaced}, "cwd": foreign}))
+    expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
+           'cd "opted repo" (quoted, space) && push denied from foreign cwd')
+    spaced_plain = os.path.join(tmp, "plain repo")
+    os.makedirs(spaced_plain, exist_ok=True)
+    sh("git init -q && git config user.email t@t && git config user.name t", cwd=spaced_plain)
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'git -C "%s" push origin main' % spaced_plain}, "cwd": foreign}))
+    expect(p.returncode == 0, 'git -C "plain repo" (quoted, space) allowed')
     p = hookrun(r1, "ls -la")
     expect(p.returncode == 0, "non-ship allowed when pipeline missing")
 
