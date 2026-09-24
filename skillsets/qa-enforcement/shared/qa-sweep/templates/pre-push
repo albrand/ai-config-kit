@@ -1,22 +1,48 @@
 #!/bin/sh
 # QA ship gate, git pre-push layer: the one that also binds agents without
-# PreToolUse hooks (opencode/GLM included). Install once per clone:
-#   cp <skill-dir>/templates/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
-# (or vendor it as .qa/hooks/pre-push and set core.hooksPath, like the meu-psi pilot).
+# PreToolUse hooks (opencode/GLM included). Three ways to install:
+#   1. once per clone:  cp <skill-dir>/templates/pre-push .git/hooks/pre-push
+#                       && chmod +x .git/hooks/pre-push
+#   2. vendored:        .qa/hooks/pre-push with core.hooksPath (meu-psi pilot)
+#   3. husky repos (pallium-app, shoc-frontend-new): husky owns core.hooksPath,
+#      so do NOT set it; put the block between the qa-ship-gate markers below
+#      at the TOP of .husky/pre-push, before anything else in that file:
+#        { sed -n '/^# --- qa-ship-gate begin/,/^# --- qa-ship-gate end/p' \
+#            <skill-dir>/templates/pre-push; cat .husky/pre-push; } > /tmp/pp \
+#          && mv /tmp/pp .husky/pre-push && chmod +x .husky/pre-push
+#      TOP, not appended: git hands the pushed refs to the hook on stdin
+#      exactly once. A husky script that parses them first (pallium's does)
+#      drains stdin, and a gate after it would see no refs and let every push
+#      through. The block saves stdin, runs the gate on it, and hands the same
+#      ref lines back to whatever follows it, so existing husky logic still
+#      sees them. A deny exits the hook at once (plain sh and husky's sh -e).
 #
 # v2: feature-branch pushes pass untouched -- a PR needs its preview built
 # before anyone can walk it. Only pushes whose destination is protected (the
-# remote default branch plus .qa/config.json protected_branches) must carry a
-# complete .qa pipeline for the commit they send. The destination logic lives
-# inside ship-gate.py itself (prepush), so this file has no parser of its own.
+# remote default branch plus .qa/config.json protected_branches) or a TAG
+# (v4: a tag ships the commit it points at) must carry a complete .qa
+# pipeline for the commit they send. The destination logic lives inside
+# ship-gate.py itself (prepush), so this file has no parser of its own.
 #
-# v3: guarded. A branch with no .qa/config.json passes (not opted in); a branch
-# whose config opts in but whose .qa/bin/ship-gate.py is missing gets a named
-# deny instead of a python3 traceback on every push (pilot reproduction).
-top="$(git rev-parse --show-toplevel)"
-[ -f "$top/.qa/config.json" ] || exit 0
-if [ ! -f "$top/.qa/bin/ship-gate.py" ]; then
-  echo "[qa-ship-gate] .qa/config.json opts this branch in but .qa/bin/ship-gate.py is missing; restore it from the qa-sweep skill." >&2
+# v3: guarded. A branch with no .qa/config.json passes (not opted in); a
+# branch whose config opts in but whose .qa/bin/ship-gate.py is missing gets
+# a named deny instead of a python3 traceback on every push (pilot
+# reproduction).
+# --- qa-ship-gate begin (templates/pre-push v4) ---
+qa_gate_refs=$(mktemp "${TMPDIR:-/tmp}/qa-prepush.XXXXXX") || exit 1
+cat > "$qa_gate_refs"
+if ! (
+  top="$(git rev-parse --show-toplevel)" || exit 0
+  [ -f "$top/.qa/config.json" ] || exit 0
+  if [ ! -f "$top/.qa/bin/ship-gate.py" ]; then
+    echo "[qa-ship-gate] .qa/config.json opts this branch in but .qa/bin/ship-gate.py is missing; restore it from the qa-sweep skill." >&2
+    exit 1
+  fi
+  exec python3 "$top/.qa/bin/ship-gate.py" prepush "$@"
+) < "$qa_gate_refs"; then
+  rm -f "$qa_gate_refs"
   exit 1
 fi
-exec python3 "$top/.qa/bin/ship-gate.py" prepush "$@"
+exec < "$qa_gate_refs"
+rm -f "$qa_gate_refs"
+# --- qa-ship-gate end ---

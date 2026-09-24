@@ -6,25 +6,69 @@
 # commit, with fetch-depth 2 so the gate can accept a head that is one
 # .qa-only commit on top of the walked one. GITHUB_SHA on pull_request is the
 # merge commit and never equals the walked SHA.
+#
+# v4 (card 6): merge-queue support. Without a `merge_group` trigger a required
+# check never reports for queue runs (GitHub docs, events that trigger
+# workflows: "Otherwise, status checks will not be triggered when you add a
+# pull request to a merge queue"). In a merge_group run GITHUB_SHA is the
+# merge-group commit, never the walked SHA. The ref is
+# refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>, where <sha> is the BASE
+# the group was built on, not the PR head (verified 2026-09-24 on a real queue
+# run: Sea-Haven-Industries/shoc-backend run 35815603657, ref
+# gh-readonly-queue/main/pr-167-b36b69df..., group commit f7db6b9f with
+# parents [b36b69df base, 5c5c01b2 = PR #167 head]). So the resolver takes the
+# PR number from the ref and asks `gh pr view` for that PR's head. The gate
+# then checks the queued PR's head against its committed .qa run, exactly
+# like a pull_request run (.qa-only allowance included). A merge_group run
+# whose ref does not parse fails instead of checking the group commit. The
+# marker-delimited resolver block is exercised verbatim by ship-gate.py
+# selftest -- keep the markers if you edit it.
 name: qa-ship-gate
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   ship-gate:
     name: qa ship gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Resolve the shipped SHA (PR head; queue runs resolve the queued PR's head)
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # --- qa-gate resolve-sha begin (exercised by ship-gate.py selftest) ---
+          if [ -n "$PR_HEAD" ]; then
+            printf 'sha=%s\n' "$PR_HEAD" >> "$GITHUB_OUTPUT"
+          elif printf '%s\n' "$GITHUB_REF" | grep -Eq '^refs/heads/gh-readonly-queue/.+/pr-[0-9]+-[0-9a-f]+$'; then
+            pr=$(printf '%s\n' "$GITHUB_REF" | sed -E 's#^refs/heads/gh-readonly-queue/.+/pr-([0-9]+)-[0-9a-f]+$#\1#')
+            head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid) || head_sha=""
+            if [ -z "$head_sha" ]; then
+              echo "qa-ship-gate: could not resolve the head of queued PR #$pr" >&2
+              exit 1
+            fi
+            printf 'sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            echo "qa-ship-gate: merge_group ref '$GITHUB_REF' is not gh-readonly-queue/<base>/pr-<N>-<sha>" >&2
+            exit 1
+          else
+            printf 'sha=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+          # --- qa-gate resolve-sha end ---
       # PR head (not the merge commit), depth 2 for the .qa-only-parent allowance
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.sha.outputs.sha }}
           fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
@@ -35,5 +79,5 @@ jobs:
           cp .qa/bin/qa-e2e-gate.mjs "$HOME/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs"
       - name: QA ship gate (.qa pipeline at the shipped commit)
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ steps.sha.outputs.sha }}
         run: python3 .qa/bin/ship-gate.py check --repo . --sha "$HEAD_SHA"

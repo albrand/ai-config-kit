@@ -2,8 +2,9 @@
 """QA ship gate: fail-closed push/PR/deploy gate for repos that opted in.
 
 A repo opts in by committing `.qa/config.json`. From that moment the gate is
-ALWAYS ON for that repo for ship commands (git push, gh pr create/merge/ready,
-bb fleet validate, vercel/netlify/fly deploy). It denies unless the whole
+ALWAYS ON for that repo for ship commands (merges, pushes to protected
+branches, production deploys, releases, tag pushes, workflow dispatch -- see
+segment_ship_kind). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
@@ -80,10 +81,50 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # pushes, gh pr create and bb fleet validate are free: that is how previews,
 # CI and review get produced. No dead patterns: every class below is exercised
 # by selftest against a canonical sample.
+# v4 (card 6): "what ships" also covers releases (gh release create), any
+# workflow dispatch (gh workflow run -- justification at the classifier), tag
+# pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
+# vercel redeploy, and deployments-API POSTs that target production. Preview
+# builds through the deployments API stay free (meu-psi heal).
 
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                    "--super-prefix", "--exec-path", "--config-env"}
 PUSH_ALL_FLAGS = {"--all", "--mirror", "--branches"}
+# v4: pushing tags ships whatever they point at (seahaven-style deploys are
+# release/tag driven: `release: published` vX.Y.Z-staging, tag deploys).
+TAG_PUSH_FLAGS = {"--tags", "--follow-tags"}
+# v4: Vercel deployments API. Only PRODUCTION targets gate; preview builds
+# through this API must stay free -- the meu-psi pilot rebuilds seat-blocked
+# previews via exactly `vercel api "/v13/deployments?teamId=.." -X POST
+# --input <body.json>`. The body usually sits in a file (the pallium autoheal
+# posts PRODUCTION the same way), so readable body files are inspected too.
+DEPLOY_CREATE_RE = re.compile(r"/v\d+/deployments(?:[?#]|$)")
+PROMOTE_API_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/")
+PROD_TARGET_RE = re.compile(r"""["']?\btarget["']?\s*[:=]\s*["']?production\b""")
+# per tool: flags whose presence means "request body" (POST unless -X says
+# otherwise), and the method flags. `vercel api -d` is --debug, not data.
+API_BODY_FLAGS = {
+    "curl": {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--data-ascii",
+             "--json", "-F", "--form", "--form-string"},
+    "vercel": {"--input", "-F", "--field", "-f", "--raw-field"},
+}
+API_METHOD_FLAGS = {"curl": {"-X", "--request"}, "vercel": {"-X", "--method"}}
+BODY_FILE_MAX = 256 * 1024
+# gh subcommand flags that take a value (so the positional parse skips it)
+GH_RELEASE_VALUE_FLAGS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--notes-start-tag",
+                          "--target", "--discussion-category", "-R", "--repo"}
+GH_WORKFLOW_VALUE_FLAGS = {"-r", "--ref", "-f", "--raw-field", "-F", "--field", "-R", "--repo"}
+# wrappers that run a command unchanged: stripped before classification so
+# `FOO=1 vercel --prod`, `npx vercel@latest --prod` or `env gh pr merge 5`
+# classify like the bare command (pre-v4 they were invisible to the hook)
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+PLAIN_WRAPPERS = {"env", "command", "exec", "nohup", "time", "sudo", "npx", "bunx", "pnpx"}
+WRAPPER_VALUE_FLAGS = {"env": {"-u", "--unset", "-C", "--chdir"}, "sudo": {"-u", "--user", "-g", "--group"},
+                       "npx": {"-p", "--package"}, "pnpm": {"--package"}, "yarn": {"-p", "--package"},
+                       "npm": {"-p", "--package"}}
+RUNNER_SUBCOMMANDS = {"pnpm": {"exec", "dlx"}, "yarn": {"exec", "dlx"}, "npm": {"exec", "x"},
+                      "bun": {"x"}}
+SHIP_BINS = {"git", "gh", "vercel", "netlify", "fly", "flyctl", "curl"}
 
 ROW_STATUSES = ("open", "closed", "fail_escalated")
 ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity", "status")
@@ -557,12 +598,12 @@ def _shell_arg_at(s, i):
     n = len(s)
     while i < n and s[i] in " \t":
         i += 1
-    if i >= n or s[i] in ";&|":
+    if i >= n or s[i] in ";&|\n":
         return None, i
     out = []
     while i < n:
         c = s[i]
-        if c in " \t;&|":
+        if c in " \t;&|\n":  # v4: a newline ends the word (multi-line commands)
             break
         if c == "\\":
             if i + 1 < n:
@@ -660,7 +701,48 @@ def command_segments(command):
         i = endpos
     if cur:
         segments.append(cur)
-    return segments
+    return [s for s in (unwrap_segment(s) for s in segments) if s]
+
+
+def unwrap_segment(seg):
+    """The command a segment actually runs: leading VAR=value assignments,
+    plain wrappers (env, command, sudo, npx, bunx, ...) with their flags and
+    package runners (`pnpm exec|dlx`, `yarn dlx`, `npm exec`, `bun x`, and
+    `pnpm|yarn <ship-bin>`) are dropped, and the head is reduced to its
+    basename without an @version (`./node_modules/.bin/vercel`,
+    `vercel@latest`). One place, so every consumer (classifier, merge-args,
+    sha selection) sees the same words."""
+    s = list(seg)
+    while s:
+        if ASSIGN_RE.match(s[0]):
+            s.pop(0)
+            continue
+        h = os.path.basename(s[0])
+        if h in PLAIN_WRAPPERS:
+            s.pop(0)
+            while s and s[0].startswith("-"):
+                f = s.pop(0)
+                if f in WRAPPER_VALUE_FLAGS.get(h, ()) and s:
+                    s.pop(0)
+            continue
+        if h in RUNNER_SUBCOMMANDS and len(s) > 1:
+            if s[1] in RUNNER_SUBCOMMANDS[h]:
+                s = s[2:]
+                while s and s[0].startswith("-"):
+                    f = s.pop(0)
+                    if f in WRAPPER_VALUE_FLAGS.get(h, ()) and s:
+                        s.pop(0)
+                continue
+            if h in ("pnpm", "yarn") and os.path.basename(s[1]).split("@")[0] in SHIP_BINS:
+                s = s[1:]
+                continue
+        break
+    if s:
+        h = os.path.basename(s[0])
+        if not h.startswith("@") and "@" in h:
+            h = h.split("@")[0]
+        s[0] = h
+    return s
 
 
 def git_subcommand(args):
@@ -685,14 +767,15 @@ def git_subcommand(args):
     return None
 
 
-def push_destinations(args):
-    """(mode, dsts) for a git push token list. mode 'all' for --all/--mirror/
-    --branches (every branch ships); else the destination refs from refspecs.
+def push_refspecs(args):
+    """(mode, flags, [(src, dst)]) for a git push token list. mode 'all' for
+    --all/--mirror/--branches (every branch ships); else the refspec words
+    after the remote as (source, destination) pairs (`HEAD:dev`, bare `v1.2`).
     No refspec -> empty list (caller resolves the branch upstream)."""
     try:
         i = args.index("push") + 1
     except ValueError:
-        return None, []
+        return None, [], []
     flags, words = [], []
     while i < len(args):
         a = args[i]
@@ -706,13 +789,18 @@ def push_destinations(args):
         words.append(a)
         i += 1
     if any(f in PUSH_ALL_FLAGS or f.split("=")[0] in PUSH_ALL_FLAGS for f in flags):
-        return "all", []
-    dsts = []
-    for rs in words[1:]:  # words[0] is the remote when present
-        dst = rs.split(":", 1)[1] if ":" in rs else rs
-        if dst:
-            dsts.append(dst)
-    return None, dsts
+        return "all", flags, []
+    pairs, rest = [], words[1:]  # words[0] is the remote when present
+    while rest:
+        rs = rest.pop(0)
+        if rs == "tag" and rest:  # `git push origin tag v1.2` == refs/tags/v1.2
+            t = "refs/tags/" + rest.pop(0)
+            pairs.append((t, t))
+            continue
+        # a leading + only forces the update; `+main` still ships to main
+        src, _, dst = rs.lstrip("+").partition(":")
+        pairs.append((src or dst, dst or src))
+    return None, flags, pairs
 
 
 def normalize_ref(dst):
@@ -756,52 +844,278 @@ def protected_refs(root, cfg):
     return prot
 
 
-def segment_ship_kind(seg, root, cfg):
-    """"merge" | "push" | "deploy" for one shell segment, else None."""
-    if not seg:
+def resolve_commit(root, rev):
+    """Full commit sha for a rev, or None. `^{commit}` peels annotated tags,
+    so a tag object resolves to the commit it ships."""
+    if not rev:
         return None
+    p = run_git(root, "rev-parse", "-q", "--verify", "%s^{commit}" % rev)
+    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+
+
+def head_commit(root):
+    return run_git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def current_branch(root):
+    b = run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    return b if b and b != "HEAD" else None
+
+
+def remote_commit(root, ref):
+    """What the remote holds for `ref` as far as this clone knows
+    (refs/remotes/origin/<ref>), then the local ref, then a raw sha."""
+    return resolve_commit(root, "refs/remotes/origin/%s" % ref) or resolve_commit(root, ref)
+
+
+def tag_ref(root, src):
+    """refs/tags/<name> when a push source names a tag (refs/tags/... or a
+    bare word that is a local tag, e.g. `git push origin v1.2`), else None.
+    HEAD and explicit refs/heads/ sources are never tags."""
+    if src.startswith("refs/tags/"):
+        return src
+    if src.startswith("refs/") or src in ("HEAD", "@"):
+        return None
+    return "refs/tags/%s" % src if resolve_commit(root, "refs/tags/%s" % src) else None
+
+
+def _positionals(toks, value_flags):
+    """Positional words of a gh subcommand plus {flag: value} for value flags
+    (split `--target main` and attached `--target=main` forms)."""
+    pos, vals, i = [], {}, 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-") and "=" in t:
+            k, _, v = t.partition("=")
+            vals[k] = v
+        elif t in value_flags and i + 1 < len(toks):
+            vals[t] = toks[i + 1]
+            i += 1
+        elif not t.startswith("-"):
+            pos.append(t)
+        i += 1
+    return pos, vals
+
+
+def release_commit(root, toks):
+    """Commit `gh release create` publishes: its tag when the tag exists
+    locally; else --target (as the remote knows it); else the remote default
+    branch, which is what GitHub tags when neither exists; else HEAD."""
+    pos, vals = _positionals(toks, GH_RELEASE_VALUE_FLAGS)
+    if pos:
+        c = resolve_commit(root, "refs/tags/%s" % pos[0].replace("refs/tags/", "", 1))
+        if c:
+            return c
+    target = vals.get("--target")
+    if target:
+        return remote_commit(root, target) or head_commit(root)
+    return remote_commit(root, default_branch(root)) or head_commit(root)
+
+
+def workflow_commit(root, toks):
+    """Commit `gh workflow run` dispatches on: --ref/-r as the remote knows
+    it, else the remote default branch (GitHub's default), else HEAD."""
+    _, vals = _positionals(toks, GH_WORKFLOW_VALUE_FLAGS)
+    ref = vals.get("--ref") or vals.get("-r")
+    if ref:
+        return remote_commit(root, ref.replace("refs/heads/", "", 1)) or head_commit(root)
+    return remote_commit(root, default_branch(root)) or head_commit(root)
+
+
+def _read_body_file(path, cwd):
+    """Text of a request-body file named on the command line, or None when it
+    is not a readable regular file (stdin `-`, not yet created, too big).
+    External input read by a hook: no $VAR expansion, regular files only,
+    size-capped."""
+    if not path or path == "-" or "$" in path:
+        return None
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(cwd, path)
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > BODY_FILE_MAX:
+            return None
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except Exception:
+        return None
+
+
+def api_deploy_post(seg, command, cwd):
+    """A deployments-API call that ships PRODUCTION, for `vercel api` and curl:
+    a POST (explicit method, or a body flag with no other method) to
+    /vN/deployments whose target is production, or a POST to a project's
+    /promote/ endpoint (the API form of `vercel promote`).
+
+    Where production is looked for: every argv word (the word parser strips
+    shell quotes, so '{"target":"production"}' arrives as
+    {"target":"production"} and "{target: production}" as {target:
+    production}), every readable body file (--input f, -d @f, -F k=@f), and
+    the raw command text (a heredoc or pipe that builds the body). Policy for
+    a body that cannot be seen at hook time (written by an earlier command,
+    or stdin) with no production marker anywhere in the command: ALLOW. The
+    gate matches on evidence of production; a preview heal must never be
+    denied for lack of it, and the git-pre-push/CI layers do not depend on
+    this classifier."""
+    tool = "vercel" if seg[0] == "vercel" else "curl"
+    toks = seg[2:] if tool == "vercel" else seg[1:]
+    urls = [t for t in toks if DEPLOY_CREATE_RE.search(t) or PROMOTE_API_RE.search(t)]
+    if not urls:
+        return False
+    body_flags, method_flags = API_BODY_FLAGS[tool], API_METHOD_FLAGS[tool]
+    method, has_body, texts, i = None, False, list(toks), 0
+    while i < len(toks):
+        t = toks[i]
+        flag, val = t, None
+        if t.startswith("--") and "=" in t:
+            flag, _, val = t.partition("=")
+        elif len(t) > 2 and t[0] == "-" and t[1] != "-" and t[:2] in method_flags | body_flags:
+            flag, val = t[:2], t[2:]  # attached short form: -XPOST, -d@body.json
+        if flag in method_flags:
+            if val is None and i + 1 < len(toks):
+                val = toks[i + 1]
+                i += 1
+            method = (val or "").upper()
+        elif flag in body_flags:
+            has_body = True
+            if val is None and i + 1 < len(toks):
+                val = toks[i + 1]
+                i += 1
+            val = val or ""
+            if flag == "--input":
+                path = val
+            elif val.startswith("@"):
+                path = val[1:]
+            elif "=@" in val:  # -F key=@file
+                path = val.split("=@", 1)[1]
+            else:
+                path = None
+            body = _read_body_file(path, cwd) if path else None
+            if body:
+                texts.append(body)
+        i += 1
+    if not (method == "POST" or (method is None and has_body)):
+        return False
+    if any(PROMOTE_API_RE.search(u) for u in urls):
+        return True
+    texts.append(command)
+    return any(PROD_TARGET_RE.search(t) for t in texts)
+
+
+def _vercel_prod_flag(seg):
+    """`--prod`, or `--target production` / `--target=production`."""
+    for i, t in enumerate(seg):
+        if t == "--prod" or t == "--target=production":
+            return True
+        if t == "--target" and i + 1 < len(seg) and seg[i + 1] == "production":
+            return True
+    return False
+
+
+def segment_ship(seg, root, cfg, command="", cwd=None):
+    """(kind, shas) for one unwrapped shell segment. kind: "merge" | "push" |
+    "deploy" | None. shas: the commits this segment ships, resolved locally,
+    so a tag pointing at an unwalked commit cannot pass on a walked HEAD.
+    For merges the caller resolves the PR head (shas empty here)."""
+    if not seg:
+        return None, []
     head = seg[0]
+    cwd = cwd or root
     if head == "git":
         if git_subcommand(seg) != "push":
-            return None
-        mode, dsts = push_destinations(seg)
-        prot = protected_refs(root, cfg)
+            return None, []
+        mode, flags, pairs = push_refspecs(seg)
         if mode == "all":
-            return "push"
-        if not dsts:
+            return "push", [head_commit(root)]
+        prot = protected_refs(root, cfg)
+        kind, shas = None, []
+        if any(f.split("=")[0] in TAG_PUSH_FLAGS for f in flags):
+            # --tags/--follow-tags: which tags are new is only known to the
+            # remote; the hook checks HEAD, the pre-push layer checks each
+            # pushed tag exactly (git lists them on stdin)
+            kind, shas = "deploy", [head_commit(root)]
+        if not pairs:
             up = upstream_branch(root)
-            return "push" if up and normalize_ref(up) in prot else None
-        for d in dsts:
-            if normalize_ref(d) in prot:
-                return "push"
-        return None
-    if head == "gh" and len(seg) > 2 and seg[1] == "pr" and seg[2] in ("merge", "ready"):
-        return "merge"
+            if up and normalize_ref(up) in prot:
+                return "push", shas + [head_commit(root)]
+            return kind, shas
+        for src, dst in pairs:
+            dst_branch = current_branch(root) if dst in ("HEAD", "@") else normalize_ref(dst)
+            if dst_branch in prot:
+                kind = "push"
+                shas.append(resolve_commit(root, src) or head_commit(root))
+                continue
+            t = tag_ref(root, src) or tag_ref(root, dst if dst.startswith("refs/tags/") else "")
+            if t:
+                kind = kind or "deploy"
+                shas.append(resolve_commit(root, t) or head_commit(root))
+        return kind, shas
+    if head == "gh" and len(seg) > 2:
+        if seg[1] == "pr" and seg[2] in ("merge", "ready"):
+            return "merge", []
+        if seg[1] == "release" and seg[2] == "create":
+            return "deploy", [release_commit(root, seg[3:])]
+        if seg[1] == "workflow" and seg[2] == "run":
+            # ANY dispatch is shipping. Deploy workflows run exactly this way
+            # (seahaven deploy.yaml is workflow_dispatch dev/staging/prod); a
+            # reliable workflow-name -> file -> jobs mapping needs GitHub API
+            # round trips inside a hook, and a missed deploy workflow is an
+            # ungated production deploy while a false positive only asks for
+            # a completed .qa pipeline on a rare manual command.
+            return "deploy", [workflow_commit(root, seg[3:])]
+        return None, []
     if head == "vercel":
-        if "--prod" in seg or (len(seg) > 1 and seg[1] == "promote"):
-            return "deploy"
-        return None
+        sub = seg[1] if len(seg) > 1 else ""
+        if sub == "api":
+            return ("deploy", [head_commit(root)]) if api_deploy_post(seg, command, cwd) else (None, [])
+        # `vercel rollback` stays free: it restores an already-shipped
+        # deployment, and gating incident recovery on a fresh walk is wrong
+        if _vercel_prod_flag(seg) or sub in ("promote", "redeploy"):
+            return "deploy", [head_commit(root)]
+        return None, []
     if head == "netlify" and "deploy" in seg[1:3] and "--prod" in seg:
-        return "deploy"
+        return "deploy", [head_commit(root)]
     if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
-        return "deploy"
-    return None
+        return "deploy", [head_commit(root)]
+    if head in ("curl", "curl.exe") and api_deploy_post(seg, command, cwd):
+        return "deploy", [head_commit(root)]
+    return None, []
 
 
-def ship_kind(command, root, cfg):
-    """Highest-stakes ship kind anywhere in the command, for this root."""
-    kinds = [k for k in (segment_ship_kind(s, root, cfg) for s in command_segments(command)) if k]
+def segment_ship_kind(seg, root, cfg):
+    """"merge" | "push" | "deploy" for one shell segment, else None."""
+    return segment_ship(seg, root, cfg)[0]
+
+
+def ship_plan(command, root, cfg, cwd=None):
+    """(kind, shas): the highest-stakes ship kind anywhere in the command and
+    every commit its non-merge segments ship. A `ship_commands` match adds
+    HEAD. Merges get their PR head from the caller."""
+    kinds, shas = [], []
+    for seg in command_segments(command):
+        k, s = segment_ship(seg, root, cfg, command, cwd)
+        if k:
+            kinds.append(k)
+            shas += [x for x in s if x and x not in shas]
     try:
         if cfg and isinstance(cfg.get("ship_commands"), list):
             if any(re.search(str(p), command) for p in cfg["ship_commands"]):
                 kinds.append("extra")
+                h = head_commit(root)
+                if h and h not in shas:
+                    shas.append(h)
     except Exception:
         pass
     if "merge" in kinds:
-        return "merge"   # needs PR-head freshness, the stricter sha rule
+        return "merge", shas   # needs PR-head freshness, the stricter sha rule
     if "push" in kinds:
-        return "push"
-    return kinds[0] if kinds else None
+        return "push", shas
+    return (kinds[0] if kinds else None), shas
+
+
+def ship_kind(command, root, cfg):
+    """Highest-stakes ship kind anywhere in the command, for this root."""
+    return ship_plan(command, root, cfg)[0]
 
 
 def pr_merge_args(command):
@@ -857,7 +1171,8 @@ def hook(raw=None):
             cfgs[root] = load_json(os.path.join(root, ".qa", "config.json"))
         except Exception:
             cfgs[root] = None  # unparseable config on a ship command: check_all reports it
-    kinds = {root: ship_kind(command, root, cfgs[root]) for root in targets}
+    plans = {root: ship_plan(command, root, cfgs[root], cwd) for root in targets}
+    kinds = {root: plans[root][0] for root in targets}
     if not any(kinds.values()):
         return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
     prov = derive_provider(payload)
@@ -871,12 +1186,22 @@ def hook(raw=None):
         # merged (gh pr view), falling back to the local HEAD; pushes and
         # deploys check the local HEAD (with the .qa-only-parent allowance).
         # v3: with a sha resolved, artifacts are read from that commit's tree.
-        sha = ""
+        # v4: every segment contributes the commits it ships (ship_plan): a
+        # tag push or release checks the TAGGED commit, a protected refspec
+        # its source, a dispatch its --ref as origin knows it. All of them
+        # must pass, so a walked HEAD cannot clear an unwalked tag and a tag
+        # cannot hide the branch pushed next to it.
+        shas = list(plans[root][1])
         if kind == "merge" and merge_args is not None:
-            sha = pr_head_sha(root, merge_args) or run_git(root, "rev-parse", "HEAD").stdout.strip()
-        else:
-            sha = run_git(root, "rev-parse", "HEAD").stdout.strip()
-        ok, fails, stats, _ = check_all(root, sha or None)
+            shas.insert(0, pr_head_sha(root, merge_args) or head_commit(root))
+        if not shas:
+            shas = [head_commit(root)]
+        ok, fails, stats = True, [], {"rows_total": 0, "clusters": 0, "open_rows": 0}
+        for sha in shas:
+            o, f, s, _ = check_all(root, sha or None)
+            ok = ok and o
+            fails += ["[%s] %s" % ((sha or "HEAD")[:12], x) for x in f] if len(shas) > 1 else f
+            stats = s
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
                  provider=prov)
@@ -1005,8 +1330,9 @@ def cmd_record(args):
 
 def prepush(remote="origin"):
     """git pre-push layer: reads the ref lines on stdin and denies only pushes
-    whose destination is protected (remote default branch + protected_branches).
-    Feature-branch pushes, tags and deletions pass untouched (a PR needs its
+    whose destination is protected (remote default branch + protected_branches)
+    or a tag (v4: a tag ships the commit it points at). Feature-branch pushes
+    and deletions pass untouched (a PR needs its
     preview built before anyone can walk it). Ported from the meu-psi pilot's
     verified hook; the destination logic is ship-gate's own, so there is one
     parser (v2 template defect: the old template ran the full check on every
@@ -1028,25 +1354,30 @@ def prepush(remote="origin"):
         lref, lsha, rref, _rsha = parts
         if not any(c != "0" for c in lsha):
             continue  # deletion: passes (branch protection on the server owns deletes)
+        if rref.startswith("refs/tags/"):
+            # v4: a pushed tag ships the commit it points at. Annotated tags
+            # report the tag object sha on stdin; peel it to the commit.
+            pushes.append((rref, resolve_commit(root, lsha) or lsha))
+            continue
         branch = normalize_ref(rref)
         if branch in prot:
             pushes.append((branch, lsha))
     if not pushes:
         return 0
     denied = False
-    for branch, lsha in pushes:
-        ok, fails, stats, _ = check_all(root, lsha)
+    for ref, sha in pushes:
+        ok, fails, stats, _ = check_all(root, sha)
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"],
-                                            "kind": "push", "ref": branch}, provider=derive_provider({}))
+                                            "kind": "push", "ref": ref}, provider=derive_provider({}))
             continue
         denied = True
         emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"],
-                                        "kind": "push", "ref": branch}, provider=derive_provider({}))
-        failures.append("[%s -> %s]\n  - %s" % (lsha[:12], branch, "\n  - ".join(fails)))
+                                        "kind": "push", "ref": ref}, provider=derive_provider({}))
+        failures.append("[%s -> %s]\n  - %s" % (sha[:12], ref, "\n  - ".join(fails)))
     if not denied:
         return 0
-    sys.stderr.write("[qa-ship-gate] Push to a protected branch denied. Complete the .qa pipeline for the "
+    sys.stderr.write("[qa-ship-gate] Push to a protected branch or a tag denied. Complete the .qa pipeline for the "
                      "pushed commit, or push a feature branch:\n" + "\n".join(failures) + "\n")
     return 1
 
@@ -1081,12 +1412,12 @@ def main():
     if cmd == "prepush":
         return prepush(argv[1] if len(argv) > 1 else "origin")
     if cmd == "selftest":
-        return selftest()
+        return selftest(rest.get("gate"), rest.get("templates"))
     print(__doc__)
     return 2
 
 
-def selftest():
+def selftest(v4_gate=None, v4_templates=None):
     """Prove each deny/allow path on scratch repos. A check that cannot go red proves nothing."""
     import shutil
     tmp = tempfile.mkdtemp(prefix="qa-gate-selftest-")
@@ -1713,6 +2044,250 @@ def selftest():
     expect(p.returncode != 0 and ("no QA run" in p.stderr or "missing" in p.stderr),
            "v3 case10: hook+config+bin with no pipeline denies")
 
+    # ---------------- v4 (card 6): what else ships ----------------
+    # Self-contained and subprocess-only, so the same cases run against any
+    # gate/template pair: `selftest --gate <ship-gate.py> --templates <dir>`
+    # replays them against an older release (the before-run of card 6).
+    V4GATE = os.path.abspath(v4_gate or GATE)
+    V4TMPL = os.path.abspath(v4_templates or os.path.join(SKILL_DIR, "..", "templates"))
+    print("-- v4 cases against gate %s, templates %s" % (V4GATE, V4TMPL))
+
+    def hook4(root, command):
+        payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
+                              "tool_input": {"command": command}, "cwd": root})
+        return subprocess.run(["python3", V4GATE, "hook"], cwd=root, input=payload, capture_output=True,
+                              text=True, env=dict(os.environ, QA_GATE_NO_GH="1"))
+
+    def deny4(root, command, name):
+        p = hook4(root, command)
+        expect(p.returncode == 2 and "qa-ship-gate" in p.stderr, "v4 DENY  %s" % name)
+        return p
+
+    def allow4(root, command, name):
+        p = hook4(root, command)
+        expect(p.returncode == 0, "v4 ALLOW %s [%s]" % (name, " ".join(p.stderr.split())[:100]))
+        return p
+
+    # r9: base(opt-in) -> codeW -> W (.qa-only run at codeW) = main, vgood
+    #                            -> codeU (unwalked) = feat = HEAD, vbad
+    r9 = os.path.join(tmp, "v4repo")
+    os.makedirs(r9)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r9)
+    os.makedirs(os.path.join(r9, ".qa"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "protected_branches": ["dev", "main"]}, open(os.path.join(r9, ".qa", "config.json"), "w"))
+    open(os.path.join(r9, "f.txt"), "w").write("x\n")
+    sh("git add -A && git commit -qm base && echo w >> f.txt && git commit -qam codeW", cwd=r9)
+    codeW = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    write_run(r9, "w", codeW)
+    sh("git add .qa && git commit -qm evidence-w -- .qa && git tag vgood", cwd=r9)
+    shaW = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    sh("git checkout -q -b feat && echo u >> f.txt && git commit -qam codeU && git tag vbad", cwd=r9)
+    codeU = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    open(os.path.join(r9, "prod-body.json"), "w").write(json.dumps(
+        {"name": "app", "target": "production", "gitSource": {"type": "github", "sha": codeU}}))
+    open(os.path.join(r9, "preview-body.json"), "w").write(json.dumps(
+        {"name": "app", "target": "preview", "gitSource": {"type": "github", "sha": codeU}}))
+    p = sh('python3 "%s" check --repo %s --sha %s' % (GATE, r9, shaW), cwd=r9)
+    expect(p.returncode == 0, "v4 fixture: the walked commit W passes check [%s]" % " ".join(p.stdout.split())[:100])
+
+    # tags ship the tagged commit
+    deny4(r9, "git push origin vbad", "tag push at an unwalked commit")
+    deny4(r9, "git push origin refs/tags/vbad", "refs/tags/... refspec push")
+    deny4(r9, "git push origin tag vbad", "`git push origin tag <name>`")
+    deny4(r9, "git push --tags", "git push --tags (hook checks HEAD; pre-push checks each tag)")
+    deny4(r9, "git push --follow-tags origin feat", "git push --follow-tags")
+    allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
+    deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
+    # releases and dispatches check the commit they publish
+    deny4(r9, "gh release create vbad", "gh release create of an unwalked tag")
+    deny4(r9, "gh release create -t 'Release title' --notes n vbad", "gh release create with value flags first")
+    deny4(r9, "gh release create v9 --target feat", "gh release create --target <unwalked branch>")
+    allow4(r9, "gh release create vgood", "gh release create of a walked tag")
+    deny4(r9, "gh workflow run deploy.yaml --ref feat", "gh workflow run on an unwalked ref")
+    allow4(r9, "gh workflow run deploy.yaml", "gh workflow run on the default branch at a walked commit")
+    allow4(r9, "gh run watch 1", "gh run watch (not a dispatch)")
+    # vercel CLI
+    deny4(r9, "vercel redeploy dpl_abc", "vercel redeploy")
+    deny4(r9, "vercel promote app-x.vercel.app", "vercel promote (covered since v2)")
+    deny4(r9, "vercel deploy --target production", "vercel deploy --target production")
+    deny4(r9, "npx vercel@latest --prod", "npx vercel@latest --prod")
+    deny4(r9, "VERCEL_ORG_ID=team_x vercel --prod", "env-prefixed vercel --prod")
+    allow4(r9, "vercel deploy", "vercel deploy (preview)")
+    allow4(r9, "vercel rollback", "vercel rollback (incident recovery stays free)")
+    # deployments API: production gated, previews free (meu-psi heal shape)
+    allow4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input preview-body.json --raw',
+           "vercel api POST building a PREVIEW (meu-psi heal, body file)")
+    deny4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json --raw',
+          "vercel api POST, PRODUCTION body file (pallium autoheal shape)")
+    deny4(r9, "vercel api /v13/deployments -F target=production -F name=app",
+          "vercel api fields imply POST, target=production")
+    allow4(r9, "vercel api '/v6/deployments?target=production' -d", "vercel api GET list (-d is --debug)")
+    deny4(r9, "curl -X POST https://api.vercel.com/v13/deployments -H 'Authorization: Bearer t' "
+              "-d '{\"name\":\"app\",\"target\":\"production\"}'", "curl POST inline production body")
+    deny4(r9, "curl -sS -XPOST https://api.vercel.com/v13/deployments -d @prod-body.json",
+          "curl POST production body file")
+    allow4(r9, "curl -X POST https://api.vercel.com/v13/deployments -d '{\"target\": \"preview\"}'",
+           "curl POST preview body")
+    allow4(r9, "curl 'https://api.vercel.com/v13/deployments?target=production&limit=1'",
+           "curl GET list with a production filter")
+    deny4(r9, "cat > body-later.json <<'EOF'\n{\"target\": \"production\"}\nEOF\n"
+              "vercel api /v13/deployments -X POST --input body-later.json",
+          "heredoc-built production body (file absent at hook time)")
+    deny4(r9, "curl -X POST https://api.vercel.com/v10/projects/prj_1/promote/dpl_1", "promote API POST")
+    # pushes: sources, wrappers, multi-line
+    allow4(r9, "git push origin feat", "feature-branch push")
+    allow4(r9, "git push origin main", "protected push of local main (walked) while HEAD is not")
+    deny4(r9, "git push origin feat:main", "feat:main ships the unwalked source")
+    deny4(r9, "git push origin +feat:dev", "forced refspec +feat:dev")
+    deny4(r9, "git status\ngit push origin HEAD:dev", "ship on the second line of a multi-line command")
+    deny4(r9, "GH_TOKEN=x gh pr merge 5", "env-prefixed gh pr merge")
+    sh("git checkout -q -b dev", cwd=r9)
+    deny4(r9, "git push origin HEAD", "git push origin HEAD while on a protected branch")
+    deny4(r9, "git push origin +dev", "forced +dev")
+    sh("git checkout -q feat && git branch -q -D dev", cwd=r9)
+
+    # non-opted-in repo: every new ship command stays free
+    r11 = os.path.join(tmp, "v4plain")
+    os.makedirs(r11)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+       "git add -A && git commit -qm i && git tag v1.2", cwd=r11)
+    for c in ("git push origin v1.2", "git push --tags", "gh release create v1.2", "gh workflow run deploy",
+              "vercel redeploy dpl_1", "npx vercel --prod",
+              "vercel api /v13/deployments -X POST -F target=production",
+              "curl -X POST https://api.vercel.com/v13/deployments -d '{\"target\":\"production\"}'"):
+        allow4(r11, c, "non-opted repo: %s" % c)
+
+    # git pre-push layer: real pushes to a local bare remote
+    bare9 = os.path.join(tmp, "remote9.git")
+    sh("git init -q --bare -b main %s" % bare9)
+    sh("git remote add r9remote %s && git push -q r9remote main" % bare9, cwd=r9)
+    os.makedirs(os.path.join(r9, ".qa", "bin"), exist_ok=True)
+    shutil.copy(V4GATE, os.path.join(r9, ".qa", "bin", "ship-gate.py"))
+    shutil.copy(os.path.join(V4TMPL, "pre-push"), os.path.join(r9, ".git", "hooks", "pre-push"))
+    os.chmod(os.path.join(r9, ".git", "hooks", "pre-push"), 0o755)
+
+    def landed(ref):
+        return bool(sh("git --git-dir=%s rev-parse --verify -q %s" % (bare9, ref)).stdout.strip())
+
+    p = sh("git push r9remote vgood", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vgood"), "v4 prepush: tag at a walked commit lands")
+    p = sh("git push r9remote vbad", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vbad"), "v4 prepush: tag at an unwalked commit denied, nothing landed")
+    sh("git tag -a vann -m annotated %s" % codeU, cwd=r9)
+    p = sh("git push r9remote vann", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vann"), "v4 prepush: annotated tag peeled to its unwalked commit, denied")
+    p = sh("git push r9remote --tags", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vbad"), "v4 prepush: --tags denied on the unwalked tag")
+    p = sh("git push r9remote feat", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/heads/feat"), "v4 prepush: feature branch still lands")
+
+    # merge_group: the resolver block of qa-ci.yml, run verbatim
+    ci_text = open(os.path.join(V4TMPL, "qa-ci.yml")).read()
+    expect(re.search(r"(?m)^\s+merge_group:", ci_text) is not None, "v4 qa-ci: merge_group trigger present")
+    expect("pull-requests: read" in ci_text, "v4 qa-ci: pull-requests: read (gh pr view in queue runs)")
+    m = re.search(r"# --- qa-gate resolve-sha begin[^\n]*\n(.*?)# --- qa-gate resolve-sha end", ci_text, re.S)
+    expect(m is not None, "v4 qa-ci: marked SHA resolver present")
+    resolver = os.path.join(tmp, "resolve-sha.sh")
+    rlines = m.group(1).splitlines() if m else ["exit 3"]
+    ded = min(len(l) - len(l.lstrip()) for l in rlines if l.strip())
+    open(resolver, "w").write("\n".join(l[ded:] for l in rlines) + "\n")
+    ghbin = os.path.join(tmp, "v4bin")
+    os.makedirs(ghbin, exist_ok=True)
+    real_head = "5c5c01b2e82ce9efbbc03f8945a98a5cbea86c7b"  # PR #167 head, shoc-backend run 35815603657
+    open(os.path.join(ghbin, "gh"), "w").write(
+        "#!/bin/sh\ncase \"$*\" in\n  'pr view 167 --json headRefOid --jq .headRefOid') echo %s;;\n"
+        "  'pr view 42 --json headRefOid --jq .headRefOid') echo %s;;\n  *) exit 1;;\nesac\n" % (real_head, shaW))
+    os.chmod(os.path.join(ghbin, "gh"), 0o755)
+
+    def resolve(event, ref, sha, pr_head=""):
+        out = os.path.join(tmp, "gh-output")
+        if os.path.exists(out):
+            os.remove(out)
+        env = dict(os.environ, GITHUB_OUTPUT=out, GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_SHA=sha,
+                   PR_HEAD=pr_head, PATH=ghbin + os.pathsep + os.environ.get("PATH", ""))
+        p = subprocess.run(["/bin/sh", resolver], env=env, capture_output=True, text=True)
+        val = ""
+        if os.path.exists(out):
+            val = next((l.strip()[4:] for l in open(out) if l.startswith("sha=")), "")
+        return p.returncode, val
+
+    grp = "f7db6b9f843f6e0ac8dfe5590a3015e6487fc861"
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-167-b36b69df83f9caedf2f8ce11d3122d8795eec01e", grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: real queue ref resolves the queued PR head, not the group sha (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/release/1.0/pr-167-" + "b" * 40, grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: base branch with a slash (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-999-" + "b" * 40, grp)
+    expect(rc != 0 and not val, "v4 merge_group: unresolvable PR head fails the job")
+    rc, val = resolve("merge_group", "refs/heads/something-else", grp)
+    expect(rc != 0 and not val, "v4 merge_group: unparseable queue ref fails instead of checking the group commit")
+    rc, val = resolve("pull_request", "refs/pull/9/merge", "c" * 40, "a" * 40)
+    expect(rc == 0 and val == "a" * 40, "v4 pull_request: PR head sha")
+    rc, val = resolve("push", "refs/heads/main", "c" * 40)
+    expect(rc == 0 and val == "c" * 40, "v4 push: GITHUB_SHA")
+    # the queued PR's head is what the gate then checks, against its .qa run
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-42-" + codeW, codeU)
+    ok_head = rc == 0 and val == shaW and subprocess.run(
+        ["python3", V4GATE, "check", "--repo", r9, "--sha", val], capture_output=True).returncode == 0
+    grp_fail = subprocess.run(["python3", V4GATE, "check", "--repo", r9, "--sha", codeU],
+                              capture_output=True).returncode != 0
+    expect(ok_head and grp_fail, "v4 merge_group: gate passes the queued PR head, would fail the group commit")
+
+    # husky: gate block at the top of .husky/pre-push, pallium-style ref parser after it
+    tmpl_text = open(os.path.join(V4TMPL, "pre-push")).read()
+    mb = re.search(r"(?ms)^# --- qa-ship-gate begin.*?^# --- qa-ship-gate end[^\n]*\n", tmpl_text)
+    block = mb.group(0) if mb else tmpl_text
+    husky_tail = ('while read local_ref local_sha remote_ref remote_sha; do echo "husky-saw $remote_ref"; done\n'
+                  'echo husky-after\n')
+
+    def husky_repo(name, v9):
+        r = os.path.join(tmp, name)
+        os.makedirs(os.path.join(r, ".husky", "_"))
+        sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+           "git add f && git commit -qm i", cwd=r)
+        bare = os.path.join(tmp, name + ".git")
+        sh("git init -q --bare -b main %s" % bare)
+        sh("git remote add up %s && git push -q up main" % bare, cwd=r)
+        open(os.path.join(r, ".husky", "pre-push"), "w").write("#!/usr/bin/env sh\n" + block + husky_tail)
+        os.chmod(os.path.join(r, ".husky", "pre-push"), 0o755)
+        if v9:  # husky v9 layout: .husky/_/<hook> sources h, which runs the script under sh -e
+            open(os.path.join(r, ".husky", "_", "h"), "w").write(
+                '#!/usr/bin/env sh\nn=$(basename "$0")\ns=$(dirname "$(dirname "$0")")/$n\n'
+                '[ ! -f "$s" ] && exit 0\nsh -e "$s" "$@"\nc=$?\n'
+                '[ $c != 0 ] && echo "husky - $n script failed (code $c)"\nexit $c\n')
+            open(os.path.join(r, ".husky", "_", "pre-push"), "w").write('#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n')
+            os.chmod(os.path.join(r, ".husky", "_", "pre-push"), 0o755)
+            sh("git config core.hooksPath .husky/_", cwd=r)
+        else:
+            sh("git config core.hooksPath .husky", cwd=r)
+        return r, bare
+
+    for label, v9 in (("husky v9 (sh -e)", True), ("husky plain", False)):
+        r10, bare10 = husky_repo("husky-v9" if v9 else "husky-plain", v9)
+        sh("git checkout -q -b feat/a && echo a >> f && git commit -qam a", cwd=r10)
+        p = sh("git push up feat/a", cwd=r10)
+        out = p.stdout + p.stderr
+        expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
+               "v4 %s: not opted in, push passes and the husky ref parser still sees the refs" % label)
+        os.makedirs(os.path.join(r10, ".qa"))
+        json.dump({"personas": ["a"], "workflows": [{"name": "w"}], "protected_branches": ["dev", "main"]},
+                  open(os.path.join(r10, ".qa", "config.json"), "w"))
+        sh("git add .qa && git commit -qm optin", cwd=r10)
+        p = sh("git push up HEAD:dev", cwd=r10)
+        exists = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare10).stdout.strip()
+        expect(p.returncode != 0 and not exists and ".qa/bin/ship-gate.py is missing" in p.stderr,
+               "v4 %s: config without .qa/bin -> named deny survives chaining" % label)
+        os.makedirs(os.path.join(r10, ".qa", "bin"))
+        shutil.copy(V4GATE, os.path.join(r10, ".qa", "bin", "ship-gate.py"))
+        p = sh("git push up HEAD:dev", cwd=r10)
+        exists = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare10).stdout.strip()
+        expect(p.returncode != 0 and not exists and "husky-after" not in p.stdout + p.stderr,
+               "v4 %s: opted in, dev push denied before the husky tail runs" % label)
+        p = sh("git push up feat/a", cwd=r10)
+        out = p.stdout + p.stderr
+        expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
+               "v4 %s: opted in, feature push passes and husky still sees the refs" % label)
+
     shutil.rmtree(tmp, ignore_errors=True)
     EVENTS = live_events
     if old_qa_gate_events is None:
@@ -1730,7 +2305,9 @@ def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|gh\s+pr\s+(merge|ready)|--prod|vercel\s+promote", text)
+    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
+                     r"gh\s+release\s+create|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
+                     r"vercel\s+(promote|redeploy)|/v\d+/deployments|/v\d+/projects/\S+/promote/", text)
 
 
 if __name__ == "__main__":

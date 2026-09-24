@@ -122,24 +122,63 @@ python3 <skill-dir>/scripts/ship-gate.py record escape --source sentry --ref <id
 
 ## P6 Ship
 
-Only what SHIPS is gated (v2): **merges** (`gh pr merge` with any flags, `gh pr ready`),
+Only what SHIPS is gated (v2 + v4): **merges** (`gh pr merge` with any flags, `gh pr ready`),
 **pushes whose destination is protected** — the repo's default branch plus
-`protected_branches` in `.qa/config.json` (resolved from the refspec, `HEAD:dev`
-forms, the current branch's upstream when there is no refspec; `--all`/`--mirror`
-count as protected) — and **production deploys** (`vercel --prod` /
-`vercel deploy --prod` / `vercel promote`, `netlify deploy --prod`, `fly deploy`).
+`protected_branches` in `.qa/config.json` (resolved from the refspec, `HEAD:dev`,
+`+dev` and bare `HEAD` forms, the current branch's upstream when there is no
+refspec; `--all`/`--mirror` count as protected) — **tag pushes** (`git push origin
+v1.2`, `refs/tags/…`, `tag v1.2`, `--tags`/`--follow-tags`) — and **production
+deploys**: `vercel --prod` / `vercel deploy --prod` / `--target production`,
+`vercel promote`, `vercel redeploy` (its target is not visible locally),
+`netlify deploy --prod`, `fly deploy`, **releases** (`gh release create`), **any
+workflow dispatch** (`gh workflow run`: deploy workflows are dispatched exactly
+this way, and a name→file→jobs mapping is not decidable locally in a hook — a
+false positive only asks for a completed pipeline, a false negative ships), and
+a **deployments-API POST that targets production** (`vercel api …/vN/deployments`
+or curl, with `target: production` in the arguments, in a readable body file
+such as `--input body.json` / `-d @body.json`, or anywhere in the command text),
+plus a POST to the promote API. Env prefixes and runners (`FOO=1 …`, `env`,
+`npx`, `bunx`, `pnpm dlx`, …) and multi-line commands classify like the bare
+command.
 
 Free on purpose: **feature-branch pushes** (that is how previews and CI get
 built), **`gh pr create`** (that is how the preview and the PR are produced),
-and **`bb fleet validate`** (review should see the work before the merge, not
-after). The deadlock v1 had — the re-walk must be at the shipped SHA but the
-preview for that SHA only exists after the push — is resolved: walk against
-the preview of your feature-branch push, then merge.
+**`bb fleet validate`** (review should see the work before the merge, not
+after), **preview deploys** (`vercel deploy` without a production target, and
+a `vercel api`/curl POST to `/vN/deployments` whose target is a preview — the
+meu-psi pilot heals seat-blocked previews through exactly that call, and
+blocking it would deadlock the pilot again), and **`vercel rollback`**
+(incident recovery restores an already-shipped deployment). A deployments POST
+whose body cannot be seen at hook time (built by a script or piped on stdin)
+and carries no production marker anywhere in the command is allowed: the hook
+gates on evidence of production. The deadlock v1 had — the re-walk must be at
+the shipped SHA but the preview for that SHA only exists after the push — is
+resolved: walk against the preview of your feature-branch push, then merge.
 
-Walk freshness for a MERGE: `rewalk.json` must sit at the PR head SHA being
-merged (`gh pr view --json headRefOid`), or one `.qa/`-only commit on top of
-it. For pushes and deploys, the shipped HEAD with the same allowance. The
-local gate (PreToolUse hook, git pre-push template) checks consistency; the
-CI job is where merges are truly enforced — make it a required check. If a
-ship is denied, complete the pipeline; never delete `.qa/config.json` to
-dodge the gate.
+Walk freshness is checked at **every commit the command ships** (v4): for a
+MERGE, `rewalk.json` must sit at the PR head SHA being merged (`gh pr view
+--json headRefOid`), or one `.qa/`-only commit on top of it; for a protected
+push, the pushed source commit (`feat:main` checks `feat`); for a tag push or
+release, the tagged commit (else `--target`, else the remote default branch);
+for a workflow dispatch, its `--ref` (else the default branch) as origin knows
+it; for other deploys, the local HEAD — each with the same `.qa`-only
+allowance. A walked HEAD cannot clear an unwalked tag, and a walked tag cannot
+hide an unwalked branch pushed next to it.
+
+**Releases after a merge.** A release tag normally points at the squash or
+merge commit on the default branch, which is never the walked PR head, so the
+gate denies it until that commit is walked: walk the merged commit (against the
+environment it deployed to), commit the evidence as one `.qa/`-only commit on
+top (via a `.qa`-only PR where the branch requires one; its squash is still one
+`.qa`-only commit on top), and tag that commit.
+
+The local gate (PreToolUse hook, git pre-push template) checks consistency; the
+CI job is where merges are truly enforced — make it a required check. The CI
+template handles merge queues (`merge_group` trigger; a queue run checks the
+queued PR's head, taken from the PR number in the
+`gh-readonly-queue/<base>/pr-<N>-<base-sha>` ref, never the group commit). In
+husky repos the pre-push gate block goes at the **top** of `.husky/pre-push`
+(see the template header): it saves the pushed refs, gates on them, and hands
+them back to the husky script after it; appended after a script that reads
+stdin it would see no refs and let every push through. If a ship is denied,
+complete the pipeline; never delete `.qa/config.json` to dodge the gate.
