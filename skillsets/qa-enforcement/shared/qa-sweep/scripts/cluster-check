@@ -1,0 +1,5 @@
+#!/bin/sh
+# cluster-check: every inventory row mapped to a cluster, every cluster has a
+# red repro that failed once, every cluster covered by plan.md. Exit 0 = ok.
+# Thin wrapper; the logic lives in ship-gate.py so there is one checker.
+exec python3 "$(dirname "$0")/ship-gate.py" clusters "$@"

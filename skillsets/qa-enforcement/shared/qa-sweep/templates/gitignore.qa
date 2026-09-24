@@ -1,0 +1,4 @@
+# Optional lines for the repo's .gitignore. The .qa artifacts are meant to be
+# COMMITTED (reviewers see the inventory; CI re-checks it), so this file only
+# excludes scratch output:
+.qa/tmp/

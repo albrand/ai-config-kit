@@ -1,0 +1,21 @@
+# QA ship gate as a CI job (GitHub Actions template). Make it a REQUIRED
+# status check before merging: this is the layer an agent cannot forge,
+# because it re-runs the artifact checks against the pushed SHA.
+# Copy to .github/workflows/qa-ship-gate.yml in an opted-in repo.
+name: qa-ship-gate
+on:
+  push:
+  pull_request:
+jobs:
+  ship-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: QA ship gate (.qa pipeline at the pushed SHA)
+        run: python3 .qa/bin/ship-gate.py check --repo . --sha "$GITHUB_SHA"

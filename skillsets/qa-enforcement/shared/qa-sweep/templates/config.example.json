@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "personas": ["admin", "member"],
+  "workflows": [
+    {
+      "name": "invite-and-accept",
+      "entry": "/settings/members invite dialog",
+      "outcome": "invited member accepts from the email link and lands in the workspace with member rights"
+    }
+  ],
+  "deployed_check": {
+    "url": "https://ci.example.com/deployments/status/{sha}",
+    "_or_command": "curl -fsS https://app.example.com/healthz",
+    "_note": "url gets {sha} substituted; command runs in the repo, exit 0 = green, timeout 3s. Omit deployed_check entirely if the repo has no deployment yet."
+  },
+  "ship_commands": []
+}

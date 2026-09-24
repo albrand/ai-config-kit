@@ -1,0 +1,14 @@
+#!/bin/sh
+# QA ship gate: git pre-push hook template (the only layer that also binds
+# opencode/GLM and any agent without PreToolUse hooks).
+# Install into an opted-in repo:
+#   cp <skill-dir>/templates/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# Requires .qa/bin/ship-gate.py (copied there at opt-in).
+sha=""
+while read -r lref lsha rref rsha; do
+  case "$lsha" in
+    *[!0]*) sha="$lsha"; break ;;
+  esac
+done
+[ -n "$sha" ] || sha=$(git rev-parse HEAD)
+exec python3 "$(git rev-parse --show-toplevel)/.qa/bin/ship-gate.py" check --repo "$(git rev-parse --show-toplevel)" --sha "$sha"
