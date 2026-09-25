@@ -70,7 +70,7 @@ _E2E_CANDIDATES = [
     os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
     os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "..", "..", "agent-runtime", "shared",
                                   "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
-    os.path.expanduser("~/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs"),
+    os.path.realpath(os.path.expanduser("~/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs")),
 ]
 E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDATES[0])
 
@@ -169,7 +169,9 @@ _LOOKUP_DEADLINE = None
 # timeout (HOOK_HOST_TIMEOUT_S) on every entry that runs the chain, and
 # hooks/check-hook-timeouts.sh refuses a config below it.
 HOOK_HOST_TIMEOUT_S = 15.0
-HOOK_HARD_S = HOOK_HOST_TIMEOUT_S - 3.0
+# Below the chain supervisor's GATE_DEADLINE (11 s, coordinator-hook-pretool.sh),
+# which kills a stage still running then; this gate's own deny usually wins.
+HOOK_HARD_S = 10.0
 HOOK_BUDGET_S = HOOK_HARD_S - 1.0
 _HOOK_DEADLINE = None
 # None until _hook() knows whether the command targets an opted-in repo. At
@@ -626,6 +628,105 @@ def declared_identities(auth):
     return out
 
 
+# Identity labels (review r1 D4). `E2E.patient`, `e2e.patient `,
+# `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
+# suite's e2e.patient, and an exact-string match let each one through as
+# unowned. Both sides are normalised (NFKC, casefold, strip, an @domain suffix
+# dropped), and a label that mixes scripts, carries invisible characters, or
+# only differs from a listed label by look-alike letters is refused outright.
+# label_problem() and label_key() have a twin in qa-e2e-gate.mjs; the selftest
+# runs the same labels through both.
+_LABEL_SCRIPTS = (
+    ("latin", ((0x41, 0x24F), (0x250, 0x2AF), (0x1E00, 0x1EFF), (0x2C60, 0x2C7F), (0xA720, 0xA7FF), (0xAB30, 0xAB6F))),
+    ("greek", ((0x370, 0x3FF), (0x1F00, 0x1FFF))),
+    ("cyrillic", ((0x400, 0x52F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F))),
+)
+# Letters that read as a Latin letter (UTS #39 confusables, single letters).
+_LABEL_CONFUSABLES = {
+    "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
+    "ѕ": "s", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w", "ӏ": "l", "ѵ": "v", "ү": "y",
+    "α": "a", "γ": "y", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u",
+    "χ": "x", "ω": "w", "ı": "i", "ɑ": "a", "ɩ": "i", "0": "o", "1": "l",
+}
+
+
+def label_key(label):
+    """The comparable form of an identity label: NFKC, casefolded, stripped,
+    without an @domain suffix."""
+    import unicodedata
+    s = unicodedata.normalize("NFKC", str(label)).casefold().strip()
+    at = s.rfind("@")
+    if at > 0:
+        s = s[:at].strip()
+    return s
+
+
+def _label_script(ch):
+    cp = ord(ch)
+    for name, ranges in _LABEL_SCRIPTS:
+        if any(a <= cp <= b for a, b in ranges):
+            return name
+    return "block-%x" % (cp >> 8)
+
+
+def label_skeleton(label):
+    """NFD without combining marks, then look-alike letters: `E2E.PATİENT`
+    casefolds to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", label_key(label))
+    return "".join(_LABEL_CONFUSABLES.get(c, c) for c in s if unicodedata.category(c) != "Mn")
+
+
+def label_problem(label):
+    """Why a label cannot be trusted as written (mixed scripts, invisible or
+    control characters), or None."""
+    import unicodedata
+    s = unicodedata.normalize("NFKC", str(label))
+    if any(unicodedata.category(c) in ("Cf", "Cc") for c in s):
+        return "carries invisible or control characters"
+    scripts = sorted({_label_script(c) for c in s if c.isalpha()})
+    if len(scripts) > 1:
+        return "mixes scripts (%s)" % ", ".join(scripts)
+    return None
+
+
+def owner_run_problems(ident, owned):
+    """Why an identity block's `walker` is not a valid owner_run (the
+    automation's own CI run recorded as the walk), as messages; [] when it is
+    one or there is no walker. Twin of ownerRunProblems() in qa-e2e-gate.mjs,
+    which also lifts IDENTITY_OWNED_BY_AUTOMATION for a valid one."""
+    walker = ident.get("walker")
+    if walker is None and "walker" not in ident:
+        return []
+    if not isinstance(walker, dict) or walker.get("kind") != "owner_run":
+        return ["walker.kind must be \"owner_run\""]
+    out = []
+    if ident.get("owned_by_automation") is not True:
+        out.append("an owner_run walks an identity an automated suite owns (owned_by_automation: true)")
+    wo, io = walker.get("owner"), ident.get("owner")
+    if not (isinstance(wo, str) and wo.strip() and isinstance(io, str) and wo.strip() == io.strip()):
+        out.append("walker.owner must be the identity block's owner")
+    rid = walker.get("run_id")
+    if not ((isinstance(rid, str) and rid.strip()) or (isinstance(rid, (int, float)) and not isinstance(rid, bool))):
+        out.append("an owner_run names the CI run id it records (walker.run_id)")
+    if owned and (listed_identity(ident.get("label") or "", owned) or (None, None))[1] != "same":
+        out.append("an owner_run walks an identity listed in .qa/config.json automation_identities")
+    return out
+
+
+def listed_identity(label, owned):
+    """(listed label, how) when `label` names an entry of automation_identities
+    after normalisation ('same') or only by look-alike letters ('confusable')."""
+    key, skel = label_key(label), label_skeleton(label)
+    for o in owned:
+        if not isinstance(o, str):
+            continue
+        if label_key(o) == key:
+            return o, "same"
+    for o in owned:
+        if isinstance(o, str) and label_skeleton(o) == skel:
+            return o, "confusable"
+    return None
 def check_e2e(qa, rd, cfg, fails):
     rel = qa + "/evidence.json"
     gate = (cfg or {}).get("e2e_evidence_gate") or E2E_GATE
@@ -641,21 +742,38 @@ def check_e2e(qa, rd, cfg, fails):
         fails.append(f"{rel} unreadable: {exc}")
         return
     owned = (cfg or {}).get("automation_identities")
-    if isinstance(owned, list) and owned:
-        try:
-            auth = json.loads(body).get("authentication") or {}
-        except Exception:
-            auth = {}
-        for ident in declared_identities(auth):
-            if isinstance(ident, dict) and ident.get("label") in owned and ident.get("owned_by_automation") is not True:
-                fails.append(f"{rel}: identity '{ident['label']}' is listed in .qa/config.json automation_identities "
-                             f"but the packet says no automated suite owns it")
+    owned = [o for o in owned if isinstance(o, str)] if isinstance(owned, list) else []
+    try:
+        auth = json.loads(body).get("authentication") or {}
+    except Exception:
+        auth = {}
+    for ident in declared_identities(auth):
+        if not isinstance(ident, dict) or not isinstance(ident.get("label"), str):
+            continue
+        label = ident["label"]
+        problem = label_problem(label)
+        hit = listed_identity(label, owned)
+        if hit and hit[1] == "confusable":
+            fails.append(f"{rel}: identity {label!r} looks like '{hit[0]}' in .qa/config.json automation_identities "
+                         f"but is spelled differently{' (it ' + problem + ')' if problem else ''}: refused")
+        elif problem:
+            fails.append(f"{rel}: identity label {label!r} {problem}: refused, name the identity in one script")
+        for problem in owner_run_problems(ident, owned):
+            fails.append(f"{rel}: identity {label!r} walker: {problem}: refused")
+        if hit and hit[1] == "same" and ident.get("owned_by_automation") is not True:
+
+            fails.append(f"{rel}: identity {label!r} is '{hit[0]}', listed in .qa/config.json automation_identities, "
+                         f"but the packet says no automated suite owns it")
     tmppath = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
             tf.write(body)
             tmppath = tf.name
-        proc = subprocess.run(["node", gate, "check", tmppath], capture_output=True, text=True,
+        args = ["node", gate, "check", tmppath]
+        if owned:
+            args += ["--automation-identities", json.dumps(owned)]
+        proc = subprocess.run(args, capture_output=True, text=True,
+
                               timeout=max(0.5, min(20, time_left())))
     except Exception as exc:
         fails.append(f"qa-e2e-gate.mjs could not run: {exc}")
@@ -3111,6 +3229,59 @@ def selftest(v4_gate=None, v4_templates=None):
     f9 = []
     check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
     expect(not any("automation_identities" in x for x in f9), "a config-listed CI identity declared owned passes the cross-check")
+    # review r1 D4: however the listed label is spelled, both gates find it,
+    # and the two gates agree label by label.
+    probe = ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient",
+             "е2е.раtіеnt", "e2e.pat​ient", "E2E.PATİENT", "qa.vеndor", "qa.patient", "joão.silva", "Straße.qa"]
+    refused = probe[:9]
+
+
+    mjs_verdicts = {}
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => { const out = {};"
+              " for (const l of JSON.parse(process.argv[2])) out[l] = [m.labelKey(l), m.labelProblem(l),"
+              " m.listedIdentity(l, ['e2e.patient'])]; process.stdout.write(JSON.stringify(out)); })")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri(), json.dumps(probe)],
+                             capture_output=True, text=True, timeout=30)
+        mjs_verdicts = json.loads(run.stdout or "{}")
+    expect(bool(mjs_verdicts), "qa-e2e-gate.mjs label functions ran (%s)" % E2E_GATE)
+    for label in probe:
+        f9 = []
+        pk = {"authentication": {"required": True, "identities": [
+            {"label": label, "ownership_checked": True, "ownership_evidence": "searched", "owned_by_automation": False}]}}
+        check_e2e("q", reader({"q/evidence.json": json.dumps(pk)}), {"automation_identities": ["e2e.patient"]}, f9)
+        hit = any("refused" in x or "automation_identities" in x for x in f9)
+        expect(hit == (label in refused), "label %r is %s by the ship gate" % (label, "refused" if label in refused else "accepted"))
+        py = [label_key(label), label_problem(label), list(listed_identity(label, ["e2e.patient"]) or []) or None]
+        expect(label not in mjs_verdicts or mjs_verdicts[label] == py,
+               "label %r: ship-gate.py and qa-e2e-gate.mjs agree (%s vs %s)" % (label, py, mjs_verdicts.get(label)))
+    # meu-psi PR #36: the suite's own CI run recorded as the walk (owner_run).
+    base_or = {"label": "e2e.patient", "owned_by_automation": True, "owner": "deployed e2e gate",
+               "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659}}
+    variants = {
+        "valid": (base_or, ["e2e.patient"], True),
+        "valid, no list": (base_or, [], True),
+        "no walker": ({k: v for k, v in base_or.items() if k != "walker"}, ["e2e.patient"], True),
+        "owner mismatch": ({**base_or, "walker": {**base_or["walker"], "owner": "other"}}, ["e2e.patient"], False),
+        "no run_id": ({**base_or, "walker": {"kind": "owner_run", "owner": "deployed e2e gate"}}, ["e2e.patient"], False),
+        "unlisted label": ({**base_or, "label": "e2e.other"}, ["e2e.patient"], False),
+        "unowned": ({**base_or, "owned_by_automation": False}, ["e2e.patient"], False),
+        "unknown kind": ({**base_or, "walker": {"kind": "borrowed"}}, ["e2e.patient"], False),
+    }
+    mjs_or = {}
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => { const out = {}; const v = JSON.parse(process.argv[2]);"
+              " for (const k of Object.keys(v)) out[k] = m.ownerRunProblems(v[k][0], v[k][1]).problems.length === 0;"
+              " process.stdout.write(JSON.stringify(out)); })")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri(),
+                              json.dumps(variants)], capture_output=True, text=True, timeout=30)
+        mjs_or = json.loads(run.stdout or "{}")
+    for name, (ident, lst, ok) in variants.items():
+        py_ok = not owner_run_problems(ident, lst)
+        expect(py_ok == ok, "owner_run %s: ship gate %s" % (name, "accepts" if ok else "refuses"))
+        expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
+
+
 
     shutil.rmtree(tmp, ignore_errors=True)
     os.environ["PATH"] = old_path

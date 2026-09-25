@@ -67,6 +67,14 @@ Advance in order. Do not draft or publish early and validate afterward.
      an `environment_contamination` defect naming the writer and walk again.
      Record all of it in `authentication.identities`, one block per persona
      (`references/evidence-contract.md`).
+   - CI's own run as the walk: when the automated suite that owns the identity
+     is the walker (its own CI run recorded as the walk), add
+     `walker: {kind: "owner_run", owner, run_id, run_url}` to the block. It
+     is not held to the unowned-identity rule; the walk window, the after-walk
+     overlap check and the disclosure still apply.
+   - Labels are compared after NFKC, casefold, strip and dropping `@domain`;
+     a mixed-script or look-alike label is refused outright.
+
 
    - If no repository identity exists or it cannot work in the target
      environment, record the discovery evidence before classifying auth blocked.

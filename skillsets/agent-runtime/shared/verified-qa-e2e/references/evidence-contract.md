@@ -123,7 +123,37 @@ exists, or the evidence that none does is missing), `WALK_WINDOW_MISSING`,
 `CONCURRENT_AUTOMATION_RUN`, and `IDENTITY_SHARING_UNDISCLOSED`. In qa-sweep
 repos, `.qa/config.json` `automation_identities` lists the CI identities, and
 the ship gate refuses a packet that declares any of them unowned, in
-`identity` or in any `identities` entry.
+`identity` or in any `identities` entry. The ship gate passes that list to
+this gate (`check <packet> --automation-identities '<json array>'`).
+
+**Labels are compared normalised.** Both sides go through NFKC, casefold,
+strip, and lose an `@domain` suffix, so `E2E.patient`, `e2e.patient ` and
+`e2e.patient@meupsi.test` all name `e2e.patient`. A label that mixes scripts
+(`e2е.patient` with a Cyrillic `е`), carries invisible or control characters,
+or matches a listed label only by look-alike letters (`е2е.раtіеnt`,
+`E2E.PATİENT`) is refused outright: `IDENTITY_LABEL_CONFUSABLE`. A listed
+label declared unowned fails `IDENTITY_LISTED_AS_AUTOMATION`.
+
+**CI's own run as the walk (`owner_run`).** The rule against owned identities
+stops other walkers borrowing one. The suite that owns the identity, running
+itself, borrows nothing, and it can only sign in as the identities it owns.
+To record such a run as the walk, add a `walker` to that identity block:
+
+```json
+"walker": {"kind": "owner_run", "owner": "deployed e2e gate (playwright global setup)",
+           "run_id": 36193694659, "run_url": "https://github.com/<org>/<repo>/actions/runs/36193694659"}
+```
+
+With `walker.kind` `owner_run`, `walker.owner` equal to the block's `owner`
+and a `run_id`, `IDENTITY_OWNED_BY_AUTOMATION` does not apply to that block,
+even when an unowned identity exists. `walk_window`, the `overlap_check`
+(after the walk ended, `overlapping_runs: 0`) and `disclosure` stay required:
+another writer on the same data during the owner's run is the same
+contamination. Refused: `WALKER_INVALID` (another `kind`),
+`OWNER_RUN_OWNER_MISMATCH`, `OWNER_RUN_ID_MISSING`, `OWNER_RUN_NOT_OWNED`
+(`owned_by_automation` not true), and `OWNER_RUN_UNLISTED` (the label is not in
+`automation_identities` when the repository lists them).
+
 
 
 ## Claiming a reached prerequisite blocked

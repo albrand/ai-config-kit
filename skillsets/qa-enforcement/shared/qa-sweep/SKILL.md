@@ -46,7 +46,15 @@ after you finish for any run whose interval intersected the walk window. Say
 in the evidence that the identity is shared. The evidence packet records all
 of it in `authentication.identities`, one block per persona walked
 (verified-qa-e2e evidence contract), and
-the gate refuses a packet that declares any listed identity unowned. Why: on
+the gate refuses a packet that declares any listed identity unowned. Labels
+match after NFKC, casefold, strip and dropping an `@domain` suffix; a
+mixed-script or look-alike label is refused outright. **CI's own run as the
+walk** is the `owner_run` case: the suite that owns the identity, recording its
+own run, adds `walker: {kind: "owner_run", owner: <the block's owner>, run_id,
+run_url}` and is not held to the unowned-identity rule; the walk window, the
+after-walk overlap check and the disclosure still apply (verified-qa-e2e
+evidence contract). Why: on
+
 2026-09-25 two interactive walks on meu-psi signed in as the deployed CI
 suite's own e2e identities on the shared preview DB. The suite's setup
 recreated their data mid-walk, the walks changed data under the suite, and a
@@ -217,7 +225,8 @@ deletes stay free.
 runs (Claude Code 2.1.282, probed live; Codex 0.157.0, `pre_tool_use.rs`). So
 the gate must decide before the host kills it. `coordinator-hook-pretool.sh`
 exports `HOOK_T0` when the chain starts, and every gate counts from it:
-a soft budget at 11 s, a hard deadline at 12 s (`HOOK_HARD_S`), under the host
+a soft budget at 9 s, a hard deadline at 10 s (`HOOK_HARD_S`), under the host
+
 timeout of 15 s (`HOOK_HOST_TIMEOUT_S`) on the chain's entry in
 `~/.claude/settings.json` and `~/.codex/hooks.json`. A gate reached with the
 time already spent decides at once. At the deadline a ship-shaped command in

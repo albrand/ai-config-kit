@@ -41,23 +41,122 @@ export function declaredIdentities(authentication) {
   return out;
 }
 
-function checkIdentities(authentication, failures) {
+// Identity labels (review r1 D4): `E2E.patient`, `e2e.patient `,
+// `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
+// suite's e2e.patient. Labels are compared after NFKC, casefold, strip and
+// dropping an @domain suffix, and a label that mixes scripts, carries
+// invisible characters, or matches a listed label only by look-alike letters
+// is refused. Twin of label_key()/label_problem() in ship-gate.py; its
+// selftest runs the same labels through both.
+const LABEL_SCRIPTS = [
+  ["latin", [[0x41, 0x24f], [0x250, 0x2af], [0x1e00, 0x1eff], [0x2c60, 0x2c7f], [0xa720, 0xa7ff], [0xab30, 0xab6f]]],
+  ["greek", [[0x370, 0x3ff], [0x1f00, 0x1fff]]],
+  ["cyrillic", [[0x400, 0x52f], [0x1c80, 0x1c8f], [0x2de0, 0x2dff], [0xa640, 0xa69f]]],
+];
+const LABEL_CONFUSABLES = {
+  "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
+  "ѕ": "s", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w", "ӏ": "l", "ѵ": "v", "ү": "y",
+  "α": "a", "γ": "y", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u",
+  "χ": "x", "ω": "w", "ı": "i", "ɑ": "a", "ɩ": "i", "0": "o", "1": "l",
+};
+
+// Python's str.casefold() beyond toLowerCase(), for the letters it changes.
+const casefold = (s) => s.toLowerCase().replace(/ß/g, "ss").replace(/ς/g, "σ").replace(/ſ/g, "s");
+
+export function labelKey(label) {
+  let s = casefold(String(label).normalize("NFKC")).trim();
+  const at = s.lastIndexOf("@");
+  if (at > 0) s = s.slice(0, at).trim();
+  return s;
+}
+
+// NFD without combining marks, then look-alike letters: `E2E.PATİENT` casefolds
+// to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient.
+const labelSkeleton = (label) => [...labelKey(label).normalize("NFD")]
+  .filter((c) => !/\p{Mn}/u.test(c)).map((c) => LABEL_CONFUSABLES[c] ?? c).join("");
+
+function labelScript(ch) {
+  const cp = ch.codePointAt(0);
+  for (const [name, ranges] of LABEL_SCRIPTS) {
+    if (ranges.some(([a, b]) => cp >= a && cp <= b)) return name;
+  }
+  return `block-${(cp >> 8).toString(16)}`;
+}
+
+export function labelProblem(label) {
+  const s = String(label).normalize("NFKC");
+  if (/[\p{Cf}\p{Cc}]/u.test(s)) return "carries invisible or control characters";
+  const scripts = [...new Set([...s].filter((c) => /\p{L}/u.test(c)).map(labelScript))].sort();
+  return scripts.length > 1 ? `mixes scripts (${scripts.join(", ")})` : null;
+}
+
+export function listedIdentity(label, owned) {
+  const key = labelKey(label);
+  const skel = labelSkeleton(label);
+  const names = (owned || []).filter((o) => typeof o === "string");
+  const same = names.find((o) => labelKey(o) === key);
+  if (same !== undefined) return [same, "same"];
+  const look = names.find((o) => labelSkeleton(o) === skel);
+  return look !== undefined ? [look, "confusable"] : null;
+}
+
+function checkIdentities(authentication, failures, owned) {
   const blocks = declaredIdentities(authentication);
   if (blocks.length === 0) {
     failures.push(failure("IDENTITY_MISSING", "authentication.identity",
       "name each identity the walk used (authentication.identities, one block per persona) and whether an automated suite owns it"));
     return;
   }
-  for (const [base, block] of blocks) checkIdentityIsolation(block, base, failures);
+  for (const [base, block] of blocks) checkIdentityIsolation(block, base, failures, owned);
 }
 
-function checkIdentityIsolation(identity, base, failures) {
+// [problems, valid] for identity.walker; valid only for a well-formed
+// owner_run by the identity's own owner.
+export function ownerRunProblems(identity, owned) {
+  const walker = identity.walker;
+  if (walker === undefined) return { problems: [], valid: false };
+  const problems = [];
+  if (!walker || typeof walker !== "object" || Array.isArray(walker) || walker.kind !== "owner_run") {
+    problems.push(["WALKER_INVALID", "walker.kind", "walker.kind must be \"owner_run\" (the automation's own CI run walking its identity)"]);
+    return { problems, valid: false };
+  }
+  if (identity.owned_by_automation !== true) {
+    problems.push(["OWNER_RUN_NOT_OWNED", "walker", "an owner_run walks an identity an automated suite owns (owned_by_automation: true)"]);
+  }
+  if (!nonEmpty(walker.owner) || !nonEmpty(identity.owner) || walker.owner.trim() !== identity.owner.trim()) {
+    problems.push(["OWNER_RUN_OWNER_MISMATCH", "walker.owner", "walker.owner must be the identity block's owner"]);
+  }
+  const runId = walker.run_id;
+  if (!(nonEmpty(runId) || (typeof runId === "number" && Number.isFinite(runId)))) {
+    problems.push(["OWNER_RUN_ID_MISSING", "walker.run_id", "an owner_run names the CI run id it records"]);
+  }
+  const listed = (owned || []).filter((o) => typeof o === "string");
+  if (listed.length > 0 && listedIdentity(identity.label ?? "", listed)?.[1] !== "same") {
+    problems.push(["OWNER_RUN_UNLISTED", "walker", "an owner_run walks an identity listed in .qa/config.json automation_identities"]);
+  }
+  return { problems, valid: problems.length === 0 };
+}
+
+function checkIdentityIsolation(identity, base, failures, owned) {
   if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
     failures.push(failure("IDENTITY_MISSING", base, "name the identity the walk used and whether an automated suite owns it"));
     return;
   }
   if (!nonEmpty(identity.label)) {
     failures.push(failure("IDENTITY_LABEL_MISSING", `${base}.label`, "identity label (account name or role, never a credential) is required"));
+  } else {
+    const problem = labelProblem(identity.label);
+    const hit = listedIdentity(identity.label, owned);
+    if (hit?.[1] === "confusable") {
+      failures.push(failure("IDENTITY_LABEL_CONFUSABLE", `${base}.label`,
+        `label looks like ${JSON.stringify(hit[0])} in automation_identities but is spelled differently${problem ? ` (it ${problem})` : ""}`));
+    } else if (problem) {
+      failures.push(failure("IDENTITY_LABEL_CONFUSABLE", `${base}.label`, `label ${problem}: name the identity in one script`));
+    }
+    if (hit?.[1] === "same" && identity.owned_by_automation !== true) {
+      failures.push(failure("IDENTITY_LISTED_AS_AUTOMATION", `${base}.owned_by_automation`,
+        `label is ${JSON.stringify(hit[0])}, listed in automation_identities, but owned_by_automation is not true`));
+    }
   }
   if (identity.ownership_checked !== true || !nonEmpty(identity.ownership_evidence)) {
     failures.push(failure("IDENTITY_OWNERSHIP_UNCHECKED", `${base}.ownership_checked`,
@@ -67,11 +166,19 @@ function checkIdentityIsolation(identity, base, failures) {
     failures.push(failure("IDENTITY_OWNERSHIP_UNKNOWN", `${base}.owned_by_automation`, "owned_by_automation must be true or false"));
     return;
   }
+  // The owner running its own suite is not borrowing the identity (meu-psi
+  // 2026-09-25: CI run 36193694659 can only sign in as the e2e pair it owns,
+  // and with qa.* provisioned every PR was denied). walker.kind "owner_run"
+  // lifts the unowned-identity rule for that block only; the walk window, the
+  // overlap check and the disclosure stay required, since another writer
+  // during the owner's run is exactly the contamination this guards.
+  const ownerRun = ownerRunProblems(identity, owned);
+  for (const [code, path, message] of ownerRun.problems) failures.push(failure(code, `${base}.${path}`, message));
   if (!identity.owned_by_automation) return;
   if (!nonEmpty(identity.owner)) {
     failures.push(failure("IDENTITY_OWNER_MISSING", `${base}.owner`, "name the automated suite or workflow that owns the identity"));
   }
-  if (identity.unowned_identity_available !== false || !nonEmpty(identity.unowned_identity_evidence)) {
+  if (!ownerRun.valid && (identity.unowned_identity_available !== false || !nonEmpty(identity.unowned_identity_evidence))) {
     failures.push(failure("IDENTITY_OWNED_BY_AUTOMATION", `${base}.unowned_identity_available`,
       "an interactive walk uses an identity no automated suite owns; an owned one only when the repository has none, with evidence"));
   }
@@ -96,7 +203,9 @@ function checkIdentityIsolation(identity, base, failures) {
   }
 }
 
-export function evaluateEvidence(packet) {
+// options.automationIdentities: the repository's automation_identities
+// (.qa/config.json), passed by ship-gate.py or --automation-identities.
+export function evaluateEvidence(packet, options = {}) {
   const failures = [];
   const requireTrue = (value, code, path, message) => {
     if (value !== true) failures.push(failure(code, path, message));
@@ -436,7 +545,9 @@ export function evaluateEvidence(packet) {
       }
     }
 
-    if (packet.authentication?.required === true) checkIdentities(packet.authentication, failures);
+    if (packet.authentication?.required === true) {
+      checkIdentities(packet.authentication, failures, options.automationIdentities);
+    }
 
 
     if (packet.operation === "publish_qa_instructions") {
@@ -653,6 +764,54 @@ function selftest() {
     }
     owned.authentication.identities = [unownedIdentity(), { ...unownedIdentity(), label: "qa.patient" }];
     if (!evaluateEvidence(owned).ok) throw new Error(`two unowned personas failed at ${effort}`);
+    // review r1 D4: a listed CI identity is found however it is spelled.
+    const list = { automationIdentities: ["e2e.patient"] };
+    for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient"]) {
+      owned.authentication.identities = [{ ...unownedIdentity(), label }];
+      if (evaluateEvidence(owned, list).ok) throw new Error(`label ${JSON.stringify(label)} passed as unowned at ${effort}`);
+    }
+    owned.authentication.identities = [{ ...unownedIdentity(), label: "qa.patient" }];
+    if (!evaluateEvidence(owned, list).ok) throw new Error(`an unlisted one-script label failed at ${effort}`);
+    owned.authentication.identities = [{ ...ownedIdentity(0), label: "E2E.Patient" }];
+    if (!evaluateEvidence(owned, list).ok) throw new Error(`a listed label declared owned failed at ${effort}`);
+    // meu-psi PR #36: the suite's own CI run recorded as the walk.
+    const codes = (block, opts = list) => {
+      owned.authentication.identities = [block];
+      return evaluateEvidence(owned, opts).failures.map(({ code }) => code);
+    };
+    const ownerRun = () => ({
+      ...ownedIdentity(0), label: "e2e.patient", unowned_identity_available: true, unowned_identity_evidence: "qa.* provisioned 21:47Z",
+      walker: { kind: "owner_run", owner: ownedIdentity(0).owner, run_id: 36193694659, run_url: "https://github.com/o/r/actions/runs/36193694659" },
+    });
+    const expectCodes = (got, want, what) => {
+      const ok = want === null ? got.length === 0 : got.includes(want);
+      if (!ok) throw new Error(`${what} at ${effort}: ${JSON.stringify(got)}`);
+    };
+    expectCodes(codes(ownerRun()), null, "owner_run with an unowned identity available is refused");
+    expectCodes(codes(ownerRun(), {}), null, "owner_run without a configured list is refused");
+    const noWalker = ownerRun(); delete noWalker.walker;
+    expectCodes(codes(noWalker), "IDENTITY_OWNED_BY_AUTOMATION", "the same walk without walker passes");
+    const mismatch = ownerRun(); mismatch.walker.owner = "some other workflow";
+    expectCodes(codes(mismatch), "OWNER_RUN_OWNER_MISMATCH", "owner_run by another owner passes");
+    expectCodes(codes(mismatch), "IDENTITY_OWNED_BY_AUTOMATION", "owner_run by another owner lifts the unowned rule");
+    const noRun = ownerRun(); delete noRun.walker.run_id;
+    expectCodes(codes(noRun), "OWNER_RUN_ID_MISSING", "owner_run without run_id passes");
+    const noOverlap = ownerRun(); delete noOverlap.overlap_check;
+    expectCodes(codes(noOverlap), "OVERLAP_UNCHECKED", "owner_run without overlap_check passes");
+    const busy = ownerRun(); busy.overlap_check = { ...busy.overlap_check, overlapping_runs: 1 };
+    expectCodes(codes(busy), "CONCURRENT_AUTOMATION_RUN", "owner_run overlapping another writer passes");
+    const quiet = ownerRun(); delete quiet.disclosure;
+    expectCodes(codes(quiet), "IDENTITY_SHARING_UNDISCLOSED", "owner_run without disclosure passes");
+    expectCodes(codes({ ...ownerRun(), label: "e2e.other" }), "OWNER_RUN_UNLISTED", "owner_run for an unlisted label passes");
+    expectCodes(codes({ ...ownerRun(), walker: { kind: "borrowed" } }), "WALKER_INVALID", "an unknown walker kind passes");
+    const early = ownerRun(); early.overlap_check = { ...early.overlap_check, checked_at: "2026-09-25T15:20:00Z" };
+    expectCodes(codes(early), "OVERLAP_UNCHECKED", "owner_run overlap checked before the walk ended passes");
+    // a mixed-script label that resembles no listed one is refused on its own
+    expectCodes(codes({ ...unownedIdentity(), label: "qa.vеndor" }), "IDENTITY_LABEL_CONFUSABLE", "a mixed-script label passes");
+    expectCodes(codes({ ...unownedIdentity(), label: "qa.vеndor" }, {}), "IDENTITY_LABEL_CONFUSABLE", "a mixed-script label passes without a list");
+
+
+
 
 
     const blocked = validFixture("claim_e2e_blocked");
@@ -676,11 +835,23 @@ function selftest() {
 }
 
 function main() {
-  const [command, file] = process.argv.slice(2);
+  const [command, file, ...rest] = process.argv.slice(2);
   if (command === "selftest") return selftest();
+  const usage = "usage: qa-e2e-gate.mjs check <evidence.json> [--automation-identities <json array>] | selftest\n";
   if (command !== "check" || !file) {
-    process.stderr.write("usage: qa-e2e-gate.mjs check <evidence.json> | selftest\n");
+    process.stderr.write(usage);
     process.exit(2);
+  }
+  let automationIdentities;
+  const at = rest.indexOf("--automation-identities");
+  if (at >= 0) {
+    try {
+      automationIdentities = JSON.parse(rest[at + 1]);
+      if (!Array.isArray(automationIdentities)) throw new Error("not an array");
+    } catch (error) {
+      process.stderr.write(`--automation-identities: ${error.message}\n${usage}`);
+      process.exit(2);
+    }
   }
   let packet;
   try {
@@ -689,7 +860,7 @@ function main() {
     process.stderr.write(JSON.stringify({ ok: false, failures: [{ code: "READ_ERROR", path: file, message: error.message }] }) + "\n");
     process.exit(2);
   }
-  const result = evaluateEvidence(packet);
+  const result = evaluateEvidence(packet, { automationIdentities });
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   process.exit(result.ok ? 0 : 1);
 }
