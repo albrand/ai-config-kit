@@ -41,4 +41,8 @@ else
   rm -f "$BK/.before" "$BK/.after"
   echo "claude matcher: added $TELL (settings backup: $BK/claude-settings.json)"
 fi
+# 4. host timeout on the chain entry: at least the gates' HOOK_HOST_TIMEOUT_S
+#    (a timed-out PreToolUse hook lets the command run; backup inside)
+python3 "$SRC/hooks/hook-timeouts.py" apply
 echo "installed scope gate; backup: $BK"
+

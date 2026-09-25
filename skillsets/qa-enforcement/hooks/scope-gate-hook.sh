@@ -11,8 +11,11 @@ DIR="${SCOPE_LEDGER_DIR:-$HOME/.local/state/agent-quality/scope}"
 GATE="$HOME/.agents/skills/scope-ledger/scripts/scope-gate.py"
 [ -n "${BB_THREAD_ID:-}" ] && [ -f "$DIR/$BB_THREAD_ID.json" ] || exit 0
 input=$(cat)
+# The payload without quotes and backslashes: `bb thr"ead" tell` is still a
+# dispatch once the shell joins the word.
+flat=$(printf '%s' "$input" | tr -d '\\"'"'")
 # Cheap prefilter: no dispatch shape anywhere in the payload, nothing to gate.
-printf '%s' "$input" | grep -qE 'fleet_member_|fleet_delegate|thread' || exit 0
+printf '%s' "$flat" | grep -qE 'fleet_member_|fleet_delegate|thread' || exit 0
 set +e
 if [ -f "$GATE" ] && command -v python3 >/dev/null 2>&1; then
   printf '%s' "$input" | python3 "$GATE" hook
@@ -26,8 +29,9 @@ if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
 fi
 # The gate could not run. A dispatch from a ledger thread without any
 # `serves:` is denied by shape alone; the rest is allowed.
-if printf '%s' "$input" | grep -qE 'fleet_member_(spawn|tell)|fleet_delegate|thread[^"]{0,40}(spawn|create|tell|message)' \
-   && ! printf '%s' "$input" | grep -qiE 'serves:[[:space:]]*(P[0-9]|revision)'; then
+if printf '%s' "$flat" | grep -qE 'fleet_member_(spawn|tell)|fleet_delegate|thread.{0,40}(spawn|create|tell|message)' \
+   && ! printf '%s' "$flat" | grep -qiE 'serves:[[:space:]]*(P[0-9]|revision)'; then
+
   echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[scope-gate] gate could not run and this dispatch names no purpose; add `serves: P<n>` for one of the ledger'"'"'s open purposes"}}'
   echo "[scope-gate] gate could not run; dispatch without serves: denied" >&2
   exit 2

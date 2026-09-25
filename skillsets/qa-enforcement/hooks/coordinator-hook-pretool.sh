@@ -7,8 +7,14 @@
 # ledger, a spawn or tell must say which open purpose it serves.
 # Non-ship behaviour is unchanged: it falls through to coordinator-hook.sh,
 # which still blocks coordinator-mode edits exactly as before.
+# One clock for the whole chain: the gates' deadlines count from here, so
+# interpreter start-up and earlier stages spend the same budget, which ends
+# before the host's hook timeout (a timed-out hook lets the command run).
+HOOK_T0=$(perl -MTime::HiRes=time -e 'printf "%.3f", time' 2>/dev/null)
+export HOOK_T0
 input=$(cat)
 printf '%s' "$input" | "$HOME/.agent-hooks/qa-ship-gate-hook.sh"
+
 rc=$?
 if [ "$rc" = 2 ]; then
   exit 2

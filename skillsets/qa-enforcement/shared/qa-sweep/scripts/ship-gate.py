@@ -126,8 +126,8 @@ PFLAG_FALSE = {"false", "0", "f", "F", "FALSE", "False"}
 # forwards a token) and requires a fresh run for its tree. Unresolvable
 # provenance (unknown deployment, CLI missing or offline, no git metadata, a
 # dirty build, a commit not in this clone) DENIES. The PreToolUse hook runs
-# under a 5 s timeout and a timed-out hook proceeds, so every lookup in one
-# command shares this budget and an expired budget denies.
+# under the host's hook timeout and a timed-out hook proceeds, so every lookup
+# in one command shares the hook budget and an expired budget denies.
 VERCEL_VALUE_FLAGS = {"-S", "--scope", "-T", "--team", "-t", "--token", "--cwd", "-A", "--local-config",
                       "-Q", "--global-config", "--timeout", "--target", "-e", "--env", "-b", "--build-env",
                       "-m", "--meta", "--archive", "--dpl"}
@@ -154,17 +154,40 @@ GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
 _LOOKUP_DEADLINE = None
-# the whole PreToolUse decision must land before the host's 5 s timeout (a
-# timed-out hook lets the command run): lookups and deployed checks are
-# clamped to what is left, and a commit reached after the deadline denies.
-# That soft budget cannot bound uncapped work (git calls, process start-up on
-# a loaded host: 6.0 s measured 2026-09-25), so a hard SIGALRM at
-# HOOK_HARD_S decides on the spot: deny for a ship in an opted-in repo,
-# allow otherwise (the same fail-open/fail-closed rule as a crash).
-HOOK_BUDGET_S = 3.8
-HOOK_HARD_S = 4.2
+# The whole PreToolUse decision must land before the host's hook timeout: a
+# timed-out hook lets the command run (verified 2026-09-25: a live probe on
+# Claude Code 2.1.282, and codex-rs/hooks pre_tool_use.rs at rust-v0.157.0,
+# where a timeout is a Failed run that never blocks). Lookups and deployed
+# checks are clamped to what is left, a commit reached after the soft budget
+# denies, and a hard SIGALRM decides on the spot: deny for a ship in an
+# opted-in repo, allow otherwise (the same rule as a crash).
+# The clock starts when the host starts the hook chain, not when this process
+# does: coordinator-hook-pretool.sh exports HOOK_T0, so interpreter start-up
+# and the stages before this one count. With a 5 s host timeout and a clock
+# that started in hook(), a loaded host decided in 4.9-6.0 s (2026-09-25,
+# load 145-190) and the command ran ungated. The installers set the host
+# timeout (HOOK_HOST_TIMEOUT_S) on every entry that runs the chain, and
+# hooks/check-hook-timeouts.sh refuses a config below it.
+HOOK_HOST_TIMEOUT_S = 15.0
+HOOK_HARD_S = HOOK_HOST_TIMEOUT_S - 3.0
+HOOK_BUDGET_S = HOOK_HARD_S - 1.0
 _HOOK_DEADLINE = None
-_HOOK_OPTED = False
+# None until _hook() knows whether the command targets an opted-in repo. At
+# the hard deadline, unknown counts as opted in: a deadline that fires before
+# the opt-in check (a chain that spent its budget before this process
+# started) must not let a ship-shaped command through.
+_HOOK_OPTED = None
+
+
+def hook_elapsed(now=None):
+    """Seconds since the hook chain started (HOOK_T0, epoch seconds). 0 when
+    unset or unreadable, and never negative: a T0 in the future cannot buy
+    more time, it can only be ignored."""
+    try:
+        t0 = float(os.environ.get("HOOK_T0", ""))
+    except ValueError:
+        return 0.0
+    return max(0.0, (time.time() if now is None else now) - t0)
 
 
 def time_left():
@@ -1574,10 +1597,10 @@ def pr_head_sha(root, args):
 
 def _hard_deadline(signum, frame):
     """SIGALRM at HOOK_HARD_S: decide now, before the host times the hook out."""
-    if _HOOK_OPTED and coarse_ship(_LAST_INPUT or ""):
-        reason = ("[qa-ship-gate] Ship denied: the gate could not finish within %.1f s (the host's hook "
-                  "timeout is 5 s, and a timed-out hook lets the command run); retry, or ship one target "
-                  "per command" % HOOK_HARD_S)
+    if _HOOK_OPTED is not False and coarse_ship(_LAST_INPUT or ""):
+        reason = ("[qa-ship-gate] Ship denied: the gate could not finish within %.1f s of the hook chain "
+                  "starting (the host's hook timeout is %.0f s, and a timed-out hook lets the command run); "
+                  "retry, or ship one target per command" % (HOOK_HARD_S, HOOK_HOST_TIMEOUT_S))
         sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                             "permissionDecision": "deny",
                                                             "permissionDecisionReason": reason}}) + "\n")
@@ -1590,11 +1613,16 @@ def _hard_deadline(signum, frame):
 
 def hook(raw=None):
     """PreToolUse adapter under a hard deadline (see HOOK_HARD_S)."""
-    global _HOOK_DEADLINE
-    _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S
+    global _HOOK_DEADLINE, _LAST_INPUT
+    spent = hook_elapsed()
+    if spent >= HOOK_HARD_S:  # the chain spent the budget before this process: decide by shape now
+        _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
+        _hard_deadline(None, None)
+    _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S - spent
     import signal
     signal.signal(signal.SIGALRM, _hard_deadline)
-    signal.setitimer(signal.ITIMER_REAL, HOOK_HARD_S)
+    signal.setitimer(signal.ITIMER_REAL, HOOK_HARD_S - spent)
+
     try:
         return _hook(raw)
     finally:
@@ -1622,7 +1650,9 @@ def _hook(raw=None):
     cwd = payload.get("cwd") or payload.get("working_directory") or os.getcwd()
     targets = [r for r in ship_target_roots(command, cwd) if opted_in(r)]
     if not targets:
+        _HOOK_OPTED = False
         return 0
+
     _HOOK_OPTED = True  # from here the hard deadline denies ship-shaped commands
     cfgs = {}
     for root in targets:
@@ -1665,8 +1695,10 @@ def _hook(raw=None):
         for sha in shas:
             if time_left() <= 0:
                 ok = False
-                fails.append("[%s] gate time budget (%.1f s, under the host's 5 s hook timeout) was spent "
-                             "before this commit was checked; retry" % ((sha or "HEAD")[:12], HOOK_BUDGET_S))
+                fails.append("[%s] gate time budget (%.1f s from the hook chain start, under the host's "
+                             "%.0f s hook timeout) was spent before this commit was checked; retry"
+                             % ((sha or "HEAD")[:12], HOOK_BUDGET_S, HOOK_HOST_TIMEOUT_S))
+
                 break
             o, f, s, _ = check_all(root, sha or None, equiv=bool(sha) and sha in plans[root][2])
             h = head_commit(root) if sha in prov_shas else ""
@@ -1899,6 +1931,7 @@ def main():
 def selftest(v4_gate=None, v4_templates=None):
     """Prove each deny/allow path on scratch repos. A check that cannot go red proves nothing."""
     import shutil
+    os.environ.pop("HOOK_T0", None)  # hook calls below start their own clock unless a case sets one
     tmp = tempfile.mkdtemp(prefix="qa-gate-selftest-")
     fails = []
     # isolate the events sink: selftest rows are not real gate activity and
@@ -2817,9 +2850,13 @@ def selftest(v4_gate=None, v4_templates=None):
     allow5(r9, "gh api -X DELETE repos/o/r/git/refs/heads/old", "control: gh api branch delete")
     allow5(r9, "curl https://api.github.com/repos/o/r/releases", "control: curl GitHub GET")
 
-    # the decision must land inside the host's 5 s hook timeout (a timed-out
-    # hook lets the command run): a 2.5 s lookup followed by a deployed_check
-    # that hangs for 10 s must still deny in time
+    # the decision must land inside the host's hook timeout (a timed-out hook
+    # lets the command run): a 2.5 s lookup followed by a deployed_check that
+    # hangs for 10 s must still deny in time. HOOK_T0 leaves the gate 4.2 s of
+    # its chain budget, the window these two cases were written for, so their
+    # bounds do not depend on how fast this host is.
+    def t0_left(seconds):
+        return {"HOOK_T0": "%.3f" % (time.time() - (HOOK_HARD_S - seconds))}
     r12 = os.path.join(tmp, "v5budget")
     os.makedirs(os.path.join(r12, ".qa"))
     sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r12)
@@ -2837,7 +2874,7 @@ def selftest(v4_gate=None, v4_templates=None):
     fx["dpl_budget"] = dict(git_dep(code12), _sleep=2.5)
     json.dump(fx, open(os.path.join(stub_bin, "deployments.json"), "w"))
     t0 = time.monotonic()
-    p = hook5(r12, "vercel promote dpl_budget")
+    p = hook5(r12, "vercel promote dpl_budget", env=t0_left(4.2))
     took = time.monotonic() - t0
     expect(p.returncode == 2 and took < 4.8,
            "v5 DENY  slow lookup + hanging deployed_check decides in %.1f s (< 4.8 s) [%s]"
@@ -2851,11 +2888,34 @@ def selftest(v4_gate=None, v4_templates=None):
     os.chmod(os.path.join(slow_git, "git"), 0o755)
     sh("git checkout -q main", cwd=r9)
     t0 = time.monotonic()
-    p = hook5(r9, "git push origin main", env={"PATH": slow_git + os.pathsep + os.environ["PATH"]})
+    p = hook5(r9, "git push origin main", env=dict(t0_left(4.2), PATH=slow_git + os.pathsep + os.environ["PATH"]))
     took = time.monotonic() - t0
     expect(p.returncode == 2 and "could not finish within" in p.stderr and took < 4.8,
            "v5 DENY  slow host: hard deadline denies a normally allowed push in %.1f s (< 4.8 s) [%s]"
            % (took, " ".join(p.stderr.split())[-90:]))
+    # T1: the clock starts with the hook chain (HOOK_T0), not with this
+    # process. A chain that already spent its budget before the gate started
+    # (slow interpreter start, an earlier stage) denies a ship at once and
+    # still allows everything else; a T0 in the future buys no extra time.
+    spent = {"HOOK_T0": "%.3f" % (time.time() - HOOK_HARD_S - 1)}
+    t0 = time.monotonic()
+    p = hook5(r9, "git push origin main", env=spent)
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and "could not finish within" in p.stderr and took < 2.0,
+           "T1 DENY  chain budget already spent: ship denied in %.2f s (< 2.0 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
+    p = hook5(r9, "ls -la", env=spent)
+    expect(p.returncode == 0, "T1 ALLOW chain budget already spent: a non-ship command is allowed")
+    os.environ["HOOK_T0"] = "%.3f" % (time.time() + 3600)
+    future = hook_elapsed()
+    os.environ["HOOK_T0"] = "not-a-time"
+    garbage = hook_elapsed()
+    os.environ.pop("HOOK_T0", None)
+    expect(future == 0.0 and garbage == 0.0 and hook_elapsed() == 0.0,
+           "T1 a future, unreadable or missing HOOK_T0 counts as 0 s spent (never extends the budget)")
+    expect(HOOK_HARD_S <= HOOK_HOST_TIMEOUT_S - 3.0 and HOOK_BUDGET_S < HOOK_HARD_S,
+           "T1 hard deadline leaves >= 3 s before the host timeout, soft budget before the hard one")
+
     sh("git checkout -q feat", cwd=r9)
     allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
     allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")

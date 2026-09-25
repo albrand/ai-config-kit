@@ -57,6 +57,20 @@ FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
 REDIRECT_IN = re.compile(r"""(?<![<0-9])<\s*(?:"([^"]+)"|'([^']+)'|([^\s<;&|)]+))""")
 MCP_TOOL = re.compile(r"(?:^|[^a-z])(fleet_member_spawn|fleet_member_tell|fleet_delegate)$")
+# The decision must land before the host's hook timeout, because a timed-out
+# hook lets the command run (Claude Code 2.1.282, probed live 2026-09-25;
+# Codex 0.157.0, codex-rs/hooks pre_tool_use.rs). The clock starts with the
+# hook chain (HOOK_T0 from coordinator-hook-pretool.sh), so start-up and the
+# ship gate before this stage count. At HOOK_HARD_S a dispatch-shaped payload
+# from a ledger thread with no `serves:` is denied by shape; anything else is
+# allowed, as when the gate crashes. Same constants as qa-sweep's ship gate;
+# hooks/check-hook-timeouts.sh holds the host config to them.
+HOOK_HOST_TIMEOUT_S = 15.0
+HOOK_HARD_S = HOOK_HOST_TIMEOUT_S - 3.0
+# Matched against the payload with quotes and backslashes removed, so
+# `bb thr"ead" tell` reads as the dispatch the shell will run.
+COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|thread.{0,40}(spawn|create|tell|message)')
+COARSE_SERVES = re.compile(r"serves:\s*(P[0-9]|revision)", re.I)
 MCP_FIELDS = {"fleet_member_spawn": ("prompt", "concern"), "fleet_member_tell": ("message",), "fleet_delegate": ("task",)}
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
@@ -262,6 +276,50 @@ def deny(reason):
     return 2
 
 
+def hook_elapsed(now=None):
+    """Seconds since the hook chain started (HOOK_T0). 0 when unset or
+    unreadable, never negative: a future T0 cannot buy more time."""
+    try:
+        t0 = float(os.environ.get("HOOK_T0", ""))
+    except ValueError:
+        return 0.0
+    return max(0.0, (datetime.datetime.now().timestamp() if now is None else now) - t0)
+
+
+def hook_under_deadline(thread, stdin=None):
+    """hook() with a hard deadline measured from the chain start."""
+    import signal
+    held = {"text": ""}
+
+    def expire(signum, frame):
+        try:
+            has = bool(thread) and bool(THREAD_ID.match(thread)) and os.path.exists(ledger_path(thread))
+        except Exception:
+            has = False
+        text = re.sub(r"[\\'\"]", "", held["text"])
+        if has and COARSE_DISPATCH.search(text) and not COARSE_SERVES.search(text):
+            deny(f"[scope-gate] the gate could not finish within {HOOK_HARD_S:.0f} s of the hook chain starting "
+                 f"(the host's hook timeout is {HOOK_HOST_TIMEOUT_S:.0f} s, and a timed-out hook lets the command "
+                 f"run); this dispatch names no purpose, so it is denied: add `serves: P<n>` and retry")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(2)
+        os._exit(0)
+
+    left = HOOK_HARD_S - hook_elapsed()
+    if left <= 0:  # the chain spent the budget before this stage: decide by shape now
+        held["text"] = (stdin or sys.stdin).read()
+        expire(None, None)
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, left)
+    try:
+        held["text"] = (stdin or sys.stdin).read()
+        return hook(held["text"], thread)
+    finally:
+
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 def hook(stdin_text, thread):
     if not thread or not THREAD_ID.match(thread):
         return 0
@@ -306,7 +364,8 @@ def main(argv):
     cmd, args = argv[0], argv[1:]
     if cmd == "hook":
         try:
-            return hook(sys.stdin.read(), os.environ.get("BB_THREAD_ID", ""))
+            return hook_under_deadline(os.environ.get("BB_THREAD_ID", ""))
+
         except Exception as e:  # a crash on a dispatch from a ledger thread denies
             thread = os.environ.get("BB_THREAD_ID", "")
             try:
@@ -506,8 +565,34 @@ def selftest():
         sys.stdout, sys.stderr = out, err
     failed += got != 2
     print(f"{'ok  ' if got == 2 else 'FAIL'} once P1 is blocked-on-user, serving it is denied: rc={got}")
+    # Hard deadline on the chain clock (HOOK_T0): with the budget already
+    # spent, an undeclared dispatch is denied by shape at once, a serving one
+    # and a non-dispatch are allowed; a future T0 buys nothing extra and the
+    # normal decision runs.
+    import subprocess
+    import time
+    main(["mark", thread, "P1", "open"])
+    spent = "%.3f" % (time.time() - HOOK_HARD_S - 1)
+    future = "%.3f" % (time.time() + 3600)
+    for label, cmd, t0, want, text in [
+        ("deadline: undeclared tell denied by shape", "bb thread tell thr_x hi", spent, 2, "could not finish"),
+        ("deadline: a quote-split dispatch word is still one", 'bb thr"ea"d tell thr_x hi', spent, 2, "could not finish"),
+
+        ("deadline: tell with serves allowed", "bb thread tell thr_x 'serves: P1 hi'", spent, 0, ""),
+        ("deadline: non-dispatch allowed", "ls -la", spent, 0, ""),
+        ("future HOOK_T0: normal decision", "bb thread tell thr_x hi", future, 2, "must say which"),
+    ]:
+        env = dict(os.environ, HOME=tmp, SCOPE_LEDGER_DIR=tmp, BB_THREAD_ID=thread, HOOK_T0=t0)
+        start = time.monotonic()
+        p = subprocess.run([sys.executable, os.path.abspath(__file__), "hook"], env=env, text=True, capture_output=True,
+                           input=json.dumps(claude_bash(cmd)))
+        took = time.monotonic() - start
+        good = p.returncode == want and text in p.stderr and took < 2.0
+        failed += not good
+        print(f"{'ok  ' if good else 'FAIL'} {label}: rc={p.returncode} want={want} in {took:.2f} s")
     with open(DECISIONS) as f:
         n = sum(1 for _ in f)
+
     failed += n == 0
     print(f"{'ok  ' if n else 'FAIL'} decisions are recorded ({n} lines)")
     import shutil

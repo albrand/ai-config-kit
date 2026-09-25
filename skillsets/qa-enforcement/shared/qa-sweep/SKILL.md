@@ -200,8 +200,8 @@ read-only `vercel api /v13/deployments/<id|url>` through the CLI's own login,
 scoped by `--scope`, the URL's `teamId`, or `.vercel/project.json`) and needs a
 fresh run for THAT tree (tree equivalence; the run's records may sit in HEAD's
 committed tree). It denies when the deployment is unknown, the CLI is missing,
-logged out or offline, the lookup overruns its 3.2 s budget (the hook itself
-times out at 5 s), the deployment has no git metadata or was built dirty, or
+logged out or offline, the lookup overruns its 3.2 s budget, the deployment
+has no git metadata or was built dirty, or
 its commit is not in the clone (`git fetch`). A production deployments-API
 create whose body names a `gitSource` is checked at that commit, not HEAD. An
 upload deploy (`vercel --prod`, `netlify deploy --prod`, `fly deploy`) ships the
@@ -211,8 +211,23 @@ create/publish, ref create/update, contents commits, workflow/repository
 dispatch, deployments, and the GraphQL merge/ref/commit mutations) deny
 outright: use the gated CLI form (`gh pr merge`, `gh release create|edit`,
 `git push`, `gh workflow run`) so the shipped commit is checked. Reads and
-deletes stay free. The whole hook decision is budgeted at 4.0 s, under the
-host's 5 s hook timeout; anything that cannot finish in time denies.
+deletes stay free.
+
+**Deadline.** A PreToolUse hook the host times out does not block: the command
+runs (Claude Code 2.1.282, probed live; Codex 0.157.0, `pre_tool_use.rs`). So
+the gate must decide before the host kills it. `coordinator-hook-pretool.sh`
+exports `HOOK_T0` when the chain starts, and every gate counts from it:
+a soft budget at 11 s, a hard deadline at 12 s (`HOOK_HARD_S`), under the host
+timeout of 15 s (`HOOK_HOST_TIMEOUT_S`) on the chain's entry in
+`~/.claude/settings.json` and `~/.codex/hooks.json`. A gate reached with the
+time already spent decides at once. At the deadline a ship-shaped command in
+an opted-in repo (or one whose opt-in was not yet read) denies; anything else
+passes. `HOOK_T0` in the future or unreadable counts as 0 s spent: it can only
+shorten a budget. `hooks/hook-timeouts.py check` fails when a host timeout is
+below the gates' constant; both installers run `apply` (backup first).
+`hooks/test-hook-chain.sh` runs the chain with a slow ship stage under the
+configured timeout.
+
 
 **Releases after a merge (tree equivalence).** A release tag normally points at
 the squash or merge commit on the default branch, which is never the walked PR

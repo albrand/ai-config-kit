@@ -59,6 +59,12 @@ after the QA ship gate.
 - A denial lists the open purposes in the user's words.
 - A ledger that exists but can't be read denies dispatches (fails closed).
 - Every decision is appended to `~/.local/state/agent-quality/scope-decisions.jsonl`.
+- It decides by 12 s after the chain started (`HOOK_T0`, exported by
+  `coordinator-hook-pretool.sh`), because a hook the host times out (15 s)
+  lets the command run. At the deadline, or when an earlier stage used the
+  time up, it decides on shape alone: with a ledger, a dispatch-shaped call
+  (`fleet_member_spawn|tell`, `fleet_delegate`, `thread … spawn|create|tell|message`)
+  without `serves: P<n>` or `serves: revision` denies; anything else passes.
 
 If the work serves no open purpose, it is outside the request. Ask the user.
 When they approve, record their approval with `revise`, then quote it in
@@ -104,7 +110,17 @@ and the successor's file is kept as `<successor>.json.returned-<ms>`.
 - Kit branch `feat/qa-gate-v3` (e82faa9): its `install.sh` would overwrite the
   scope pretool hook in `~/.agent-hooks` (`coordinator-hook-pretool.sh`). Re-run
   `hooks/install-scope-gate.sh` after installing from that branch.
-- Not parsed: a script run from a file (`sh dispatch.sh`), a script piped into
+- The deadline covers the ship gate and the scope gate. The chain's last
+  stage, `coordinator-hook.sh pretool` (coordinator-mode edit blocks), has
+  none of its own and gets what is left of the 15 s.
+- At the deadline the scope gate decides by shape over the whole payload, so
+  from a ledger thread a Write or Edit whose text reads like
+  `thread … tell` without `serves:` is denied too (Codex runs the chain for
+  every tool). It fails closed.
+- Not parsed:
+
+ a script run from a file (`sh dispatch.sh`), a script piped into
+
   a shell (`cat x | sh`), a command handed to a wrapper as one quoted string
   (`watch 'bb thread tell ...'`, `ssh host 'bb ...'`), and `bb` reached
   through an alias, a function or a variable other than `BB_CLI`.
