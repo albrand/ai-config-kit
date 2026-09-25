@@ -36,6 +36,21 @@ between them, and the target (URL plus the SHA being tested). A repo-level
 `.qa/config.json` (committed) lists the repo's personas and workflows and is
 what turns the gate on; `workflow.json` names one of those workflows.
 
+**The walk identity.** Walk as an identity that no automated suite owns. An
+identity is owned when a CI workflow, or e2e setup, fixtures or teardown,
+signs in as it or creates, resets or deletes its data. List the owned ones in
+`.qa/config.json` `automation_identities`. If the repo has no unowned identity
+for the persona, walk with the owned one only when no automated run on the
+same data overlaps the walk. Check running CI before you start, and again
+after you finish for any run whose interval intersected the walk window. Say
+in the evidence that the identity is shared. The evidence packet records all
+of it in `authentication.identity` (verified-qa-e2e evidence contract), and
+the gate refuses a packet that declares a listed identity unowned. Why: on
+2026-09-25 two interactive walks on meu-psi signed in as the deployed CI
+suite's own e2e identities on the shared preview DB. The suite's setup
+recreated their data mid-walk, the walks changed data under the suite, and a
+deployed gate went 36/38 on a build that was 38/38 twelve minutes earlier.
+
 ```json
 {"workflow": "invite-and-accept", "persona": "member", "entry": "/invite link from email",
  "outcome": "lands in workspace with member rights", "steps": ["open invite", "accept", "first login"],
@@ -58,7 +73,15 @@ Rules:
 - Match evidence to the defect: interactive failures need the step sequence
   and the broken state (snapshot refs); visible-on-load defects need one
   annotated screenshot ref. Verify once that it reproduces before recording.
+- **A gate failure caused by another writer is a defect, not a flake.** When
+  a gate or walk fails because something else changed the same data during
+  it (a CI setup, another agent's walk, a seed job), record an inventory row
+  with `"kind": "environment_contamination"` and `"writer"`: the CI run id,
+  thread id or job that wrote. The gate refuses such a row without a writer.
+  Never re-run the gate blind: find the writer, stop the overlap, then re-run
+  and re-walk.
 - Check the console alongside the UI, and cover the unhappy paths (see
+
   references/walk-checklist.md): wrong role, missing prerequisite, invalid
   input, denied permission, and every escape hatch (cancel, back, close,
   undo, retry, log out).

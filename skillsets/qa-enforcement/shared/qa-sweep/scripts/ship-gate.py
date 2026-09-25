@@ -8,7 +8,8 @@ segment_ship_kind). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
-  .qa/config.json     repo opt-in: personas, workflows, optional deployed_check
+  .qa/config.json     repo opt-in: personas, workflows, optional deployed_check,
+                      optional automation_identities (CI-owned walk identities)
   <run>/workflow.json   the task's scope: persona, entry, outcome, steps, target
   <run>/inventory.jsonl one row per defect found on the full walk (no fixing yet)
   <run>/clusters.json   row -> cluster, repro command, repro_failed_once: true
@@ -435,6 +436,12 @@ def check_inventory(qa, rd, fails, stats):
                 fails.append(f"inventory row {row['id']} is fail_escalated without an escalation reference")
             if not isinstance(row["predates_change"], bool):
                 fails.append(f"inventory row {row['id']}: predates_change must be true/false")
+            # A gate failure caused by another writer mutating the same data
+            # (meu-psi 2026-09-25: a CI setup and interactive walks sharing the
+            # CI identities) is a defect with a named writer, never a blind re-run.
+            if row.get("kind") == "environment_contamination" and not str(row.get("writer") or "").strip():
+                fails.append(f"inventory row {row['id']}: environment_contamination must name the writer "
+                             f"(CI run id, thread id or job) that mutated the data")
             rows.append(row)
     except Exception as exc:
         fails.append(f"{rel} unreadable: {exc}")
@@ -593,6 +600,15 @@ def check_e2e(qa, rd, cfg, fails):
     except Exception as exc:
         fails.append(f"{rel} unreadable: {exc}")
         return
+    owned = (cfg or {}).get("automation_identities")
+    if isinstance(owned, list) and owned:
+        try:
+            ident = (json.loads(body).get("authentication") or {}).get("identity") or {}
+        except Exception:
+            ident = {}
+        if isinstance(ident, dict) and ident.get("label") in owned and ident.get("owned_by_automation") is not True:
+            fails.append(f"{rel}: identity '{ident['label']}' is listed in .qa/config.json automation_identities "
+                         f"but the packet says no automated suite owns it")
     tmppath = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
@@ -2980,9 +2996,30 @@ def selftest(v4_gate=None, v4_templates=None):
         expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
                "v4 %s: opted in, feature push passes and husky still sees the refs" % label)
 
+    # Identity isolation (meu-psi 2026-09-25).
+    def reader(files):
+        return {"exists": lambda rel: rel in files, "read": lambda rel: files[rel]}
+    row = {"id": "R9", "step": "s", "symptom": "gate 36/38: CI setup recreated the data mid-walk", "evidence": "e",
+           "predates_change": True, "severity": "high", "status": "open", "kind": "environment_contamination"}
+    f9 = []
+    check_inventory("q", reader({"q/inventory.jsonl": json.dumps(row)}), f9, {})
+    expect(any("must name the writer" in x for x in f9), "environment_contamination row without a writer is refused")
+    f9 = []
+    check_inventory("q", reader({"q/inventory.jsonl": json.dumps({**row, "writer": "gh run 18214"})}), f9, {})
+    expect(not any("writer" in x for x in f9), "environment_contamination row naming its writer is accepted")
+    pkt = {"authentication": {"required": True, "identity": {"label": "e2e.patient", "owned_by_automation": False}}}
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("automation_identities" in x for x in f9), "a config-listed CI identity declared unowned is refused")
+    pkt["authentication"]["identity"]["owned_by_automation"] = True
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(not any("automation_identities" in x for x in f9), "a config-listed CI identity declared owned passes the cross-check")
+
     shutil.rmtree(tmp, ignore_errors=True)
     os.environ["PATH"] = old_path
     EVENTS = live_events
+
     if old_qa_gate_events is None:
         os.environ.pop("QA_GATE_EVENTS_FILE", None)
     else:

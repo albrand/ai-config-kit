@@ -17,6 +17,63 @@ function failure(code, path, message) {
   return { code, path, message };
 }
 
+const isoTime = (value) => (nonEmpty(value) && /^\d{4}-\d{2}-\d{2}T/.test(value) ? Date.parse(value) : NaN);
+
+// 2026-09-25, meu-psi: interactive walks signed in as e2e.professional and
+// e2e.patient, the deployed CI suite's own identities on the same preview DB.
+// The suite's setup deleted and recreated their data mid-walk, the walks
+// changed the data under the suite, and a deployed gate went 36/38 on a build
+// that was 38/38 twelve minutes earlier. Both sides' evidence was
+// contaminated. A walk names its identity (a label, never a credential) and
+// whether an automated suite owns it; an owned identity is allowed only when
+// no unowned one exists, no automated run overlapped the whole walk window
+// (checked after the walk, not only at its start), and the evidence says so.
+function checkIdentityIsolation(identity, failures) {
+  const base = "authentication.identity";
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
+    failures.push(failure("IDENTITY_MISSING", base, "name the identity the walk used and whether an automated suite owns it"));
+    return;
+  }
+  if (!nonEmpty(identity.label)) {
+    failures.push(failure("IDENTITY_LABEL_MISSING", `${base}.label`, "identity label (account name or role, never a credential) is required"));
+  }
+  if (identity.ownership_checked !== true || !nonEmpty(identity.ownership_evidence)) {
+    failures.push(failure("IDENTITY_OWNERSHIP_UNCHECKED", `${base}.ownership_checked`,
+      "check CI workflows and e2e setup/fixtures/teardown for the identity, with evidence, before walking with it"));
+  }
+  if (typeof identity.owned_by_automation !== "boolean") {
+    failures.push(failure("IDENTITY_OWNERSHIP_UNKNOWN", `${base}.owned_by_automation`, "owned_by_automation must be true or false"));
+    return;
+  }
+  if (!identity.owned_by_automation) return;
+  if (!nonEmpty(identity.owner)) {
+    failures.push(failure("IDENTITY_OWNER_MISSING", `${base}.owner`, "name the automated suite or workflow that owns the identity"));
+  }
+  if (identity.unowned_identity_available !== false || !nonEmpty(identity.unowned_identity_evidence)) {
+    failures.push(failure("IDENTITY_OWNED_BY_AUTOMATION", `${base}.unowned_identity_available`,
+      "an interactive walk uses an identity no automated suite owns; an owned one only when the repository has none, with evidence"));
+  }
+  const start = isoTime(identity.walk_window?.start);
+  const end = isoTime(identity.walk_window?.end);
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
+    failures.push(failure("WALK_WINDOW_MISSING", `${base}.walk_window`, "walk_window.start and .end (ISO 8601, end not before start) are required"));
+  }
+  const overlap = identity.overlap_check;
+  const checkedAt = isoTime(overlap?.checked_at);
+  if (!overlap || typeof overlap !== "object" || !nonEmpty(overlap.evidence)
+      || Number.isNaN(checkedAt) || (!Number.isNaN(end) && checkedAt < end)) {
+    failures.push(failure("OVERLAP_UNCHECKED", `${base}.overlap_check`,
+      "after the walk, check for automated runs on the same data whose run interval intersects the walk window (checked_at at or after walk_window.end, with evidence)"));
+  } else if (overlap.overlapping_runs !== 0) {
+    failures.push(failure("CONCURRENT_AUTOMATION_RUN", `${base}.overlap_check.overlapping_runs`,
+      "an automated run mutated the same data during the walk: record an environment_contamination defect naming the writer and walk again without overlap"));
+  }
+  if (!nonEmpty(identity.disclosure)) {
+    failures.push(failure("IDENTITY_SHARING_UNDISCLOSED", `${base}.disclosure`,
+      "evidence must state that the walk used an automation-owned identity on shared data and that no run overlapped it"));
+  }
+}
+
 export function evaluateEvidence(packet) {
   const failures = [];
   const requireTrue = (value, code, path, message) => {
@@ -357,6 +414,8 @@ export function evaluateEvidence(packet) {
       }
     }
 
+    if (packet.authentication?.required === true) checkIdentityIsolation(packet.authentication?.identity, failures);
+
     if (packet.operation === "publish_qa_instructions") {
       requireTrue(packet.external?.authorized, "EXTERNAL_WRITE_UNAUTHORIZED", "external.authorized", "external tracker mutation must be authorized");
       requireText(packet.external?.authorization_evidence, "EXTERNAL_AUTHORIZATION_EVIDENCE_MISSING", "external.authorization_evidence", "current authorization evidence is required");
@@ -379,6 +438,30 @@ export function evaluateEvidence(packet) {
   };
 }
 
+function unownedIdentity() {
+  return {
+    label: "qa.vendor",
+    ownership_checked: true,
+    ownership_evidence: "CI workflows and e2e setup searched; no suite uses qa.vendor",
+    owned_by_automation: false,
+  };
+}
+
+function ownedIdentity(overlappingRuns = 0) {
+  return {
+    label: "e2e.professional",
+    ownership_checked: true,
+    ownership_evidence: "e2e global setup recreates its appointment",
+    owned_by_automation: true,
+    owner: "deployed e2e gate",
+    unowned_identity_available: false,
+    unowned_identity_evidence: "seed defines no other professional account",
+    walk_window: { start: "2026-09-25T15:10:00Z", end: "2026-09-25T15:40:00Z" },
+    overlap_check: { checked_at: "2026-09-25T15:41:00Z", evidence: "CI run list for the walk window", overlapping_runs: overlappingRuns },
+    disclosure: "walked as an automation-owned identity on shared data; no run overlapped",
+  };
+}
+
 function validFixture(operation = "publish_qa_instructions") {
   const packet = {
     schema_version: 1,
@@ -398,6 +481,7 @@ function validFixture(operation = "publish_qa_instructions") {
         evidence: "seed-doc-reference",
         attempt_evidence: "seeded identity attempt result",
       },
+      identity: unownedIdentity(),
     },
     prerequisites: {
       verified: true,
@@ -438,6 +522,7 @@ function manualLoginFixture(operation = "request_manual_browser_login") {
         evidence: "seed-doc-reference",
         attempt_evidence: "seeded identity attempt result",
       },
+      identity: unownedIdentity(),
     },
     manual_login: {
       instance_id: "page-7f3a",
@@ -523,7 +608,22 @@ function selftest() {
       throw new Error(`manual publish failure codes missing at ${effort}`);
     }
 
+    // meu-psi 2026-09-25: a walk on the CI suite's identity while its run mutated the data.
+    const owned = validFixture("claim_e2e_complete");
+    owned.reasoning_effort = effort;
+    owned.authentication.identity = ownedIdentity(0);
+    if (!evaluateEvidence(owned).ok) throw new Error(`owned identity without overlap failed at ${effort}`);
+    owned.authentication.identity = ownedIdentity(1);
+    if (!evaluateEvidence(owned).failures.some(({ code }) => code === "CONCURRENT_AUTOMATION_RUN")) {
+      throw new Error(`walk overlapping an automated run passed at ${effort}`);
+    }
+    delete owned.authentication.identity;
+    if (!evaluateEvidence(owned).failures.some(({ code }) => code === "IDENTITY_MISSING")) {
+      throw new Error(`walk without a named identity passed at ${effort}`);
+    }
+
     const blocked = validFixture("claim_e2e_blocked");
+
     blocked.blocker = {
       goal: "finish onboarding with connected data",
       point: "Connect data screen, Connect Google control",

@@ -29,6 +29,12 @@ vendor-specific secret links.
       "found": true,
       "attempted": true,
       "evidence": "repository seed/setup reference without credentials"
+    },
+    "identity": {
+      "label": "qa.vendor",
+      "ownership_checked": true,
+      "ownership_evidence": "CI workflows and e2e setup/fixtures searched; no suite uses qa.vendor",
+      "owned_by_automation": false
     }
   },
   "prerequisites": {
@@ -77,7 +83,42 @@ when deciding pass or fail. When `initial_state` is `authenticated`, test-identi
 discovery may be omitted. When it is `logged_out`, discovery evidence is required
 before requesting user interaction or declaring authentication blocked.
 
+## The walk identity
+
+`authentication.identity` is required when `authentication.required` is true
+and the operation is `publish_qa_instructions` or `claim_e2e_complete`. It
+holds a label (an account name or role, never a credential), the evidence
+that CI workflows and e2e setup, fixtures and teardown were searched for it,
+and `owned_by_automation`. An identity an automated suite owns also needs:
+
+```json
+"identity": {
+  "label": "e2e.professional",
+  "ownership_checked": true,
+  "ownership_evidence": "e2e global setup deletes and recreates its appointment",
+  "owned_by_automation": true,
+  "owner": "deployed e2e gate (playwright global setup)",
+  "unowned_identity_available": false,
+  "unowned_identity_evidence": "the seed defines no other professional account",
+  "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"},
+  "overlap_check": {"checked_at": "2026-09-25T15:41:00Z",
+                    "evidence": "CI run list: no e2e run started or finished within the window",
+                    "overlapping_runs": 0},
+  "disclosure": "walked as e2e.professional, owned by the e2e gate, on the shared preview DB; no run overlapped"
+}
+```
+
+Failure codes: `IDENTITY_MISSING`, `IDENTITY_LABEL_MISSING`,
+`IDENTITY_OWNERSHIP_UNCHECKED`, `IDENTITY_OWNERSHIP_UNKNOWN`,
+`IDENTITY_OWNER_MISSING`, `IDENTITY_OWNED_BY_AUTOMATION` (an unowned identity
+exists, or the evidence that none does is missing), `WALK_WINDOW_MISSING`,
+`OVERLAP_UNCHECKED` (no evidence, or `checked_at` before the walk ended),
+`CONCURRENT_AUTOMATION_RUN`, and `IDENTITY_SHARING_UNDISCLOSED`. In qa-sweep
+repos, `.qa/config.json` `automation_identities` lists the CI identities, and
+the ship gate refuses a packet that declares one of them unowned.
+
 ## Claiming a reached prerequisite blocked
+
 
 Use `claim_e2e_blocked` only after reaching the intended entry point. The
 packet still needs `actor`, `entrypoint`, and `authentication` evidence, but
