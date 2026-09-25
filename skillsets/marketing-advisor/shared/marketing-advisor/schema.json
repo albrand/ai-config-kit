@@ -1,0 +1,26 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "marketing-advisor verdict",
+ "type": "object",
+ "required": ["asset_id", "criteria", "founder_principles", "compliance", "panel", "scores", "decision", "calibrated", "decision_preregistered", "failed_criteria"],
+ "properties": {
+  "asset_id": {"type": "string"},
+  "judge": {"type": "string"},
+  "criteria": {"type": "array", "items": {"type": "object", "required": ["id", "pass"],
+   "properties": {"id": {"enum": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"]}, "pass": {"enum": [true, false, "na"]}, "evidence": {"type": "string"}}}},
+  "founder_principles": {"type": "array", "items": {"type": "object", "required": ["id", "pass"],
+   "properties": {"id": {"type": "string"}, "pass": {"enum": [true, false, "na"]}}}},
+  "compliance": {"type": "object", "required": ["pass", "violations"], "properties": {
+   "pass": {"type": "boolean"},
+   "violations": {"type": "array", "items": {"type": "object", "properties": {"rule": {"type": "string"}, "excerpt": {"type": "string"}}}}}},
+  "panel": {"type": "array", "items": {"type": "object", "properties": {
+   "persona": {"type": "string"}, "would_click": {"type": "boolean"}, "would_sign_up": {"type": "boolean"}, "reason": {"type": "string"}}}},
+  "scores": {"type": "object", "required": ["rubric", "panel", "combined", "w", "threshold", "ranking"], "properties": {
+   "rubric": {"type": "number"}, "panel": {"type": "number"}, "combined": {"type": "number"}, "w": {"type": "number"},
+   "threshold": {"type": "number"}, "ranking": {"type": "number"}}},
+  "decision": {"enum": ["accept", "verify", "revise"]},
+  "calibrated": {"type": "boolean", "description": "true only for the calibrated judge, weight and asset type (copy)"},
+  "decision_preregistered": {"enum": ["accept", "revise"], "description": "the original gated rule; kept for comparison, not for use"},
+  "failed_criteria": {"type": "array", "items": {"type": "string"}}
+ }
+}

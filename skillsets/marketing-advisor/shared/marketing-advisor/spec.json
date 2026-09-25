@@ -1,0 +1,122 @@
+{
+ "version": "2026-09-24",
+ "criteria": [
+  {
+   "id": "R1",
+   "name": "cold_clarity",
+   "critical": true,
+   "applies_to": [
+    "copy",
+    "name"
+   ],
+   "test": "A first-time visitor with no context understands, after one read, what is offered and to whom. No internal feature names, coined terms or references that presuppose knowing the product (a name passes if it is legible and pronounceable in the target language without explanation)."
+  },
+  {
+   "id": "R2",
+   "name": "one_idea",
+   "critical": false,
+   "applies_to": [
+    "copy"
+   ],
+   "test": "The headline carries one idea, and the body supports that idea instead of adding unrelated ones."
+  },
+  {
+   "id": "R3",
+   "name": "benefit_first",
+   "critical": true,
+   "applies_to": [
+    "copy"
+   ],
+   "test": "Leads with what the reader gets or feels before how the product works. Describes outcomes and feelings, not interface gestures (drag, click, scroll, open a panel) or internal mechanics."
+  },
+  {
+   "id": "R4",
+   "name": "concreteness",
+   "critical": false,
+   "applies_to": [
+    "copy"
+   ],
+   "test": "Specific nouns and verbs. No floating pronouns or vague phrases ('isso', 'aquilo', 'o que for preciso') whose referent the reader has to guess."
+  },
+  {
+   "id": "R5",
+   "name": "reading_ease",
+   "critical": false,
+   "applies_to": [
+    "copy"
+   ],
+   "test": "Plain language at a general-public reading level, short sentences, scannable. Length fits the surface: a hero or section body over ~60 words, or dense regulatory/technical prose, fails."
+  },
+  {
+   "id": "R6",
+   "name": "truthful",
+   "critical": true,
+   "applies_to": [
+    "copy",
+    "name"
+   ],
+   "test": "No claim beyond the fact sheet and no promise of results. Does not imply that the professional the reader would pay does a poor job. Does not contradict itself or deny something the product does. A name must not imply a clinical claim (diagnosis, analysis, cure)."
+  },
+  {
+   "id": "R7",
+   "name": "compliance",
+   "critical": true,
+   "gate": true,
+   "applies_to": [
+    "copy",
+    "name"
+   ],
+   "test": "Brazil: CFP Res. 010/2005 (Código de Ética) art. 20 on publicity (no promise of results, no sensationalism, no price used as bait, CRP shown when a psychologist is named); CFP Nota Técnica 1/2022 on psychologists' publicity online; CDC art. 37 (no misleading or abusive advertising, including implied endorsements or unverifiable claims); LGPD art. 11 (no suggestion that sensitive health data is used or shared without a legal basis or consent)."
+  },
+  {
+   "id": "R8",
+   "name": "audience_value",
+   "critical": false,
+   "applies_to": [
+    "copy",
+    "name"
+   ],
+   "test": "For professionals: shows value a competent clinician could not easily get alone (examples too common to need a tool argue against it). For patients: answers a real felt need of someone looking for therapy. For names: memorable, warm, fits a care brand, and does not collide with a theoretical school or clinical term."
+  }
+ ],
+ "personas": [
+  {
+   "id": "P1",
+   "name": "Larissa",
+   "profile": "27, CRP for 2 years, CBT, sees clients online from Recife. Has open slots and needs patients. Sensitive to commission and price. Finds clients through Instagram."
+  },
+  {
+   "id": "P2",
+   "name": "Roberto",
+   "profile": "52, psychoanalyst, 25 years in private practice in São Paulo, full diary. Distrusts platforms and marketing language. Values confidentiality and the therapeutic relationship above tools."
+  },
+  {
+   "id": "P3",
+   "name": "Mariana",
+   "profile": "38, ACT and systemic therapist, clinical supervisor. Skeptical of AI in the clinic; checks every claim against CFP rules and LGPD."
+  },
+  {
+   "id": "P4",
+   "name": "Camila",
+   "profile": "33, 7 years in practice, currently gets patients through a platform that takes a commission. Wants independence. Keeps clinical records in spreadsheets."
+  }
+ ],
+ "scoring": {
+  "rubric_score": "passed / applicable, over R1-R8 plus the active brand principles; 'na' criteria are excluded",
+  "panel_score": "mean over personas of (would_click + would_sign_up) / 2",
+  "combined": "(1 - w) * rubric_score + w * panel_score",
+  "accept_threshold": 0.75,
+  "gates": "R7 must pass. When w < 1, every applicable critical criterion (R1, R3, R6) must pass too.",
+  "ranking_score": "combined, minus 1 if a gate fails (used for AUC and for ranking alternatives)"
+ },
+ "calibrated": {
+  "date": "2026-09-24",
+  "judge": "opus",
+  "w": 0.0,
+  "threshold": 0.571,
+  "scope": [
+   "copy"
+  ],
+  "rule": "decision = revise if combined < threshold; else verify if R6 or R7 fails or any compliance violation is listed; else accept"
+ }
+}
