@@ -26,23 +26,6 @@
 
 import { execFileSync } from "node:child_process";
 
-/**
- * Machine-specific configuration comes from the environment, never a default.
- *
- * A hardcoded hostname or service name is one machine's answer wearing the
- * costume of a general one: it makes this script look portable while silently
- * pointing every other host at somebody else's box. Failing loudly on an unset
- * variable is the honest behaviour.
- */
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    console.error(`${name} is not set. It names a host-specific resource, so there is no safe default.`);
-    process.exit(2);
-  }
-  return value;
-}
-
 const SSH = ["-o", "ConnectTimeout=20", "vps"];
 const H = "/opt/hermes/agent/venv/bin/hermes";
 const run = (cmd, timeout = 180_000) =>
@@ -55,27 +38,26 @@ const run = (cmd, timeout = 180_000) =>
 /**
  * Preference order, and the first entry is a choice that was made, not a ranking.
  *
- * Sol is first because it is what was ASKED for — "hermes can be left using
- * sol". A guard that quietly promoted a model it considered better would be
- * overriding that decision every time the other account happened to be free,
- * and the user would find Hermes running something they did not pick. So this
- * only ever deviates when the chosen provider cannot answer, and returns to it
- * the moment it can.
+ * Astra is first because it is what was ASKED for (2026-09-07, superseding the
+ * earlier "hermes can be left using sol"). A guard that quietly promoted a
+ * model it considered better would be overriding that decision every time the
+ * other account happened to be free, and the user would find Hermes running
+ * something they did not pick. So this only ever deviates when the chosen
+ * provider cannot answer, and returns to it the moment it can.
  *
  * Opus is the first fallback: it is the strongest reviewer available, and an
  * independent second opinion is the entire point of Hermes. GLM is last, being
  * a shared proxy on a weekly ceiling.
  */
 const CANDIDATES = [
-  { provider: "openai-codex", model: "gpt-5.6-sol", pooled: true },
-  { provider: "anthropic", model: "claude-opus-4-8", pooled: true },
+  { provider: "openai-codex", model: "gpt-6-astra", pooled: true, plan: "chatgpt" },
+  { provider: "anthropic", model: "claude-opus-5-5", pooled: true, plan: "claude" },
   {
-    // Machine-specific: the self-hosted provider id and its probe URL name a
-    // particular host, so they come from the environment and have no default.
-    provider: requireEnv("HERMES_SELFHOSTED_PROVIDER"),
+    provider: "custom:aperture-glm",
     model: "glm-5.2",
     pooled: false,
-    probe: requireEnv("HERMES_SELFHOSTED_PROBE_URL"),
+    plan: "zai",
+    probe: "http://claramente-aperture.tail6118ef.ts.net/v1/models",
   },
 ];
 
@@ -148,6 +130,88 @@ function probeOk(url) {
   }
 }
 
+/**
+ * Tokens already spent per PLAN, so the primary can go to the least-used one.
+ *
+ * This guard used to take the first usable candidate. That is a failover
+ * ladder, not a balancer: it pinned the primary to one plan and held it there
+ * until the credential was fully spent, then moved to the next and drained that
+ * too. Measured 2026-09-08 over 30 days: gpt-5.6-sol had burned 229,748,212 of
+ * 230,842,404 total tokens — 99.5% on ONE plan — while the other two paid plans
+ * sat effectively unused, and then all three hit their limit together. That is
+ * the exact outcome the balancing policy exists to prevent.
+ *
+ * Balancing is done per PLAN, not per model, because astra and sol both bill the
+ * same ChatGPT subscription — rotating between them spreads nothing.
+ *
+ * Returns null when the ledger cannot be read, and the caller then falls back to
+ * the old first-usable order. Degrading to today's behaviour is acceptable;
+ * guessing at usage is not.
+ */
+function planUsage() {
+  // 48h, not the 30-day default. The window is the whole design decision:
+  // cumulative history says chatgpt=230,406,518 vs claude=23,324, which would
+  // exile a live, working plan for weeks over a drain that already happened and
+  // has since reset. Measured 2026-09-08 — 30d: chatgpt 230.4M / zai 428k /
+  // claude 23k; 7d: 30.2M / 202k / 23k; 48h: 479k / 158k / 23k. Only the short
+  // window reflects CURRENT pressure, so the primary rotates on a timescale of
+  // hours instead of days. Quota cycles are weekly, but the goal here is "who
+  // should take the next turn", not "who used most this billing period".
+  const out = run(`sudo -u hermes ${H} insights --days 2 2>/dev/null`);
+  if (!out || !/Models Used/.test(out)) return null;
+  const tokens = { chatgpt: 0, claude: 0, zai: 0 };
+  let seen = false;
+  for (const line of out.split("\n")) {
+    const m = line.match(/^\s+(\S+)\s+\d+\s+([\d,]+)\s*$/);
+    if (!m) continue;
+    const model = m[1];
+    const n = Number(m[2].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    const plan = /^gpt-/.test(model) ? "chatgpt"
+      : /^claude/.test(model) ? "claude"
+      : /^glm/.test(model) ? "zai" : null;
+    if (!plan) continue;
+    tokens[plan] += n;
+    seen = true;
+  }
+  return seen ? tokens : null;
+}
+
+/**
+ * Subscription plans first, always; a capped plan only when none is usable.
+ *
+ * This used to hand the primary to the plan with the fewest raw 48h tokens. The
+ * capped plan (GLM behind Aperture's $1/day + $10/month brake) always looked
+ * least used, precisely BECAUSE it is capped, so whenever its bucket refilled a
+ * few cents the guard promoted it, the bucket drained within minutes, and every
+ * review on it died with `429 Aperture quota exceeded: hermes-daily` after
+ * 3 x 600 s retries. Measured 2026-09-24: 14 promotions onto GLM in one day
+ * while astra was usable in 1,082 of 1,082 runs, and 64+ review threads dead
+ * over 09-21..24. Raw tokens are the wrong unit: a subscription window and a
+ * dollar brake are not comparable by token count.
+ *
+ * So: usable subscription (pooled) plans in operator order (astra first, as
+ * asked on 2026-09-07); a capped plan only when no subscription plan is usable,
+ * with the reason logged. Spend is still printed, for the record only.
+ */
+export function orderCandidates(usable, candidates = CANDIDATES) {
+  const rank = new Map(candidates.map((c, i) => [c.model, i]));
+  const byRank = (a, b) => rank.get(a.model) - rank.get(b.model);
+  const subscription = usable.filter((c) => c.pooled).sort(byRank);
+  if (subscription.length) {
+    return { ordered: subscription, reason: "subscription plan usable — capped plans not considered" };
+  }
+  const capped = usable.filter((c) => !c.pooled).sort(byRank);
+  const down = candidates.filter((c) => c.pooled).map((c) => c.provider).join(", ");
+  return {
+    ordered: capped,
+    reason: capped.length
+      ? `FALLBACK to capped plan: no subscription plan usable (${down} all unavailable)`
+      : `no subscription plan usable (${down}) and no capped plan answered`,
+  };
+}
+
+function main() {
 const cfg = run(`sudo -u hermes ${H} config show 2>/dev/null | grep -i "^  Model:" | head -1`);
 const currentModel = (cfg.match(/'default':\s*'([^']+)'/) ?? [])[1] ?? "?";
 const currentProvider = (cfg.match(/'provider':\s*'([^']+)'/) ?? [])[1] ?? "?";
@@ -156,13 +220,38 @@ const pooled = pooledStatus();
 let chosen = null;
 const why = [];
 
-for (const candidate of CANDIDATES) {
-  const ok = candidate.pooled
-    ? pooled.get(candidate.provider) === true
-    : probeOk(candidate.probe);
+const usable = [];
+for (const candidate of CANDIDATES.filter((c) => c.pooled)) {
+  const ok = pooled.get(candidate.provider) === true;
   why.push(`${candidate.provider}: ${ok ? "usable" : "unavailable"}`);
-  if (ok && !chosen) chosen = candidate;
+  if (ok) usable.push(candidate);
 }
+// Probing a capped plan spends from its brake, so it is only probed when it
+// could actually be chosen.
+for (const candidate of CANDIDATES.filter((c) => !c.pooled)) {
+  if (usable.length) {
+    why.push(`${candidate.provider}: not probed (subscription plan usable)`);
+    continue;
+  }
+  const ok = probeOk(candidate.probe);
+  why.push(`${candidate.provider}: ${ok ? "usable" : "unavailable"}`);
+  if (ok) usable.push(candidate);
+}
+
+const spend = planUsage();
+if (spend) {
+  why.push(
+    `plan spend (48h, informational): ` +
+      Object.entries(spend)
+        .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+        .join("  "),
+  );
+}
+
+const { ordered, reason } = orderCandidates(usable);
+why.push(`policy: ${reason}`);
+if (ordered.length) why.push(`order: ${ordered.map((c) => c.model).join(" -> ")}`);
+chosen = ordered[0] ?? null;
 
 console.log(`  current: ${currentModel} via ${currentProvider}`);
 console.log(why.map((w) => `  ${w}`).join("\n"));
@@ -180,8 +269,50 @@ if (chosen.provider === currentProvider && chosen.model === currentModel) {
   process.exit(0);
 }
 
-run(`sudo -u hermes ${H} config set model.provider "${chosen.provider}" >/dev/null 2>&1`);
-run(`sudo -u hermes ${H} config set model.default "${chosen.model}" >/dev/null 2>&1`);
+/**
+ * Prove the provider ANSWERS before leaving the primary on it.
+ *
+ * `hermes auth list` reports a marker, not a working credential. On 2026-09-08
+ * the anthropic entry read as a usable pooled credential while every call died
+ * with "No Anthropic credentials found" — it had never worked, which is why that
+ * plan showed 0 tokens in 30 days. A guard that trusts the marker parks the
+ * primary on a dead provider and Hermes stays down with a healthy-looking config.
+ *
+ * One short completion per SWITCH (not per run), and the previous primary is
+ * restored if it fails.
+ */
+function switchTo(candidate) {
+  run(`sudo -u hermes ${H} config set model.provider "${candidate.provider}" >/dev/null 2>&1`);
+  run(`sudo -u hermes ${H} config set model.default "${candidate.model}" >/dev/null 2>&1`);
+  // The cd must happen INSIDE the sudo. /var/lib/hermes is drwx------ hermes, so
+  // changing into it as the automation's own user fails with "Permission denied"
+  // and takes the whole guard down — which is exactly what run
+  // arun_pzpefbyfkte did on 2026-09-08, and only on runs that actually switch.
+  const probe = run(
+    `sudo -u hermes bash -lc 'cd /var/lib/hermes && timeout 120 ${H} -z "reply OK"' 2>&1 | tail -2`,
+  );
+  const failed = /agent failed|No .* credentials found|error/i.test(probe);
+  return { ok: !failed, detail: probe.trim().slice(0, 160) };
+}
+
+let verified = null;
+for (const candidate of ordered) {
+  const attempt = switchTo(candidate);
+  if (attempt.ok) {
+    verified = candidate;
+    break;
+  }
+  console.log(`  ${candidate.provider} accepted the config but did not answer: ${attempt.detail}`);
+}
+
+if (!verified) {
+  // Put the primary back rather than leaving it on the last thing tried.
+  run(`sudo -u hermes ${H} config set model.provider "${currentProvider}" >/dev/null 2>&1`);
+  run(`sudo -u hermes ${H} config set model.default "${currentModel}" >/dev/null 2>&1`);
+  console.log("\nno provider actually answered — primary restored, nothing switched");
+  process.exit(0);
+}
+chosen = verified;
 
 // Re-read rather than trust the set. Two commands wrote; this checks what the
 // file now says, because a half-applied switch is worse than none.
@@ -198,3 +329,7 @@ if (nowModel === chosen.model && nowProvider === chosen.provider) {
   );
   process.exitCode = 1;
 }
+}
+
+// The replay test imports orderCandidates without touching the VPS.
+if (process.env.HERMES_GUARD_IMPORT_ONLY !== "1") main();
