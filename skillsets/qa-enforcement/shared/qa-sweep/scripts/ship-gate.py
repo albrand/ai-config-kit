@@ -264,15 +264,16 @@ def qa_run_dirs(root, sha=None, rd=None):
     return dirs
 
 
-def resolve_run(root, sha, rd):
+def resolve_run(root, sha, rd, equiv=False):
     """(dir, None) for the one run re-walked at `sha` (or at its parent under
-    a .qa/-only head); (None, failure) when none or several match. A single
-    candidate is returned as is, so the legacy flat layout and a lone run
-    behave exactly as before."""
+    a .qa/-only head; with equiv, at a commit whose tree outside .qa/ is
+    identical -- used only when no sha/parent match exists); (None, failure)
+    when none or several match. A single candidate is returned as is, so the
+    legacy flat layout and a lone run behave exactly as before."""
     cands = qa_run_dirs(root, sha, rd)
     if len(cands) == 1:
         return cands[0], None
-    seen, matches = [], []
+    seen, matches, equiv_matches = [], [], []
     for d in cands:
         try:
             walked = str(json.loads(rd["read"](d + "/rewalk.json")).get("sha") or "")
@@ -281,6 +282,10 @@ def resolve_run(root, sha, rd):
         seen.append("%s@%s" % (d, walked[:12] or "-"))
         if walked and (walked == sha or rewalk_parent_ok(root, sha, walked)):
             matches.append(d)
+        elif equiv and walk_fresh(root, sha, walked, equiv=True):
+            equiv_matches.append(d)
+    if not matches:
+        matches = equiv_matches
     if len(matches) == 1:
         return matches[0], None
     if not matches:
@@ -447,7 +452,34 @@ def rewalk_parent_ok(root, head, walked):
     return bool(diff) and all(d == ".qa" or d.startswith(".qa/") for d in diff)
 
 
-def check_rewalk(root, qa, rd, wf, sha, fails, stats):
+def tree_equiv_outside_qa(root, shipped, walked):
+    """True when both commits exist locally and their root trees are identical
+    outside .qa/: every top-level entry except .qa has the same mode, type and
+    object hash. Tree hashes only, no heuristics. v4 (coordinator decision,
+    card 6): a squash or merge commit whose code tree IS the walked code tree
+    ships code that was walked, so a tag / release / default-branch dispatch
+    of it needs no second walk; any non-.qa difference (other changes merged
+    in) still does."""
+    def entries(c):
+        p = run_git(root, "ls-tree", "-z", "%s^{commit}" % c)
+        if p.returncode != 0:
+            return None
+        return sorted(e for e in p.stdout.split("\0") if e and e.split("\t", 1)[-1] != ".qa")
+    if not shipped or not walked:
+        return False
+    a, b = entries(shipped), entries(walked)
+    return a is not None and b is not None and a == b
+
+
+def walk_fresh(root, shipped, walked, equiv=False):
+    """The walk at `walked` covers `shipped`: same sha, one .qa-only commit on
+    top, or (equiv: tags, releases, default-branch dispatch) an identical
+    tree outside .qa/."""
+    return bool(walked) and (walked == shipped or rewalk_parent_ok(root, shipped, walked)
+                             or (equiv and tree_equiv_outside_qa(root, shipped, walked)))
+
+
+def check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv=False):
     rel = qa + "/rewalk.json"
     if not rd["exists"](rel):
         fails.append(rel + " missing (P5 re-walk of the whole workflow)")
@@ -460,8 +492,11 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats):
     if not doc.get("sha"):
         fails.append(rel + ": sha missing")
     elif sha and doc["sha"] != sha:
-        if not (rewalk_parent_ok(root, sha, doc["sha"])):
-            fails.append(f"{rel} sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}: re-walk at the new commit")
+        if not walk_fresh(root, sha, str(doc["sha"]), equiv):
+            why = (" and its tree outside .qa/ differs (or the walked commit is not in this clone)"
+                   if equiv else "")
+            fails.append(f"{rel} sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}{why}: "
+                         f"re-walk at the new commit")
     steps = doc.get("steps")
     if not isinstance(steps, list) or not steps:
         fails.append(rel + ": steps must be a non-empty list")
@@ -559,9 +594,11 @@ def check_deployed(root, cfg, sha, fails):
         fails.append(".qa/config.json deployed_check needs a url template or a command")
 
 
-def check_all(root, sha=None):
+def check_all(root, sha=None, equiv=False):
     """Return (ok, failures, stats, cfg). Never raises. Artifacts are read
-    from the shipped commit's tree when sha is resolvable (v3)."""
+    from the shipped commit's tree when sha is resolvable (v3). equiv (v4):
+    the walk may sit on a commit whose tree outside .qa/ equals the shipped
+    one -- only for tags, releases and default-branch dispatches."""
     fails, stats = [], {"rows_total": 0, "open_rows": 0, "predates_count": 0, "clusters": 0,
                         "rewalk_steps": 0, "rewalk_failed": 0}
     cfg = None
@@ -570,7 +607,7 @@ def check_all(root, sha=None):
             sha = run_git(root, "rev-parse", "HEAD").stdout.strip() or None
         rd = qa_reader(root, sha)
         cfg = check_config(root, rd, fails)
-        qa, err = resolve_run(root, sha, rd)
+        qa, err = resolve_run(root, sha, rd, equiv)
         if err:
             fails.append(err)
             return (False, fails, stats, cfg)
@@ -578,7 +615,7 @@ def check_all(root, sha=None):
         rows = check_inventory(qa, rd, fails, stats)
         clusters = check_clusters(qa, rd, rows, fails, stats)
         check_plan(qa, rd, clusters, fails)
-        check_rewalk(root, qa, rd, wf, sha, fails, stats)
+        check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv)
         check_e2e(qa, rd, cfg, fails)
         check_deployed(root, cfg, sha, fails)
     except Exception as exc:  # fail closed on anything unexpected
@@ -913,13 +950,14 @@ def release_commit(root, toks):
 
 
 def workflow_commit(root, toks):
-    """Commit `gh workflow run` dispatches on: --ref/-r as the remote knows
-    it, else the remote default branch (GitHub's default), else HEAD."""
+    """(commit, on_default) for `gh workflow run`: the commit it dispatches
+    on (--ref/-r as the remote knows it, else the remote default branch,
+    GitHub's default, else HEAD) and whether that ref is the default branch."""
     _, vals = _positionals(toks, GH_WORKFLOW_VALUE_FLAGS)
-    ref = vals.get("--ref") or vals.get("-r")
-    if ref:
-        return remote_commit(root, ref.replace("refs/heads/", "", 1)) or head_commit(root)
-    return remote_commit(root, default_branch(root)) or head_commit(root)
+    ref = (vals.get("--ref") or vals.get("-r") or "").replace("refs/heads/", "", 1)
+    default = default_branch(root)
+    target = ref or default
+    return (remote_commit(root, target) or head_commit(root)), target == default
 
 
 def _read_body_file(path, cwd):
@@ -1013,48 +1051,57 @@ def _vercel_prod_flag(seg):
 
 
 def segment_ship(seg, root, cfg, command="", cwd=None):
-    """(kind, shas) for one unwrapped shell segment. kind: "merge" | "push" |
-    "deploy" | None. shas: the commits this segment ships, resolved locally,
-    so a tag pointing at an unwalked commit cannot pass on a walked HEAD.
+    """(kind, shas, equiv) for one unwrapped shell segment. kind: "merge" |
+    "push" | "deploy" | None. shas: the commits this segment ships, resolved
+    locally, so a tag pointing at an unwalked commit cannot pass on a walked
+    HEAD. equiv: the subset whose walk may sit on a tree-identical commit
+    (tree_equiv_outside_qa): tags, releases, default-branch dispatches only.
     For merges the caller resolves the PR head (shas empty here)."""
     if not seg:
-        return None, []
+        return None, [], set()
     head = seg[0]
     cwd = cwd or root
     if head == "git":
         if git_subcommand(seg) != "push":
-            return None, []
+            return None, [], set()
         mode, flags, pairs = push_refspecs(seg)
         if mode == "all":
-            return "push", [head_commit(root)]
+            return "push", [head_commit(root)], set()
         prot = protected_refs(root, cfg)
-        kind, shas = None, []
+        kind, shas, equiv, strict = None, [], set(), set()
         if any(f.split("=")[0] in TAG_PUSH_FLAGS for f in flags):
             # --tags/--follow-tags: which tags are new is only known to the
             # remote; the hook checks HEAD, the pre-push layer checks each
             # pushed tag exactly (git lists them on stdin)
-            kind, shas = "deploy", [head_commit(root)]
+            h = head_commit(root)
+            kind, shas = "deploy", [h]
+            equiv.add(h)
         if not pairs:
             up = upstream_branch(root)
             if up and normalize_ref(up) in prot:
-                return "push", shas + [head_commit(root)]
-            return kind, shas
+                return "push", shas + [head_commit(root)], set()  # HEAD goes to a protected branch: strict
+            return kind, shas, equiv
         for src, dst in pairs:
             dst_branch = current_branch(root) if dst in ("HEAD", "@") else normalize_ref(dst)
             if dst_branch in prot:
                 kind = "push"
-                shas.append(resolve_commit(root, src) or head_commit(root))
+                c = resolve_commit(root, src) or head_commit(root)
+                shas.append(c)
+                strict.add(c)
                 continue
             t = tag_ref(root, src) or tag_ref(root, dst if dst.startswith("refs/tags/") else "")
             if t:
                 kind = kind or "deploy"
-                shas.append(resolve_commit(root, t) or head_commit(root))
-        return kind, shas
+                c = resolve_commit(root, t) or head_commit(root)
+                shas.append(c)
+                equiv.add(c)
+        return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
     if head == "gh" and len(seg) > 2:
         if seg[1] == "pr" and seg[2] in ("merge", "ready"):
-            return "merge", []
+            return "merge", [], set()
         if seg[1] == "release" and seg[2] == "create":
-            return "deploy", [release_commit(root, seg[3:])]
+            c = release_commit(root, seg[3:])
+            return "deploy", [c], {c}
         if seg[1] == "workflow" and seg[2] == "run":
             # ANY dispatch is shipping. Deploy workflows run exactly this way
             # (seahaven deploy.yaml is workflow_dispatch dev/staging/prod); a
@@ -1062,24 +1109,27 @@ def segment_ship(seg, root, cfg, command="", cwd=None):
             # round trips inside a hook, and a missed deploy workflow is an
             # ungated production deploy while a false positive only asks for
             # a completed .qa pipeline on a rare manual command.
-            return "deploy", [workflow_commit(root, seg[3:])]
-        return None, []
+            c, on_default = workflow_commit(root, seg[3:])
+            return "deploy", [c], ({c} if on_default else set())
+        return None, [], set()
     if head == "vercel":
         sub = seg[1] if len(seg) > 1 else ""
         if sub == "api":
-            return ("deploy", [head_commit(root)]) if api_deploy_post(seg, command, cwd) else (None, [])
+            if api_deploy_post(seg, command, cwd):
+                return "deploy", [head_commit(root)], set()
+            return None, [], set()
         # `vercel rollback` stays free: it restores an already-shipped
         # deployment, and gating incident recovery on a fresh walk is wrong
         if _vercel_prod_flag(seg) or sub in ("promote", "redeploy"):
-            return "deploy", [head_commit(root)]
-        return None, []
+            return "deploy", [head_commit(root)], set()
+        return None, [], set()
     if head == "netlify" and "deploy" in seg[1:3] and "--prod" in seg:
-        return "deploy", [head_commit(root)]
+        return "deploy", [head_commit(root)], set()
     if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
-        return "deploy", [head_commit(root)]
+        return "deploy", [head_commit(root)], set()
     if head in ("curl", "curl.exe") and api_deploy_post(seg, command, cwd):
-        return "deploy", [head_commit(root)]
-    return None, []
+        return "deploy", [head_commit(root)], set()
+    return None, [], set()
 
 
 def segment_ship_kind(seg, root, cfg):
@@ -1088,15 +1138,19 @@ def segment_ship_kind(seg, root, cfg):
 
 
 def ship_plan(command, root, cfg, cwd=None):
-    """(kind, shas): the highest-stakes ship kind anywhere in the command and
-    every commit its non-merge segments ship. A `ship_commands` match adds
-    HEAD. Merges get their PR head from the caller."""
-    kinds, shas = [], []
+    """(kind, shas, equiv): the highest-stakes ship kind anywhere in the
+    command, every commit its non-merge segments ship, and the commits that
+    may be checked with tree equivalence. A commit also shipped by a strict
+    segment (protected push, prod deploy) is checked strictly. A
+    `ship_commands` match adds HEAD. Merges get their PR head from the caller."""
+    kinds, shas, eq, strict = [], [], set(), set()
     for seg in command_segments(command):
-        k, s = segment_ship(seg, root, cfg, command, cwd)
+        k, s, e = segment_ship(seg, root, cfg, command, cwd)
         if k:
             kinds.append(k)
             shas += [x for x in s if x and x not in shas]
+            eq |= {x for x in s if x in e}
+            strict |= {x for x in s if x not in e}
     try:
         if cfg and isinstance(cfg.get("ship_commands"), list):
             if any(re.search(str(p), command) for p in cfg["ship_commands"]):
@@ -1104,13 +1158,15 @@ def ship_plan(command, root, cfg, cwd=None):
                 h = head_commit(root)
                 if h and h not in shas:
                     shas.append(h)
+                strict.add(h)
     except Exception:
         pass
+    eq -= strict
     if "merge" in kinds:
-        return "merge", shas   # needs PR-head freshness, the stricter sha rule
+        return "merge", shas, eq   # needs PR-head freshness, the stricter sha rule
     if "push" in kinds:
-        return "push", shas
-    return (kinds[0] if kinds else None), shas
+        return "push", shas, eq
+    return (kinds[0] if kinds else None), shas, eq
 
 
 def ship_kind(command, root, cfg):
@@ -1198,7 +1254,7 @@ def hook(raw=None):
             shas = [head_commit(root)]
         ok, fails, stats = True, [], {"rows_total": 0, "clusters": 0, "open_rows": 0}
         for sha in shas:
-            o, f, s, _ = check_all(root, sha or None)
+            o, f, s, _ = check_all(root, sha or None, equiv=bool(sha) and sha in plans[root][2])
             ok = ok and o
             fails += ["[%s] %s" % ((sha or "HEAD")[:12], x) for x in f] if len(shas) > 1 else f
             stats = s
@@ -1366,7 +1422,8 @@ def prepush(remote="origin"):
         return 0
     denied = False
     for ref, sha in pushes:
-        ok, fails, stats, _ = check_all(root, sha)
+        # tags may be checked with tree equivalence; protected branches stay strict
+        ok, fails, stats, _ = check_all(root, sha, equiv=ref.startswith("refs/tags/"))
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"],
                                             "kind": "push", "ref": ref}, provider=derive_provider({}))
@@ -2147,6 +2204,48 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin +dev", "forced +dev")
     sh("git checkout -q feat && git branch -q -D dev", cwd=r9)
 
+    # tree equivalence (coordinator decision): commits built from tree hashes
+    # with no parent link to the walk, as a squash merge on main would be.
+    #   S  = W's exact tree (identical-tree squash)          -> vsquash
+    #   S2 = W's tree plus .qa/notes.md (differs under .qa)  -> vqaonly
+    #   M  = W's tree plus f2.txt, parents base+W (a merge bringing in other code) -> vmerge
+    base9 = sh("git rev-list --max-parents=0 HEAD", cwd=r9).stdout.strip()
+
+    def tree_with(extra_path, content):
+        idx = os.path.join(tmp, "v4-index")
+        env = "GIT_INDEX_FILE=%s" % idx
+        blob = sh("printf '%s' | git hash-object -w --stdin" % content, cwd=r9).stdout.strip()
+        sh("%s git read-tree %s && %s git update-index --add --cacheinfo 100644,%s,%s"
+           % (env, shaW, env, blob, extra_path), cwd=r9)
+        tree = sh("%s git write-tree" % env, cwd=r9).stdout.strip()
+        os.remove(idx)
+        return tree
+
+    shaS = sh("git commit-tree %s^{tree} -p %s -m squash" % (shaW, base9), cwd=r9).stdout.strip()
+    shaS2 = sh("git commit-tree %s -p %s -m squash-qa" % (tree_with(".qa/notes.md", "n"), base9),
+               cwd=r9).stdout.strip()
+    shaM = sh("git commit-tree %s -p %s -p %s -m merge" % (tree_with("f2.txt", "other"), base9, shaW),
+              cwd=r9).stdout.strip()
+    sh("git tag vsquash %s && git tag vqaonly %s && git tag vmerge %s && git branch sq %s"
+       % (shaS, shaS2, shaM, shaS), cwd=r9)
+    allow4(r9, "git push origin vsquash", "tree-equiv: tag on an identical-tree squash commit")
+    allow4(r9, "git push origin vqaonly", "tree-equiv: tag on a commit differing from the walk only under .qa/")
+    deny4(r9, "git push origin vmerge", "tree-equiv: tag on a merge commit that brings in other changes")
+    allow4(r9, "gh release create vsquash", "tree-equiv: release of the identical-tree squash commit")
+    deny4(r9, "gh release create vmerge", "tree-equiv: release of the merge commit with other changes")
+    deny4(r9, "git push origin vsquash:dev", "tree-equiv is NOT applied to protected pushes")
+    deny4(r9, "git push origin vsquash sq:dev", "same commit as tag and protected push: strict wins")
+    deny4(r9, "gh workflow run deploy.yaml --ref sq", "tree-equiv is NOT applied to a non-default dispatch")
+    sh("git branch -f main %s" % shaS, cwd=r9)
+    allow4(r9, "gh workflow run deploy.yaml", "tree-equiv: default-branch dispatch on the squash commit")
+    sh("git branch -f main %s" % shaM, cwd=r9)
+    deny4(r9, "gh workflow run deploy.yaml", "tree-equiv: default-branch dispatch on the merge commit")
+    sh("git branch -f main %s && git branch -q -D sq" % shaW, cwd=r9)
+    sh("git checkout -q -b rel %s && git config branch.rel.remote origin && "
+       "git config branch.rel.merge refs/heads/main" % shaS, cwd=r9)
+    deny4(r9, "git push --follow-tags", "tags pushed along a protected upstream push: strict")
+    sh("git checkout -q feat && git branch -q -D rel", cwd=r9)
+
     # non-opted-in repo: every new ship command stays free
     r11 = os.path.join(tmp, "v4plain")
     os.makedirs(r11)
@@ -2181,6 +2280,17 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(p.returncode != 0 and not landed("refs/tags/vbad"), "v4 prepush: --tags denied on the unwalked tag")
     p = sh("git push r9remote feat", cwd=r9)
     expect(p.returncode == 0 and landed("refs/heads/feat"), "v4 prepush: feature branch still lands")
+    p = sh("git push r9remote vsquash", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vsquash"),
+           "v4 prepush tree-equiv: tag on the identical-tree squash commit lands [%s]" % p.stderr.strip()[-100:])
+    p = sh("git push r9remote vqaonly", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vqaonly"), "v4 prepush tree-equiv: .qa-only tree difference lands")
+    p = sh("git push r9remote vmerge", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vmerge"),
+           "v4 prepush tree-equiv: tag on the merge commit with other changes denied, nothing landed")
+    p = sh("git push r9remote vsquash:refs/heads/dev", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/heads/dev"),
+           "v4 prepush tree-equiv: the squash commit pushed to protected dev stays denied")
 
     # merge_group: the resolver block of qa-ci.yml, run verbatim
     ci_text = open(os.path.join(V4TMPL, "qa-ci.yml")).read()

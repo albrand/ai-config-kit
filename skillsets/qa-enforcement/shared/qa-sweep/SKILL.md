@@ -165,14 +165,20 @@ it; for other deploys, the local HEAD — each with the same `.qa`-only
 allowance. A walked HEAD cannot clear an unwalked tag, and a walked tag cannot
 hide an unwalked branch pushed next to it.
 
-**Releases after a merge.** A release tag normally points at the squash or
-merge commit on the default branch, which is never the walked PR head, so the
-gate denies it until that commit is walked: walk the merged commit (against the
-environment it deployed to), commit the evidence as one `.qa/`-only commit on
-top (via a `.qa`-only PR where the branch requires one; its squash is still one
-`.qa`-only commit on top), and tag that commit. The same holds for
-`gh workflow run` without `--ref` (it dispatches the default branch) and for a
-`--ref` that names the default branch.
+**Releases after a merge (tree equivalence).** A release tag normally points at
+the squash or merge commit on the default branch, which is never the walked PR
+head. For a **tag push, `gh release create`, or a `gh workflow run` on the
+default branch** (no `--ref`, or `--ref <default>`), and only for those, the
+walk also covers a commit whose root tree outside `.qa/` is **identical by tree
+hash** to the tree of the walked commit (the committed run's `rewalk.json`
+sha, which must be present in the clone). Squash-merging an up-to-date branch
+therefore ships without a second walk. If any path outside `.qa/` differs
+(the base moved, or a merge brought in other changes), the combined code was
+never walked. Walk the merged commit, commit the evidence as one `.qa/`-only
+commit on top, and tag or dispatch that. Protected-branch pushes, merges,
+non-default dispatches and other deploys keep the strict rule (walked sha or
+one `.qa`-only commit on top). A commit that one command ships both as a tag
+and to a protected branch is checked strictly.
 
 The local gate (PreToolUse hook, git pre-push template) checks consistency; the
 CI job is where merges are truly enforced — make it a required check. The CI
