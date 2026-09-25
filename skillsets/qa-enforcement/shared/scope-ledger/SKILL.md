@@ -92,6 +92,18 @@ The following threads are never archived by fleet (orphan scan,
 - A review thread under a topic.
 
 Fleet restores them if anything else archives them, and tells the coordinator.
+
+When a child is finished, release it, so its archive stays archived:
+
+    scope-gate.py release <coordinator> <child> --evidence "<why it is done>"
+
+The release is recorded in the coordinator's ledger (`released_children`,
+with the evidence and when). The hold, the orphan scan and the archive guard
+then skip that child, and only that child; the audit line names the release.
+Record it on the child's parent ledger: a release in any other ledger holds
+nothing back. A child with its own ledger and unfinished purposes is still
+held by that ledger. A circuit successor's releases survive the hand-back.
+
 Every archive is appended to `~/.local/state/agent-quality/archive-audit.jsonl`.
 
 ## Circuit successor (fleet plugin)

@@ -13,7 +13,9 @@ and holds the user's purposes in the user's own words:
                    "status": "open|done|blocked-on-user", "evidence": [],
                    "status_marked_at": "<iso>", "ask": null}],
      "accepted_revisions": [{"quote": "<the user's approval, verbatim>",
-                             "accepted_at": "<iso>", "source": "..."}]}
+                             "accepted_at": "<iso>", "source": "..."}],
+     "released_children": [{"thread_id": "thr_...", "evidence": "<why done>",
+                            "released_at": "<iso>"}]}
 
 `hook` is the PreToolUse gate. From a thread that HAS a ledger, every
 dispatch -- `bb thread spawn|create|tell|message` in a shell command,
@@ -31,6 +33,9 @@ Subcommands:
     add <thread> --text T --done-when D     append a purpose in the user's words
     mark <thread> <Pn> <status> [--ask Q] [--evidence E]
     revise <thread> --quote Q [--source S]  record a user-approved scope change
+    release <thread> <child> --evidence E   a finished child: fleet stops holding it
+                                            from archive (only the child's parent
+                                            ledger counts; its own ledger still holds)
     show <thread>
     selftest
 
@@ -118,6 +123,11 @@ def validate(ledger, thread):
     revisions = ledger.setdefault("accepted_revisions", [])
     if not isinstance(revisions, list) or any(not isinstance(r, dict) or not str(r.get("quote", "")).strip() for r in revisions):
         raise LedgerError("accepted_revisions must be a list of {quote}")
+    released = ledger.get("released_children", [])
+    if not isinstance(released, list) or any(
+            not isinstance(r, dict) or not THREAD_ID.match(str(r.get("thread_id", "")))
+            or not isinstance(r.get("evidence"), str) or not r["evidence"].strip() for r in released):
+        raise LedgerError("released_children must be a list of {thread_id, evidence}")
     return ledger
 
 
@@ -365,7 +375,6 @@ def main(argv):
     if cmd == "hook":
         try:
             return hook_under_deadline(os.environ.get("BB_THREAD_ID", ""))
-
         except Exception as e:  # a crash on a dispatch from a ledger thread denies
             thread = os.environ.get("BB_THREAD_ID", "")
             try:
@@ -447,6 +456,24 @@ def main(argv):
             write_ledger(thread, ledger)
             print("revision recorded")
             return 0
+        if cmd == "release":
+            # The fleet archive guard restores every archive of a child whose
+            # parent ledger has an unfinished purpose. A release is the
+            # coordinator saying this one child is done, with the reason.
+            child, ev = (args[1] if len(args) > 1 else ""), arg(args, "--evidence")
+            if not THREAD_ID.match(child):
+                raise LedgerError("release <coordinator> <child thr_...> --evidence E")
+            if child == thread:
+                raise LedgerError("a coordinator is not its own child; mark its purposes done instead")
+            if not (ev and ev.strip()):
+                raise LedgerError("release needs --evidence saying why the child is done")
+            rel = [r for r in ledger.get("released_children", []) if r["thread_id"] != child]
+            rel.append({"thread_id": child, "evidence": ev, "released_at": now_iso()})
+            ledger["released_children"] = rel
+            write_ledger(thread, ledger)
+            print(f"released {child} from {thread}'s archive hold")
+            return 0
+
     except (LedgerError, OSError, ValueError) as e:
         print(f"scope-gate: {e}", file=sys.stderr)
         return 1
@@ -565,6 +592,41 @@ def selftest():
         sys.stdout, sys.stderr = out, err
     failed += got != 2
     print(f"{'ok  ' if got == 2 else 'FAIL'} once P1 is blocked-on-user, serving it is denied: rc={got}")
+    # release: a finished child, with the reason; fleet's archive hold skips it.
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        refused = [main(["release", thread, "thr_child1"]),
+                   main(["release", thread, "thr_child1", "--evidence", "  "]),
+                   main(["release", thread, thread, "--evidence", "done"]),
+                   main(["release", thread, "not-a-thread", "--evidence", "done"])]
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    failed += refused != [1, 1, 1, 1]
+    print(f"{'ok  ' if refused == [1, 1, 1, 1] else 'FAIL'} release refuses no evidence, blank evidence, itself, a non-thread: {refused}")
+    rc1 = main(["release", thread, "thr_child1", "--evidence", "PR #22 merged"])
+    rc2 = main(["release", thread, "thr_child1", "--evidence", "PR #22 merged at d0ce389"])
+    rel = read_ledger(thread).get("released_children", [])
+    good = rc1 == rc2 == 0 and len(rel) == 1 and rel[0]["thread_id"] == "thr_child1" \
+        and rel[0]["evidence"] == "PR #22 merged at d0ce389" and rel[0]["released_at"]
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} release records the child, the evidence and when; a second release replaces it")
+    led = read_ledger(thread)
+    led["released_children"].append({"thread_id": "thr_child2"})
+    with open(ledger_path(thread), "w") as f:
+        json.dump(led, f)
+    try:
+        read_ledger(thread)
+        bad_ok = False
+    except LedgerError:
+        bad_ok = True
+    failed += not bad_ok
+    print(f"{'ok  ' if bad_ok else 'FAIL'} a release without evidence makes the ledger invalid (fleet holds, the gate denies)")
+    led["released_children"].pop()
+    with open(ledger_path(thread), "w") as f:
+        json.dump(led, f)
+
     # Hard deadline on the chain clock (HOOK_T0): with the budget already
     # spent, an undeclared dispatch is denied by shape at once, a serving one
     # and a non-dispatch are allowed; a future T0 buys nothing extra and the
