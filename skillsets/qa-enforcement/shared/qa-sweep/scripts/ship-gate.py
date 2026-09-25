@@ -60,8 +60,9 @@ HOME = os.path.expanduser("~")
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     HOME, ".local", "state", "agent-quality", "events.jsonl")
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
-# realpath: a symlinked skill dir makes the gate script no-op (its main() guard
-# compares import.meta.url to argv[1]), so always run the resolved file.
+# realpath: gate copies published before 2026-09-25 no-op through a symlinked
+# skill dir (their main() guard compared import.meta.url to argv[1] literally),
+# so always run the resolved file.
 # Candidates: the flattened skill-home sibling, the kit's agent-runtime copy,
 # then the neutral hub home. First that exists wins; else the first (canonical
 # flattened) path is kept so the failure message names a concrete location.

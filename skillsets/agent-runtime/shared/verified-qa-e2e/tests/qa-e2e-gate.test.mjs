@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,6 +93,37 @@ deniedConsent.blocker.visible_route = "denied";
 delete deniedConsent.blocker.attempt_evidence;
 deniedConsent.blocker.denial_evidence = "user explicitly declined this connection";
 assert.equal(evaluateEvidence(deniedConsent).ok, true, "explicit consent denial can block the journey");
+
+// Installed copies are reached through symlinks (bb's per-session bridge lives
+// under /var/folders, which resolves to /private/var). The CLI must still run
+// when argv[1] and import.meta.url spell the path differently; an entry guard
+// that compares them literally exits 0 with no output and evaluates nothing.
+const gateScript = path.join(here, "..", "scripts", "qa-e2e-gate.mjs");
+const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), "qa-e2e-gate-link-"));
+try {
+  const fileLink = path.join(linkRoot, "gate.mjs");
+  fs.symlinkSync(gateScript, fileLink);
+  const dirLink = path.join(linkRoot, "scripts");
+  fs.symlinkSync(path.dirname(gateScript), dirLink, "dir");
+  const packetFor = (id) => {
+    const file = path.join(linkRoot, `${id}.json`);
+    fs.writeFileSync(file, JSON.stringify(fixtures.find((fixture) => fixture.id === id).packet));
+    return file;
+  };
+  const failing = packetFor("seeded-account-not-checked");
+  const passing = packetFor("valid-vendor-portal");
+  for (const entry of [fileLink, path.join(dirLink, "qa-e2e-gate.mjs")]) {
+    const bad = spawnSync(process.execPath, [entry, "check", failing], { encoding: "utf8" });
+    assert.equal(bad.status, 1, `failing packet via ${entry} must exit 1 (got ${bad.status}, stdout ${bad.stdout.length} bytes)`);
+    assert.ok(bad.stdout.length > 0, `failing packet via ${entry} produced no output`);
+    assert.equal(JSON.parse(bad.stdout).ok, false, `failing packet via ${entry} verdict`);
+    const good = spawnSync(process.execPath, [entry, "check", passing], { encoding: "utf8" });
+    assert.equal(good.status, 0, `passing packet via ${entry} must exit 0 (got ${good.status})`);
+    assert.equal(JSON.parse(good.stdout).ok, true, `passing packet via ${entry} verdict`);
+  }
+} finally {
+  fs.rmSync(linkRoot, { recursive: true, force: true });
+}
 
 process.stdout.write(
   JSON.stringify({ ok: true, fixtures: fixtures.length, efforts, evaluations: fixtures.length * efforts.length }) + "\n",
