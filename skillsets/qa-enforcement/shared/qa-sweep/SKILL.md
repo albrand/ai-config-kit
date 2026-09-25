@@ -10,7 +10,8 @@ description: >
   (P3), fix per cluster (P4), re-walk the whole workflow at the new SHA (P5),
   then ship (P6). The gate denies the ship until the pipeline is complete.
 verify: 'python3 "$HOME/.agents/skills/qa-sweep/scripts/ship-gate.py" selftest'
-verified: 2026-09-24
+verify_timeout: 420
+verified: 2026-09-25
 ---
 
 # QA sweep: discover everything, cluster, plan once, fix, re-walk

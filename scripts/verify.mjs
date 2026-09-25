@@ -65,16 +65,24 @@ for (const lesson of collectLessons(ROOT)) {
     result.status = "not-here";
     result.detail = `needs ${missing.join(", ")} in the local overlay`;
   } else {
+    // 60 s fits almost every check. A lesson whose check is a whole test suite
+    // declares `verify_timeout: <seconds>` sized from its measured runtime
+    // (capped), rather than being cut to a subset or timing out as a FAIL with
+    // no reason, which is what qa-sweep's selftest did from v4 on.
+    const seconds = Math.min(Number(meta.verify_timeout) > 0 ? Number(meta.verify_timeout) : 60, 900);
     try {
       execSync(check, {
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60_000,
+        timeout: seconds * 1000,
         shell: "/bin/bash",
       });
       result.status = "holds";
     } catch (error) {
       result.status = "failed";
-      result.detail = String(error.stderr ?? error.message ?? "").trim().slice(0, 120);
+      result.detail =
+        error.code === "ETIMEDOUT" || error.signal === "SIGTERM"
+          ? `timed out after ${seconds} s (verify_timeout)`
+          : String(error.stderr ?? error.message ?? "").trim().slice(0, 120);
     }
   }
 
