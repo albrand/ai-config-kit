@@ -1138,5 +1138,515 @@
     "required_codes": [
       "CONCURRENT_AUTOMATION_RUN"
     ]
+  },
+  {
+    "id": "identities-two-personas-both-unowned",
+    "expected": true,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identities": [
+          {
+            "label": "qa.professional",
+            "ownership_checked": true,
+            "ownership_evidence": "no CI workflow or e2e setup uses qa.professional",
+            "owned_by_automation": false
+          },
+          {
+            "label": "qa.patient",
+            "ownership_checked": true,
+            "ownership_evidence": "no CI workflow or e2e setup uses qa.patient",
+            "owned_by_automation": false
+          }
+        ]
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    }
+  },
+  {
+    "id": "identities-two-personas-one-owned-undisclosed",
+    "expected": false,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identities": [
+          {
+            "label": "qa.professional",
+            "ownership_checked": true,
+            "ownership_evidence": "no CI workflow or e2e setup uses qa.professional",
+            "owned_by_automation": false
+          },
+          {
+            "label": "e2e.patient",
+            "ownership_checked": true,
+            "ownership_evidence": "e2e/global-setup.ts recreates its appointment",
+            "owned_by_automation": true,
+            "owner": "deployed e2e gate (playwright global-setup)",
+            "unowned_identity_available": false,
+            "unowned_identity_evidence": "seed defines no other professional account",
+            "walk_window": {
+              "start": "2026-09-25T15:10:00Z",
+              "end": "2026-09-25T15:40:00Z"
+            },
+            "overlap_check": {
+              "checked_at": "2026-09-25T15:41:00Z",
+              "evidence": "gh run list: no e2e run started or completed within 15:10-15:40Z",
+              "overlapping_runs": 0
+            }
+          }
+        ]
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    },
+    "required_codes": [
+      "IDENTITY_SHARING_UNDISCLOSED"
+    ]
+  },
+  {
+    "id": "identity-plus-identities-second-persona-still-checked",
+    "expected": false,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identity": {
+          "label": "qa.professional",
+          "ownership_checked": true,
+          "ownership_evidence": "no CI workflow or e2e setup uses qa.professional",
+          "owned_by_automation": false
+        },
+        "identities": [
+          {
+            "label": "e2e.patient",
+            "ownership_checked": true,
+            "ownership_evidence": "e2e/global-setup.ts recreates its appointment",
+            "owned_by_automation": true,
+            "owner": "deployed e2e gate (playwright global-setup)",
+            "unowned_identity_available": false,
+            "unowned_identity_evidence": "seed defines no other professional account",
+            "walk_window": {
+              "start": "2026-09-25T15:10:00Z",
+              "end": "2026-09-25T15:40:00Z"
+            },
+            "overlap_check": {
+              "checked_at": "2026-09-25T15:41:00Z",
+              "evidence": "gh run list: no e2e run started or completed within 15:10-15:40Z",
+              "overlapping_runs": 0
+            }
+          }
+        ]
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    },
+    "required_codes": [
+      "IDENTITY_SHARING_UNDISCLOSED"
+    ]
+  },
+  {
+    "id": "identities-two-personas-owned-disclosed-valid",
+    "expected": true,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identities": [
+          {
+            "label": "qa.professional",
+            "ownership_checked": true,
+            "ownership_evidence": "no CI workflow or e2e setup uses qa.professional",
+            "owned_by_automation": false
+          },
+          {
+            "label": "e2e.patient",
+            "ownership_checked": true,
+            "ownership_evidence": "e2e/global-setup.ts recreates its appointment",
+            "owned_by_automation": true,
+            "owner": "deployed e2e gate (playwright global-setup)",
+            "unowned_identity_available": false,
+            "unowned_identity_evidence": "seed defines no other professional account",
+            "walk_window": {
+              "start": "2026-09-25T15:10:00Z",
+              "end": "2026-09-25T15:40:00Z"
+            },
+            "overlap_check": {
+              "checked_at": "2026-09-25T15:41:00Z",
+              "evidence": "gh run list: no e2e run started or completed within 15:10-15:40Z",
+              "overlapping_runs": 0
+            },
+            "disclosure": "walked as e2e.patient, owned by the e2e gate, on shared data; no run overlapped"
+          }
+        ]
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    }
+  },
+  {
+    "id": "identities-empty-list",
+    "expected": false,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identities": []
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    },
+    "required_codes": [
+      "IDENTITY_MISSING"
+    ]
+  },
+  {
+    "id": "identity-bad-plus-clean-identities-still-checked",
+    "expected": false,
+    "packet": {
+      "schema_version": 1,
+      "operation": "claim_e2e_complete",
+      "actor": {
+        "verified": true,
+        "persona": "vendor",
+        "surface": "Vendor Portal",
+        "environment": "development"
+      },
+      "entrypoint": {
+        "verified": true,
+        "route": "visible vendor link",
+        "evidence": "snapshot-entry"
+      },
+      "authentication": {
+        "required": true,
+        "initial_state": "logged_out",
+        "state": "authenticated",
+        "evidence": "snapshot-auth",
+        "test_identity_discovery": {
+          "checked": true,
+          "found": true,
+          "attempted": true,
+          "evidence": "seed-reference",
+          "attempt_evidence": "seeded identity attempt result"
+        },
+        "identity": {
+          "label": "e2e.patient",
+          "ownership_checked": true,
+          "ownership_evidence": "e2e/global-setup.ts recreates its appointment",
+          "owned_by_automation": true,
+          "owner": "deployed e2e gate (playwright global-setup)",
+          "unowned_identity_available": false,
+          "unowned_identity_evidence": "seed defines no other professional account",
+          "walk_window": {
+            "start": "2026-09-25T15:10:00Z",
+            "end": "2026-09-25T15:40:00Z"
+          },
+          "overlap_check": {
+            "checked_at": "2026-09-25T15:41:00Z",
+            "evidence": "gh run list: no e2e run started or completed within 15:10-15:40Z",
+            "overlapping_runs": 0
+          }
+        },
+        "identities": [
+          {
+            "label": "qa.professional",
+            "ownership_checked": true,
+            "ownership_evidence": "no CI workflow or e2e setup uses qa.professional",
+            "owned_by_automation": false
+          }
+        ]
+      },
+      "prerequisites": {
+        "verified": true,
+        "evidence": "snapshot-prerequisites",
+        "items": [
+          {
+            "name": "portal link",
+            "available": true,
+            "obtained_by": "visible control",
+            "evidence": "snapshot-link"
+          }
+        ]
+      },
+      "journey": {
+        "walked": true,
+        "same_actor": true,
+        "same_surface": true,
+        "evidence": "trace-vendor",
+        "steps": [
+          {
+            "page": "Work",
+            "control": "Accept Dispatch",
+            "surface": "Vendor Portal",
+            "observed": true,
+            "evidence": "snapshot-work"
+          }
+        ]
+      },
+      "terminal": {
+        "status": "passed",
+        "evidence": "snapshot-complete"
+      }
+    },
+    "required_codes": [
+      "IDENTITY_SHARING_UNDISCLOSED"
+    ]
   }
 ]

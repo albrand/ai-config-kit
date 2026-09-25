@@ -30,12 +30,14 @@ vendor-specific secret links.
       "attempted": true,
       "evidence": "repository seed/setup reference without credentials"
     },
-    "identity": {
-      "label": "qa.vendor",
-      "ownership_checked": true,
-      "ownership_evidence": "CI workflows and e2e setup/fixtures searched; no suite uses qa.vendor",
-      "owned_by_automation": false
-    }
+    "identities": [
+      {
+        "label": "qa.vendor",
+        "ownership_checked": true,
+        "ownership_evidence": "CI workflows and e2e setup/fixtures searched; no suite uses qa.vendor",
+        "owned_by_automation": false
+      }
+    ]
   },
   "prerequisites": {
     "verified": true,
@@ -85,11 +87,16 @@ before requesting user interaction or declaring authentication blocked.
 
 ## The walk identity
 
-`authentication.identity` is required when `authentication.required` is true
-and the operation is `publish_qa_instructions` or `claim_e2e_complete`. It
-holds a label (an account name or role, never a credential), the evidence
-that CI workflows and e2e setup, fixtures and teardown were searched for it,
-and `owned_by_automation`. An identity an automated suite owns also needs:
+`authentication.identities` is required when `authentication.required` is
+true and the operation is `publish_qa_instructions` or `claim_e2e_complete`:
+one block per persona the walk signed in as. A walk as a professional and a
+patient declares two blocks, and each one is checked on its own. The single
+`authentication.identity` of older packets is still read, as one more block;
+the gate checks every block in either place, so a clean first persona never
+hides a second. Each block holds a label (an account name or role, never a
+credential), the evidence that CI workflows and e2e setup, fixtures and
+teardown were searched for it, and `owned_by_automation`. A block for an
+identity an automated suite owns also needs:
 
 ```json
 "identity": {
@@ -115,7 +122,9 @@ exists, or the evidence that none does is missing), `WALK_WINDOW_MISSING`,
 `OVERLAP_UNCHECKED` (no evidence, or `checked_at` before the walk ended),
 `CONCURRENT_AUTOMATION_RUN`, and `IDENTITY_SHARING_UNDISCLOSED`. In qa-sweep
 repos, `.qa/config.json` `automation_identities` lists the CI identities, and
-the ship gate refuses a packet that declares one of them unowned.
+the ship gate refuses a packet that declares any of them unowned, in
+`identity` or in any `identities` entry.
+
 
 ## Claiming a reached prerequisite blocked
 

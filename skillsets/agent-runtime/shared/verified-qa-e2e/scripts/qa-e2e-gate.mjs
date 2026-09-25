@@ -28,8 +28,30 @@ const isoTime = (value) => (nonEmpty(value) && /^\d{4}-\d{2}-\d{2}T/.test(value)
 // whether an automated suite owns it; an owned identity is allowed only when
 // no unowned one exists, no automated run overlapped the whole walk window
 // (checked after the walk, not only at its start), and the evidence says so.
-function checkIdentityIsolation(identity, failures) {
-  const base = "authentication.identity";
+// A walk may sign in as several personas (meu-psi walks e2e.professional AND
+// e2e.patient). `identities` holds one block per persona; the single
+// `identity` is kept for older packets. Both are read, so a block in either
+// place is checked: with one field only, a second persona went unchecked.
+export function declaredIdentities(authentication) {
+  const out = [];
+  if (authentication?.identity !== undefined) out.push(["authentication.identity", authentication.identity]);
+  const list = authentication?.identities;
+  if (Array.isArray(list)) list.forEach((block, i) => out.push([`authentication.identities[${i}]`, block]));
+  else if (list !== undefined) out.push(["authentication.identities", list]);
+  return out;
+}
+
+function checkIdentities(authentication, failures) {
+  const blocks = declaredIdentities(authentication);
+  if (blocks.length === 0) {
+    failures.push(failure("IDENTITY_MISSING", "authentication.identity",
+      "name each identity the walk used (authentication.identities, one block per persona) and whether an automated suite owns it"));
+    return;
+  }
+  for (const [base, block] of blocks) checkIdentityIsolation(block, base, failures);
+}
+
+function checkIdentityIsolation(identity, base, failures) {
   if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
     failures.push(failure("IDENTITY_MISSING", base, "name the identity the walk used and whether an automated suite owns it"));
     return;
@@ -414,7 +436,8 @@ export function evaluateEvidence(packet) {
       }
     }
 
-    if (packet.authentication?.required === true) checkIdentityIsolation(packet.authentication?.identity, failures);
+    if (packet.authentication?.required === true) checkIdentities(packet.authentication, failures);
+
 
     if (packet.operation === "publish_qa_instructions") {
       requireTrue(packet.external?.authorized, "EXTERNAL_WRITE_UNAUTHORIZED", "external.authorized", "external tracker mutation must be authorized");
@@ -621,6 +644,16 @@ function selftest() {
     if (!evaluateEvidence(owned).failures.some(({ code }) => code === "IDENTITY_MISSING")) {
       throw new Error(`walk without a named identity passed at ${effort}`);
     }
+    // Two personas: an owned, undisclosed second one is not hidden by a clean first one.
+    const patient = { ...ownedIdentity(0), label: "e2e.patient" };
+    delete patient.disclosure;
+    owned.authentication.identities = [unownedIdentity(), patient];
+    if (!evaluateEvidence(owned).failures.some(({ code, path }) => code === "IDENTITY_SHARING_UNDISCLOSED" && path === "authentication.identities[1].disclosure")) {
+      throw new Error(`owned undisclosed second persona passed at ${effort}`);
+    }
+    owned.authentication.identities = [unownedIdentity(), { ...unownedIdentity(), label: "qa.patient" }];
+    if (!evaluateEvidence(owned).ok) throw new Error(`two unowned personas failed at ${effort}`);
+
 
     const blocked = validFixture("claim_e2e_blocked");
 

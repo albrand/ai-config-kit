@@ -65,7 +65,7 @@ Advance in order. Do not draft or publish early and validate afterward.
      would have passed the meu-psi incident), and say in the evidence that the
      identity is shared. A run that overlapped makes the walk invalid: record
      an `environment_contamination` defect naming the writer and walk again.
-     Record all of it in `authentication.identity`
+     Record all of it in `authentication.identities`, one block per persona
      (`references/evidence-contract.md`).
 
    - If no repository identity exists or it cannot work in the target

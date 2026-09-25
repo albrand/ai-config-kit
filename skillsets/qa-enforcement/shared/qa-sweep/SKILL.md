@@ -44,8 +44,9 @@ for the persona, walk with the owned one only when no automated run on the
 same data overlaps the walk. Check running CI before you start, and again
 after you finish for any run whose interval intersected the walk window. Say
 in the evidence that the identity is shared. The evidence packet records all
-of it in `authentication.identity` (verified-qa-e2e evidence contract), and
-the gate refuses a packet that declares a listed identity unowned. Why: on
+of it in `authentication.identities`, one block per persona walked
+(verified-qa-e2e evidence contract), and
+the gate refuses a packet that declares any listed identity unowned. Why: on
 2026-09-25 two interactive walks on meu-psi signed in as the deployed CI
 suite's own e2e identities on the shared preview DB. The suite's setup
 recreated their data mid-walk, the walks changed data under the suite, and a

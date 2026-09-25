@@ -586,6 +586,23 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv=False):
     return doc
 
 
+def declared_identities(auth):
+    """Every identity block in an evidence packet: the legacy single
+    `identity` plus each entry of `identities` (one per persona). Mirrors
+    declaredIdentities() in qa-e2e-gate.mjs, so both gates read the same set."""
+    out = []
+    if not isinstance(auth, dict):
+        return out
+    if "identity" in auth:
+        out.append(auth["identity"])
+    ids = auth.get("identities")
+    if isinstance(ids, list):
+        out.extend(ids)
+    elif ids is not None:
+        out.append(ids)
+    return out
+
+
 def check_e2e(qa, rd, cfg, fails):
     rel = qa + "/evidence.json"
     gate = (cfg or {}).get("e2e_evidence_gate") or E2E_GATE
@@ -603,12 +620,13 @@ def check_e2e(qa, rd, cfg, fails):
     owned = (cfg or {}).get("automation_identities")
     if isinstance(owned, list) and owned:
         try:
-            ident = (json.loads(body).get("authentication") or {}).get("identity") or {}
+            auth = json.loads(body).get("authentication") or {}
         except Exception:
-            ident = {}
-        if isinstance(ident, dict) and ident.get("label") in owned and ident.get("owned_by_automation") is not True:
-            fails.append(f"{rel}: identity '{ident['label']}' is listed in .qa/config.json automation_identities "
-                         f"but the packet says no automated suite owns it")
+            auth = {}
+        for ident in declared_identities(auth):
+            if isinstance(ident, dict) and ident.get("label") in owned and ident.get("owned_by_automation") is not True:
+                fails.append(f"{rel}: identity '{ident['label']}' is listed in .qa/config.json automation_identities "
+                             f"but the packet says no automated suite owns it")
     tmppath = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
@@ -3011,7 +3029,25 @@ def selftest(v4_gate=None, v4_templates=None):
     f9 = []
     check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
     expect(any("automation_identities" in x for x in f9), "a config-listed CI identity declared unowned is refused")
+    pkt2 = {"authentication": {"required": True, "identities": [
+        {"label": "qa.professional", "owned_by_automation": False},
+        {"label": "e2e.patient", "owned_by_automation": False}]}}
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "a config-listed CI identity in identities[1] declared unowned is refused")
+    pkt2["authentication"]["identity"] = {"label": "qa.professional", "owned_by_automation": False}
+    pkt2["authentication"]["identities"] = [{"label": "e2e.patient", "owned_by_automation": False}]
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "identity plus identities: the second persona is still cross-checked")
+    pkt2["authentication"]["identity"] = {"label": "e2e.patient", "owned_by_automation": False}
+    pkt2["authentication"]["identities"] = [{"label": "qa.professional", "owned_by_automation": False}]
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "identity plus identities: the legacy identity is still cross-checked")
+
     pkt["authentication"]["identity"]["owned_by_automation"] = True
+
     f9 = []
     check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
     expect(not any("automation_identities" in x for x in f9), "a config-listed CI identity declared owned passes the cross-check")
