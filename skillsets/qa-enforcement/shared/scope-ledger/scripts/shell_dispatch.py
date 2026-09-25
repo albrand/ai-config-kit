@@ -6,18 +6,21 @@ that merely MENTIONED them was treated as a dispatch: on 2026-09-25 it denied
 Logging or grepping about dispatches is exactly what a coordinator does, and
 a false deny pushes it to reword evidence to get past the gate.
 
-Here a dispatch is only a simple command whose COMMAND WORD is bb, a path
-ending in /bb, or $BB_CLI / ${BB_CLI}, followed by `thread` and a dispatch
+Here a dispatch is only a simple command that RUNS bb (command word bb, a path
+ending in /bb, or $BB_CLI / ${BB_CLI}), followed by `thread` and a dispatch
 verb. Scripts are split into simple commands at unquoted ; && || | & newlines
 and parentheses; $(...) and `...` contents are commands of their own; comments
 are dropped; heredoc bodies are data attached to the command that declared
 them. Words come from shlex. Leading assignments and the wrappers env,
-command, exec, nohup and time are skipped. `sh|bash|zsh|dash|ksh -c '<script>'`,
+command, exec, nohup and time are skipped, and bb as an unquoted word after
+any other command (timeout, xargs, nice, sudo, find -exec) counts. `sh|bash|zsh|dash|ksh -c '<script>'`,
 `eval <words>` and a shell reading a heredoc (`bash <<EOF`) are parsed
 recursively.
 
 Not covered (documented in SKILL.md known limits): a script run from a file
-(`sh dispatch.sh`), a script piped into a shell (`cat x | sh`), and a bb
+(`sh dispatch.sh`), a script piped into a shell (`cat x | sh`), a command
+given to a wrapper as one quoted string (`watch 'bb thread tell ...'`,
+`ssh host 'bb ...'`), and a bb
 invoked through an alias, a function or a variable other than BB_CLI.
 """
 import re
@@ -255,15 +258,27 @@ def dispatches(script, depth=0):
         if base == "eval" and depth < MAX_DEPTH:
             found.extend(dispatches(" ".join(rest), depth + 1))
             continue
-        if not is_bb(head):
-            continue
-        # `thread` is the subcommand, after at most a few global options
-        # (`bb --json thread tell`, `bb --host h thread spawn`).
-        for j, a in enumerate(rest[:4]):
-            if a == "thread":
-                if j + 1 < len(rest) and rest[j + 1] in DISPATCH_VERBS:
-                    found.append((text, list(cmd.heredocs), rest[j + 1]))
-                break
-            if not a.startswith("-") and not (j and rest[j - 1].startswith("-")):
+        # bb as the command word, or as an unquoted word after any other
+        # command that runs its arguments (timeout, xargs, nice, sudo, stdbuf,
+        # find -exec, ...). Quoted text is one shlex word, so a sentence that
+        # mentions a dispatch never matches.
+        for b in [k] if is_bb(head) else [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
+            verb = _thread_verb(w[b + 1:])
+            if verb:
+                found.append((text, list(cmd.heredocs), verb))
                 break
     return found
+
+
+def _thread_verb(rest):
+    """The dispatch verb when `rest` (the words after bb) is `thread <verb>`,
+    after at most a few global options (`--json`, `--host h`)."""
+    for j, a in enumerate(rest[:4]):
+        if a == "thread":
+            if j + 1 < len(rest) and rest[j + 1] in DISPATCH_VERBS:
+                return rest[j + 1]
+            return None
+        if not a.startswith("-") and not (j and rest[j - 1].startswith("-")):
+            return None
+    return None
+

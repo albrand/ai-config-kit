@@ -46,9 +46,11 @@ after the QA ship gate.
 - Only an invocation counts: the command is split into simple commands
   (`scripts/shell_dispatch.py`), and `bb` must be the command word (after
   `;` `&&` `||` `|`, inside `$(...)` or backticks, after `env`, `command`,
-  `exec`, assignments, or inside `sh -c '...'` / `eval`). The same words in a
-  quoted argument (`printf`, `echo`, `grep`, `git commit -m`), a comment or a
-  heredoc written to a file are data and pass.
+  `exec`, assignments, or inside `sh -c '...'` / `eval`), or an unquoted word
+  after a wrapper that runs it (`timeout`, `xargs`, `nice`, `sudo`,
+  `find -exec`). The same words in a quoted argument (`printf`, `echo`,
+  `grep`, `git commit -m`), a comment or a heredoc written to a file are data
+  and pass.
 - Every such dispatch must carry one of (each dispatch its own; a `serves:`
   in a sibling command does not cover it):
   - `serves: P<n>`, where P<n> is an **open** purpose;
@@ -103,8 +105,10 @@ and the successor's file is kept as `<successor>.json.returned-<ms>`.
   scope pretool hook in `~/.agent-hooks` (`coordinator-hook-pretool.sh`). Re-run
   `hooks/install-scope-gate.sh` after installing from that branch.
 - Not parsed: a script run from a file (`sh dispatch.sh`), a script piped into
-  a shell (`cat x | sh`), and `bb` reached through an alias, a function or a
-  variable other than `BB_CLI`.
+  a shell (`cat x | sh`), a command handed to a wrapper as one quoted string
+  (`watch 'bb thread tell ...'`, `ssh host 'bb ...'`), and `bb` reached
+  through an alias, a function or a variable other than `BB_CLI`.
+
 
 ## Tests
 
