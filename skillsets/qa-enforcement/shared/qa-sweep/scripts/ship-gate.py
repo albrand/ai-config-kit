@@ -129,8 +129,13 @@ PFLAG_FALSE = {"false", "0", "f", "F", "FALSE", "False"}
 # command shares this budget and an expired budget denies.
 VERCEL_VALUE_FLAGS = {"-S", "--scope", "-T", "--team", "-t", "--token", "--cwd", "-A", "--local-config",
                       "-Q", "--global-config", "--timeout", "--target", "-e", "--env", "-b", "--build-env",
-                      "-m", "--meta", "--archive"}
+                      "-m", "--meta", "--archive", "--dpl"}
 PROMOTE_ID_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/([^/?#\s'\"]+)")
+# the API forms of `vercel alias set <deployment> <domain>` (a production
+# domain pointed at any deployment ships it) and of `vercel redeploy` (a
+# deployments POST whose body names the deployment to rebuild)
+ALIAS_API_RE = re.compile(r"/v\d+/deployments/([^/?#\s'\"]+)/aliases")
+DEPLOYMENT_ID_BODY_RE = re.compile(r"""["']?deploymentId["']?\s*[:=]\s*["']?([A-Za-z0-9_.-]+)""")
 DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
 LOOKUP_BUDGET_S = 3.2
@@ -1045,7 +1050,7 @@ def api_deploy_post(seg, command, cwd):
     this classifier."""
     tool = "vercel" if seg[0] == "vercel" else "curl"
     toks = seg[2:] if tool == "vercel" else seg[1:]
-    urls = [t for t in toks if DEPLOY_CREATE_RE.search(t) or PROMOTE_API_RE.search(t)]
+    urls = [t for t in toks if DEPLOY_CREATE_RE.search(t) or PROMOTE_API_RE.search(t) or ALIAS_API_RE.search(t)]
     if not urls:
         return False
     body_flags, method_flags = API_BODY_FLAGS[tool], API_METHOD_FLAGS[tool]
@@ -1083,12 +1088,15 @@ def api_deploy_post(seg, command, cwd):
     if not (method == "POST" or (method is None and has_body)):
         return None
     texts.append(command)
-    promotes = [u for u in urls if PROMOTE_API_RE.search(u)]
-    if promotes:
-        ids = [(PROMOTE_ID_RE.search(u) or [None, ""])[1] for u in promotes]
+    # promote and alias POSTs ship the deployment named in the URL
+    ids = [(PROMOTE_ID_RE.search(u) or ALIAS_API_RE.search(u) or [None, ""])[1]
+           for u in urls if PROMOTE_API_RE.search(u) or ALIAS_API_RE.search(u)]
+    if ids:
         return {"promote": ids, "urls": urls, "texts": texts}
     if any(PROD_TARGET_RE.search(t) for t in texts):
-        return {"promote": [], "urls": urls, "texts": texts}
+        # a production create naming deploymentId is a redeploy of that one
+        redeploys = [m.group(1) for t in texts for m in DEPLOYMENT_ID_BODY_RE.finditer(t)]
+        return {"promote": list(dict.fromkeys(redeploys)), "urls": urls, "texts": texts}
     return None
 
 
@@ -1348,6 +1356,19 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
             if sub == "promote" and pos[1:2] == ["status"]:
                 return None, [], set()
             return deployment_ship(root, pos[1:2], vercel_team_query(vals, [], cwd, root), cwd)
+        # pointing a domain at a deployment ships it (`vercel alias [set] <deployment> <alias>`;
+        # the one-argument form picks a deployment the hook cannot see, so it denies);
+        # a rolling release starts shipping the deployment given by --dpl
+        if sub == "alias":
+            rest = pos[1:]
+            if rest[:1] == ["set"]:
+                rest = rest[1:]
+            elif not rest or rest[0] in ("ls", "list", "rm", "remove"):
+                return None, [], set()
+            return deployment_ship(root, rest[:1] if len(rest) > 1 else [""],
+                                   vercel_team_query(vals, [], cwd, root), cwd)
+        if sub in ("rolling-release", "rr") and pos[1:2] == ["start"]:
+            return deployment_ship(root, [vals.get("--dpl", "")], vercel_team_query(vals, [], cwd, root), cwd)
         if _vercel_prod_flag(seg):
             return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
         return None, [], set()
@@ -2577,6 +2598,15 @@ def selftest(v4_gate=None, v4_templates=None):
           "promote API (vercel api, scope from .vercel/project.json)", U)
     deny5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json',
           "production API create whose gitSource is unwalked", U)
+    deny5(r9, "vercel alias set dpl_unwalked app.example.com", "vercel alias set to an unwalked deployment", U)
+    deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
+    deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
+          "no deployment id")
+    deny5(r9, "curl -X POST 'https://api.vercel.com/v2/deployments/dpl_unwalked/aliases?teamId=team_fx' "
+              "-d '{\"alias\":\"app.example.com\"}'", "alias API on an unwalked deployment", U)
+    deny5(r9, "vercel api /v13/deployments -X POST -F name=app -F deploymentId=dpl_unwalked -F target=production",
+          "production API redeploy (deploymentId) of an unwalked deployment", U)
+    deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
     deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_slow", "lookup past the hook budget", "timed out")
@@ -2609,6 +2639,10 @@ def selftest(v4_gate=None, v4_templates=None):
     allow5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body-w.json',
            "production API create whose gitSource is walked")
     allow5(r9, "vercel promote status", "vercel promote status (read-only)")
+    allow5(r9, "vercel alias set dpl_walked app.example.com", "vercel alias set to a walked deployment")
+    allow5(r9, "vercel api /v13/deployments -X POST -F name=app -F deploymentId=dpl_walked -F target=production",
+           "production API redeploy (deploymentId) of a walked deployment")
+    allow5(r9, "vercel alias ls", "control: vercel alias ls (read-only)")
     allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
     allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")
 
@@ -2786,7 +2820,7 @@ def coarse_ship(text):
     closed), never allow. Coarser than the classifier on purpose."""
     return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
-                     r"vercel\s+(promote|redeploy)|/v\d+/deployments|/v\d+/projects/\S+/promote/", text)
+                     r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/", text)
 
 
 if __name__ == "__main__":

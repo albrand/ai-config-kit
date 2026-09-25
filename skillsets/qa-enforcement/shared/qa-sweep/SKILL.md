@@ -167,7 +167,9 @@ allowance. A walked HEAD cannot clear an unwalked tag, and a walked tag cannot
 hide an unwalked branch pushed next to it.
 
 **Deployments ship their own commit (v5).** `vercel promote <deployment>`,
-`vercel redeploy <deployment>` and the promote API ship a deployment that
+`vercel redeploy <deployment>`, `vercel alias [set] <deployment> <domain>`,
+`vercel rolling-release start --dpl <deployment>`, the promote and alias APIs,
+and a production deployments POST naming `deploymentId` ship a deployment that
 already exists, so the gate resolves the commit Vercel built it from (one
 read-only `vercel api /v13/deployments/<id|url>` through the CLI's own login,
 scoped by `--scope`, the URL's `teamId`, or `.vercel/project.json`) and needs a
