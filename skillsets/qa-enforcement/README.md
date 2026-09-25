@@ -62,3 +62,13 @@ for h in ~/.agents ~/.bb ~/.claude ~/.codex; do rm -rf "$h/skills/qa-sweep"; don
    because rewalk.sha must equal the pushed SHA.
 
 `meaningful-tests` points here instead of carrying the pipeline as prose.
+
+## Scope gate (2026-09-25)
+
+`shared/scope-ledger/` holds the scope ledger skill and `scripts/scope-gate.py`, and
+`hooks/scope-gate-hook.sh` is chained in `coordinator-hook-pretool.sh` after the ship gate.
+From a thread that has a ledger (`~/.local/state/agent-quality/scope/<thread>.json`), a
+spawn or tell must carry `serves: P<n>` for an open purpose, or `serves: revision "<quote>"`.
+Threads without a ledger are never gated. Install with `hooks/install-scope-gate.sh`; it
+does not reinstall qa-sweep. The fleet plugin reads the same ledger for its idle guard and
+archive hold (fleet `lib/scope.ts`).
