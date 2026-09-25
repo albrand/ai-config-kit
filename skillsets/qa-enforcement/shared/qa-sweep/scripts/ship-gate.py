@@ -155,9 +155,15 @@ LOOKUP_BUDGET_S = 3.2
 _LOOKUP_DEADLINE = None
 # the whole PreToolUse decision must land before the host's 5 s timeout (a
 # timed-out hook lets the command run): lookups and deployed checks are
-# clamped to what is left, and a commit reached after the deadline denies
-HOOK_BUDGET_S = 4.0
+# clamped to what is left, and a commit reached after the deadline denies.
+# That soft budget cannot bound uncapped work (git calls, process start-up on
+# a loaded host: 6.0 s measured 2026-09-25), so a hard SIGALRM at
+# HOOK_HARD_S decides on the spot: deny for a ship in an opted-in repo,
+# allow otherwise (the same fail-open/fail-closed rule as a crash).
+HOOK_BUDGET_S = 3.8
+HOOK_HARD_S = 4.2
 _HOOK_DEADLINE = None
+_HOOK_OPTED = False
 
 
 def time_left():
@@ -1176,7 +1182,7 @@ def deployment_commit(root, ref, team, cwd):
     now = time.monotonic()
     if _LOOKUP_DEADLINE is None:
         _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
-    left = min(_LOOKUP_DEADLINE - now, time_left() - 1.0)  # leave ~1 s to check the commit
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)  # leave time to check the commit
     if left < 0.3:
         return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
                       "ship one deployment per command" % (host, LOOKUP_BUDGET_S))
@@ -1532,10 +1538,38 @@ def pr_head_sha(root, args):
     return None
 
 
+def _hard_deadline(signum, frame):
+    """SIGALRM at HOOK_HARD_S: decide now, before the host times the hook out."""
+    if _HOOK_OPTED and coarse_ship(_LAST_INPUT or ""):
+        reason = ("[qa-ship-gate] Ship denied: the gate could not finish within %.1f s (the host's hook "
+                  "timeout is 5 s, and a timed-out hook lets the command run); retry, or ship one target "
+                  "per command" % HOOK_HARD_S)
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                            "permissionDecision": "deny",
+                                                            "permissionDecisionReason": reason}}) + "\n")
+        sys.stdout.flush()
+        sys.stderr.write(reason + "\n")
+        sys.stderr.flush()
+        os._exit(2)
+    os._exit(0)
+
+
 def hook(raw=None):
-    """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
-    global _LAST_INPUT, _HOOK_DEADLINE
+    """PreToolUse adapter under a hard deadline (see HOOK_HARD_S)."""
+    global _HOOK_DEADLINE
     _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S
+    import signal
+    signal.signal(signal.SIGALRM, _hard_deadline)
+    signal.setitimer(signal.ITIMER_REAL, HOOK_HARD_S)
+    try:
+        return _hook(raw)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _hook(raw=None):
+    """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
+    global _LAST_INPUT, _HOOK_OPTED
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -1555,6 +1589,7 @@ def hook(raw=None):
     targets = [r for r in ship_target_roots(command, cwd) if opted_in(r)]
     if not targets:
         return 0
+    _HOOK_OPTED = True  # from here the hard deadline denies ship-shaped commands
     cfgs = {}
     for root in targets:
         try:
@@ -2773,6 +2808,21 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(p.returncode == 2 and took < 4.8,
            "v5 DENY  slow lookup + hanging deployed_check decides in %.1f s (< 4.8 s) [%s]"
            % (took, " ".join(p.stderr.split())[-90:]))
+    # hard deadline: work no soft clamp bounds (every git call 0.3 s slower,
+    # as on a loaded host) must still end in a deny before the host timeout
+    slow_git = os.path.join(tmp, "slow-git")
+    os.makedirs(slow_git)
+    with open(os.path.join(slow_git, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nsleep 0.3\nexec %s \"$@\"\n" % shutil.which("git"))
+    os.chmod(os.path.join(slow_git, "git"), 0o755)
+    sh("git checkout -q main", cwd=r9)
+    t0 = time.monotonic()
+    p = hook5(r9, "git push origin main", env={"PATH": slow_git + os.pathsep + os.environ["PATH"]})
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and "could not finish within" in p.stderr and took < 4.8,
+           "v5 DENY  slow host: hard deadline denies a normally allowed push in %.1f s (< 4.8 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
+    sh("git checkout -q feat", cwd=r9)
     allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
     allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")
 
