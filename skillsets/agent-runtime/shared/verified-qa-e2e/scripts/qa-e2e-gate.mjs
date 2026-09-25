@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const OPERATIONS = new Set([
   "publish_qa_instructions",
@@ -561,4 +561,16 @@ function main() {
   process.exit(result.ok ? 0 : 1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// Node resolves import.meta.url to the realpath while argv[1] keeps the spelling
+// it was invoked with, so a symlinked install (/var -> /private/var on macOS)
+// never matched a literal comparison and exited 0 having evaluated nothing.
+function isEntryModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  }
+}
+
+if (isEntryModule()) main();
