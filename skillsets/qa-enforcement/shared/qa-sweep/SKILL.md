@@ -180,7 +180,14 @@ times out at 5 s), the deployment has no git metadata or was built dirty, or
 its commit is not in the clone (`git fetch`). A production deployments-API
 create whose body names a `gitSource` is checked at that commit, not HEAD. An
 upload deploy (`vercel --prod`, `netlify deploy --prod`, `fly deploy`) ships the
-working tree, so uncommitted changes outside `.qa/` deny it.
+working tree, so uncommitted changes outside `.qa/` deny it. GitHub API writes
+that ship (`gh api` or curl to api.github.com: a PR merge, `merges`, release
+create/publish, ref create/update, contents commits, workflow/repository
+dispatch, deployments, and the GraphQL merge/ref/commit mutations) deny
+outright: use the gated CLI form (`gh pr merge`, `gh release create|edit`,
+`git push`, `gh workflow run`) so the shipped commit is checked. Reads and
+deletes stay free. The whole hook decision is budgeted at 4.0 s, under the
+host's 5 s hook timeout; anything that cannot finish in time denies.
 
 **Releases after a merge (tree equivalence).** A release tag normally points at
 the squash or merge commit on the default branch, which is never the walked PR

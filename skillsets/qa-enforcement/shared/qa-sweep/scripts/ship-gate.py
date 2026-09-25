@@ -138,8 +138,32 @@ ALIAS_API_RE = re.compile(r"/v\d+/deployments/([^/?#\s'\"]+)/aliases")
 DEPLOYMENT_ID_BODY_RE = re.compile(r"""["']?deploymentId["']?\s*[:=]\s*["']?([A-Za-z0-9_.-]+)""")
 DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
+# GitHub REST/GraphQL writes that ship without a CLI form the gate can check
+# (gh api / curl api.github.com): merging a PR, merging branches, creating or
+# publishing a release, creating or moving a ref, committing file contents,
+# dispatching a workflow, creating a deployment. The commit they ship is not
+# decidable locally, so they DENY outright and name the gated CLI form.
+GITHUB_WRITE_RE = re.compile(
+    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(pulls/\d+/merge|merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
+    r"actions/workflows/[^/\s]+/dispatches|dispatches|contents/[^\s?#]*|deployments)(?:[?#]|$)")
+GITHUB_GRAPHQL_WRITE_RE = re.compile(
+    r"\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch|createRef|updateRef|updateRefs|"
+    r"createCommitOnBranch)\b")
+GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
+                      "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
 _LOOKUP_DEADLINE = None
+# the whole PreToolUse decision must land before the host's 5 s timeout (a
+# timed-out hook lets the command run): lookups and deployed checks are
+# clamped to what is left, and a commit reached after the deadline denies
+HOOK_BUDGET_S = 4.0
+_HOOK_DEADLINE = None
+
+
+def time_left():
+    """Seconds left in this hook invocation (infinite outside hook())."""
+    return float("inf") if _HOOK_DEADLINE is None else _HOOK_DEADLINE - time.monotonic()
+
 GH_WORKFLOW_VALUE_FLAGS = {"-r", "--ref", "-f", "--raw-field", "-F", "--field", "-R", "--repo"}
 # wrappers that run a command unchanged: stripped before classification so
 # `FOO=1 vercel --prod`, `npx vercel@latest --prod` or `env gh pr merge 5`
@@ -568,7 +592,8 @@ def check_e2e(qa, rd, cfg, fails):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
             tf.write(body)
             tmppath = tf.name
-        proc = subprocess.run(["node", gate, "check", tmppath], capture_output=True, text=True, timeout=20)
+        proc = subprocess.run(["node", gate, "check", tmppath], capture_output=True, text=True,
+                              timeout=max(0.5, min(20, time_left())))
     except Exception as exc:
         fails.append(f"qa-e2e-gate.mjs could not run: {exc}")
         return
@@ -603,7 +628,7 @@ def check_deployed(root, cfg, sha, fails):
         import urllib.request
         target = url.replace("{sha}", sha or "")
         try:
-            with urllib.request.urlopen(target, timeout=3) as resp:
+            with urllib.request.urlopen(target, timeout=max(0.5, min(3, time_left()))) as resp:
                 if resp.status not in (200, 204):
                     fails.append(f"deployed check HTTP {resp.status} for {target}")
         except Exception as exc:
@@ -613,7 +638,7 @@ def check_deployed(root, cfg, sha, fails):
     if cmd:
         try:
             proc = subprocess.run([cmd], shell=True, cwd=root, capture_output=True, text=True,
-                                  timeout=dc.get("timeout_s", 3))
+                                  timeout=max(0.5, min(dc.get("timeout_s", 3), time_left())))
             if proc.returncode != 0:
                 fails.append(f"deployed check exited {proc.returncode}: {(proc.stdout or proc.stderr).strip()[:200]}")
         except subprocess.TimeoutExpired:
@@ -1123,6 +1148,8 @@ def vercel_team_query(vals, urls, cwd, root):
     start = vals.get("--cwd")
     d = os.path.abspath(os.path.join(cwd, os.path.expanduser(start)) if start else cwd)
     stop = os.path.abspath(root)
+    if d != stop and not d.startswith(stop + os.sep):
+        d = stop  # `cd <repo> && vercel ...` / `git -C`: the payload cwd is elsewhere
     while True:
         for name in ("project.json", "repo.json"):
             try:
@@ -1149,7 +1176,7 @@ def deployment_commit(root, ref, team, cwd):
     now = time.monotonic()
     if _LOOKUP_DEADLINE is None:
         _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
-    left = _LOOKUP_DEADLINE - now
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 1.0)  # leave ~1 s to check the commit
     if left < 0.3:
         return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
                       "ship one deployment per command" % (host, LOOKUP_BUDGET_S))
@@ -1255,6 +1282,51 @@ def upload_dirty(root):
                                                             " ..." if len(paths) > 5 else "")]
 
 
+def github_api_write(seg, command):
+    """Deny reason for a GitHub API write that ships (`gh api`, curl to
+    api.github.com), else None. Method: explicit -X/--method/--request, else
+    POST when a field or body flag is present, else GET. GET, HEAD and
+    DELETE pass: reading and deleting ship no code."""
+    gh = seg[0] == "gh"
+    toks = seg[2:] if gh else seg[1:]
+    if gh:
+        pos, vals = _positionals(toks, GH_API_VALUE_FLAGS)
+        endpoint = pos[0] if pos else ""
+        method = (vals.get("-X") or vals.get("--method") or "").upper()
+        has_body = any(k in vals for k in ("-f", "--raw-field", "-F", "--field", "--input"))
+    else:
+        urls = [t for t in toks if "api.github.com" in t]
+        if not urls:
+            return None
+        endpoint, method, has_body = urls[0], "", False
+        for i, t in enumerate(toks):
+            if t in ("-X", "--request") and i + 1 < len(toks):
+                method = toks[i + 1].upper()
+            elif t.startswith("--request="):
+                method = t.split("=", 1)[1].upper()
+            elif (t.split("=", 1)[0] in API_BODY_FLAGS["curl"]
+                  or (len(t) > 2 and t[1] != "-" and t[:2] in API_BODY_FLAGS["curl"])):
+                has_body = True
+    for t in toks:
+        if len(t) > 2 and t.startswith("-X"):
+            method = t[2:].upper()  # attached -XPOST (curl and pflag)
+    method = method or ("POST" if has_body else "GET")
+    if method in ("GET", "HEAD", "DELETE"):
+        return None
+    path = endpoint.split("api.github.com", 1)[-1]
+    if re.search(r"(?:^|/)graphql(?:[?#]|$)", path):
+        m = GITHUB_GRAPHQL_WRITE_RE.search(" ".join(toks) + "\n" + command)
+        what = "GraphQL %s" % m.group(1) if m else None
+    else:
+        m = GITHUB_WRITE_RE.search(path)
+        what = "%s %s" % (method, _redact(path)[:80]) if m else None
+    if not what:
+        return None
+    return ("GitHub API write (%s) ships code the gate cannot tie to a commit: use the gated CLI form "
+            "(gh pr merge, gh release create|edit, git push, gh workflow run) so the shipped commit is "
+            "checked" % what)
+
+
 def _vercel_prod_flag(seg):
     """`--prod`, or `--target production` / `--target=production`."""
     for i, t in enumerate(seg):
@@ -1326,6 +1398,9 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
         if seg[1] == "release" and seg[2] == "create":
             c = release_commit(root, seg[3:])
             return "deploy", [c], {c}
+        if seg[1] == "api":
+            why = github_api_write(seg, command)
+            return ("deploy", [], set(), [why], set()) if why else (None, [], set())
         if seg[1] == "release" and seg[2] == "edit":
             ships, c, why = release_edit_commit(root, seg[3:])
             if not ships:
@@ -1377,6 +1452,9 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
     if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
         return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
     if head in ("curl", "curl.exe"):
+        why = github_api_write(seg, command)
+        if why:
+            return "deploy", [], set(), [why], set()
         info = api_deploy_post(seg, command, cwd)
         return api_ship(root, info, cwd) if info else (None, [], set())
     return None, [], set()
@@ -1456,7 +1534,8 @@ def pr_head_sha(root, args):
 
 def hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
-    global _LAST_INPUT
+    global _LAST_INPUT, _HOOK_DEADLINE
+    _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -1507,7 +1586,7 @@ def hook(raw=None):
         # rather than its own, so HEAD's committed records are tried too,
         # freshness still judged against the deployment's commit. Anything
         # that could not be resolved (plans[root][3]) denies outright.
-        shas, problems, prov = list(plans[root][1]), plans[root][3], plans[root][4]
+        shas, problems, prov_shas = list(plans[root][1]), plans[root][3], plans[root][4]
         if kind == "merge" and merge_args is not None:
             shas.insert(0, pr_head_sha(root, merge_args) or head_commit(root))
         if not shas and not problems:
@@ -1515,9 +1594,14 @@ def hook(raw=None):
         ok, fails, stats = not problems, list(problems), {"rows_total": 0, "clusters": 0, "open_rows": 0}
         many = len(shas) + len(problems) > 1
         for sha in shas:
+            if time_left() <= 0:
+                ok = False
+                fails.append("[%s] gate time budget (%.1f s, under the host's 5 s hook timeout) was spent "
+                             "before this commit was checked; retry" % ((sha or "HEAD")[:12], HOOK_BUDGET_S))
+                break
             o, f, s, _ = check_all(root, sha or None, equiv=bool(sha) and sha in plans[root][2])
-            h = head_commit(root) if sha in prov else ""
-            if not o and h and h != sha:
+            h = head_commit(root) if sha in prov_shas else ""
+            if not o and h and h != sha and time_left() > 0:
                 o2, f2, s2, _ = check_all(root, sha, equiv=True, evidence=h)
                 if o2:
                     o, f, s = o2, f2, s2
@@ -1781,6 +1865,7 @@ def selftest(v4_gate=None, v4_templates=None):
                  "if 'teamId=team_fx' not in q.split('&') or ref not in fx:\n"
                  "    sys.stderr.write('Error: Deployment not found (404)\\n')\n"
                  "    sys.exit(1)\n"
+                 "time.sleep(fx[ref].get('_sleep', 0))\n"
                  "print(json.dumps(fx[ref]))\n")
     os.chmod(os.path.join(stub_bin, "vercel"), 0o755)
     old_path = os.environ.get("PATH", "")
@@ -2624,6 +2709,20 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "gh release edit vgood --draft=false --tag vbad", "gh release edit moving to an unwalked tag", U)
     deny5(r9, "gh release edit vnope --draft=false", "gh release edit of a tag not in the clone",
           "not in this clone")
+    gw = "GitHub API write"
+    deny5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge", gw)
+    deny5(r9, "gh api repos/{owner}/{repo}/releases -f tag_name=v9", "gh api release create (fields imply POST)", gw)
+    deny5(r9, "gh api -X PATCH repos/o/r/releases/123 -F draft=false", "gh api release publish", gw)
+    deny5(r9, "gh api repos/o/r/git/refs -f ref=refs/tags/v9 -f sha=abc", "gh api ref create", gw)
+    deny5(r9, "gh api -XPOST repos/o/r/actions/workflows/deploy.yml/dispatches -f ref=main",
+          "gh api workflow dispatch", gw)
+    deny5(r9, "gh api repos/o/r/merges -f base=main -f head=feat", "gh api branch merge", gw)
+    deny5(r9, "gh api -X PUT repos/o/r/contents/f.txt -f message=m -f content=eA==", "gh api contents commit", gw)
+    deny5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
+              "{ clientMutationId } }'", "gh api graphql mergePullRequest", gw)
+    deny5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
+          "curl PR merge", gw)
+    deny5(r9, "curl -d '{\"tag_name\":\"v9\"}' https://api.github.com/repos/o/r/releases", "curl release create", gw)
     allow5(r9, "vercel --prod", "control: upload deploy of a clean walked HEAD")
     with open(os.path.join(r9, "f.txt"), "a") as fh:
         fh.write("dirty\n")
@@ -2643,6 +2742,37 @@ def selftest(v4_gate=None, v4_templates=None):
     allow5(r9, "vercel api /v13/deployments -X POST -F name=app -F deploymentId=dpl_walked -F target=production",
            "production API redeploy (deploymentId) of a walked deployment")
     allow5(r9, "vercel alias ls", "control: vercel alias ls (read-only)")
+    allow5(r9, "gh api repos/o/r/releases", "control: gh api release list (GET)")
+    allow5(r9, "gh api repos/o/r/pulls/5/merge", "control: gh api is-merged check (GET)")
+    allow5(r9, "gh api graphql -f query='query { viewer { login } }'", "control: gh api graphql query")
+    allow5(r9, "gh api -X DELETE repos/o/r/git/refs/heads/old", "control: gh api branch delete")
+    allow5(r9, "curl https://api.github.com/repos/o/r/releases", "control: curl GitHub GET")
+
+    # the decision must land inside the host's 5 s hook timeout (a timed-out
+    # hook lets the command run): a 2.5 s lookup followed by a deployed_check
+    # that hangs for 10 s must still deny in time
+    r12 = os.path.join(tmp, "v5budget")
+    os.makedirs(os.path.join(r12, ".qa"))
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r12)
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "deployed_check": {"command": "sleep 10", "timeout_s": 10}},
+              open(os.path.join(r12, ".qa", "config.json"), "w"))
+    open(os.path.join(r12, "f.txt"), "w").write("x\n")
+    sh("git add -A && git commit -qm base", cwd=r12)
+    code12 = sh("git rev-parse HEAD", cwd=r12).stdout.strip()
+    write_run(r12, "w", code12)
+    sh("git add .qa && git commit -qm evidence -- .qa", cwd=r12)
+    os.makedirs(os.path.join(r12, ".vercel"))
+    json.dump({"orgId": "team_fx"}, open(os.path.join(r12, ".vercel", "project.json"), "w"))
+    fx = json.load(open(os.path.join(stub_bin, "deployments.json")))
+    fx["dpl_budget"] = dict(git_dep(code12), _sleep=2.5)
+    json.dump(fx, open(os.path.join(stub_bin, "deployments.json"), "w"))
+    t0 = time.monotonic()
+    p = hook5(r12, "vercel promote dpl_budget")
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and took < 4.8,
+           "v5 DENY  slow lookup + hanging deployed_check decides in %.1f s (< 4.8 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
     allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
     allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")
 
@@ -2820,7 +2950,9 @@ def coarse_ship(text):
     closed), never allow. Coarser than the classifier on purpose."""
     return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
-                     r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/", text)
+                     r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
+                     r"repos/\S+/(pulls/\d+/merge|merges|releases|git/refs|dispatches|contents/|deployments)|"
+                     r"mergePullRequest|createCommitOnBranch|updateRef", text)
 
 
 if __name__ == "__main__":
