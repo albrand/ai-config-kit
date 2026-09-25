@@ -51,6 +51,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 HOME = os.path.expanduser("~")
 # QA_GATE_EVENTS_FILE overrides the sink: tests, demos and probes MUST point it
@@ -112,7 +113,28 @@ API_METHOD_FLAGS = {"curl": {"-X", "--request"}, "vercel": {"-X", "--method"}}
 BODY_FILE_MAX = 256 * 1024
 # gh subcommand flags that take a value (so the positional parse skips it)
 GH_RELEASE_VALUE_FLAGS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--notes-start-tag",
-                          "--target", "--discussion-category", "-R", "--repo"}
+                          "--target", "--discussion-category", "-R", "--repo", "--tag"}
+# pflag's false spellings: `gh release edit --draft=false` publishes a draft
+# (`--draft false` does not: a bare bool flag takes no separate value)
+PFLAG_FALSE = {"false", "0", "f", "F", "FALSE", "False"}
+# ---- v5 (card 11): deployment provenance ------------------------------------
+# `vercel promote|redeploy <deployment>` and the promote API ship a deployment
+# that already exists; its code is the commit Vercel built it from, not the
+# local HEAD. The gate resolves that commit through the vercel CLI's own login
+# (read-only GET /v13/deployments/<id|url>; the hook never reads, prints or
+# forwards a token) and requires a fresh run for its tree. Unresolvable
+# provenance (unknown deployment, CLI missing or offline, no git metadata, a
+# dirty build, a commit not in this clone) DENIES. The PreToolUse hook runs
+# under a 5 s timeout and a timed-out hook proceeds, so every lookup in one
+# command shares this budget and an expired budget denies.
+VERCEL_VALUE_FLAGS = {"-S", "--scope", "-T", "--team", "-t", "--token", "--cwd", "-A", "--local-config",
+                      "-Q", "--global-config", "--timeout", "--target", "-e", "--env", "-b", "--build-env",
+                      "-m", "--meta", "--archive"}
+PROMOTE_ID_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/([^/?#\s'\"]+)")
+DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
+LOOKUP_BUDGET_S = 3.2
+_LOOKUP_DEADLINE = None
 GH_WORKFLOW_VALUE_FLAGS = {"-r", "--ref", "-f", "--raw-field", "-F", "--field", "-R", "--repo"}
 # wrappers that run a command unchanged: stripped before classification so
 # `FOO=1 vercel --prod`, `npx vercel@latest --prod` or `env gh pr merge 5`
@@ -264,13 +286,16 @@ def qa_run_dirs(root, sha=None, rd=None):
     return dirs
 
 
-def resolve_run(root, sha, rd, equiv=False):
+def resolve_run(root, sha, rd, equiv=False, listing=None):
     """(dir, None) for the one run re-walked at `sha` (or at its parent under
     a .qa/-only head; with equiv, at a commit whose tree outside .qa/ is
     identical -- used only when no sha/parent match exists); (None, failure)
     when none or several match. A single candidate is returned as is, so the
-    legacy flat layout and a lone run behave exactly as before."""
-    cands = qa_run_dirs(root, sha, rd)
+    legacy flat layout and a lone run behave exactly as before. `listing`
+    (v5): the commit whose tree holds the records when it is not `sha`
+    itself (a deployment built from a code commit whose run was committed
+    later); it is the commit `rd` reads from."""
+    cands = qa_run_dirs(root, listing or sha, rd)
     if len(cands) == 1:
         return cands[0], None
     seen, matches, equiv_matches = [], [], []
@@ -594,20 +619,23 @@ def check_deployed(root, cfg, sha, fails):
         fails.append(".qa/config.json deployed_check needs a url template or a command")
 
 
-def check_all(root, sha=None, equiv=False):
+def check_all(root, sha=None, equiv=False, evidence=None):
     """Return (ok, failures, stats, cfg). Never raises. Artifacts are read
     from the shipped commit's tree when sha is resolvable (v3). equiv (v4):
     the walk may sit on a commit whose tree outside .qa/ equals the shipped
-    one -- only for tags, releases and default-branch dispatches."""
+    one -- only for tags, releases, default-branch dispatches and (v5)
+    deployments resolved to their source commit. evidence (v5): read the
+    records from this commit's tree instead (committed records only, never
+    the working tree); freshness is still judged against `sha`."""
     fails, stats = [], {"rows_total": 0, "open_rows": 0, "predates_count": 0, "clusters": 0,
                         "rewalk_steps": 0, "rewalk_failed": 0}
     cfg = None
     try:
         if not sha:
             sha = run_git(root, "rev-parse", "HEAD").stdout.strip() or None
-        rd = qa_reader(root, sha)
+        rd = qa_reader(root, evidence or sha)
         cfg = check_config(root, rd, fails)
-        qa, err = resolve_run(root, sha, rd, equiv)
+        qa, err = resolve_run(root, sha, rd, equiv, evidence)
         if err:
             fails.append(err)
             return (False, fails, stats, cfg)
@@ -949,6 +977,26 @@ def release_commit(root, toks):
     return remote_commit(root, default_branch(root)) or head_commit(root)
 
 
+def release_edit_commit(root, toks):
+    """(ships, commit, problem) for `gh release edit <tag>`. It ships when it
+    publishes a draft (--draft=false in any pflag spelling) or moves the
+    release to another tag (--tag). The commit is the release's tag (--tag
+    when given) as this clone has it, else --target as the remote knows it.
+    No default-branch fallback: a draft's stored target is not visible
+    locally, and guessing it is the "checked the wrong commit" defect."""
+    pos, vals = _positionals(toks, GH_RELEASE_VALUE_FLAGS)
+    if vals.get("--draft") not in PFLAG_FALSE and "--tag" not in vals:
+        return False, None, None
+    tag = (vals.get("--tag") or (pos[0] if pos else "")).replace("refs/tags/", "", 1)
+    c = resolve_commit(root, "refs/tags/%s" % tag) if tag else None
+    if not c and vals.get("--target"):
+        c = remote_commit(root, vals["--target"])
+    if c:
+        return True, c, None
+    return True, None, ("gh release edit publishes release %r, but its tag is not in this clone and no "
+                        "--target names the commit: `git fetch --tags`, then retry" % (tag or "?"))
+
+
 def workflow_commit(root, toks):
     """(commit, on_default) for `gh workflow run`: the commit it dispatches
     on (--ref/-r as the remote knows it, else the remote default branch,
@@ -1033,11 +1081,170 @@ def api_deploy_post(seg, command, cwd):
                 texts.append(body)
         i += 1
     if not (method == "POST" or (method is None and has_body)):
-        return False
-    if any(PROMOTE_API_RE.search(u) for u in urls):
-        return True
+        return None
     texts.append(command)
-    return any(PROD_TARGET_RE.search(t) for t in texts)
+    promotes = [u for u in urls if PROMOTE_API_RE.search(u)]
+    if promotes:
+        ids = [(PROMOTE_ID_RE.search(u) or [None, ""])[1] for u in promotes]
+        return {"promote": ids, "urls": urls, "texts": texts}
+    if any(PROD_TARGET_RE.search(t) for t in texts):
+        return {"promote": [], "urls": urls, "texts": texts}
+    return None
+
+
+def _redact(text):
+    """One line of CLI output, safe to show: long opaque words (tokens,
+    hashes) are masked and the line is capped."""
+    return re.sub(r"[A-Za-z0-9_\-]{24,}", "<redacted>", " ".join((text or "").split()))[:160]
+
+
+def vercel_team_query(vals, urls, cwd, root):
+    """Scope for the deployment lookup, as a query string: --scope/-S/--team/-T
+    on the command, else teamId=/slug= in an API URL, else the orgId of the
+    nearest .vercel link (project.json, repo.json) from --cwd/cwd up to the
+    repo root. '' = the CLI's current scope (which 404s another team's
+    deployment, so a missing scope fails closed rather than open)."""
+    for k in ("--scope", "-S", "--team", "-T"):
+        v = vals.get(k)
+        if v and re.fullmatch(r"[A-Za-z0-9_.-]+", v):
+            return ("teamId=" if v.startswith("team_") else "slug=") + v
+    for u in urls:
+        m = re.search(r"[?&](teamId|slug)=([A-Za-z0-9_.-]+)", u)
+        if m:
+            return "%s=%s" % (m.group(1), m.group(2))
+    start = vals.get("--cwd")
+    d = os.path.abspath(os.path.join(cwd, os.path.expanduser(start)) if start else cwd)
+    stop = os.path.abspath(root)
+    while True:
+        for name in ("project.json", "repo.json"):
+            try:
+                org = str(load_json(os.path.join(d, ".vercel", name)).get("orgId") or "")
+            except Exception:
+                org = ""
+            if re.fullmatch(r"team_[A-Za-z0-9]+", org):
+                return "teamId=" + org
+        if d == stop or not d.startswith(stop + os.sep) or os.path.dirname(d) == d:
+            return ""
+        d = os.path.dirname(d)
+
+
+def deployment_commit(root, ref, team, cwd):
+    """(commit, None) for the local commit a Vercel deployment was built
+    from, or (None, reason). One read-only GET /v13/deployments/<id|host>
+    through the vercel CLI's own login; the hook never reads, prints or
+    forwards a token. Every failure is a reason, and a reason DENIES."""
+    global _LOOKUP_DEADLINE
+    host = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", ref or "").split("/", 1)[0]
+    if not host or not DEPLOYMENT_REF_RE.match(host):
+        return None, ("deployment %r: no deployment id or URL to resolve its source commit from"
+                      % (ref or ""))
+    now = time.monotonic()
+    if _LOOKUP_DEADLINE is None:
+        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+    left = _LOOKUP_DEADLINE - now
+    if left < 0.3:
+        return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
+                      "ship one deployment per command" % (host, LOOKUP_BUDGET_S))
+    path = "/v13/deployments/%s%s" % (host, ("?" + team) if team else "")
+    env = dict(os.environ, VERCEL_TELEMETRY_DISABLED="1", NO_COLOR="1")
+    try:
+        p = subprocess.run(["vercel", "api", path, "--raw", "--non-interactive"],
+                           cwd=cwd if os.path.isdir(cwd) else root, capture_output=True, text=True,
+                           timeout=left, env=env)
+    except FileNotFoundError:
+        return None, ("deployment %s: the vercel CLI is not on the hook's PATH, so the commit this "
+                      "deployment was built from cannot be resolved" % host)
+    except subprocess.TimeoutExpired:
+        return None, ("deployment %s: provenance lookup timed out after %.1f s (offline, or the API "
+                      "is slow); retry" % (host, left))
+    except Exception as exc:
+        return None, "deployment %s: provenance lookup could not run: %s" % (host, _redact(str(exc)))
+    if p.returncode != 0:
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        return None, ("deployment %s: provenance lookup failed (rc=%d: %s). The hook resolves deployments "
+                      "with the vercel CLI's own login (`vercel login`, or VERCEL_TOKEN in the agent's "
+                      "environment) and scope (%s); a --token on the command line is not forwarded"
+                      % (host, p.returncode, _redact(lines[-1] if lines else ""),
+                         team or "the CLI's current scope"))
+    try:
+        doc = json.loads(p.stdout[p.stdout.index("{"):])
+    except Exception:
+        return None, "deployment %s: provenance lookup returned no JSON" % host
+    meta = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+    gs = doc.get("gitSource") if isinstance(doc.get("gitSource"), dict) else {}
+    if str(meta.get("gitDirty", "")).lower() in ("1", "true"):
+        return None, ("deployment %s was built from uncommitted changes (meta.gitDirty): no commit "
+                      "describes its code" % host)
+    shas = {str(v).lower() for v in [gs.get("sha")] + [meta.get(k) for k in (
+        "githubCommitSha", "gitlabCommitSha", "bitbucketCommitSha")] if v}
+    if not shas:
+        return None, ("deployment %s has no git provenance (no gitSource.sha or meta.*CommitSha): "
+                      "deploy it from a commit" % host)
+    if len(shas) > 1:
+        return None, "deployment %s: conflicting source commits %s" % (
+            host, ", ".join(sorted(s[:12] for s in shas)))
+    sha = shas.pop()
+    c = resolve_commit(root, sha) if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None
+    if not c:
+        return None, ("deployment %s was built from %s, which is not in this clone: `git fetch`, then "
+                      "retry" % (host, sha[:12]))
+    return c, None
+
+
+def deployment_ship(root, refs, team, cwd):
+    """Segment result for shipping existing deployments: each one's source
+    commit, checked with tree equivalence and with records allowed from HEAD
+    (provenance set), or a reason per deployment that could not be resolved."""
+    shas, problems = [], []
+    for ref in refs or [""]:
+        c, why = deployment_commit(root, ref, team, cwd)
+        if c and c not in shas:
+            shas.append(c)
+        elif why:
+            problems.append(why)
+    return "deploy", shas, set(shas), problems, set(shas)
+
+
+def api_ship(root, info, cwd):
+    """Segment result for a production deployments-API POST (api_deploy_post).
+    A promote ships the named deployment's source commit. A create whose body
+    names a gitSource ships THAT commit (sha, else the ref as origin knows
+    it), not HEAD; a body without one (file upload) keeps the v4 rule: HEAD."""
+    if info["promote"]:
+        return deployment_ship(root, info["promote"], vercel_team_query({}, info["urls"], cwd, root), cwd)
+    shas, problems = [], []
+    for t in info["texts"]:
+        for m in GIT_SOURCE_RE.finditer(t):
+            sm = re.search(r"""["']?sha["']?\s*:\s*["']?([0-9a-fA-F]{7,40})""", m.group(1))
+            rm = re.search(r"""["']?ref["']?\s*:\s*["']?([^"',\s}]+)""", m.group(1))
+            c = resolve_commit(root, sm.group(1)) if sm else (remote_commit(root, rm.group(1)) if rm else None)
+            if c:
+                if c not in shas:
+                    shas.append(c)
+                continue
+            why = ("production deployment from gitSource %s: that commit is not in this clone "
+                   "(`git fetch`, then retry)" % _redact(" ".join(m.group(1).split()))[:80])
+            if why not in problems:
+                problems.append(why)
+    if shas or problems:
+        return "deploy", shas, set(shas), problems, set(shas)
+    return "deploy", [head_commit(root)], set(), [], set()
+
+
+def upload_dirty(root):
+    """Problems for an upload deploy (vercel --prod, netlify --prod, fly
+    deploy), which ships the WORKING TREE, not HEAD: uncommitted changes
+    outside .qa/ (and the .vercel link dir) were never walked."""
+    p = run_git(root, "status", "--porcelain", "--untracked-files=normal")
+    if p.returncode != 0:
+        return ["git status failed, so what this upload deploy ships is unknown"]
+    paths = [ln[3:].strip('"') for ln in p.stdout.splitlines() if len(ln) > 3]
+    paths = [x for x in paths if not re.match(r"(\.qa|\.vercel)(/|$)", x)]
+    if not paths:
+        return []
+    return ["this deploy uploads the working tree, which has uncommitted changes outside .qa/ (%s%s): "
+            "commit them, walk that commit, then deploy" % (", ".join(paths[:5]),
+                                                            " ..." if len(paths) > 5 else "")]
 
 
 def _vercel_prod_flag(seg):
@@ -1051,12 +1258,21 @@ def _vercel_prod_flag(seg):
 
 
 def segment_ship(seg, root, cfg, command="", cwd=None):
-    """(kind, shas, equiv) for one unwrapped shell segment. kind: "merge" |
-    "push" | "deploy" | None. shas: the commits this segment ships, resolved
-    locally, so a tag pointing at an unwalked commit cannot pass on a walked
-    HEAD. equiv: the subset whose walk may sit on a tree-identical commit
-    (tree_equiv_outside_qa): tags, releases, default-branch dispatches only.
-    For merges the caller resolves the PR head (shas empty here)."""
+    """(kind, shas, equiv, problems, prov) for one unwrapped shell segment.
+    kind: "merge" | "push" | "deploy" | None. shas: the commits this segment
+    ships, resolved locally, so a tag pointing at an unwalked commit cannot
+    pass on a walked HEAD. equiv: the subset whose walk may sit on a
+    tree-identical commit (tree_equiv_outside_qa): tags, releases,
+    default-branch dispatches, deployment source commits. problems (v5):
+    reasons the shipped commit could not be resolved, each one a DENY.
+    prov (v5): deployment source commits, whose records may come from HEAD's
+    tree (the run is usually committed after the code it walked). For
+    merges the caller resolves the PR head (shas empty here)."""
+    r = _segment_ship(seg, root, cfg, command, cwd)
+    return r if len(r) == 5 else (r[0], r[1], r[2], [], set())
+
+
+def _segment_ship(seg, root, cfg, command="", cwd=None):
     if not seg:
         return None, [], set()
     head = seg[0]
@@ -1102,6 +1318,11 @@ def segment_ship(seg, root, cfg, command="", cwd=None):
         if seg[1] == "release" and seg[2] == "create":
             c = release_commit(root, seg[3:])
             return "deploy", [c], {c}
+        if seg[1] == "release" and seg[2] == "edit":
+            ships, c, why = release_edit_commit(root, seg[3:])
+            if not ships:
+                return None, [], set()
+            return "deploy", [c] if c else [], {c} if c else set(), [why] if why else [], set()
         if seg[1] == "workflow" and seg[2] == "run":
             # ANY dispatch is shipping. Deploy workflows run exactly this way
             # (seahaven deploy.yaml is workflow_dispatch dev/staging/prod); a
@@ -1113,22 +1334,30 @@ def segment_ship(seg, root, cfg, command="", cwd=None):
             return "deploy", [c], ({c} if on_default else set())
         return None, [], set()
     if head == "vercel":
-        sub = seg[1] if len(seg) > 1 else ""
+        # global flags may precede the subcommand (`vercel --scope t promote x`)
+        pos, vals = _positionals(seg[1:], VERCEL_VALUE_FLAGS)
+        sub = pos[0] if pos else ""
         if sub == "api":
-            if api_deploy_post(seg, command, cwd):
-                return "deploy", [head_commit(root)], set()
-            return None, [], set()
-        # `vercel rollback` stays free: it restores an already-shipped
-        # deployment, and gating incident recovery on a fresh walk is wrong
-        if _vercel_prod_flag(seg) or sub in ("promote", "redeploy"):
-            return "deploy", [head_commit(root)], set()
+            info = api_deploy_post(seg, command, cwd)
+            return api_ship(root, info, cwd) if info else (None, [], set())
+        # v5: promote/redeploy ship an EXISTING deployment, whose code is the
+        # commit it was built from -- never the local HEAD. `vercel promote
+        # status` only reads. `vercel rollback` stays free: it restores an
+        # already-shipped deployment, and gating incident recovery is wrong.
+        if sub in ("promote", "redeploy"):
+            if sub == "promote" and pos[1:2] == ["status"]:
+                return None, [], set()
+            return deployment_ship(root, pos[1:2], vercel_team_query(vals, [], cwd, root), cwd)
+        if _vercel_prod_flag(seg):
+            return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
         return None, [], set()
     if head == "netlify" and "deploy" in seg[1:3] and "--prod" in seg:
-        return "deploy", [head_commit(root)], set()
+        return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
     if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
-        return "deploy", [head_commit(root)], set()
-    if head in ("curl", "curl.exe") and api_deploy_post(seg, command, cwd):
-        return "deploy", [head_commit(root)], set()
+        return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
+    if head in ("curl", "curl.exe"):
+        info = api_deploy_post(seg, command, cwd)
+        return api_ship(root, info, cwd) if info else (None, [], set())
     return None, [], set()
 
 
@@ -1138,19 +1367,23 @@ def segment_ship_kind(seg, root, cfg):
 
 
 def ship_plan(command, root, cfg, cwd=None):
-    """(kind, shas, equiv): the highest-stakes ship kind anywhere in the
-    command, every commit its non-merge segments ship, and the commits that
-    may be checked with tree equivalence. A commit also shipped by a strict
-    segment (protected push, prod deploy) is checked strictly. A
-    `ship_commands` match adds HEAD. Merges get their PR head from the caller."""
-    kinds, shas, eq, strict = [], [], set(), set()
+    """(kind, shas, equiv, problems, prov): the highest-stakes ship kind
+    anywhere in the command, every commit its non-merge segments ship, the
+    commits that may be checked with tree equivalence, the reasons a shipped
+    commit could not be resolved (each denies), and the deployment source
+    commits whose records may come from HEAD. A commit also shipped by a
+    strict segment (protected push, prod upload deploy) is checked strictly.
+    A `ship_commands` match adds HEAD. Merges get their PR head from the caller."""
+    kinds, shas, eq, strict, problems, prov = [], [], set(), set(), [], set()
     for seg in command_segments(command):
-        k, s, e = segment_ship(seg, root, cfg, command, cwd)
+        k, s, e, pr, pv = segment_ship(seg, root, cfg, command, cwd)
         if k:
             kinds.append(k)
             shas += [x for x in s if x and x not in shas]
             eq |= {x for x in s if x in e}
             strict |= {x for x in s if x not in e}
+            problems += [x for x in pr if x not in problems]
+            prov |= set(pv)
     try:
         if cfg and isinstance(cfg.get("ship_commands"), list):
             if any(re.search(str(p), command) for p in cfg["ship_commands"]):
@@ -1162,11 +1395,12 @@ def ship_plan(command, root, cfg, cwd=None):
     except Exception:
         pass
     eq -= strict
+    prov -= strict
     if "merge" in kinds:
-        return "merge", shas, eq   # needs PR-head freshness, the stricter sha rule
+        return "merge", shas, eq, problems, prov   # needs PR-head freshness, the stricter sha rule
     if "push" in kinds:
-        return "push", shas, eq
-    return (kinds[0] if kinds else None), shas, eq
+        return "push", shas, eq, problems, prov
+    return (kinds[0] if kinds else None), shas, eq, problems, prov
 
 
 def ship_kind(command, root, cfg):
@@ -1247,16 +1481,30 @@ def hook(raw=None):
         # its source, a dispatch its --ref as origin knows it. All of them
         # must pass, so a walked HEAD cannot clear an unwalked tag and a tag
         # cannot hide the branch pushed next to it.
-        shas = list(plans[root][1])
+        # v5: a promoted/redeployed deployment checks the commit Vercel built
+        # it from (plans[root][4]); its run may be committed in HEAD's tree
+        # rather than its own, so HEAD's committed records are tried too,
+        # freshness still judged against the deployment's commit. Anything
+        # that could not be resolved (plans[root][3]) denies outright.
+        shas, problems, prov = list(plans[root][1]), plans[root][3], plans[root][4]
         if kind == "merge" and merge_args is not None:
             shas.insert(0, pr_head_sha(root, merge_args) or head_commit(root))
-        if not shas:
+        if not shas and not problems:
             shas = [head_commit(root)]
-        ok, fails, stats = True, [], {"rows_total": 0, "clusters": 0, "open_rows": 0}
+        ok, fails, stats = not problems, list(problems), {"rows_total": 0, "clusters": 0, "open_rows": 0}
+        many = len(shas) + len(problems) > 1
         for sha in shas:
             o, f, s, _ = check_all(root, sha or None, equiv=bool(sha) and sha in plans[root][2])
+            h = head_commit(root) if sha in prov else ""
+            if not o and h and h != sha:
+                o2, f2, s2, _ = check_all(root, sha, equiv=True, evidence=h)
+                if o2:
+                    o, f, s = o2, f2, s2
+                else:
+                    f = (["(records at the deployed commit) " + x for x in f]
+                         + ["(records at HEAD %s) %s" % (h[:12], x) for x in f2])
             ok = ok and o
-            fails += ["[%s] %s" % ((sha or "HEAD")[:12], x) for x in f] if len(shas) > 1 else f
+            fails += ["[%s] %s" % ((sha or "HEAD")[:12], x) for x in f] if many else f
             stats = s
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
@@ -1487,6 +1735,35 @@ def selftest(v4_gate=None, v4_templates=None):
     EVENTS = scratch_events
     old_qa_gate_events = os.environ.get("QA_GATE_EVENTS_FILE")
     os.environ["QA_GATE_EVENTS_FILE"] = scratch_events
+    # v5: a scratch `vercel` first on PATH for every hook this selftest runs,
+    # so no case reaches the real Vercel API. It answers GET
+    # /v13/deployments/<ref> from stub-bin/deployments.json (written by the
+    # v5 cases) only under teamId=team_fx, like a real scoped lookup.
+    stub_bin = os.path.join(tmp, "stub-bin")
+    os.makedirs(stub_bin)
+    with open(os.path.join(stub_bin, "vercel"), "w") as fh:
+        fh.write("#!/usr/bin/env python3\n"
+                 "import json, os, sys, time\n"
+                 "a = sys.argv[1:]\n"
+                 "if a[:1] != ['api'] or len(a) < 2:\n"
+                 "    sys.exit(0)\n"
+                 "ref, _, q = a[1].split('/v13/deployments/', 1)[-1].partition('?')\n"
+                 "try:\n"
+                 "    fx = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deployments.json')))\n"
+                 "except Exception:\n"
+                 "    fx = {}\n"
+                 "if ref == 'dpl_slow':\n"
+                 "    time.sleep(20)\n"
+                 "if ref == 'dpl_offline':\n"
+                 "    sys.stderr.write('Error: request to https://api.vercel.com failed, reason: getaddrinfo ENOTFOUND\\n')\n"
+                 "    sys.exit(1)\n"
+                 "if 'teamId=team_fx' not in q.split('&') or ref not in fx:\n"
+                 "    sys.stderr.write('Error: Deployment not found (404)\\n')\n"
+                 "    sys.exit(1)\n"
+                 "print(json.dumps(fx[ref]))\n")
+    os.chmod(os.path.join(stub_bin, "vercel"), 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = stub_bin + os.pathsep + old_path
 
     def expect(cond, name):
         print(("ok   " if cond else "FAIL ") + name)
@@ -2246,6 +2523,95 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push --follow-tags", "tags pushed along a protected upstream push: strict")
     sh("git checkout -q feat && git branch -q -D rel", cwd=r9)
 
+    # ---------------- v5 (card 11): deployment provenance ----------------
+    # Deny cases run with HEAD on main = W (walked), where the v4 gate
+    # checked only HEAD and so allowed them; allow cases run with HEAD on the
+    # unwalked feat, where v4 denied them. Every one of them flips between
+    # 77b8d56 and v5, except the controls marked "control".
+    def hook5(root, command, env=None):
+        payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
+                              "tool_input": {"command": command}, "cwd": root})
+        return subprocess.run(["python3", V4GATE, "hook"], cwd=root, input=payload, capture_output=True,
+                              text=True, env=dict(os.environ, QA_GATE_NO_GH="1", **(env or {})))
+
+    def deny5(root, command, name, why, env=None):
+        p = hook5(root, command, env)
+        expect(p.returncode == 2 and "qa-ship-gate" in p.stderr and why in p.stderr,
+               "v5 DENY  %s [%s]" % (name, " ".join(p.stderr.split())[-110:]))
+
+    def allow5(root, command, name):
+        p = hook5(root, command)
+        expect(p.returncode == 0, "v5 ALLOW %s [%s]" % (name, " ".join(p.stderr.split())[:100]))
+
+    def git_dep(sha, **meta):
+        return {"id": "dpl_x", "target": "production", "meta": meta,
+                "gitSource": {"type": "github", "ref": "main", "sha": sha}}
+
+    json.dump({
+        "dpl_walked": git_dep(codeW, githubCommitSha=codeW),
+        "app-walked.vercel.app": git_dep(codeW, githubCommitSha=codeW),
+        "dpl_walkedqa": git_dep(shaW, githubCommitSha=shaW),
+        "dpl_squash": git_dep(shaS),
+        "dpl_unwalked": git_dep(codeU, githubCommitSha=codeU),
+        "dpl_foreign": git_dep("ab" * 20),
+        "dpl_nogit": {"id": "dpl_nogit", "target": "production", "meta": {}},
+        "dpl_dirty": git_dep(codeW, githubCommitSha=codeW, gitDirty="1"),
+        "dpl_mismatch": git_dep(codeW, githubCommitSha=codeU),
+    }, open(os.path.join(stub_bin, "deployments.json"), "w"))
+    os.makedirs(os.path.join(r9, ".vercel"))
+    json.dump({"orgId": "team_fx", "projectId": "prj_1"}, open(os.path.join(r9, ".vercel", "project.json"), "w"))
+    open(os.path.join(r9, "prod-body-w.json"), "w").write(json.dumps(
+        {"name": "app", "target": "production", "gitSource": {"type": "github", "sha": codeW}}))
+    with open(os.path.join(r9, ".git", "info", "exclude"), "a") as fh:
+        fh.write("/.vercel/\n/prod-body.json\n/preview-body.json\n/prod-body-w.json\n")
+    no_vercel = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep)
+                                if d and not os.path.isfile(os.path.join(d, "vercel")))
+    U = codeU[:12]
+    sh("git checkout -q main", cwd=r9)  # HEAD = W, walked
+    deny5(r9, "vercel promote dpl_unwalked", "walked HEAD A cannot promote unwalked deployment B", U)
+    deny5(r9, "vercel redeploy dpl_unwalked", "walked HEAD cannot redeploy unwalked deployment", U)
+    deny5(r9, "vercel --scope team_fx promote dpl_unwalked", "global flag before the subcommand", U)
+    deny5(r9, "curl -X POST 'https://api.vercel.com/v10/projects/prj_1/promote/dpl_unwalked?teamId=team_fx'",
+          "promote API (curl) of an unwalked deployment", U)
+    deny5(r9, "vercel api /v10/projects/prj_1/promote/dpl_unwalked -X POST",
+          "promote API (vercel api, scope from .vercel/project.json)", U)
+    deny5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json',
+          "production API create whose gitSource is unwalked", U)
+    deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
+    deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
+    deny5(r9, "vercel promote dpl_slow", "lookup past the hook budget", "timed out")
+    deny5(r9, "vercel promote dpl_foreign", "source commit not in this clone", "not in this clone")
+    deny5(r9, "vercel promote dpl_nogit", "deployment without git metadata", "no git provenance")
+    deny5(r9, "vercel promote dpl_dirty", "deployment built from a dirty tree", "uncommitted changes")
+    deny5(r9, "vercel promote dpl_mismatch", "gitSource and meta disagree", "conflicting source commits")
+    deny5(r9, "vercel promote", "promote with no deployment named", "no deployment id")
+    deny5(r9, "vercel promote dpl_walked --scope team_other", "explicit scope that cannot see it",
+          "provenance lookup failed")
+    deny5(r9, "vercel promote dpl_walked", "vercel CLI missing from the hook PATH", "not on the hook's PATH",
+          env={"PATH": no_vercel})
+    deny5(r9, "gh release edit vbad --draft=false", "gh release edit publishing an unwalked tag", U)
+    deny5(r9, "gh release edit vbad --draft=0", "gh release edit --draft=0 (pflag false)", U)
+    deny5(r9, "gh release edit vgood --draft=false --tag vbad", "gh release edit moving to an unwalked tag", U)
+    deny5(r9, "gh release edit vnope --draft=false", "gh release edit of a tag not in the clone",
+          "not in this clone")
+    allow5(r9, "vercel --prod", "control: upload deploy of a clean walked HEAD")
+    with open(os.path.join(r9, "f.txt"), "a") as fh:
+        fh.write("dirty\n")
+    deny5(r9, "vercel --prod", "upload deploy of a walked HEAD with uncommitted code", "uploads the working tree")
+    sh("git checkout -q -- f.txt", cwd=r9)
+    sh("git checkout -q feat", cwd=r9)  # HEAD = U, unwalked
+    allow5(r9, "vercel promote dpl_walked", "deployment built from the walked commit, HEAD unwalked")
+    allow5(r9, "vercel promote dpl_walkedqa", "deployment built from the .qa commit on top of the walk")
+    allow5(r9, "vercel promote dpl_squash", "deployment whose source tree equals the walked tree")
+    allow5(r9, "vercel redeploy https://app-walked.vercel.app", "redeploy by URL of a walked deployment")
+    allow5(r9, "curl -X POST 'https://api.vercel.com/v10/projects/prj_1/promote/dpl_walked?teamId=team_fx'",
+           "promote API of a walked deployment")
+    allow5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body-w.json',
+           "production API create whose gitSource is walked")
+    allow5(r9, "vercel promote status", "vercel promote status (read-only)")
+    allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
+    allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")
+
     # non-opted-in repo: every new ship command stays free
     r11 = os.path.join(tmp, "v4plain")
     os.makedirs(r11)
@@ -2401,6 +2767,7 @@ def selftest(v4_gate=None, v4_templates=None):
                "v4 %s: opted in, feature push passes and husky still sees the refs" % label)
 
     shutil.rmtree(tmp, ignore_errors=True)
+    os.environ["PATH"] = old_path
     EVENTS = live_events
     if old_qa_gate_events is None:
         os.environ.pop("QA_GATE_EVENTS_FILE", None)
@@ -2418,7 +2785,7 @@ def coarse_ship(text):
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose."""
     return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
-                     r"gh\s+release\s+create|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
+                     r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy)|/v\d+/deployments|/v\d+/projects/\S+/promote/", text)
 
 

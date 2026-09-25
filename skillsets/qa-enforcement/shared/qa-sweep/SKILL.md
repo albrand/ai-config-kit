@@ -129,8 +129,9 @@ Only what SHIPS is gated (v2 + v4): **merges** (`gh pr merge` with any flags, `g
 refspec; `--all`/`--mirror` count as protected) — **tag pushes** (`git push origin
 v1.2`, `refs/tags/…`, `tag v1.2`, `--tags`/`--follow-tags`) — and **production
 deploys**: `vercel --prod` / `vercel deploy --prod` / `--target production`,
-`vercel promote`, `vercel redeploy` (its target is not visible locally),
-`netlify deploy --prod`, `fly deploy`, **releases** (`gh release create`), **any
+`vercel promote`, `vercel redeploy`,
+`netlify deploy --prod`, `fly deploy`, **releases** (`gh release create`, and
+`gh release edit` with `--draft=false` or `--tag`), **any
 workflow dispatch** (`gh workflow run`: deploy workflows are dispatched exactly
 this way, and a name→file→jobs mapping is not decidable locally in a hook — a
 false positive only asks for a completed pipeline, a false negative ships), and
@@ -164,6 +165,20 @@ for a workflow dispatch, its `--ref` (else the default branch) as origin knows
 it; for other deploys, the local HEAD — each with the same `.qa`-only
 allowance. A walked HEAD cannot clear an unwalked tag, and a walked tag cannot
 hide an unwalked branch pushed next to it.
+
+**Deployments ship their own commit (v5).** `vercel promote <deployment>`,
+`vercel redeploy <deployment>` and the promote API ship a deployment that
+already exists, so the gate resolves the commit Vercel built it from (one
+read-only `vercel api /v13/deployments/<id|url>` through the CLI's own login,
+scoped by `--scope`, the URL's `teamId`, or `.vercel/project.json`) and needs a
+fresh run for THAT tree (tree equivalence; the run's records may sit in HEAD's
+committed tree). It denies when the deployment is unknown, the CLI is missing,
+logged out or offline, the lookup overruns its 3.2 s budget (the hook itself
+times out at 5 s), the deployment has no git metadata or was built dirty, or
+its commit is not in the clone (`git fetch`). A production deployments-API
+create whose body names a `gitSource` is checked at that commit, not HEAD. An
+upload deploy (`vercel --prod`, `netlify deploy --prod`, `fly deploy`) ships the
+working tree, so uncommitted changes outside `.qa/` deny it.
 
 **Releases after a merge (tree equivalence).** A release tag normally points at
 the squash or merge commit on the default branch, which is never the walked PR
