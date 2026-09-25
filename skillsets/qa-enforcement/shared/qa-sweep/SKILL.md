@@ -52,8 +52,12 @@ mixed-script or look-alike label is refused outright. **CI's own run as the
 walk** is the `owner_run` case: the suite that owns the identity, recording its
 own run, adds `walker: {kind: "owner_run", owner: <the block's owner>, run_id,
 run_url}` and is not held to the unowned-identity rule; the walk window, the
-after-walk overlap check and the disclosure still apply (verified-qa-e2e
-evidence contract). Why: on
+after-walk overlap check and the disclosure still apply. It needs the label
+in `automation_identities` and a `run_url` of this repository's `origin`
+naming `run_id`, and the gate checks the run with `gh run view`: it must have
+run on the walked commit, around the walk window (verified-qa-e2e evidence
+contract). Why: on
+
 
 2026-09-25 two interactive walks on meu-psi signed in as the deployed CI
 suite's own e2e identities on the shared preview DB. The suite's setup

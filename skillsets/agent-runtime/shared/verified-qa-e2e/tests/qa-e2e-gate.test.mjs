@@ -92,6 +92,32 @@ delete deniedConsent.blocker.attempt_evidence;
 deniedConsent.blocker.denial_evidence = "user explicitly declined this connection";
 assert.equal(evaluateEvidence(deniedConsent).ok, true, "explicit consent denial can block the journey");
 
+// Run through a symlinked directory (macOS /tmp is one): the valid control is
+// allowed and a failing packet is denied, as when run by its real path.
+{
+  const { spawnSync } = await import("node:child_process");
+  const os = await import("node:os");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-e2e-gate-link-"));
+  try {
+    const link = path.join(tmp, "scripts-link");
+    fs.symlinkSync(path.join(here, "..", "scripts"), link);
+    const run = (fixtureId) => {
+      const packet = path.join(tmp, `${fixtureId}.json`);
+      fs.writeFileSync(packet, JSON.stringify(fixtures.find((f) => f.id === fixtureId).packet));
+      return spawnSync(process.execPath, [path.join(link, "qa-e2e-gate.mjs"), "check", packet], { encoding: "utf8" });
+    };
+    const control = run("valid-vendor-portal");
+    assert.equal(control.status, 0, `valid control via a symlinked path: rc ${control.status} ${control.stderr}`);
+    assert.equal(JSON.parse(control.stdout).ok, true, "valid control via a symlinked path is allowed");
+    const bad = run("identity-missing");
+    assert.equal(bad.status, 1, "a failing packet via a symlinked path is denied by the gate itself");
+    assert.equal(JSON.parse(bad.stdout).ok, false, "with its failures printed");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 process.stdout.write(
   JSON.stringify({ ok: true, fixtures: fixtures.length, efforts, evaluations: fixtures.length * efforts.length }) + "\n",
 );
+

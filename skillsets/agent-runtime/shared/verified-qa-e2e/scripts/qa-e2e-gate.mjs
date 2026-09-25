@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const OPERATIONS = new Set([
   "publish_qa_instructions",
@@ -110,15 +110,22 @@ function checkIdentities(authentication, failures, owned) {
   for (const [base, block] of blocks) checkIdentityIsolation(block, base, failures, owned);
 }
 
-// [problems, valid] for identity.walker; valid only for a well-formed
-// owner_run by the identity's own owner.
+// A GitHub Actions run page: https://github.com/<owner>/<repo>/actions/runs/<id>[/attempts/<n>].
+export const RUN_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/actions\/runs\/(\d+)(?:\/attempts\/\d+)?$/;
+
+// {problems, valid, repo} for identity.walker; valid only for a well-formed
+// owner_run by the identity's own owner, on an identity the repository lists
+// as automation-owned, naming its run by id and by URL (review r2a D5: a
+// made-up run id, another repository's run URL, or no list at all passed).
+// The ship gate also checks `repo` against the origin remote and the run
+// itself with `gh run view`; this gate, offline, checks what the packet says.
 export function ownerRunProblems(identity, owned) {
   const walker = identity.walker;
-  if (walker === undefined) return { problems: [], valid: false };
+  if (walker === undefined) return { problems: [], valid: false, repo: null };
   const problems = [];
   if (!walker || typeof walker !== "object" || Array.isArray(walker) || walker.kind !== "owner_run") {
     problems.push(["WALKER_INVALID", "walker.kind", "walker.kind must be \"owner_run\" (the automation's own CI run walking its identity)"]);
-    return { problems, valid: false };
+    return { problems, valid: false, repo: null };
   }
   if (identity.owned_by_automation !== true) {
     problems.push(["OWNER_RUN_NOT_OWNED", "walker", "an owner_run walks an identity an automated suite owns (owned_by_automation: true)"]);
@@ -127,14 +134,26 @@ export function ownerRunProblems(identity, owned) {
     problems.push(["OWNER_RUN_OWNER_MISMATCH", "walker.owner", "walker.owner must be the identity block's owner"]);
   }
   const runId = walker.run_id;
-  if (!(nonEmpty(runId) || (typeof runId === "number" && Number.isFinite(runId)))) {
-    problems.push(["OWNER_RUN_ID_MISSING", "walker.run_id", "an owner_run names the CI run id it records"]);
+  const id = typeof runId === "number" && Number.isSafeInteger(runId) && runId > 0 ? String(runId)
+    : typeof runId === "string" && /^\d+$/.test(runId.trim()) ? runId.trim() : null;
+  if (id === null) {
+    problems.push(["OWNER_RUN_ID_MISSING", "walker.run_id", "an owner_run names the CI run id it records (digits)"]);
+  }
+  const m = typeof walker.run_url === "string" ? RUN_URL.exec(walker.run_url.trim()) : null;
+  if (!m) {
+    problems.push(["OWNER_RUN_URL_INVALID", "walker.run_url",
+      "an owner_run names its run page: https://github.com/<owner>/<repo>/actions/runs/<run_id>"]);
+  } else if (id !== null && m[3] !== id) {
+    problems.push(["OWNER_RUN_URL_MISMATCH", "walker.run_url", `run_url names run ${m[3]}, not run_id ${id}`]);
   }
   const listed = (owned || []).filter((o) => typeof o === "string");
-  if (listed.length > 0 && listedIdentity(identity.label ?? "", listed)?.[1] !== "same") {
+  if (listed.length === 0) {
+    problems.push(["OWNER_RUN_NO_LIST", "walker",
+      "an owner_run is accepted only against the repository's automation_identities (.qa/config.json; --automation-identities), and none was given"]);
+  } else if (listedIdentity(identity.label ?? "", listed)?.[1] !== "same") {
     problems.push(["OWNER_RUN_UNLISTED", "walker", "an owner_run walks an identity listed in .qa/config.json automation_identities"]);
   }
-  return { problems, valid: problems.length === 0 };
+  return { problems, valid: problems.length === 0, repo: m ? `${m[1]}/${m[2]}` : null };
 }
 
 function checkIdentityIsolation(identity, base, failures, owned) {
@@ -781,14 +800,27 @@ function selftest() {
     };
     const ownerRun = () => ({
       ...ownedIdentity(0), label: "e2e.patient", unowned_identity_available: true, unowned_identity_evidence: "qa.* provisioned 21:47Z",
-      walker: { kind: "owner_run", owner: ownedIdentity(0).owner, run_id: 36193694659, run_url: "https://github.com/o/r/actions/runs/36193694659" },
+      walker: { kind: "owner_run", owner: ownedIdentity(0).owner, run_id: 36193694659, run_url: "https://github.com/albrand/psyche-project/actions/runs/36193694659" },
     });
     const expectCodes = (got, want, what) => {
       const ok = want === null ? got.length === 0 : got.includes(want);
       if (!ok) throw new Error(`${what} at ${effort}: ${JSON.stringify(got)}`);
     };
     expectCodes(codes(ownerRun()), null, "owner_run with an unowned identity available is refused");
-    expectCodes(codes(ownerRun(), {}), null, "owner_run without a configured list is refused");
+    const attempt = ownerRun(); attempt.walker.run_url += "/attempts/2";
+    expectCodes(codes(attempt), null, "owner_run with an attempt URL is refused");
+    // review r2a D5: what anyone could claim.
+    expectCodes(codes(ownerRun(), {}), "OWNER_RUN_NO_LIST", "owner_run without a configured list passes");
+    expectCodes(codes({ ...ownerRun(), label: "anything" }, {}), "OWNER_RUN_NO_LIST", "owner_run on any label without a list passes");
+    const madeUp = ownerRun(); madeUp.walker = { kind: "owner_run", owner: madeUp.owner, run_id: "x" };
+    expectCodes(codes(madeUp), "OWNER_RUN_ID_MISSING", "a made-up run id passes");
+    expectCodes(codes(madeUp), "OWNER_RUN_URL_INVALID", "an owner_run without a run_url passes");
+    const elsewhere = ownerRun(); elsewhere.walker.run_id = 1; elsewhere.walker.run_url = "https://github.com/someone/else/actions/runs/999";
+    expectCodes(codes(elsewhere), "OWNER_RUN_URL_MISMATCH", "a run_url for another run passes");
+    const notGithub = ownerRun(); notGithub.walker.run_url = "https://evil.test/o/r/actions/runs/36193694659";
+    expectCodes(codes(notGithub), "OWNER_RUN_URL_INVALID", "a run_url off github.com passes");
+    if (ownerRunProblems(ownerRun(), ["e2e.patient"]).repo !== "albrand/psyche-project") throw new Error(`owner_run repo not parsed at ${effort}`);
+
     const noWalker = ownerRun(); delete noWalker.walker;
     expectCodes(codes(noWalker), "IDENTITY_OWNED_BY_AUTOMATION", "the same walk without walker passes");
     const mismatch = ownerRun(); mismatch.walker.owner = "some other workflow";
@@ -865,4 +897,17 @@ function main() {
   process.exit(result.ok ? 0 : 1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// Run as a script, however it was reached. Node resolves symlinks in the main
+// module's URL but not in argv[1], so from a symlinked path (macOS /tmp ->
+// /private/tmp, a symlinked skill home) the two differed, main() never ran,
+// and ship-gate.py read the silence as a failure: every packet, the valid
+// control included, was denied (card 3, 2026-09-25). Compare real paths.
+const realUrl = (p) => {
+  try {
+    return pathToFileURL(fs.realpathSync(p)).href;
+  } catch {
+    return null;
+  }
+};
+if (process.argv[1] && realUrl(process.argv[1]) === realUrl(fileURLToPath(import.meta.url))) main();
+

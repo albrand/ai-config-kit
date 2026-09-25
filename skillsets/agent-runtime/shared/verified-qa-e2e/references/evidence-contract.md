@@ -144,15 +144,36 @@ To record such a run as the walk, add a `walker` to that identity block:
            "run_id": 36193694659, "run_url": "https://github.com/<org>/<repo>/actions/runs/36193694659"}
 ```
 
-With `walker.kind` `owner_run`, `walker.owner` equal to the block's `owner`
-and a `run_id`, `IDENTITY_OWNED_BY_AUTOMATION` does not apply to that block,
-even when an unowned identity exists. `walk_window`, the `overlap_check`
-(after the walk ended, `overlapping_runs: 0`) and `disclosure` stay required:
-another writer on the same data during the owner's run is the same
-contamination. Refused: `WALKER_INVALID` (another `kind`),
-`OWNER_RUN_OWNER_MISMATCH`, `OWNER_RUN_ID_MISSING`, `OWNER_RUN_NOT_OWNED`
-(`owned_by_automation` not true), and `OWNER_RUN_UNLISTED` (the label is not in
-`automation_identities` when the repository lists them).
+With `walker.kind` `owner_run`, `walker.owner` equal to the block's `owner`,
+a numeric `run_id`, and a `run_url` of the form
+`https://github.com/<owner>/<repo>/actions/runs/<run_id>[/attempts/<n>]`
+naming that same run, `IDENTITY_OWNED_BY_AUTOMATION` does not apply to that
+block, even when an unowned identity exists. `walk_window`, the
+`overlap_check` (after the walk ended, `overlapping_runs: 0`) and `disclosure`
+stay required: another writer on the same data during the owner's run is the
+same contamination. The label must be one the repository lists in
+`automation_identities`; with no list an owner_run is refused (this gate run
+alone, `check <packet>` without `--automation-identities`, refuses it too).
+Refused: `WALKER_INVALID` (another `kind`), `OWNER_RUN_OWNER_MISMATCH`,
+`OWNER_RUN_ID_MISSING` (absent or not digits), `OWNER_RUN_URL_INVALID`,
+`OWNER_RUN_URL_MISMATCH` (the URL names another run), `OWNER_RUN_NOT_OWNED`
+(`owned_by_automation` not true), `OWNER_RUN_NO_LIST`, and
+`OWNER_RUN_UNLISTED`.
+
+The ship gate then checks the claim against the world, failing closed: the
+run URL's `<owner>/<repo>` must be the repository's `origin` remote, and
+`gh run view <run_id> --repo <owner>/<repo> --json headSha,createdAt,updatedAt,status`
+(inside the same lookup budget as the deployment provenance lookup) must show
+a run on the walked commit (`rewalk.json` `sha`) whose `createdAt..updatedAt`
+contains the walk window. No `gh`, a failed or timed-out lookup, another
+commit or a window outside the run denies. What stays declarative is that the
+evidence came from that run and not from a person during it.
+
+Known false refusal: diacritics are stripped for the look-alike check, so an
+unowned `joão.silva` is refused when `joao.silva` is listed (and an `@domain`
+suffix is dropped, so `e2e.patient@other` counts as `e2e.patient`). Both fail
+closed; rename the identity or list it.
+
 
 
 

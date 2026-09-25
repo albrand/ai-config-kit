@@ -706,11 +706,106 @@ def owner_run_problems(ident, owned):
     wo, io = walker.get("owner"), ident.get("owner")
     if not (isinstance(wo, str) and wo.strip() and isinstance(io, str) and wo.strip() == io.strip()):
         out.append("walker.owner must be the identity block's owner")
-    rid = walker.get("run_id")
-    if not ((isinstance(rid, str) and rid.strip()) or (isinstance(rid, (int, float)) and not isinstance(rid, bool))):
-        out.append("an owner_run names the CI run id it records (walker.run_id)")
-    if owned and (listed_identity(ident.get("label") or "", owned) or (None, None))[1] != "same":
+    rid = owner_run_id(walker)
+    if rid is None:
+        out.append("an owner_run names the CI run id it records (walker.run_id, digits)")
+    m = RUN_URL_RE.match(walker["run_url"].strip()) if isinstance(walker.get("run_url"), str) else None
+    if not m:
+        out.append("an owner_run names its run page: walker.run_url "
+                   "https://github.com/<owner>/<repo>/actions/runs/<run_id>")
+    elif rid is not None and m.group(3) != rid:
+        out.append(f"walker.run_url names run {m.group(3)}, not run_id {rid}")
+    if not owned:
+        out.append("an owner_run is accepted only against the repository's automation_identities "
+                   "(.qa/config.json), and none is configured")
+    elif (listed_identity(ident.get("label") or "", owned) or (None, None))[1] != "same":
         out.append("an owner_run walks an identity listed in .qa/config.json automation_identities")
+    return out
+
+
+# A GitHub Actions run page; twin of RUN_URL in qa-e2e-gate.mjs.
+RUN_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/actions/runs/(\d+)(?:/attempts/\d+)?$")
+
+
+def owner_run_id(walker):
+    rid = walker.get("run_id")
+    if isinstance(rid, int) and not isinstance(rid, bool) and rid > 0:
+        return str(rid)
+    if isinstance(rid, str) and re.fullmatch(r"\d+", rid.strip()):
+        return rid.strip()
+    return None
+
+
+def origin_repo(root):
+    """'owner/repo' of the origin remote on github.com, lowercased, or None."""
+    try:
+        url = run_git(root, "remote", "get-url", "origin").stdout.strip()
+    except Exception:
+        return None
+    m = re.match(r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com(?::\d+)?/)"
+                 r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}".lower() if m else None
+
+
+def _iso(s):
+    try:
+        return datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def owner_run_verify(root, ident, walked_sha):
+    """What the ship gate checks of a well-formed owner_run beyond the packet
+    (review r2a D5): the run URL's repository is this repository's origin, and
+    the run exists (`gh run view`), was built from the walked commit, and
+    spans the walk window. Every failure is a reason, and a reason denies. The
+    lookup shares the v5 provenance lookup's budget and deadline."""
+    global _LOOKUP_DEADLINE
+    walker = ident["walker"]
+    m = RUN_URL_RE.match(walker["run_url"].strip())
+    repo, rid = f"{m.group(1)}/{m.group(2)}", m.group(3)
+    if not root:
+        return ["no repository to check the run against (the ship gate verifies an owner_run from its repo)"]
+    origin = origin_repo(root)
+    if origin is None:
+        return ["the repository's origin remote is not on github.com, so the run cannot be tied to it"]
+    if repo.lower() != origin:
+        return [f"walker.run_url is a run of {repo}, not of this repository ({origin})"]
+    now = time.monotonic()
+    if _LOOKUP_DEADLINE is None:
+        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)
+    if left < 0.3:
+        return [f"run {rid}: lookup budget ({LOOKUP_BUDGET_S:.1f} s per command) is spent; retry"]
+    try:
+        p = subprocess.run(["gh", "run", "view", rid, "--repo", repo, "--json", "headSha,createdAt,updatedAt,status"],
+                           cwd=root, capture_output=True, text=True, timeout=left,
+                           env=dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1"))
+    except FileNotFoundError:
+        return [f"run {rid}: the gh CLI is not on the hook's PATH, so the run cannot be checked"]
+    except subprocess.TimeoutExpired:
+        return [f"run {rid}: `gh run view` timed out after {left:.1f} s; retry"]
+    except Exception as exc:
+        return [f"run {rid}: `gh run view` could not run: {_redact(str(exc))}"]
+    if p.returncode != 0:
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        return [f"run {rid}: `gh run view` failed (rc={p.returncode}: {_redact(lines[-1] if lines else '')})"]
+    try:
+        run = json.loads(p.stdout)
+    except ValueError:
+        return [f"run {rid}: `gh run view` returned no JSON"]
+    out = []
+    head = str(run.get("headSha") or "").lower()
+    if not walked_sha:
+        out.append(f"run {rid}: no walked commit (rewalk.json sha) to compare its headSha with")
+    elif head != str(walked_sha).lower():
+        out.append(f"run {rid} ran on {head[:12] or '?'}, not the walked commit {str(walked_sha)[:12]}")
+    start, end = _iso(run.get("createdAt")), _iso(run.get("updatedAt"))
+    w = ident.get("walk_window") if isinstance(ident.get("walk_window"), dict) else {}
+    ws, we = _iso(w.get("start")), _iso(w.get("end"))
+    if None in (start, end, ws, we) or not (start <= ws <= we <= end):
+        out.append(f"run {rid} ran {run.get('createdAt')}..{run.get('updatedAt')}; the walk window "
+                   f"{w.get('start')}..{w.get('end')} is not inside it")
     return out
 
 
@@ -727,7 +822,7 @@ def listed_identity(label, owned):
         if isinstance(o, str) and label_skeleton(o) == skel:
             return o, "confusable"
     return None
-def check_e2e(qa, rd, cfg, fails):
+def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
     rel = qa + "/evidence.json"
     gate = (cfg or {}).get("e2e_evidence_gate") or E2E_GATE
     if not rd["exists"](rel):
@@ -758,7 +853,10 @@ def check_e2e(qa, rd, cfg, fails):
                          f"but is spelled differently{' (it ' + problem + ')' if problem else ''}: refused")
         elif problem:
             fails.append(f"{rel}: identity label {label!r} {problem}: refused, name the identity in one script")
-        for problem in owner_run_problems(ident, owned):
+        or_problems = owner_run_problems(ident, owned)
+        if "walker" in ident and not or_problems:
+            or_problems = owner_run_verify(root, ident, walked_sha)
+        for problem in or_problems:
             fails.append(f"{rel}: identity {label!r} walker: {problem}: refused")
         if hit and hit[1] == "same" and ident.get("owned_by_automation") is not True:
 
@@ -854,8 +952,9 @@ def check_all(root, sha=None, equiv=False, evidence=None):
         rows = check_inventory(qa, rd, fails, stats)
         clusters = check_clusters(qa, rd, rows, fails, stats)
         check_plan(qa, rd, clusters, fails)
-        check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv)
-        check_e2e(qa, rd, cfg, fails)
+        rewalk = check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv)
+        check_e2e(qa, rd, cfg, fails, root=root, walked_sha=(rewalk or {}).get("sha") if isinstance(rewalk, dict) else None)
+
         check_deployed(root, cfg, sha, fails)
     except Exception as exc:  # fail closed on anything unexpected
         fails.append(f"gate internal error: {exc}")
@@ -3257,10 +3356,15 @@ def selftest(v4_gate=None, v4_templates=None):
                "label %r: ship-gate.py and qa-e2e-gate.mjs agree (%s vs %s)" % (label, py, mjs_verdicts.get(label)))
     # meu-psi PR #36: the suite's own CI run recorded as the walk (owner_run).
     base_or = {"label": "e2e.patient", "owned_by_automation": True, "owner": "deployed e2e gate",
-               "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659}}
+               "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659,
+                          "run_url": "https://github.com/albrand/psyche-project/actions/runs/36193694659"}}
     variants = {
         "valid": (base_or, ["e2e.patient"], True),
-        "valid, no list": (base_or, [], True),
+        "valid, attempt URL": ({**base_or, "walker": {**base_or["walker"], "run_url": base_or["walker"]["run_url"] + "/attempts/2"}}, ["e2e.patient"], True),
+        "no list (r2a D5)": (base_or, [], False),
+        "run_id x, no run_url (r2a D5)": ({**base_or, "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": "x"}}, ["e2e.patient"], False),
+        "run_url of another run (r2a D5)": ({**base_or, "walker": {**base_or["walker"], "run_id": 1, "run_url": "https://github.com/someone/else/actions/runs/999"}}, ["e2e.patient"], False),
+        "run_url off github.com": ({**base_or, "walker": {**base_or["walker"], "run_url": "https://evil.test/a/b/actions/runs/36193694659"}}, ["e2e.patient"], False),
         "no walker": ({k: v for k, v in base_or.items() if k != "walker"}, ["e2e.patient"], True),
         "owner mismatch": ({**base_or, "walker": {**base_or["walker"], "owner": "other"}}, ["e2e.patient"], False),
         "no run_id": ({**base_or, "walker": {"kind": "owner_run", "owner": "deployed e2e gate"}}, ["e2e.patient"], False),
@@ -3280,6 +3384,56 @@ def selftest(v4_gate=None, v4_templates=None):
         py_ok = not owner_run_problems(ident, lst)
         expect(py_ok == ok, "owner_run %s: ship gate %s" % (name, "accepts" if ok else "refuses"))
         expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
+    # r2a D5: the ship gate ties the run to this repository and checks it with
+    # `gh run view` (stubbed here: offline, deterministic).
+    orr = os.path.join(tmp, "owner-run-repo")
+    os.makedirs(orr)
+    sh("git init -q && git remote add origin git@github.com:albrand/psyche-project.git", cwd=orr)
+    orbin = os.path.join(tmp, "owner-run-bin")
+    os.makedirs(orbin)
+    ghrun = os.path.join(tmp, "gh-run.json")
+    open(os.path.join(orbin, "gh"), "w").write(
+        "#!/bin/sh\n[ -n \"$OR_GH_SLEEP\" ] && sleep \"$OR_GH_SLEEP\"\n"
+        "[ \"$1 $2 $3 $4 $5\" = \"run view 36193694659 --repo albrand/psyche-project\" ] || { echo 'unexpected gh call' >&2; exit 1; }\n"
+        f"cat {ghrun}\n")
+    os.chmod(os.path.join(orbin, "gh"), 0o755)
+    walked = "a" * 40
+    run_doc = {"headSha": walked, "createdAt": "2026-09-25T15:05:00Z", "updatedAt": "2026-09-25T15:45:00Z", "status": "completed"}
+    ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
+    saved_path = os.environ["PATH"]
+
+    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, sleep=None):
+        global _LOOKUP_DEADLINE
+        json.dump(doc, open(ghrun, "w"))
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + "/usr/bin:/bin"
+        if sleep:
+            os.environ["OR_GH_SLEEP"] = sleep
+        _LOOKUP_DEADLINE = None
+        try:
+            return owner_run_verify(root, ident, sha)
+        finally:
+            os.environ["PATH"] = saved_path
+            os.environ.pop("OR_GH_SLEEP", None)
+            _LOOKUP_DEADLINE = None
+
+    expect(verify(ident_or) == [], "owner_run: right repo, matching id, run on the walked commit around the walk -> pass")
+    expect(any("not the walked commit" in p for p in verify(ident_or, {**run_doc, "headSha": "b" * 40})),
+           "owner_run: a run on another commit -> deny")
+    expect(any("not inside it" in p for p in verify(ident_or, {**run_doc, "updatedAt": "2026-09-25T15:30:00Z"})),
+           "owner_run: a walk window outside the run -> deny")
+    expect(any("not on the hook's PATH" in p for p in verify(ident_or, path_first=None)),
+           "owner_run: gh unavailable -> deny")
+    _LOOKUP_DEADLINE_SAVED = LOOKUP_BUDGET_S
+    globals()["LOOKUP_BUDGET_S"] = 0.5
+    try:
+        expect(any("timed out" in p for p in verify(ident_or, sleep="3")), "owner_run: gh timing out -> deny")
+    finally:
+        globals()["LOOKUP_BUDGET_S"] = _LOOKUP_DEADLINE_SAVED
+    other = {**ident_or, "walker": {**ident_or["walker"], "run_url": "https://github.com/someone/else/actions/runs/36193694659"}}
+    expect(any("not of this repository" in p for p in verify(other)), "owner_run: a run of another repository -> deny")
+    expect(verify(ident_or, root=None) != [], "owner_run: no repository to check against -> deny")
+    expect(any("no walked commit" in p for p in verify(ident_or, sha=None)), "owner_run: no walked commit -> deny")
+
 
 
 
