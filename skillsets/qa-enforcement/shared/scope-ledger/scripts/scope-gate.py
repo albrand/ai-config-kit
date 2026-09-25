@@ -44,16 +44,15 @@ import shlex
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True  # no __pycache__: the four skill homes stay identical
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shell_dispatch import dispatches  # noqa: E402
+
 LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/state/agent-quality/scope")
 DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
 THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
 STATUSES = ("open", "done", "blocked-on-user")
 
-# `bb thread spawn|create|tell|message`, with bb as a bare word, a path ending
-# in /bb, or "$BB_CLI" / ${BB_CLI}.
-BB_DISPATCH = re.compile(
-    r"""(?:^|[\s;&|(`{])(?:"?\$\{?BB_CLI\}?"?|(?:[\w./~-]*/)?bb)\s+(?:--?[\w-]+(?:[= ]\S+)?\s+)*thread\s+(spawn|create|tell|message)\b"""
-)
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
 REDIRECT_IN = re.compile(r"""(?<![<0-9])<\s*(?:"([^"]+)"|'([^']+)'|([^\s<;&|)]+))""")
@@ -228,17 +227,24 @@ def dispatch_texts(payload):
     cmd = command_text(inp)
     if not cmd:
         return [], None
-    found = BB_DISPATCH.findall(cmd)
+    # Only a command whose command word is bb runs a dispatch; the same words
+    # inside a quoted argument (printf, echo, grep, git commit -m) are data.
+    found = dispatches(cmd)
     if not found:
         return [], None
     cwd = (inp.get("workdir") or inp.get("cwd") or payload.get("cwd") or "") if isinstance(inp, dict) else ""
-    text = cmd
-    for rx in (FILE_FLAG, CAT_SUB, REDIRECT_IN):
-        for g in rx.findall(cmd):
-            path = next((x for x in g if x), "")
-            if path and path != "-":
-                text += "\n" + read_file_text(path, cwd)
-    return [text], "bb thread " + "/".join(sorted(set(found)))
+    texts = []
+    for text, heredocs, _verb in found:
+        # Each dispatch carries its own serves line: its words, its heredoc,
+        # and the files it reads its brief from.
+        body = "\n".join([text, *heredocs])
+        for rx in (FILE_FLAG, CAT_SUB, REDIRECT_IN):
+            for g in rx.findall(text):
+                path = next((x for x in g if x), "")
+                if path and path != "-":
+                    body += "\n" + read_file_text(path, cwd)
+        texts.append(body)
+    return texts, "bb thread " + "/".join(sorted({v for _t, _h, v in found}))
 
 
 def record(entry):
@@ -444,6 +450,13 @@ def selftest():
         ("no ledger: spawn without serves is allowed", claude_bash("bb thread spawn --prompt x"), "thr_noledger", 0),
         ("no thread id: allowed", claude_bash("bb thread spawn --prompt x"), "", 0),
     ]
+    # Tokenizer cases, shared with the fail-before replay against an older gate.
+    with open(os.path.join(here, "..", "tests", "fixtures", "dispatch-cases.json"), encoding="utf-8") as f:
+        shared = json.load(f)["cases"]
+    for c in shared:
+        cmd = c["command"].replace("{brief}", brief).replace("{nobrief}", nobrief).replace("{tmp}", tmp)
+        cases.append((f"claude: {c['label']}", {**claude_bash(cmd), "cwd": tmp}, thread, c["want"]))
+        cases.append((f"codex: {c['label']}", codex_shell(cmd), thread, c["want"]))
     failed = 0
     for label, payload, t, want in cases:
         out = sys.stdout

@@ -40,10 +40,17 @@ after the QA ship gate.
 
 - It only acts when `$BB_THREAD_ID` has a ledger.
 - Dispatches it gates: `bb thread spawn|create|tell|message` (bare `bb`, a path
-  to `bb`, or `"$BB_CLI"`, with `--prompt-file`, `--message-file`, `$(cat f)`
-  and `< f` read), plus `fleet_member_spawn`, `fleet_member_tell` and
+  to `bb`, or `"$BB_CLI"`, with `--prompt-file`, `--message-file`, `$(cat f)`,
+  `< f` and heredocs read), plus `fleet_member_spawn`, `fleet_member_tell` and
   `fleet_delegate`.
-- Every such dispatch must carry one of:
+- Only an invocation counts: the command is split into simple commands
+  (`scripts/shell_dispatch.py`), and `bb` must be the command word (after
+  `;` `&&` `||` `|`, inside `$(...)` or backticks, after `env`, `command`,
+  `exec`, assignments, or inside `sh -c '...'` / `eval`). The same words in a
+  quoted argument (`printf`, `echo`, `grep`, `git commit -m`), a comment or a
+  heredoc written to a file are data and pass.
+- Every such dispatch must carry one of (each dispatch its own; a `serves:`
+  in a sibling command does not cover it):
   - `serves: P<n>`, where P<n> is an **open** purpose;
   - `serves: revision "<quote>"`, where the quote equals an accepted
     revision's quote (whitespace collapsed, never a substring).
@@ -79,8 +86,30 @@ The following threads are never archived by fleet (orphan scan,
 Fleet restores them if anything else archives them, and tells the coordinator.
 Every archive is appended to `~/.local/state/agent-quality/archive-audit.jsonl`.
 
+## Circuit successor (fleet plugin)
+
+When the fleet circuit hands a thread to a successor, the successor gets a
+copy of the origin's ledger: the same purposes and revisions, plus
+`inherited_from` and `inherited_at`. Its dispatches are gated the same way.
+At hand-back, status changes the successor made (newer `status_marked_at`),
+its evidence, new purposes and new revisions merge into the origin's ledger,
+and the successor's file is kept as `<successor>.json.returned-<ms>`.
+
+## Known limits
+
+- opencode has no PreToolUse hook, so dispatches from opencode threads (GLM)
+  are not gated. Only Claude Code and Codex run the gate.
+- Kit branch `feat/qa-gate-v3` (e82faa9): its `install.sh` would overwrite the
+  scope pretool hook in `~/.agent-hooks` (`coordinator-hook-pretool.sh`). Re-run
+  `hooks/install-scope-gate.sh` after installing from that branch.
+- Not parsed: a script run from a file (`sh dispatch.sh`), a script piped into
+  a shell (`cat x | sh`), and `bb` reached through an alias, a function or a
+  variable other than `BB_CLI`.
+
 ## Tests
 
-`python3 scripts/scope-gate.py selftest` runs Claude and Codex payload shapes
+
+`python3 scripts/scope-gate.py selftest` runs Claude and Codex payload shapes,
+including every shell case in `tests/fixtures/dispatch-cases.json`,
 against `tests/fixtures/scope-ledger.json`. The fleet plugin's
 `test/scope-guard.test.mts` uses the same fixture.
