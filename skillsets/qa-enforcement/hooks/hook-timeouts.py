@@ -5,8 +5,9 @@ A timed-out PreToolUse hook lets the command run: verified 2026-09-25 with a
 live probe on Claude Code 2.1.282 (a hook sleeping past its 2 s timeout, the
 command still ran), and in codex-rs/hooks/src/events/pre_tool_use.rs at
 rust-v0.157.0 (a timeout is a Failed run, and only a Blocked run blocks).
-The ship gate and the scope gate decide at HOOK_HARD_S from the hook chain's
-start, which is HOOK_HOST_TIMEOUT_S - 3 s. That only holds if the host
+The ship gate and the scope gate decide at HOOK_HARD_S (10 s) from the hook
+chain's start; coordinator-hook-pretool.sh kills a gate stage at 11 s and
+decides by shape in shell, and cuts its last stage at 12.5 s. That only holds if the host
 timeout on the entry that runs coordinator-hook-pretool.sh is at least
 HOOK_HOST_TIMEOUT_S; with the old 5 s a loaded host decided in 4.9-6.0 s and
 the command ran ungated.
@@ -88,7 +89,8 @@ def check(configs):
             if not isinstance(t, (int, float)) or t < need:
 
                 problems.append(f"{path}: PreToolUse[{gi}].hooks[{hi}] timeout {t} < {need:.0f} s "
-                                f"(the gates decide at {need - 3:.0f} s from the chain start)")
+                                f"(the chain decides by 12.5 s from its start and needs the margin)")
+
             else:
                 print(f"ok {path}: PreToolUse[{gi}].hooks[{hi}] timeout {t} >= {need:.0f}")
     for p in problems:

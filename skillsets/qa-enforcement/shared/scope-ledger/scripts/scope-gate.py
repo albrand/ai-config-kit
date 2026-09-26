@@ -71,11 +71,13 @@ MCP_TOOL = re.compile(r"(?:^|[^a-z])(fleet_member_spawn|fleet_member_tell|fleet_
 # allowed, as when the gate crashes. Same constants as qa-sweep's ship gate;
 # hooks/check-hook-timeouts.sh holds the host config to them.
 HOOK_HOST_TIMEOUT_S = 15.0
-HOOK_HARD_S = HOOK_HOST_TIMEOUT_S - 3.0
+# Below the chain supervisor's GATE_DEADLINE (11 s, coordinator-hook-pretool.sh),
+# which kills a stage still running then; this gate's own deny usually wins.
+HOOK_HARD_S = 10.0
 # Matched against the payload with quotes and backslashes removed, so
 # `bb thr"ead" tell` reads as the dispatch the shell will run.
-COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|thread.{0,40}(spawn|create|tell|message)')
-COARSE_SERVES = re.compile(r"serves:\s*(P[0-9]|revision)", re.I)
+COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue)|'
+                             r'fleet.{0,20}(group-create|task-add|advise)', re.I)
 MCP_FIELDS = {"fleet_member_spawn": ("prompt", "concern"), "fleet_member_tell": ("message",), "fleet_delegate": ("task",)}
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
@@ -208,15 +210,83 @@ def deny_reason(ledger, thread, served):
 
 # ---------------------------------------------------------------- the payload
 
-def read_file_text(path, cwd):
-    path = os.path.expanduser(path)
+ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-)?([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+# Why a brief file could not be read, for the deny message; reset per payload.
+FILE_NOTES = []
+
+
+# Names a command assigns itself: `D=...;`, `export D=...`, `for D in`, `read D`.
+# The hook reads brief files before the command runs, so its value for such a
+# name is not the one the command will use (live miss, 2026-09-25 23:15Z:
+# `D=...; bb thread tell ... --message-file $D/x.md`). Over-approximates on
+# purpose (a prefix assignment, or `D=` inside a quoted argument, also counts):
+# the cost is a deny whose message says to use a literal path.
+ASSIGNED_NAME = re.compile(
+    r"(?:^|[\s;&|(){}`])(?:(?:export|local|declare|typeset|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]*)\+?="
+    r"|\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b"
+    r"|\bread\s+(?:-\w+\s+)*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def assigned_names(cmd):
+    return {n for g in ASSIGNED_NAME.findall(cmd or "") for n in g if n}
+
+
+def expand_path(path, assigned=frozenset()):
+    """`path` with $VAR, ${VAR}, ${VAR:-default} and a leading ~ expanded from
+    this hook's environment, which the host gives the hook and the command
+    alike; None when a variable is unset (the file cannot be known, so the
+    dispatch is denied) or is one the command assigns itself (`assigned`: the
+    hook would read another file than the command). A coordinator's brief in
+    $TMPDIR/m.txt was denied until 2026-09-25 because $TMPDIR was read as a
+    relative directory name."""
+    unset, inside = [], []
+
+    def sub(m):
+        name = m.group(1) or m.group(4)
+        op, rest = m.group(2), m.group(3) or ""
+        if name in assigned:
+            inside.append("$" + name)
+            return ""
+        val = os.environ.get(name)
+        if m.group(1) and op is None and rest:
+            unset.append(m.group(0))  # ${VAR/x/y} and friends: not expanded
+            return ""
+        if (op == ":-" and not val) or (op == "-" and val is None):
+            return ENV_REF.sub(sub, rest)
+
+        if val is None:
+            unset.append("$" + name)
+            return ""
+        return val
+
+    out = ENV_REF.sub(sub, path)
+    if inside:
+        FILE_NOTES.append(f"{path}: {', '.join(sorted(set(inside)))} is set by this same command, and the hook reads "
+                          f"the brief file before the command runs, so it cannot know which file that is: "
+                          f"name the brief file by a literal path")
+        return None
+    if unset:
+        FILE_NOTES.append(f"{path}: {', '.join(unset)} is not set in the hook's environment, so the file cannot be read")
+        return None
+    return os.path.expanduser(out)
+
+
+def read_file_text(path, cwd, assigned=frozenset()):
+    shown = path
+    path = expand_path(path, assigned)
+    if path is None:
+        return ""
     if not os.path.isabs(path) and cwd:
         path = os.path.join(cwd, path)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read(200_000)
-    except OSError:
-        return ""
+    except FileNotFoundError:
+        FILE_NOTES.append(f"{shown}: no such file when the hook ran. A file the same command writes does not exist "
+                          f"yet when the hook reads it: write the brief file in a separate step, then dispatch")
+    except OSError as e:
+        FILE_NOTES.append(f"{shown}: unreadable ({e.strerror})")
+    return ""
 
 
 def command_text(inp):
@@ -234,6 +304,7 @@ def command_text(inp):
 
 def dispatch_texts(payload):
     """([texts], label) when the tool call dispatches work; ([], None) otherwise."""
+    del FILE_NOTES[:]
     tool = str(payload.get("tool_name") or payload.get("toolName") or "")
     inp = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
     if isinstance(inp, str):
@@ -258,6 +329,7 @@ def dispatch_texts(payload):
         return [], None
     cwd = (inp.get("workdir") or inp.get("cwd") or payload.get("cwd") or "") if isinstance(inp, dict) else ""
     texts = []
+    assigned = assigned_names(cmd)
     for text, heredocs, _verb in found:
         # Each dispatch carries its own serves line: its words, its heredoc,
         # and the files it reads its brief from.
@@ -266,9 +338,10 @@ def dispatch_texts(payload):
             for g in rx.findall(text):
                 path = next((x for x in g if x), "")
                 if path and path != "-":
-                    body += "\n" + read_file_text(path, cwd)
+                    body += "\n" + read_file_text(path, cwd, assigned)
         texts.append(body)
-    return texts, "bb thread " + "/".join(sorted({v for _t, _h, v in found}))
+    return texts, "bb " + "/".join(sorted({v for _t, _h, v in found}))
+
 
 
 def record(entry):
@@ -296,6 +369,26 @@ def hook_elapsed(now=None):
     return max(0.0, (datetime.datetime.now().timestamp() if now is None else now) - t0)
 
 
+def shape_serves(thread, flat):
+    """Shape mode: does the (quote-stripped) payload name an OPEN purpose of
+    the ledger, or quote one of its accepted revisions? An unknown or
+    blocked P-id does not count; an unreadable ledger serves nothing."""
+    try:
+        led = read_ledger(thread)
+    except Exception:
+        return False
+    if not led:
+        return False
+    opened = {p["id"] for p in led["purposes"] if p["status"] == "open"}
+    for m in SERVES_P.finditer(flat):
+        if {pid.upper() for pid in re.findall(r"P\d+", m.group(1), re.I)} & opened:
+            return True
+    if re.search(r"serves:\s*revision", flat, re.I):
+        body = collapse(flat)
+        return any(collapse(re.sub(r"[\\'\"]", "", r["quote"])) in body for r in led.get("accepted_revisions", []))
+    return False
+
+
 def hook_under_deadline(thread, stdin=None):
     """hook() with a hard deadline measured from the chain start."""
     import signal
@@ -307,7 +400,7 @@ def hook_under_deadline(thread, stdin=None):
         except Exception:
             has = False
         text = re.sub(r"[\\'\"]", "", held["text"])
-        if has and COARSE_DISPATCH.search(text) and not COARSE_SERVES.search(text):
+        if has and COARSE_DISPATCH.search(text) and not shape_serves(thread, text):
             deny(f"[scope-gate] the gate could not finish within {HOOK_HARD_S:.0f} s of the hook chain starting "
                  f"(the host's hook timeout is {HOOK_HOST_TIMEOUT_S:.0f} s, and a timed-out hook lets the command "
                  f"run); this dispatch names no purpose, so it is denied: add `serves: P<n>` and retry")
@@ -354,7 +447,8 @@ def hook(stdin_text, thread):
         record({"event": "scope_passed", "thread": thread, "tool": label, "serves": via})
         return 0
     record({"event": "scope_denied", "thread": thread, "tool": label, "named": served})
-    return deny(deny_reason(ledger, thread, served))
+    notes = "".join("\nBrief file " + n + "." for n in FILE_NOTES)
+    return deny(deny_reason(ledger, thread, served) + notes)
 
 
 # ---------------------------------------------------------------- CLI
@@ -483,7 +577,55 @@ def main(argv):
 
 # ---------------------------------------------------------------- selftest
 
+# bb verbs whose help shows text but that dispatch no work, with the reason.
+VERB_EXEMPT = {
+    "fleet validate": "a claim sent to the reviewer, not work for a thread",
+    "fleet review": "a claim sent to the reviewer, not work for a thread",
+    "fleet hermes": "a claim sent to the reviewer, not work for a thread",
+}
+
+
+def shutil_which(name):
+    import shutil
+    return shutil.which(name)
+
+
+def gated_verbs():
+    from shell_dispatch import THREAD_VERBS, QUEUE_VERBS, FLEET_VERBS
+    return ({f"thread {v}" for v in THREAD_VERBS} | {f"thread queue {v}" for v in QUEUE_VERBS}
+            | {f"fleet {v}" for v in FLEET_VERBS})
+
+
+def bb_text_verbs(bb="bb"):
+    """Every verb of `bb thread`, `bb thread queue` and `bb fleet` whose help
+    says it carries a prompt, a message, a charter, a title, a question or a
+    claim. The per-verb help calls run concurrently (about 1 s each)."""
+    import subprocess
+
+    def helptext(*args):
+        try:
+            return subprocess.run([bb, *args, "--help"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    listed = re.compile(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?\s", re.M)
+    jobs = {f"thread {v}": ["thread", v] for v in listed.findall(helptext("thread")) if v not in ("help", "queue")}
+    jobs.update({f"thread queue {v}": ["thread", "queue", v] for v in listed.findall(helptext("thread", "queue")) if v != "help"})
+    procs = {k: subprocess.Popen([bb, *a, "--help"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+             for k, a in jobs.items()}
+    text = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|\[message\]|<message>|--charter")
+    carries = set()
+    for k, p in procs.items():
+        out, _ = p.communicate(timeout=120)
+        if text.search(out or ""):
+            carries.add(k)
+    for m in re.finditer(r"^\s+bb fleet (\S+)(.*)$", helptext("fleet"), re.M):
+        if re.search(r'--charter|--prompt|--message|"<(title|question|claim)>"', m.group(2)):
+            carries.add(f"fleet {m.group(1)}")
+    return carries
+
+
 def selftest():
+
     global LEDGER_DIR, DECISIONS
     here = os.path.dirname(os.path.abspath(__file__))
     fixture = os.path.join(here, "..", "tests", "fixtures", "scope-ledger.json")
@@ -535,7 +677,30 @@ def selftest():
         ("codex: bare fleet_member_spawn serving P1", {"tool_name": "fleet_member_spawn", "tool_input": {"prompt": "serves: P1"}}, thread, 0),
         ("no ledger: spawn without serves is allowed", claude_bash("bb thread spawn --prompt x"), "thr_noledger", 0),
         ("no thread id: allowed", claude_bash("bb thread spawn --prompt x"), "", 0),
+        # 2026-09-25: a brief in $TMPDIR was denied, the variable read as a directory name.
+        ("claude: --message-file $TMPDIR/brief with serves", claude_bash("bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 0),
+        ("claude: --message-file \"${TMPDIR}/nobrief\" without serves", claude_bash('bb thread tell thr_x --message-file "${TMPDIR}/nobrief.md"'), thread, 2),
+        ("claude: --prompt-file ${UNSET:-$TMPDIR}/brief takes the default", claude_bash("bb thread spawn --prompt-file ${SCOPE_GATE_UNSET_VAR:-$TMPDIR}/brief.md"), thread, 0),
+        ("claude: --prompt-file ${UNSET:-/nonexistent}/brief takes the default and is denied", claude_bash("bb thread spawn --prompt-file ${SCOPE_GATE_UNSET_VAR:-/nonexistent}/brief.md"), thread, 2),
+        ("claude: --message-file $UNSET/brief is denied", claude_bash("bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR/brief.md"), thread, 2),
+        ("claude: an unset variable before a real path is denied", claude_bash("bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR$TMPDIR/brief.md"), thread, 2),
+
+        ("claude: $(cat $TMPDIR/brief) with serves", claude_bash('bb thread tell thr_x "$(cat $TMPDIR/brief.md)"'), thread, 0),
+        ("claude: tell < $TMPDIR/brief with serves", claude_bash("bb thread tell thr_x < $TMPDIR/brief.md"), thread, 0),
+        # 2026-09-25 23:15Z: a variable the command sets itself. The hook would
+        # read $TMPDIR/brief.md from its own environment, not /nonexistent.
+        ("claude: TMPDIR reassigned in the command, then --message-file $TMPDIR/brief", claude_bash("TMPDIR=/nonexistent; bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 2),
+        ("claude: D=... && --message-file $D/brief", claude_bash("D=$TMPDIR && bb thread tell thr_x --message-file $D/brief.md"), thread, 2),
+        ("claude: export D=...; --prompt-file ${D}/brief", claude_bash("export D=/x; bb thread spawn --prompt-file ${D}/brief.md"), thread, 2),
+        ("claude: for TMPDIR in ...; $(cat $TMPDIR/brief)", claude_bash('for TMPDIR in /nonexistent; do bb thread tell thr_x "$(cat $TMPDIR/brief.md)"; done'), thread, 2),
+        ("claude: read TMPDIR; tell < $TMPDIR/brief", claude_bash("read -r TMPDIR < /dev/null; bb thread tell thr_x < $TMPDIR/brief.md"), thread, 2),
+        ("claude: an assignment of another name leaves $TMPDIR/brief readable", claude_bash("X=1; bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 0),
+        ("claude: --message-file ~/brief with serves (HOME)", claude_bash("bb thread tell thr_x --message-file ~/brief.md"), thread, 0),
     ]
+    saved_env = {k: os.environ.get(k) for k in ("TMPDIR", "HOME", "SCOPE_GATE_UNSET_VAR")}
+    os.environ["TMPDIR"], os.environ["HOME"] = tmp, tmp
+    os.environ.pop("SCOPE_GATE_UNSET_VAR", None)
+
     # Tokenizer cases, shared with the fail-before replay against an older gate.
     with open(os.path.join(here, "..", "tests", "fixtures", "dispatch-cases.json"), encoding="utf-8") as f:
         shared = json.load(f)["cases"]
@@ -558,7 +723,33 @@ def selftest():
         if got != want:
             failed += 1
         print(f"{mark} {label}: rc={got} want={want}")
+    import io
+    for label, cmd, needle in [
+        ("a missing brief file says to write it in a separate step",
+         "printf 'serves: P1' > $TMPDIR/late.md && bb thread tell thr_x --message-file $TMPDIR/late.md", "separate step"),
+        ("an unset variable is named", "bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR/b.md", "$SCOPE_GATE_UNSET_VAR is not set"),
+        ("a variable the command sets asks for a literal path",
+         "D=$TMPDIR; bb thread tell thr_x --message-file $D/brief.md", "$D is set by this same command"),
+
+    ]:
+        out, err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(claude_bash(cmd)), thread)
+            said = sys.stdout.getvalue()
+        finally:
+            sys.stderr.close()
+            sys.stdout, sys.stderr = out, err
+        ok = got == 2 and needle in said
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} deny message: {label}: rc={got}")
+    for k, v in saved_env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
     # A broken ledger denies dispatches (fail closed) but not other tools.
+
     with open(ledger_path("thr_broken"), "w") as f:
         f.write("{ not json")
     for label, payload, want in [
@@ -641,6 +832,10 @@ def selftest():
         ("deadline: a quote-split dispatch word is still one", 'bb thr"ea"d tell thr_x hi', spent, 2, "could not finish"),
 
         ("deadline: tell with serves allowed", "bb thread tell thr_x 'serves: P1 hi'", spent, 0, ""),
+        ("deadline: a blocked purpose does not serve", "bb thread tell thr_x 'serves: P2 hi'", spent, 2, "could not finish"),
+        ("deadline: an unknown purpose does not serve", "bb thread tell thr_x 'serves: P9 hi'", spent, 2, "could not finish"),
+        ("deadline: an open id in a list serves", "bb thread tell thr_x 'serves: P9, P1 hi'", spent, 0, ""),
+        ("deadline: fork is a dispatch", "bb thread fork thr_x --prompt hi", spent, 2, "could not finish"),
         ("deadline: non-dispatch allowed", "ls -la", spent, 0, ""),
         ("future HOOK_T0: normal decision", "bb thread tell thr_x hi", future, 2, "must say which"),
     ]:
@@ -652,6 +847,17 @@ def selftest():
         good = p.returncode == want and text in p.stderr and took < 2.0
         failed += not good
         print(f"{'ok  ' if good else 'FAIL'} {label}: rc={p.returncode} want={want} in {took:.2f} s")
+    # Every bb verb whose help says it hands a thread text to act on is gated
+    # (review r1 D3): a new prompt-carrying verb fails here until it is added
+    # to shell_dispatch or to VERB_EXEMPT with the reason.
+    if shutil_which("bb"):
+        carries = bb_text_verbs()
+        missing = sorted(carries - gated_verbs() - set(VERB_EXEMPT))
+        failed += bool(missing) or not carries
+        print(f"{'ok  ' if carries and not missing else 'FAIL'} every prompt-carrying bb verb is gated "
+              f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
+    else:
+        print("skip bb verb coverage: no bb on PATH")
     with open(DECISIONS) as f:
         n = sum(1 for _ in f)
 

@@ -17,16 +17,37 @@ any other command (timeout, xargs, nice, sudo, find -exec) counts. `sh|bash|zsh|
 `eval <words>` and a shell reading a heredoc (`bash <<EOF`) are parsed
 recursively.
 
+Review r1 (2026-09-25) added: the command word is case-folded (`BB` runs bb
+on a case-insensitive filesystem); `${VAR:-bb}` resolves to its default; a
+command word that is a variable or a command substitution (`$B`,
+`$(printf bb)`) counts when a dispatch verb follows it; a here-string fed to a
+shell (`bash <<< '...'`), `env -S '...'`, and a process substitution a shell
+reads (`bash <(echo '...')`, `source <(...)`) are parsed as scripts; and
+`xargs [opts] bb` is a dispatch, since its arguments arrive on stdin.
+
+Dispatch verbs are every bb verb that hands a thread new text to act on
+(`bb thread --help`, `bb fleet --help`, 2026-09-25): thread spawn|create|fork|
+tell|message|edit-message, thread queue create|update|send, and fleet
+group-create|task-add|advise. scope-gate.py selftest checks the installed
+bb's help for a prompt-carrying verb missing here.
+
 Not covered (documented in SKILL.md known limits): a script run from a file
 (`sh dispatch.sh`), a script piped into a shell (`cat x | sh`), a command
 given to a wrapper as one quoted string (`watch 'bb thread tell ...'`,
-`ssh host 'bb ...'`), and a bb
-invoked through an alias, a function or a variable other than BB_CLI.
+`ssh host 'bb ...'`), and a bb invoked through an alias or a function.
 """
 import re
 import shlex
 
-DISPATCH_VERBS = ("spawn", "create", "tell", "message")
+THREAD_VERBS = ("spawn", "create", "fork", "tell", "message", "edit-message")
+QUEUE_VERBS = ("create", "update", "send")
+FLEET_VERBS = ("group-create", "task-add", "advise")
+DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
+SUBST = "__SUBST__"
+DEFAULTED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}]*)\}$")
+XARGS_ARG_OPTS = {"-I", "-i", "-n", "-P", "-L", "-l", "-d", "-E", "-e", "-s", "-a", "-J", "-R", "-S"}
+VARIABLE = re.compile(
+r"^\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$")
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
 WRAPPERS = {"command", "exec", "nohup", "time", "builtin"}
 PREFIX_WORDS = {"!", "{", "}", "then", "do", "else", "elif", "if", "while", "until"}
@@ -36,11 +57,12 @@ MAX_DEPTH = 4
 
 
 class Command:
-    __slots__ = ("text", "heredocs")
+    __slots__ = ("text", "heredocs", "procsubs")
 
     def __init__(self):
         self.text = []
         self.heredocs = []
+        self.procsubs = []  # the inner scripts of <(...) words
 
     def string(self):
         return "".join(self.text).strip()
@@ -191,17 +213,58 @@ def split_script(script, depth=0):
             cur.text.append(c)  # 2>&1, &> file: a redirection, not a separator
             i += 1
             continue
+        if script.startswith("<(", i) or script.startswith(">(", i):
+            j = _matching(script, i + 1)
+            cur.procsubs.append(script[i + 2:j])
+            substitute(i, j, script[i + 2:j])
+            i = j + 1
+            continue
         if c in ";&|()":
             push()
             i += 1
             continue
+
         cur.text.append(c)
         i += 1
     push()
     return out
 
 
+def mask(text):
+    """The command text with each $(...), `...`, <(...) and >(...) replaced by
+    SUBST, so shlex keeps a substitution as one word instead of splitting it."""
+    out, i, n, q = [], 0, len(text), None
+    while i < n:
+        c = text[i]
+        if q == "'":
+            out.append(c)
+            if c == "'":
+                q = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if text.startswith("$(", i) or (q is None and (text.startswith("<(", i) or text.startswith(">(", i))):
+            j = _matching(text, i + 1)
+            out.append(SUBST)
+            i = j + 1
+            continue
+        if c == "`":
+            j = text.find("`", i + 1)
+            out.append(SUBST)
+            i = n if j < 0 else j + 1
+            continue
+        if c in "'\"":
+            q = c if q is None else (None if q == c else q)
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def words(text):
+    text = mask(text)
     try:
         return shlex.split(text, posix=True)
     except ValueError:
@@ -230,55 +293,133 @@ def _command_word(w):
     return None
 
 
+def _env_split(w):
+    """The command line `env -S '<line>'` runs (the -S string, then the words
+    after it), or None when this is not an env -S."""
+    i = 0
+    while i < len(w) and (w[i] in PREFIX_WORDS or ASSIGNMENT.match(w[i])):
+        i += 1
+    if i >= len(w) or w[i].rsplit("/", 1)[-1] != "env":
+        return None
+    i += 1
+    while i < len(w) and (w[i].startswith("-") or ASSIGNMENT.match(w[i])):
+        a = w[i]
+        if a in ("-S", "--split-string") and i + 1 < len(w):
+            return " ".join(w[i + 1:])
+        if a.startswith("--split-string="):
+            return " ".join([a.split("=", 1)[1], *w[i + 1:]])
+        if a.startswith("-S") and len(a) > 2:
+            return " ".join([a[2:], *w[i + 1:]])
+        i += 2 if a in ("-u", "--unset", "-C", "--chdir") else 1
+    return None
+
+
 def is_bb(word):
-    return word in ("$BB_CLI", "${BB_CLI}") or word.rsplit("/", 1)[-1] == "bb"
+    """A word that runs bb: bb or a path to it (any case: the filesystem is
+    case-insensitive), $BB_CLI, or ${VAR:-<one of those>}."""
+    m = DEFAULTED.match(word)
+    if m:
+        return is_bb(m.group(1))
+    return word in ("$BB_CLI", "${BB_CLI}") or word.rsplit("/", 1)[-1].lower() == "bb"
+
+
+def maybe_bb(word):
+    """A command word whose program is only known at run time."""
+    return word == SUBST or bool(VARIABLE.match(word)) or bool(DEFAULTED.match(word))
+
+
+def _printed(script, depth):
+    """What the echo/printf commands in a process substitution print, as
+    script text a shell reading it would run."""
+    out = []
+    for cmd in split_script(script, depth + 1):
+        w = words(cmd.string())
+        k = _command_word(w)
+        if k is not None and w[k].rsplit("/", 1)[-1] in ("echo", "printf"):
+            out.append(" ".join(a for a in w[k + 1:] if a not in ("-e", "-n", "-E", "--")))
+    return out
 
 
 def dispatches(script, depth=0):
-    """[(command_text, heredoc_bodies, verb)] for each bb thread dispatch in the script."""
+    """[(command_text, heredoc_bodies, verb)] for each bb dispatch in the script."""
     found = []
     for cmd in split_script(script, depth):
         text = cmd.string()
         w = words(text)
+        split = _env_split(w)
+        if split is not None:
+            if depth < MAX_DEPTH:
+                found.extend(dispatches(split, depth + 1))
+            continue
         k = _command_word(w)
         if k is None:
             continue
         head, rest = w[k], w[k + 1:]
         base = head.rsplit("/", 1)[-1]
-        if base in SHELLS and depth < MAX_DEPTH:
-            inner = None
-            for j, a in enumerate(rest):
-                if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
-                    inner = rest[j + 1] if j + 1 < len(rest) else None
-                    break
-            scripts = [inner] if inner is not None else list(cmd.heredocs)
-            for s in scripts:
-                found.extend(dispatches(s, depth + 1))
+        if base in SHELLS or base in ("source", "."):
+            if depth < MAX_DEPTH:
+                inner = None
+                if base in SHELLS:
+                    for j, a in enumerate(rest):
+                        if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                            inner = rest[j + 1] if j + 1 < len(rest) else None
+                            break
+                if inner is not None:
+                    scripts = [inner]
+                else:
+                    # what the shell reads: here-strings, heredocs, and what a
+                    # process substitution prints
+                    scripts = [rest[j + 1] for j, a in enumerate(rest) if a == "<<<" and j + 1 < len(rest)]
+                    scripts += [a[3:] for a in rest if a.startswith("<<<") and len(a) > 3]
+                    scripts += list(cmd.heredocs)
+                    for p in cmd.procsubs:
+                        scripts += _printed(p, depth)
+                for s in scripts:
+                    found.extend(dispatches(s, depth + 1))
             continue
         if base == "eval" and depth < MAX_DEPTH:
             found.extend(dispatches(" ".join(rest), depth + 1))
             continue
-        # bb as the command word, or as an unquoted word after any other
-        # command that runs its arguments (timeout, xargs, nice, sudo, stdbuf,
-        # find -exec, ...). Quoted text is one shlex word, so a sentence that
-        # mentions a dispatch never matches.
-        for b in [k] if is_bb(head) else [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
-            verb = _thread_verb(w[b + 1:])
+        if is_bb(head) or maybe_bb(head):
+            verb = _dispatch_verb(rest)
+            if verb:
+                found.append((text, list(cmd.heredocs), verb))
+            continue
+        # `xargs [opts] bb ...` runs bb with words from stdin, so it is a
+        # dispatch even when no verb is written.
+        if base == "xargs":
+            j = k + 1
+            while j < len(w) and w[j].startswith("-"):
+                j += 2 if w[j] in XARGS_ARG_OPTS else 1
+            if j < len(w) and is_bb(w[j]):
+                found.append((text, list(cmd.heredocs), _dispatch_verb(w[j + 1:]) or "xargs bb"))
+                continue
+        # bb as an unquoted word after any other command that runs its
+        # arguments (timeout, nice, sudo, stdbuf, find -exec, ...). Quoted
+        # text is one shlex word, so a sentence that mentions a dispatch
+        # never matches.
+        for b in [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
+            verb = _dispatch_verb(w[b + 1:])
             if verb:
                 found.append((text, list(cmd.heredocs), verb))
                 break
     return found
 
 
-def _thread_verb(rest):
-    """The dispatch verb when `rest` (the words after bb) is `thread <verb>`,
-    after at most a few global options (`--json`, `--host h`)."""
-    for j, a in enumerate(rest[:4]):
-        if a == "thread":
-            if j + 1 < len(rest) and rest[j + 1] in DISPATCH_VERBS:
-                return rest[j + 1]
+def _dispatch_verb(rest):
+    """'thread tell', 'thread queue create', 'fleet group-create', ... when
+    `rest` (the words after bb) is a dispatch, after at most a few global
+    options (`--json`, `--host h`)."""
+    for j, a in enumerate(rest[:5]):
+        if a in ("thread", "fleet"):
+            nxt = rest[j + 1] if j + 1 < len(rest) else ""
+            if a == "thread" and nxt in THREAD_VERBS:
+                return f"thread {nxt}"
+            if a == "thread" and nxt == "queue" and j + 2 < len(rest) and rest[j + 2] in QUEUE_VERBS:
+                return f"thread queue {rest[j + 2]}"
+            if a == "fleet" and nxt in FLEET_VERBS:
+                return f"fleet {nxt}"
             return None
         if not a.startswith("-") and not (j and rest[j - 1].startswith("-")):
             return None
     return None
-

@@ -39,16 +39,36 @@ python3 $G check <thread> "<brief text>"           # the gate's decision, no too
 after the QA ship gate.
 
 - It only acts when `$BB_THREAD_ID` has a ledger.
-- Dispatches it gates: `bb thread spawn|create|tell|message` (bare `bb`, a path
-  to `bb`, or `"$BB_CLI"`, with `--prompt-file`, `--message-file`, `$(cat f)`,
-  `< f` and heredocs read), plus `fleet_member_spawn`, `fleet_member_tell` and
-  `fleet_delegate`.
+- Dispatches it gates: every `bb` verb that carries a prompt, derived from
+  `bb thread --help` and `bb fleet --help`: `thread spawn|create|fork|tell|
+  message|edit-message`, `thread queue create|update|send`, and `fleet
+  group-create|task-add|advise`, plus `fleet_member_spawn`,
+  `fleet_member_tell` and `fleet_delegate`. The selftest reads bb's help and
+  fails when a prompt-carrying verb appears that the gate does not cover
+  (`fleet validate|review|hermes` are exempt: a claim to the reviewer, not a
+  brief). `bb` is matched in any case (`BB`: the filesystem is
+  case-insensitive), as a path, as `"$BB_CLI"` or `"${BB_CLI:-bb}"`, and a
+  command word only known at run time (`$(...)`, `$VAR`) followed by a
+  dispatch verb counts too.
+- Brief files are read: `--prompt-file`, `--message-file`, `$(cat f)`, `< f`
+  and heredocs. `~`, `$VAR`, `${VAR}` and `${VAR:-default}` in the path are
+  expanded from the hook's environment (the host gives the hook and the
+  command the same one), so `--message-file $TMPDIR/brief.md` works. An unset
+  variable denies. So does a variable the command sets itself (`D=...;`,
+  `export D=`, `for D in`, `read D`), even one the hook's environment also
+  has: the hook reads the file before the command runs, so it would read
+  another file. Name the brief file by a literal path (the deny says so). A
+  file the same command writes does not exist yet when the hook runs: write
+  the brief file in a separate step (the deny says so).
 - Only an invocation counts: the command is split into simple commands
   (`scripts/shell_dispatch.py`), and `bb` must be the command word (after
   `;` `&&` `||` `|`, inside `$(...)` or backticks, after `env`, `command`,
-  `exec`, assignments, or inside `sh -c '...'` / `eval`), or an unquoted word
-  after a wrapper that runs it (`timeout`, `xargs`, `nice`, `sudo`,
-  `find -exec`). The same words in a quoted argument (`printf`, `echo`,
+  `exec`, assignments, `env -S '...'`, inside `sh -c '...'` / `eval`, a
+  here-string, heredoc or process substitution a shell reads
+  (`bash <<< '...'`, `bash <(echo ...)`, `source <(...)`)), or an unquoted
+  word after a wrapper that runs it (`timeout`, `nice`, `sudo`,
+  `find -exec`), or `xargs [opts] bb` (its verb comes from stdin, so any
+  `xargs bb` counts as a dispatch). The same words in a quoted argument (`printf`, `echo`,
   `grep`, `git commit -m`), a comment or a heredoc written to a file are data
   and pass.
 - Every such dispatch must carry one of (each dispatch its own; a `serves:`
@@ -59,12 +79,21 @@ after the QA ship gate.
 - A denial lists the open purposes in the user's words.
 - A ledger that exists but can't be read denies dispatches (fails closed).
 - Every decision is appended to `~/.local/state/agent-quality/scope-decisions.jsonl`.
-- It decides by 12 s after the chain started (`HOOK_T0`, exported by
-  `coordinator-hook-pretool.sh`), because a hook the host times out (15 s)
-  lets the command run. At the deadline, or when an earlier stage used the
-  time up, it decides on shape alone: with a ledger, a dispatch-shaped call
-  (`fleet_member_spawn|tell`, `fleet_delegate`, `thread … spawn|create|tell|message`)
-  without `serves: P<n>` or `serves: revision` denies; anything else passes.
+- A hook the host times out (15 s) lets the command run, so the decision is
+  made before that in two layers. `coordinator-hook-pretool.sh` stamps
+  `HOOK_T0` and runs each gate stage under a supervisor that kills the stage's
+  whole process group 11 s after `HOOK_T0` and then decides by shape in shell,
+  without Python (review r1 measured 2-3.5 s of shell and interpreter start at
+  load 160-213); a stage reached after 11 s is not started. Inside the stage
+  the Python gate keeps its own deadline at 10 s (`HOOK_HARD_S`). The shape
+  decision: with a ledger, a dispatch-shaped call (`fleet_member_spawn|tell`,
+  `fleet_delegate`, `thread … spawn|create|fork|tell|message|edit-message|queue`,
+  `fleet group-create|task-add|advise`, any case, quotes and backslashes
+  removed) denies unless it names an **open** purpose (`serves: P<n>`, read
+  from the ledger with `jq`; a blocked or unknown id does not count) or
+  quotes an accepted revision; no `jq` or an unreadable ledger denies. The
+  same shape block is in `scope-gate-hook.sh`, which falls back to it when
+  Python cannot run; `hooks/test-hook-chain.sh` checks the copies match.
 
 If the work serves no open purpose, it is outside the request. Ask the user.
 When they approve, record their approval with `revise`, then quote it in
@@ -78,7 +107,11 @@ background task, and isn't relieved by a circuit successor, it gets one nudge.
 The nudge lists the open purposes and says: dispatch the next step, or mark
 the purpose blocked-on-user with the exact ask.
 
-- It sends at most one nudge per hour.
+- It makes at most one nudge attempt per hour. A failed send counts (it may
+  still have been delivered), and each failure in a row adds 10, 20, 40, then
+  60 min to the wait.
+- A coordinator a person archived (`archived_by_user_at` in its ledger) is
+  not nudged until it works again after that archive.
 - blocked-on-user and done purposes don't trigger nudges.
 - Each nudge is a coordinator-idle episode in `bb fleet value`.
 - `bb fleet scope` shows every ledger and what the guard would do now.
@@ -91,7 +124,14 @@ The following threads are never archived by fleet (orphan scan,
 - A thread whose own or parent's ledger has an unfinished purpose.
 - A review thread under a topic.
 
-Fleet restores them if anything else archives them, and tells the coordinator.
+If anything else archives one, fleet restores it once and tells the
+coordinator, including when the restore fails:
+
+- The coordinator itself is never restored. A person archiving it means it:
+  its ledger gets `archived_by_user_at`, and the idle guard leaves it alone.
+- A child is restored at most once (`archive_restores` in the coordinator's
+  ledger). Archived again after that, the archive stands; the ledger records
+  `archived_again_at` and the coordinator is told.
 
 When a child is finished, release it, so its archive stays archived:
 
@@ -113,7 +153,10 @@ copy of the origin's ledger: the same purposes and revisions, plus
 `inherited_from` and `inherited_at`. Its dispatches are gated the same way.
 At hand-back, status changes the successor made (newer `status_marked_at`),
 its evidence, new purposes and new revisions merge into the origin's ledger,
-and the successor's file is kept as `<successor>.json.returned-<ms>`.
+and the successor's file is kept as `<successor>.json.returned-<ms>`. When
+both added a different purpose under the same id, both are kept: the
+successor's is renumbered past every id and carries `renumbered_from`.
+
 
 ## Known limits
 
@@ -122,20 +165,28 @@ and the successor's file is kept as `<successor>.json.returned-<ms>`.
 - Kit branch `feat/qa-gate-v3` (e82faa9): its `install.sh` would overwrite the
   scope pretool hook in `~/.agent-hooks` (`coordinator-hook-pretool.sh`). Re-run
   `hooks/install-scope-gate.sh` after installing from that branch.
-- The deadline covers the ship gate and the scope gate. The chain's last
-  stage, `coordinator-hook.sh pretool` (coordinator-mode edit blocks), has
-  none of its own and gets what is left of the 15 s.
+- The chain's last stage, `coordinator-hook.sh pretool` (coordinator-mode
+  edit blocks), is cut at 12.5 s after `HOOK_T0` and then passes, as a host
+  timeout would, but inside the 15 s.
 - At the deadline the scope gate decides by shape over the whole payload, so
   from a ledger thread a Write or Edit whose text reads like
   `thread … tell` without `serves:` is denied too (Codex runs the chain for
   every tool). It fails closed.
+- A brief file written in the same command as the dispatch
+  (`printf ... > f && bb thread tell x --message-file f`) is not there when
+  the hook reads it, so the dispatch is denied (fails closed).
+- At the shell deadline a brief file is not read: a dispatch whose `serves:`
+  is only in a file is denied and has to be retried.
+- `python3 -c '...'` (or any interpreter) that runs `bb` through its own
+  process API is not parsed.
 - Not parsed:
 
  a script run from a file (`sh dispatch.sh`), a script piped into
 
   a shell (`cat x | sh`), a command handed to a wrapper as one quoted string
   (`watch 'bb thread tell ...'`, `ssh host 'bb ...'`), and `bb` reached
-  through an alias, a function or a variable other than `BB_CLI`.
+  through an alias or a function.
+
 
 
 ## Tests
