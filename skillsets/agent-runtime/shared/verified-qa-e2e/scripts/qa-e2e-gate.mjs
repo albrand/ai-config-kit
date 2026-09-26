@@ -47,16 +47,18 @@ export function declaredIdentities(authentication) {
 
 // Identity labels (review r1 D4): `E2E.patient`, `e2e.patient `,
 // `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
-// suite's e2e.patient. Labels are compared after NFKC, casefold, strip and
-// dropping an @domain suffix, and a label that mixes scripts, carries
-// invisible characters, or matches a listed label only by look-alike letters
-// is refused. Twin of label_key()/label_problem() in ship-gate.py; its
-// selftest runs the same labels through both.
-const LABEL_SCRIPTS = [
-  ["latin", [[0x41, 0x24f], [0x250, 0x2af], [0x1e00, 0x1eff], [0x2c60, 0x2c7f], [0xa720, 0xa7ff], [0xab30, 0xab6f]]],
-  ["greek", [[0x370, 0x3ff], [0x1f00, 0x1fff]]],
-  ["cyrillic", [[0x400, 0x52f], [0x1c80, 0x1c8f], [0x2de0, 0x2dff], [0xa640, 0xa69f]]],
-];
+// suite's e2e.patient. One spec, the same in ship-gate.py (see the comment
+// there): key = NFKC, lowercase, ß -> ss, LABEL_SPACE stripped, @domain
+// dropped; refused = a character of NFKC(label) outside printable ASCII and
+// the Latin letter blocks; listed = same key, same skeleton (confusable), or
+// a skeleton containing a listed one between non-alphanumeric boundaries.
+// No toLowerCase-vs-casefold, trim-vs-strip or \p{L}-vs-isalpha difference
+// can split the two gates (review r2a); the ship-gate selftest runs review
+// r2a's corpus through both and fails on any difference.
+const LABEL_SPACE = "\\t\\n\\x0b\\x0c\\r \\x1c\\x1d\\x1e\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff";
+const LABEL_STRIP = new RegExp(`^[${LABEL_SPACE}]+|[${LABEL_SPACE}]+$`, "gu");
+const LABEL_ALPHABET = /^[\x20-\x7eÀ-ÖØ-öø-ɏḀ-ỿ]$/u;
+const LABEL_ALNUM = "0-9a-z\\u00df-\\u00f6\\u00f8-\\u024f\\u1e00-\\u1eff";
 const LABEL_CONFUSABLES = {
   "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
   "ѕ": "s", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w", "ӏ": "l", "ѵ": "v", "ү": "y",
@@ -64,35 +66,29 @@ const LABEL_CONFUSABLES = {
   "χ": "x", "ω": "w", "ı": "i", "ɑ": "a", "ɩ": "i", "0": "o", "1": "l",
 };
 
-// Python's str.casefold() beyond toLowerCase(), for the letters it changes.
-const casefold = (s) => s.toLowerCase().replace(/ß/g, "ss").replace(/ς/g, "σ").replace(/ſ/g, "s");
-
 export function labelKey(label) {
-  let s = casefold(String(label).normalize("NFKC")).trim();
+  let s = String(label).normalize("NFKC").toLowerCase().replace(/ß/g, "ss").replace(LABEL_STRIP, "");
   const at = s.lastIndexOf("@");
-  if (at > 0) s = s.slice(0, at).trim();
+  if (at > 0) s = s.slice(0, at).replace(LABEL_STRIP, "");
   return s;
 }
 
-// NFD without combining marks, then look-alike letters: `E2E.PATİENT` casefolds
+// NFD without combining marks, then look-alike letters: `E2E.PATİENT` lowercases
 // to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient.
 const labelSkeleton = (label) => [...labelKey(label).normalize("NFD")]
   .filter((c) => !/\p{Mn}/u.test(c)).map((c) => LABEL_CONFUSABLES[c] ?? c).join("");
 
-function labelScript(ch) {
-  const cp = ch.codePointAt(0);
-  for (const [name, ranges] of LABEL_SCRIPTS) {
-    if (ranges.some(([a, b]) => cp >= a && cp <= b)) return name;
+export function labelProblem(label) {
+  for (const c of String(label).normalize("NFKC")) {
+    if (!LABEL_ALPHABET.test(c)) {
+      const cp = c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+      return `has a character outside the label alphabet (printable ASCII and Latin letters): U+${cp}`;
+    }
   }
-  return `block-${(cp >> 8).toString(16)}`;
+  return null;
 }
 
-export function labelProblem(label) {
-  const s = String(label).normalize("NFKC");
-  if (/[\p{Cf}\p{Cc}]/u.test(s)) return "carries invisible or control characters";
-  const scripts = [...new Set([...s].filter((c) => /\p{L}/u.test(c)).map(labelScript))].sort();
-  return scripts.length > 1 ? `mixes scripts (${scripts.join(", ")})` : null;
-}
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
 export function listedIdentity(label, owned) {
   const key = labelKey(label);
@@ -101,7 +97,12 @@ export function listedIdentity(label, owned) {
   const same = names.find((o) => labelKey(o) === key);
   if (same !== undefined) return [same, "same"];
   const look = names.find((o) => labelSkeleton(o) === skel);
-  return look !== undefined ? [look, "confusable"] : null;
+  if (look !== undefined) return [look, "confusable"];
+  const inside = names.find((o) => {
+    const k = labelSkeleton(o);
+    return k && new RegExp(`(?<![${LABEL_ALNUM}])${escapeRegExp(k)}(?![${LABEL_ALNUM}])`, "u").test(skel);
+  });
+  return inside !== undefined ? [inside, "contains"] : null;
 }
 
 function checkIdentities(authentication, failures, owned) {
@@ -177,10 +178,11 @@ function checkIdentityIsolation(identity, base, failures, owned) {
     } else if (problem) {
       failures.push(failure("IDENTITY_LABEL_CONFUSABLE", `${base}.label`, `label ${problem}: name the identity in one script`));
     }
-    if (hit?.[1] === "same" && identity.owned_by_automation !== true) {
+    if ((hit?.[1] === "same" || hit?.[1] === "contains") && identity.owned_by_automation !== true) {
       failures.push(failure("IDENTITY_LISTED_AS_AUTOMATION", `${base}.owned_by_automation`,
-        `label is ${JSON.stringify(hit[0])}, listed in automation_identities, but owned_by_automation is not true`));
+        `label ${hit[1] === "same" ? "is" : "contains"} ${JSON.stringify(hit[0])}, listed in automation_identities, but owned_by_automation is not true`));
     }
+
   }
   if (identity.ownership_checked !== true || !nonEmpty(identity.ownership_evidence)) {
     failures.push(failure("IDENTITY_OWNERSHIP_UNCHECKED", `${base}.ownership_checked`,
@@ -802,12 +804,17 @@ function selftest() {
     if (!evaluateEvidence(owned).ok) throw new Error(`two unowned personas failed at ${effort}`);
     // review r1 D4: a listed CI identity is found however it is spelled.
     const list = { automationIdentities: ["e2e.patient"] };
-    for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient"]) {
+    for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient",
+      // review r2a: compound labels and U+2800
+      "e2e.patient (CI)", "@e2e.patient", "patient (e2e.patient@meupsi.test)", "e2e.pat⠀ient", "e2e.patͅient"]) {
       owned.authentication.identities = [{ ...unownedIdentity(), label }];
       if (evaluateEvidence(owned, list).ok) throw new Error(`label ${JSON.stringify(label)} passed as unowned at ${effort}`);
     }
-    owned.authentication.identities = [{ ...unownedIdentity(), label: "qa.patient" }];
-    if (!evaluateEvidence(owned, list).ok) throw new Error(`an unlisted one-script label failed at ${effort}`);
+    for (const label of ["qa.patient", "e2e.patients", "xe2e.patient", "joão.silva", "Straße.qa"]) {
+      owned.authentication.identities = [{ ...unownedIdentity(), label }];
+      if (!evaluateEvidence(owned, list).ok) throw new Error(`the unlisted label ${JSON.stringify(label)} failed at ${effort}`);
+    }
+
     owned.authentication.identities = [{ ...ownedIdentity(0), label: "E2E.Patient" }];
     if (!evaluateEvidence(owned, list).ok) throw new Error(`a listed label declared owned failed at ${effort}`);
     // meu-psi PR #36: the suite's own CI run recorded as the walk.

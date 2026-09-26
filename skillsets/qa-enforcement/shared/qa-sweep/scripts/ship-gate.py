@@ -631,16 +631,27 @@ def declared_identities(auth):
 # Identity labels (review r1 D4). `E2E.patient`, `e2e.patient `,
 # `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
 # suite's e2e.patient, and an exact-string match let each one through as
-# unowned. Both sides are normalised (NFKC, casefold, strip, an @domain suffix
-# dropped), and a label that mixes scripts, carries invisible characters, or
-# only differs from a listed label by look-alike letters is refused outright.
-# label_problem() and label_key() have a twin in qa-e2e-gate.mjs; the selftest
-# runs the same labels through both.
-_LABEL_SCRIPTS = (
-    ("latin", ((0x41, 0x24F), (0x250, 0x2AF), (0x1E00, 0x1EFF), (0x2C60, 0x2C7F), (0xA720, 0xA7FF), (0xAB30, 0xAB6F))),
-    ("greek", ((0x370, 0x3FF), (0x1F00, 0x1FFF))),
-    ("cyrillic", ((0x400, 0x52F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F))),
-)
+# unowned. One spec, implemented the same way here and in qa-e2e-gate.mjs;
+# neither side uses its language's casefold, trim or isalpha, which differ
+# (review r2a: 2,716 of 30,058 labels got different keys, e.g. U+0345):
+#   key      = NFKC, lowercase, ß -> ss, LABEL_SPACE stripped, an @domain
+#              suffix dropped, stripped again;
+#   refused  = NFKC(label) has a character outside the label alphabet
+#              (printable ASCII and the Latin letter blocks): mixed scripts,
+#              Greek or Cyrillic look-alikes, IPA and small capitals, marks
+#              left after composition, invisible characters (U+200B, U+2060,
+#              U+FEFF, U+2800, U+3164, U+034F ...) and controls, in one rule;
+#   listed   = the key equals a listed key ('same'), the skeleton (NFD, marks
+#              dropped, look-alike letters mapped) equals a listed one
+#              ('confusable'), or the skeleton contains a listed one between
+#              non-alphanumeric boundaries ('contains': `e2e.patient (CI)`,
+#              `@e2e.patient`).
+# The selftest runs review r2a's corpus through both and fails on any
+# difference in key, problem or listing.
+LABEL_SPACE = "\t\n\x0b\x0c\r \x1c\x1d\x1e\x1f\x85\xa0  -     　﻿"
+_LABEL_STRIP = re.compile("^[" + LABEL_SPACE + "]+|[" + LABEL_SPACE + "]+$")
+_LABEL_ALPHABET = re.compile("[\x20-\x7eÀ-ÖØ-öø-ɏḀ-ỿ]")
+_LABEL_ALNUM = "0-9a-zß-öø-ɏḀ-ỿ"
 # Letters that read as a Latin letter (UTS #39 confusables, single letters).
 _LABEL_CONFUSABLES = {
     "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
@@ -651,42 +662,30 @@ _LABEL_CONFUSABLES = {
 
 
 def label_key(label):
-    """The comparable form of an identity label: NFKC, casefolded, stripped,
-    without an @domain suffix."""
+    """The comparable form of an identity label (the spec above)."""
     import unicodedata
-    s = unicodedata.normalize("NFKC", str(label)).casefold().strip()
+    s = _LABEL_STRIP.sub("", unicodedata.normalize("NFKC", str(label)).lower().replace("ß", "ss"))
     at = s.rfind("@")
     if at > 0:
-        s = s[:at].strip()
+        s = _LABEL_STRIP.sub("", s[:at])
     return s
-
-
-def _label_script(ch):
-    cp = ord(ch)
-    for name, ranges in _LABEL_SCRIPTS:
-        if any(a <= cp <= b for a, b in ranges):
-            return name
-    return "block-%x" % (cp >> 8)
 
 
 def label_skeleton(label):
     """NFD without combining marks, then look-alike letters: `E2E.PATİENT`
-    casefolds to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient."""
+    lowercases to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient."""
     import unicodedata
     s = unicodedata.normalize("NFD", label_key(label))
     return "".join(_LABEL_CONFUSABLES.get(c, c) for c in s if unicodedata.category(c) != "Mn")
 
 
 def label_problem(label):
-    """Why a label cannot be trusted as written (mixed scripts, invisible or
-    control characters), or None."""
+    """Why a label cannot be trusted as written, or None: its first character
+    outside the label alphabet (printable ASCII and Latin letters)."""
     import unicodedata
-    s = unicodedata.normalize("NFKC", str(label))
-    if any(unicodedata.category(c) in ("Cf", "Cc") for c in s):
-        return "carries invisible or control characters"
-    scripts = sorted({_label_script(c) for c in s if c.isalpha()})
-    if len(scripts) > 1:
-        return "mixes scripts (%s)" % ", ".join(scripts)
+    for c in unicodedata.normalize("NFKC", str(label)):
+        if not _LABEL_ALPHABET.match(c):
+            return "has a character outside the label alphabet (printable ASCII and Latin letters): U+%04X" % ord(c)
     return None
 
 
@@ -854,14 +853,17 @@ def listed_identity(label, owned):
     """(listed label, how) when `label` names an entry of automation_identities
     after normalisation ('same') or only by look-alike letters ('confusable')."""
     key, skel = label_key(label), label_skeleton(label)
-    for o in owned:
-        if not isinstance(o, str):
-            continue
+    names = [o for o in owned if isinstance(o, str)]
+    for o in names:
         if label_key(o) == key:
             return o, "same"
-    for o in owned:
-        if isinstance(o, str) and label_skeleton(o) == skel:
+    for o in names:
+        if label_skeleton(o) == skel:
             return o, "confusable"
+    for o in names:
+        k = label_skeleton(o)
+        if k and re.search("(?<![" + _LABEL_ALNUM + "])" + re.escape(k) + "(?![" + _LABEL_ALNUM + "])", skel):
+            return o, "contains"
     return None
 def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
     rel = qa + "/evidence.json"
@@ -901,9 +903,12 @@ def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
         for problem in or_problems:
             fails.append(f"{rel}: identity {label!r} walker: {problem}: refused")
         if hit and hit[1] == "same" and ident.get("owned_by_automation") is not True:
-
             fails.append(f"{rel}: identity {label!r} is '{hit[0]}', listed in .qa/config.json automation_identities, "
                          f"but the packet says no automated suite owns it")
+        if hit and hit[1] == "contains" and ident.get("owned_by_automation") is not True:
+            fails.append(f"{rel}: identity {label!r} contains '{hit[0]}', listed in .qa/config.json "
+                         f"automation_identities, but the packet says no automated suite owns it: refused")
+
     tmppath = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
@@ -3373,20 +3378,60 @@ def selftest(v4_gate=None, v4_templates=None):
     # review r1 D4: however the listed label is spelled, both gates find it,
     # and the two gates agree label by label.
     probe = ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient",
-             "е2е.раtіеnt", "e2e.pat​ient", "E2E.PATİENT", "qa.vеndor", "qa.patient", "joão.silva", "Straße.qa"]
-    refused = probe[:9]
-
-
-    mjs_verdicts = {}
+             "е2е.раtіеnt", "e2e.pat​ient", "E2E.PATİENT", "qa.vеndor",
+             # review r2a: compound labels, and U+2800 (invisible, category So)
+             "patient (e2e.patient@meupsi.test)", "e2e.patient (CI)", "@e2e.patient", "qa.veɴdor", "e2e.pat⠀ient",
+             "e2e.patͅient",
+             "qa.patient", "joão.silva", "Straße.qa", "e2e.patients", "xe2e.patient"]
+    refused = probe[:15]
+    # review r2a: one spec in both gates. The reviewer's differential corpus
+    # (r2a-repro/diff_labels.py: seed 7, 20,000 mutations of the listed labels
+    # plus its fixed probes) goes through both implementations; any difference
+    # in key, problem or listing fails.
+    lists = [["e2e.patient"], ["qa.vendor"], ["e2e.professional"]]
+    corpus = list(probe) + [
+        "e2e.pαtient", "qa.vοndor", "ｅ２ｅ．ｐａｔｉｅｎｔ", "e2e.pat‍ient", "e2e.pat⁠ient", "e2e.pat\xadient",
+        "e2e.pat͏ient", "e2e.patㅤient", "e2e.patient﻿", "e2e.patient\x1f", "\x1ce2e.patient",
+        "e2e.patient᠎", "e2e.patient.", "e2e_patient", "e2e. patient", "e2e.patient/staging", "e2e.patient@evil",
+        "e2e.patientı", "e2e.patıent", "qa.vendorᾳ", "ΟΔΟΣ", "ᾈqa", "ꭰbc", "Ᲊ", "e2e.patient\U00010d50", "ǰqa", "ΐ",
+        "e2e.professionaІ", "e2e.prоfеssional", "e2e.patient\u0085", "e2e.patient　", "e2e.patient́",
+        "ℯ2ℯ.patient", "𝐞𝟐𝐞.𝐩𝐚𝐭𝐢𝐞𝐧𝐭", "e2e.pat̲ient", "qa.vendoʀ", "qa.ᴠendor", "STRASSE.QA", "ſtraße", "ẞ.qa"]
+    import random as _random
+    pool = [chr(c) for c in list(range(0x20, 0x7f)) + list(range(0xa0, 0x250)) + list(range(0x300, 0x370))
+            + list(range(0x370, 0x400)) + list(range(0x400, 0x530)) + list(range(0x1e00, 0x1f00))
+            + list(range(0x1f00, 0x2000)) + list(range(0x2000, 0x2070)) + list(range(0xff00, 0xff60))
+            + [0x13a0, 0xab70, 0x1c89, 0x10d50, 0x1d41e, 0xfeff, 0x3164, 0x2800, 0x1e9e, 0x130]]
+    rng = _random.Random(7)
+    for _ in range(20000):
+        s = list(rng.choice(["e2e.patient", "qa.vendor", "e2e.professional", ""]))
+        for _ in range(rng.randint(1, 3)):
+            op = rng.random()
+            if op < 0.4 and s:
+                s[rng.randrange(len(s))] = rng.choice(pool)
+            elif op < 0.8:
+                s.insert(rng.randrange(len(s) + 1), rng.choice(pool))
+            else:
+                s.append(rng.choice(pool))
+        corpus.append("".join(s))
+    mjs_out = None
     if shutil.which("node") and os.path.isfile(E2E_GATE):
-        js = ("import(process.argv[1]).then((m) => { const out = {};"
-              " for (const l of JSON.parse(process.argv[2])) out[l] = [m.labelKey(l), m.labelProblem(l),"
-              " m.listedIdentity(l, ['e2e.patient'])]; process.stdout.write(JSON.stringify(out)); })")
-        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri(), json.dumps(probe)],
-                             capture_output=True, text=True, timeout=30)
-        mjs_verdicts = json.loads(run.stdout or "{}")
-    expect(bool(mjs_verdicts), "qa-e2e-gate.mjs label functions ran (%s)" % E2E_GATE)
+        js = ("import(process.argv[1]).then((m) => { const [labels, lists] = JSON.parse(process.getBuiltinModule('fs').readFileSync(0, 'utf8'));"
+              " process.stdout.write(JSON.stringify(labels.map((l) => [m.labelKey(l), m.labelProblem(l),"
+              " lists.map((o) => m.listedIdentity(l, o))]))); })")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri()],
+                             input=json.dumps([corpus, lists]), capture_output=True, text=True, timeout=120)
+        mjs_out = json.loads(run.stdout) if run.returncode == 0 and run.stdout else None
+    expect(mjs_out is not None and len(mjs_out) == len(corpus), "qa-e2e-gate.mjs label functions ran on the corpus (%s)" % E2E_GATE)
+    differ = []
+    for label, js_row in zip(corpus, mjs_out or []):
+        py_row = [label_key(label), label_problem(label), [list(listed_identity(label, o) or []) or None for o in lists]]
+        if py_row != js_row:
+            differ.append((label, py_row, js_row))
+    expect(not differ, "ship-gate.py and qa-e2e-gate.mjs agree on key, problem and listing for all %d corpus labels "
+           "(%d differ; first: %s)" % (len(corpus), len(differ), ascii(differ[:2])))
+    mjs_verdicts = {l: [r[0], r[1], r[2][0]] for l, r in zip(corpus, mjs_out or [])}
     for label in probe:
+
         f9 = []
         pk = {"authentication": {"required": True, "identities": [
             {"label": label, "ownership_checked": True, "ownership_evidence": "searched", "owned_by_automation": False}]}}

@@ -80,8 +80,8 @@ Advance in order. Do not draft or publish early and validate afterward.
      an SSH host alias.
 
 
-   - Labels are compared after NFKC, casefold, strip and dropping `@domain`;
-     a mixed-script or look-alike label is refused outright.
+   - Labels are compared after NFKC, lowercase, strip and dropping `@domain`;
+     a label outside ASCII and Latin letters, a look-alike, or one containing a listed label is refused.
 
 
    - If no repository identity exists or it cannot work in the target

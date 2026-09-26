@@ -126,13 +126,23 @@ the ship gate refuses a packet that declares any of them unowned, in
 `identity` or in any `identities` entry. The ship gate passes that list to
 this gate (`check <packet> --automation-identities '<json array>'`).
 
-**Labels are compared normalised.** Both sides go through NFKC, casefold,
-strip, and lose an `@domain` suffix, so `E2E.patient`, `e2e.patient ` and
-`e2e.patient@meupsi.test` all name `e2e.patient`. A label that mixes scripts
-(`e2е.patient` with a Cyrillic `е`), carries invisible or control characters,
-or matches a listed label only by look-alike letters (`е2е.раtіеnt`,
-`E2E.PATİENT`) is refused outright: `IDENTITY_LABEL_CONFUSABLE`. A listed
-label declared unowned fails `IDENTITY_LISTED_AS_AUTOMATION`.
+**Labels are compared normalised.** Both sides go through NFKC, lowercase,
+`ß` to `ss`, strip, and lose an `@domain` suffix, so `E2E.patient`,
+`e2e.patient ` and `e2e.patient@meupsi.test` all name `e2e.patient`. A label
+with a character outside printable ASCII and the Latin letter blocks (after
+NFKC) is refused outright: that covers mixed scripts (`e2е.patient` with a
+Cyrillic `е`), Greek and Cyrillic look-alikes, IPA and small capitals
+(`qa.veɴdor`), marks left after composition, invisible characters (U+200B,
+U+2060, U+FEFF, U+2800, U+3164) and controls. A label that matches a listed
+one only by look-alike letters (`E2E.PATİENT`) is refused too:
+`IDENTITY_LABEL_CONFUSABLE`. A label that is a listed one, or contains one
+between non-alphanumeric boundaries (`e2e.patient (CI)`, `@e2e.patient`,
+`patient (e2e.patient@…)`), declared unowned fails
+`IDENTITY_LISTED_AS_AUTOMATION`. This gate and ship-gate.py implement one
+spec (not their languages' own casefold, trim or letter tests, which differ);
+the ship-gate selftest runs 20,000 generated labels through both and fails on
+any difference.
+
 
 **CI's own run as the walk (`owner_run`).** The rule against owned identities
 stops other walkers borrowing one. The suite that owns the identity, running
