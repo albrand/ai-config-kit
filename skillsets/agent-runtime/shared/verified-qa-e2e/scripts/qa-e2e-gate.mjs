@@ -31,6 +31,9 @@ export function parseZonedTime(value) {
   const day = new Date(0);
   day.setUTCFullYear(y, mo - 1, d);
   if (y < 1 || day.toISOString().slice(0, 10) !== s.slice(0, 10)) return NaN;
+  // 24:00 rolls over to the next day; after 9999-12-31 that is year 10000,
+  // which ship-gate.py's datetime cannot hold (review r2b: the one split).
+  if (s.slice(0, 13) === "9999-12-31T24") return NaN;
   return Date.parse(s);
 }
 const isoTime = parseZonedTime;

@@ -40,6 +40,61 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/coordinator-hook
 printf '#!/bin/sh\nsleep 3.5\nexec %s "$@"\n' "$(python3 -c "import sys; print(sys.executable)")" > "$H/slowpy/python3"
 chmod +x "$H/.agent-hooks/"*.sh "$H/slowpy/python3"
 ms() { perl -MTime::HiRes=time -e 'printf "%d", time*1000'; }
+# The two deadline decisions agree (review r2b): the shell's jq shape, from
+# this kit's coordinator-hook-pretool.sh, and scope-gate.py `shape`, over
+# tests/fixtures/shape-cases.json. Only the call's own words count.
+sed -n '/^# --- scope shape/,/^# --- end scope shape/p' "$HOOKS/coordinator-hook-pretool.sh" > "$H/shape.sh"
+# Plus, from scope-gate.py's MCP_FIELDS, every gated agent tool without a
+# serves line (deny) and with one in each of its fields in turn (allow), so
+# the jq copy of the tool and field lists cannot drift from Python's.
+python3 - "$SKILL/scripts/scope-gate.py" "$SKILL/tests/fixtures/shape-cases.json" > "$H/shape-cases.json" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("sg", sys.argv[1]); sg = importlib.util.module_from_spec(spec); spec.loader.exec_module(sg)
+cases = json.load(open(sys.argv[2]))["cases"]
+for tool, fields in sg.MCP_FIELDS.items():
+    base = {f: "go on" for f in fields}
+    cases.append({"label": f"{tool} without serves", "want": 2, "payload": {"tool_name": f"mcp__bb-bridge__{tool}", "tool_input": base}})
+    for f in fields:
+        cases.append({"label": f"{tool} serving P1 in {f}", "want": 0,
+                      "payload": {"tool_name": f"mcp__bb-bridge__{tool}", "tool_input": {**base, f: "serves: P1 go on"}}})
+print(json.dumps({"cases": cases}))
+PY
+n=$(jq '.cases | length' "$H/shape-cases.json")
+i=0
+while [ "$i" -lt "$n" ]; do
+  label=$(jq -r ".cases[$i].label" "$H/shape-cases.json")
+  want=$(jq -r ".cases[$i].want" "$H/shape-cases.json")
+  payload=$(jq -c ".cases[$i].payload" "$H/shape-cases.json")
+  sh_rc=$(input="$payload" BB_THREAD_ID="$THR" SCOPE_LEDGER_DIR="$H/.local/state/agent-quality/scope" \
+    sh -c '. "$1"; if scope_dispatch_denied; then echo 2; else echo 0; fi' _ "$H/shape.sh")
+  py=$(printf '%s' "$payload" | BB_THREAD_ID="$THR" SCOPE_LEDGER_DIR="$H/.local/state/agent-quality/scope" \
+    python3 "$SKILL/scripts/scope-gate.py" shape)
+  py_rc=$([ "$py" = deny ] && echo 2 || echo 0)
+  if [ "$sh_rc" = "$want" ] && [ "$py_rc" = "$want" ]; then
+    echo "ok   shape: $label: shell=$sh_rc python=$py_rc"
+  else
+    echo "FAIL shape: $label: shell=$sh_rc python=$py_rc ($py) want $want"
+    fails=$((fails + 1))
+  fi
+  i=$((i + 1))
+done
+# Every gated agent tool, without a serves line, is denied through the whole
+# chain (the scope-gate-hook.sh prefilter must not let one through unread).
+printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hook.sh"
+chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
+for tool in $(jq -r '.cases[].payload.tool_name | select(startswith("mcp__bb-bridge__"))' "$H/shape-cases.json" | sort -u); do
+  payload=$(jq -c --arg t "$tool" '[.cases[] | select(.payload.tool_name == $t and .want == 2)][0].payload' "$H/shape-cases.json")
+  [ "$payload" = null ] && continue
+  printf '%s' "$payload" | HOME="$H" BB_THREAD_ID="$THR" perl -e 'alarm shift; exec @ARGV' "$T" \
+    sh "$H/.agent-hooks/coordinator-hook-pretool.sh" >"$H/out" 2>"$H/err"
+  rc=$?
+  if [ "$rc" = 2 ] && grep -q "must say which" "$H/err"; then
+    echo "ok   chain: $tool without serves: denied by the gate"
+  else
+    echo "FAIL chain: $tool without serves: rc=$rc [$(tr '\n' ' ' < "$H/err" | cut -c1-70)]"
+    fails=$((fails + 1))
+  fi
+done
 bash_payload() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:"/tmp"}'; }
 # case: <ship stage seconds>|<want rc>|<reason the deny must carry, or ->|<command>
 # The chain kills a gate stage 11 s after HOOK_T0 and decides by shape in
@@ -63,7 +118,12 @@ cases='0|2|must say|bb thread tell thr_x also refactor it
 13|0|-|ls -la
 13|2|Ship denied|git push origin main
 30|2|could not finish|bb thread tell thr_x also refactor it
-30|0|-|ls -la'
+30|0|-|ls -la
+13|2|could not finish|bb thread tell thr_x also refactor it # serves: P1'
+# review r2b: a FIFO brief is not opened (it blocked the gate until its deadline)
+mkfifo "$H/brief.fifo"
+cases="$cases
+0|2|not a regular file|bb thread tell thr_x --message-file $H/brief.fifo"
 for mode in plain slowpy; do
   path="$PATH"
   [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"

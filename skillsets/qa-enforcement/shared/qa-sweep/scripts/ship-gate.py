@@ -3463,6 +3463,8 @@ def selftest(v4_gate=None, v4_templates=None):
              "2026-02-28T12:00+24:00", "2026-02-28T23:59:60Z", "2026-02-28T23:60Z", "2026-12-31T23:59:59.999Z",
              # review r2a-quater: day 00 behind a 24:00 rollover; fractions past 9 digits
              "2026-10-00T24:00Z", "2026-10-01T12:00:00.123456789Z", "2026-10-01T12:00:00.1234567890Z",
+             # review r2b: the 24:00 rollover past year 9999
+             "9999-12-31T24:00Z", "9999-12-31T23:59Z",
              "2026-09-25T15:10:00", "2026-09-25 15:10:00Z", "9999-12-31T23:59Z", "0001-01-01T00:00Z"]
     mjs_t = None
     if shutil.which("node") and os.path.isfile(E2E_GATE):

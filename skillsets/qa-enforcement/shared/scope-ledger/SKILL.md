@@ -39,17 +39,35 @@ python3 $G check <thread> "<brief text>"           # the gate's decision, no too
 after the QA ship gate.
 
 - It only acts when `$BB_THREAD_ID` has a ledger.
-- Dispatches it gates: every `bb` verb that carries a prompt, derived from
-  `bb thread --help` and `bb fleet --help`: `thread spawn|create|fork|tell|
-  message|edit-message`, `thread queue create|update|send`, and `fleet
-  group-create|task-add|advise`, plus `fleet_member_spawn`,
-  `fleet_member_tell` and `fleet_delegate`. The selftest reads bb's help and
-  fails when a prompt-carrying verb appears that the gate does not cover
-  (`fleet validate|review|hermes` are exempt: a claim to the reviewer, not a
-  brief). `bb` is matched in any case (`BB`: the filesystem is
+- Dispatches it gates: every `bb` verb that hands a thread text, derived
+  from `bb thread --help` (nested groups included) and `bb fleet --help`:
+  `thread spawn|create|fork|tell|message|edit-message`, `thread queue
+  create|update|send`, `thread interactions respond` and `thread interactions
+  answer --text`, and `fleet group-create|task-add|advise` and `fleet
+  member-add --concern`. An answer that only picks offered choices
+  (`--choice`) and a member-add without a concern carry no new text and pass.
+  Agent tools (`scripts/scope-gate.py` `MCP_FIELDS`, with the fields read):
+  `fleet_member_spawn` (prompt, concern), `fleet_member_tell` (message),
+  `fleet_delegate` (task, context), `fleet_task_create` (title, body),
+  `fleet_task_update` (title, body, blocked reason; gated only when it sets
+  one of those or an assignee: a task handed to a member carries its brief,
+  and members and the orchestrator read a blocked reason as work), `fleet_advise`
+  (question, context), `fleet_context_set` (key, content: entries go into
+  every member's instructions) and `bb_workflow_run` (script, source, args,
+  and the `scriptPath` file). Claude reaches them through the PreToolUse
+  matcher the installer writes; Codex runs the chain for every tool. The
+  selftest walks bb's help and fails on a text-carrying verb the gate does
+  not cover (`fleet validate|review|hermes` are exempt: a claim to the
+  reviewer, not a brief), and reads every enabled plugin's source and fails
+  on a registered agent tool that is neither gated nor in `MCP_EXEMPT` with
+  its reason (read-only tools, `fleet_review`, `fleet_curate`,
+  `fleet_optimization`, `fleet_member_retire`, `bb_workflow_result`, the
+  `browser_*` and `mcp_*` tools). `bb` is matched in any case (`BB`: the filesystem is
   case-insensitive), as a path, as `"$BB_CLI"` or `"${BB_CLI:-bb}"`, and a
   command word only known at run time (`$(...)`, `$VAR`) followed by a
-  dispatch verb counts too.
+  dispatch verb counts too. ANSI-C quoting (`$'tell'`, `$'\x74ell'`) is
+  decoded first. A dispatch that asks for its help (`--help`, `-h`) sends
+  nothing and passes.
 - Brief files are read: `--prompt-file`, `--message-file`, `$(cat f)`, `< f`
   and heredocs. `~`, `$VAR`, `${VAR}` and `${VAR:-default}` in the path are
   expanded from the hook's environment (the host gives the hook and the
@@ -59,7 +77,12 @@ after the QA ship gate.
   has: the hook reads the file before the command runs, so it would read
   another file. Name the brief file by a literal path (the deny says so). A
   file the same command writes does not exist yet when the hook runs: write
-  the brief file in a separate step (the deny says so).
+  the brief file in a separate step (the deny says so). Only a regular file
+  is read: a FIFO, a device or a directory denies at once (opening a FIFO
+  waited for a writer, which is the command itself). A relative path in a
+  command that changes directory (`cd d && ... --message-file brief.md`)
+  denies: the hook reads it before the command runs, from a directory it
+  cannot know; use an absolute path (the deny says so).
 - Only an invocation counts: the command is split into simple commands
   (`scripts/shell_dispatch.py`), and `bb` must be the command word (after
   `;` `&&` `||` `|`, inside `$(...)` or backticks, after `env`, `command`,
@@ -86,14 +109,20 @@ after the QA ship gate.
   without Python (review r1 measured 2-3.5 s of shell and interpreter start at
   load 160-213); a stage reached after 11 s is not started. Inside the stage
   the Python gate keeps its own deadline at 10 s (`HOOK_HARD_S`). The shape
-  decision: with a ledger, a dispatch-shaped call (`fleet_member_spawn|tell`,
-  `fleet_delegate`, `thread … spawn|create|fork|tell|message|edit-message|queue`,
-  `fleet group-create|task-add|advise`, any case, quotes and backslashes
-  removed) denies unless it names an **open** purpose (`serves: P<n>`, read
-  from the ledger with `jq`; a blocked or unknown id does not count) or
-  quotes an accepted revision; no `jq` or an unreadable ledger denies. The
-  same shape block is in `scope-gate-hook.sh`, which falls back to it when
-  Python cannot run; `hooks/test-hook-chain.sh` checks the copies match.
+  decision reads only the call's own words: a gated agent tool's text
+  fields, or the command with its comments dropped; never the tool call's
+  description, and no brief file. With a ledger, a dispatch-shaped call (a
+  gated agent tool, or a command matching `thread … spawn|create|fork|tell|
+  message|edit-message|queue|interactions … answer|respond` or `fleet
+  group-create|task-add|advise|member-add`, any case, quotes and backslashes
+  removed) denies unless those words name an **open** purpose (`serves:
+  P<n>`; a blocked or unknown id does not count) or quote an accepted
+  revision. In shell it is one `jq` run over the payload and the ledger,
+  made before the stages start (so the path after a kill starts no process);
+  no `jq` denies any dispatch word. The same shape block is in
+  `scope-gate-hook.sh`, which falls back to it when Python cannot run;
+  `hooks/test-hook-chain.sh` checks the copies match and that the `jq` shape
+  and `scope-gate.py shape` agree on `tests/fixtures/shape-cases.json`.
 
 If the work serves no open purpose, it is outside the request. Ask the user.
 When they approve, record their approval with `revise`, then quote it in
@@ -168,10 +197,10 @@ successor's is renumbered past every id and carries `renumbered_from`.
 - The chain's last stage, `coordinator-hook.sh pretool` (coordinator-mode
   edit blocks), is cut at 12.5 s after `HOOK_T0` and then passes, as a host
   timeout would, but inside the 15 s.
-- At the deadline the scope gate decides by shape over the whole payload, so
-  from a ledger thread a Write or Edit whose text reads like
-  `thread … tell` without `serves:` is denied too (Codex runs the chain for
-  every tool). It fails closed.
+- At the deadline a command whose words read like a dispatch
+  (`echo "bb thread tell ..."`) is denied unless it serves an open purpose,
+  and a `#` line inside a heredoc brief is dropped as a comment. Both fail
+  closed.
 - A brief file written in the same command as the dispatch
   (`printf ... > f && bb thread tell x --message-file f`) is not there when
   the hook reads it, so the dispatch is denied (fails closed).
@@ -179,6 +208,17 @@ successor's is renumbered past every id and carries `renumbered_from`.
   is only in a file is denied and has to be retried.
 - `python3 -c '...'` (or any interpreter) that runs `bb` through its own
   process API is not parsed.
+- TOCTOU: the hook reads a brief file before the command runs, so a brief
+  overwritten, copied over, re-linked or edited in place between the two
+  (`cp`, `ln -sf`, `sed -i`) is sent unread. It needs the same user as the
+  agent; there is no permission gap, only the time between the reads.
+- `eval "$(...)"` and `sh -c "$(...)"`: the script is only known when the
+  substitution runs, so a dispatch it builds is not seen.
+- `bb` under another name (a copy or symlink named otherwise) and a git
+  alias that runs `bb` (`git config alias.t '!bb thread tell'`) are not
+  parsed.
+- A saved workflow run by name (`bb_workflow_run` with `name`) is not read;
+  it needs the serves line in `args`, or the script passed inline.
 - Not parsed:
 
  a script run from a file (`sh dispatch.sh`), a script piped into

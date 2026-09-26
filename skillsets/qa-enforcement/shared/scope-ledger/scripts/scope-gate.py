@@ -18,8 +18,10 @@ and holds the user's purposes in the user's own words:
                             "released_at": "<iso>"}]}
 
 `hook` is the PreToolUse gate. From a thread that HAS a ledger, every
-dispatch -- `bb thread spawn|create|tell|message` in a shell command,
-fleet_member_spawn, fleet_member_tell, fleet_delegate -- must carry
+dispatch -- a bb verb that hands a thread text (shell_dispatch.py), or an
+agent tool that does (MCP_FIELDS: fleet_member_spawn|tell, fleet_delegate,
+fleet_task_create|update, fleet_advise, fleet_context_set, bb_workflow_run) --
+must carry
     serves: P<n>                  (an OPEN purpose), or
     serves: revision "<quote>"    (equal to an accepted revision's quote)
 or it is denied with the open purposes listed. Threads without a ledger are
@@ -37,6 +39,8 @@ Subcommands:
                                             from archive (only the child's parent
                                             ledger counts; its own ledger still holds)
     show <thread>
+    shape                                   the deadline (shape) decision for a stdin
+                                            payload: allow, deny or none (tests)
     selftest
 
 SCOPE_LEDGER_DIR overrides the ledger directory (tests only).
@@ -46,12 +50,13 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 import tempfile
 
 sys.dont_write_bytecode = True  # no __pycache__: the four skill homes stay identical
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shell_dispatch import dispatches  # noqa: E402
+from shell_dispatch import changes_dir, dispatches  # noqa: E402
 
 LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/state/agent-quality/scope")
 DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
@@ -61,7 +66,30 @@ STATUSES = ("open", "done", "blocked-on-user")
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
 REDIRECT_IN = re.compile(r"""(?<![<0-9])<\s*(?:"([^"]+)"|'([^']+)'|([^\s<;&|)]+))""")
-MCP_TOOL = re.compile(r"(?:^|[^a-z])(fleet_member_spawn|fleet_member_tell|fleet_delegate)$")
+# Agent tools that hand an agent text, and the fields the text is in (review
+# r2b D6, 2026-09-26: the task, advise and context twins of gated CLI verbs
+# were allowed). fleet_context_set entries and a member's concern go into
+# every group member's instructions; bb_workflow_run's script prompts the
+# subagents it starts (its scriptPath file is read like a brief file).
+# MCP_EXEMPT below lists every other registered tool with the reason; the
+# selftest fails on a registered tool in neither.
+MCP_FIELDS = {
+    "fleet_member_spawn": ("prompt", "concern"),
+    "fleet_member_tell": ("message",),
+    "fleet_delegate": ("task", "context"),
+    "fleet_task_create": ("title", "body"),
+    "fleet_task_update": ("title", "body", "blockedReason"),
+    "fleet_advise": ("question", "context"),
+    "fleet_context_set": ("key", "content"),
+    "bb_workflow_run": ("script", "source", "args"),
+}
+# Gated only when one of these is set: a status or priority update hands
+# nobody new work; a new title, body or blocked reason, or an assignee, does.
+# The blocked reason is read as work: fleet_task_list returns it to members
+# (the assignee included), and the orchestrator's stall briefing quotes it
+# with "clear it, re-scope it, or escalate it" (fleet orchestrator.ts).
+MCP_WHEN = {"fleet_task_update": ("title", "body", "blockedReason", "assigneeMemberId")}
+MCP_TOOL = re.compile(r"(?:^|[^a-z])(" + "|".join(MCP_FIELDS) + r")$")
 # The decision must land before the host's hook timeout, because a timed-out
 # hook lets the command run (Claude Code 2.1.282, probed live 2026-09-25;
 # Codex 0.157.0, codex-rs/hooks pre_tool_use.rs). The clock starts with the
@@ -76,9 +104,9 @@ HOOK_HOST_TIMEOUT_S = 15.0
 HOOK_HARD_S = 10.0
 # Matched against the payload with quotes and backslashes removed, so
 # `bb thr"ead" tell` reads as the dispatch the shell will run.
-COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue)|'
-                             r'fleet.{0,20}(group-create|task-add|advise)', re.I)
-MCP_FIELDS = {"fleet_member_spawn": ("prompt", "concern"), "fleet_member_tell": ("message",), "fleet_delegate": ("task",)}
+COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
+                             r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
+                             r'fleet.{0,20}(group-create|task-add|advise|member-add)', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -213,6 +241,8 @@ def deny_reason(ledger, thread, served):
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-)?([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
 # Why a brief file could not be read, for the deny message; reset per payload.
 FILE_NOTES = []
+# What the call has to add, beyond a serves line, for the deny message.
+CALL_NOTES = []
 
 
 # Names a command assigns itself: `D=...;`, `export D=...`, `for D in`, `read D`.
@@ -271,22 +301,45 @@ def expand_path(path, assigned=frozenset()):
     return os.path.expanduser(out)
 
 
-def read_file_text(path, cwd, assigned=frozenset()):
+def read_file_text(path, cwd, assigned=frozenset(), after_cd=False):
+    """A brief file's text; "" (with a note for the deny) when it cannot be
+    known. Only a regular file is read: opening a FIFO blocks until a writer
+    comes, which is the command itself, so the gate ran into its deadline
+    (review r2b). A relative path in a command that changes directory is
+    relative to a directory the hook cannot know (after_cd)."""
     shown = path
     path = expand_path(path, assigned)
     if path is None:
         return ""
-    if not os.path.isabs(path) and cwd:
-        path = os.path.join(cwd, path)
+    if not os.path.isabs(path):
+        if after_cd:
+            FILE_NOTES.append(f"{shown}: a relative path in a command that changes directory (cd, pushd); the hook "
+                              f"reads it before the command runs, so it cannot know which file that is: use an absolute path")
+            return ""
+        if cwd:
+            path = os.path.join(cwd, path)
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read(200_000)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         FILE_NOTES.append(f"{shown}: no such file when the hook ran. A file the same command writes does not exist "
                           f"yet when the hook reads it: write the brief file in a separate step, then dispatch")
+        return ""
     except OSError as e:
         FILE_NOTES.append(f"{shown}: unreadable ({e.strerror})")
-    return ""
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            FILE_NOTES.append(f"{shown}: not a regular file (a FIFO, a device or a directory); only a plain brief file is read")
+            return ""
+        with os.fdopen(fd, encoding="utf-8", errors="replace") as f:
+            fd = None
+            return f.read(200_000)
+    except OSError as e:
+        FILE_NOTES.append(f"{shown}: unreadable ({e.strerror})")
+        return ""
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def command_text(inp):
@@ -302,9 +355,7 @@ def command_text(inp):
     return cmd if isinstance(cmd, str) else None
 
 
-def dispatch_texts(payload):
-    """([texts], label) when the tool call dispatches work; ([], None) otherwise."""
-    del FILE_NOTES[:]
+def tool_and_input(payload):
     tool = str(payload.get("tool_name") or payload.get("toolName") or "")
     inp = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
     if isinstance(inp, str):
@@ -312,12 +363,41 @@ def dispatch_texts(payload):
             inp = json.loads(inp)
         except ValueError:
             inp = {"command": inp}
-    if isinstance(inp, dict) and isinstance(inp.get("arguments"), dict):
+    if not isinstance(inp, dict):
+        inp = {}
+    if isinstance(inp.get("arguments"), dict):
         inp = {**inp, **inp["arguments"]}
+    return tool, inp
+
+
+def mcp_text(kind, inp):
+    """The text an agent tool hands over, or None when this call hands over
+    nothing (MCP_WHEN). Non-string values (bb_workflow_run's args) as JSON."""
+    if kind in MCP_WHEN and not any(inp.get(k) not in (None, "") for k in MCP_WHEN[kind]):
+        return None
+    vals = (inp.get(k) for k in MCP_FIELDS[kind])
+    return "\n".join(v if isinstance(v, str) else json.dumps(v, separators=(",", ":"), ensure_ascii=False)
+                     for v in vals if v is not None)
+
+
+def dispatch_texts(payload):
+    """([texts], label) when the tool call dispatches work; ([], None) otherwise."""
+    del FILE_NOTES[:]
+    del CALL_NOTES[:]
+    tool, inp = tool_and_input(payload)
+    cwd = inp.get("workdir") or inp.get("cwd") or payload.get("cwd") or ""
     m = MCP_TOOL.search(tool)
     if m:
         kind = m.group(1)
-        text = "\n".join(str(inp.get(k) or "") for k in MCP_FIELDS[kind])
+        text = mcp_text(kind, inp)
+        if text is None:
+            return [], None
+        if kind == "bb_workflow_run" and isinstance(inp.get("scriptPath"), str):
+            text += "\n" + read_file_text(inp["scriptPath"], str(cwd))
+        if kind == "bb_workflow_run" and not any(isinstance(inp.get(k), str) for k in ("script", "source", "scriptPath")):
+            CALL_NOTES.append("A saved workflow's script is not read: pass the script (or scriptPath), or put the serves line in args.")
+        if kind == "fleet_task_update" and not (inp.get("title") or inp.get("body") or inp.get("blockedReason")):
+            CALL_NOTES.append("A task handed to a member carries its brief: set body (or title) with the serves line.")
         return [text], kind
     cmd = command_text(inp)
     if not cmd:
@@ -327,9 +407,9 @@ def dispatch_texts(payload):
     found = dispatches(cmd)
     if not found:
         return [], None
-    cwd = (inp.get("workdir") or inp.get("cwd") or payload.get("cwd") or "") if isinstance(inp, dict) else ""
     texts = []
     assigned = assigned_names(cmd)
+    after_cd = changes_dir(cmd)
     for text, heredocs, _verb in found:
         # Each dispatch carries its own serves line: its words, its heredoc,
         # and the files it reads its brief from.
@@ -338,7 +418,7 @@ def dispatch_texts(payload):
             for g in rx.findall(text):
                 path = next((x for x in g if x), "")
                 if path and path != "-":
-                    body += "\n" + read_file_text(path, cwd, assigned)
+                    body += "\n" + read_file_text(path, str(cwd), assigned, after_cd)
         texts.append(body)
     return texts, "bb " + "/".join(sorted({v for _t, _h, v in found}))
 
@@ -367,6 +447,39 @@ def hook_elapsed(now=None):
     except ValueError:
         return 0.0
     return max(0.0, (datetime.datetime.now().timestamp() if now is None else now) - t0)
+
+
+# A shell comment outside quotes (keeping quoted strings and escapes). The
+# same expression is in the hooks' jq shape (SCOPE_SHAPE_JQ), so the two
+# deadline decisions read the same words.
+UNCOMMENT = re.compile(r"""('[^']*'|"(?:\\.|[^"\\])*"|\\.)|(?:^|(?<=[\s;&|()]))#[^\n]*""", re.M)
+
+
+def flatten(text):
+    return re.sub(r"[\\'\"]", "", text)
+
+
+def shape_text(stdin_text):
+    """The deadline view of a call: its own words when it is dispatch-shaped,
+    else None. Its own words are a gated agent tool's text fields, or the
+    command with its comments dropped; never the tool call's description or
+    a comment, and no brief file is read (a FIFO would block; review r2b)."""
+    try:
+        payload = json.loads(stdin_text or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    tool, inp = tool_and_input(payload)
+    m = MCP_TOOL.search(tool)
+    if m:
+        text = mcp_text(m.group(1), inp)
+        return None if text is None else flatten(text)
+    cmd = command_text(inp)
+    if not cmd:
+        return None
+    flat = flatten(UNCOMMENT.sub(lambda x: x.group(1) or "", cmd))
+    return flat if COARSE_DISPATCH.search(flat) else None
 
 
 def shape_serves(thread, flat):
@@ -399,8 +512,8 @@ def hook_under_deadline(thread, stdin=None):
             has = bool(thread) and bool(THREAD_ID.match(thread)) and os.path.exists(ledger_path(thread))
         except Exception:
             has = False
-        text = re.sub(r"[\\'\"]", "", held["text"])
-        if has and COARSE_DISPATCH.search(text) and not shape_serves(thread, text):
+        text = shape_text(held["text"]) if has else None
+        if text is not None and not shape_serves(thread, text):
             deny(f"[scope-gate] the gate could not finish within {HOOK_HARD_S:.0f} s of the hook chain starting "
                  f"(the host's hook timeout is {HOOK_HOST_TIMEOUT_S:.0f} s, and a timed-out hook lets the command "
                  f"run); this dispatch names no purpose, so it is denied: add `serves: P<n>` and retry")
@@ -447,7 +560,7 @@ def hook(stdin_text, thread):
         record({"event": "scope_passed", "thread": thread, "tool": label, "serves": via})
         return 0
     record({"event": "scope_denied", "thread": thread, "tool": label, "named": served})
-    notes = "".join("\nBrief file " + n + "." for n in FILE_NOTES)
+    notes = "".join("\nBrief file " + n + "." for n in FILE_NOTES) + "".join("\n" + n for n in CALL_NOTES)
     return deny(deny_reason(ledger, thread, served) + notes)
 
 
@@ -480,6 +593,11 @@ def main(argv):
             return 0
     if cmd == "selftest":
         return selftest()
+    if cmd == "shape":
+        thread = os.environ.get("BB_THREAD_ID", "")
+        text = shape_text(sys.stdin.read())
+        print("none" if text is None else ("allow" if shape_serves(thread, text) else "deny"))
+        return 0
     if not args:
         print(f"usage: scope-gate.py {cmd} <thread> ...", file=sys.stderr)
         return 2
@@ -585,41 +703,126 @@ VERB_EXEMPT = {
 }
 
 
+# Every other agent tool an enabled bb plugin registers, with why it hands no
+# agent work (a name ending in _ covers the prefix). The selftest reads the
+# plugins' sources and fails on a tool in neither MCP_FIELDS nor here.
+MCP_EXEMPT = {
+    "fleet_review": "a claim sent to the reviewer, not work for a thread (the CLI's fleet review is exempt too)",
+    "fleet_curate": "asks the reviewer to audit the knowledge library; carries no text",
+    "fleet_optimization": "records a cost hypothesis in fleet's own ledger; no agent is given it as work",
+    "fleet_member_retire": "stops a member; carries no text",
+    "fleet_group_status": "read-only",
+    "fleet_task_list": "read-only",
+    "fleet_context_list": "read-only",
+    "fleet_route": "read-only: which provider would run a kind of work",
+    "fleet_tokens": "read-only",
+    "fleet_provider_stats": "read-only",
+    "bb_workflow_result": "a workflow's own agent returning its result to the script, not work for a thread",
+    "browser_": "drives the isolated browser; nothing reaches an agent",
+    "mcp_": "MCP server sign-in and management; nothing reaches an agent",
+}
+
+
+def mcp_exempt(name):
+    return name in MCP_EXEMPT or any(k.endswith("_") and name.startswith(k) for k in MCP_EXEMPT)
+
+
+def plugin_tools(bb="bb"):
+    """{tool: plugin} for every agent tool an enabled bb plugin registers,
+    read from the plugin's source (`bb plugin list --json` gives rootDir)."""
+    import subprocess
+    try:
+        listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True,
+                                            timeout=60).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    roots = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("enabled") is True and isinstance(o.get("rootDir"), str) and isinstance(o.get("id"), str):
+                roots[o["id"]] = o["rootDir"]
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    rx = re.compile(r'registerTool\(\s*\{\s*name:\s*"([A-Za-z0-9_-]+)"')
+    tools = {}
+    for pid, root in roots.items():
+        base = root.rstrip(os.sep).count(os.sep)
+        for dirpath, dirs, files in os.walk(root):
+            deep = dirpath.count(os.sep) - base
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "host-data", "test", "tests", "types")] if deep < 3 else []
+            for fn in files:
+                if not fn.endswith((".ts", ".mts", ".js", ".mjs", ".cjs")) or fn.endswith(".d.ts"):
+                    continue
+                try:
+                    path = os.path.join(dirpath, fn)
+                    if os.path.getsize(path) > 30_000_000:
+                        continue
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                for name in rx.findall(text):
+                    tools.setdefault(name, pid)
+    return tools
+
+
 def shutil_which(name):
     import shutil
     return shutil.which(name)
 
 
 def gated_verbs():
-    from shell_dispatch import THREAD_VERBS, QUEUE_VERBS, FLEET_VERBS
+    from shell_dispatch import THREAD_VERBS, QUEUE_VERBS, FLEET_VERBS, CONDITIONAL_VERBS
     return ({f"thread {v}" for v in THREAD_VERBS} | {f"thread queue {v}" for v in QUEUE_VERBS}
-            | {f"fleet {v}" for v in FLEET_VERBS})
+            | {f"fleet {v}" for v in FLEET_VERBS} | set(CONDITIONAL_VERBS))
 
 
 def bb_text_verbs(bb="bb"):
-    """Every verb of `bb thread`, `bb thread queue` and `bb fleet` whose help
-    says it carries a prompt, a message, a charter, a title, a question or a
-    claim. The per-verb help calls run concurrently (about 1 s each)."""
+    """Every `bb thread` verb, nested groups included (queue, interactions,
+    section, tabs, ...), and every `bb fleet` verb whose help says it carries
+    text for a thread: a prompt, a message, a charter, a concern, a context, a
+    free-text answer (--text) or value (--value), a title, a question or a
+    claim. Review r2b: the scan stopped at `thread queue` and did not look for
+    --text/--value, so it missed `thread interactions answer|respond`. Each
+    level's help calls run concurrently (about 1 s each)."""
     import subprocess
 
-    def helptext(*args):
-        try:
-            return subprocess.run([bb, *args, "--help"], capture_output=True, text=True, timeout=60).stdout
-        except (OSError, subprocess.SubprocessError):
-            return ""
+    def helps(paths):
+        procs = {p: subprocess.Popen([bb, *p, "--help"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                 for p in paths}
+        out = {}
+        for p, proc in procs.items():
+            try:
+                out[p] = proc.communicate(timeout=120)[0] or ""
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out[p] = ""
+        return out
     listed = re.compile(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?\s", re.M)
-    jobs = {f"thread {v}": ["thread", v] for v in listed.findall(helptext("thread")) if v not in ("help", "queue")}
-    jobs.update({f"thread queue {v}": ["thread", "queue", v] for v in listed.findall(helptext("thread", "queue")) if v != "help"})
-    procs = {k: subprocess.Popen([bb, *a, "--help"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-             for k, a in jobs.items()}
-    text = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|\[message\]|<message>|--charter")
-    carries = set()
-    for k, p in procs.items():
-        out, _ = p.communicate(timeout=120)
-        if text.search(out or ""):
-            carries.add(k)
-    for m in re.finditer(r"^\s+bb fleet (\S+)(.*)$", helptext("fleet"), re.M):
-        if re.search(r'--charter|--prompt|--message|"<(title|question|claim)>"', m.group(2)):
+    text = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|\[message\]|<message>|--charter\b"
+                      r"|--concern\b|--context\b|--text\b|--value\b")
+    carries, level, seen = set(), [("thread",)], set()
+    for _depth in range(4):
+        nxt = []
+        for path, out in helps(level).items():
+            if "Commands:" in out:  # a group: walk its commands
+                for v in listed.findall(out.split("Commands:", 1)[1]):
+                    if v != "help" and path + (v,) not in seen:
+                        seen.add(path + (v,))
+                        nxt.append(path + (v,))
+            elif len(path) > 1 and text.search(out):
+                carries.add(" ".join(path))
+        if not nxt:
+            break
+        level = nxt
+    fleet = helps([("fleet",)])[("fleet",)]
+    for m in re.finditer(r"^\s+bb fleet (\S+)(.*)$", fleet, re.M):
+        if re.search(r'--charter|--prompt|--message|--concern|--context|--text|--value|"<(title|question|claim)>"', m.group(2)):
             carries.add(f"fleet {m.group(1)}")
     return carries
 
@@ -648,6 +851,11 @@ def selftest():
     def codex_shell(cmd):
         return {"tool_name": "shell", "tool_input": {"command": ["/bin/zsh", "-lc", cmd], "workdir": tmp}}
 
+    def mcp(tool, **args):
+        return {"tool_name": f"mcp__bb-bridge__{tool}", "tool_input": args}
+    fifo = os.path.join(tmp, "brief.fifo")
+    os.mkfifo(fifo)
+
     rev = base["accepted_revisions"][0]["quote"]
     cases = [
         # (label, payload, thread, expected rc)
@@ -675,6 +883,34 @@ def selftest():
         ("codex: shell argv spawn with brief file (relative to workdir)", codex_shell("bb thread spawn --prompt-file brief.md"), thread, 0),
         ("codex: bare fleet_member_tell without serves", {"tool_name": "fleet_member_tell", "tool_input": {"member": "x", "message": "go"}}, thread, 2),
         ("codex: bare fleet_member_spawn serving P1", {"tool_name": "fleet_member_spawn", "tool_input": {"prompt": "serves: P1"}}, thread, 0),
+        # review r2b D6 (2026-09-26): the agent-tool twins of gated CLI verbs.
+        ("claude mcp: fleet_task_create without serves", mcp("fleet_task_create", title="refactor the sparkline", body="do it now"), thread, 2),
+        ("claude mcp: fleet_task_create serving P1 in the body", mcp("fleet_task_create", title="gates", body="serves: P1\nre-vendor"), thread, 0),
+        ("codex: bare fleet_task_create without serves", {"tool_name": "fleet_task_create", "tool_input": {"title": "refactor the sparkline"}}, thread, 2),
+        ("codex: fleet_task_create with arguments nested", {"tool_name": "fleet_task_create", "tool_input": {"arguments": {"title": "refactor"}}}, thread, 2),
+        ("claude mcp: fleet_task_update retitle without serves", mcp("fleet_task_update", task="#3", title="refactor the sparkline"), thread, 2),
+        ("claude mcp: fleet_task_update assign without serves", mcp("fleet_task_update", task="#3", assigneeMemberId="mem_1"), thread, 2),
+        ("claude mcp: fleet_task_update assign with a serving body", mcp("fleet_task_update", task="#3", assigneeMemberId="mem_1", body="serves: P1 gates"), thread, 0),
+        ("claude mcp: fleet_task_update status only (no new work)", mcp("fleet_task_update", task="#3", status="done"), thread, 0),
+        ("claude mcp: fleet_task_update priority only (no new work)", mcp("fleet_task_update", task="#3", priority=1), thread, 0),
+        ("claude mcp: fleet_task_update blocked reason without serves (read as work)", mcp("fleet_task_update", task="#3", status="blocked", blockedReason="rewrite it in Rust first"), thread, 2),
+        ("claude mcp: fleet_task_update blocked reason serving P1", mcp("fleet_task_update", task="#3", status="blocked", blockedReason="serves: P1 waiting on the user's host choice"), thread, 0),
+        ("codex: bare fleet_task_update body without serves", {"tool_name": "fleet_task_update", "tool_input": {"task": "#3", "body": "refactor"}}, thread, 2),
+        ("claude mcp: fleet_advise without serves", mcp("fleet_advise", question="refactor the sparkline?"), thread, 2),
+        ("claude mcp: fleet_advise serving P1 in the context", mcp("fleet_advise", question="which host?", context="serves: P1"), thread, 0),
+        ("codex: bare fleet_advise without serves", {"tool_name": "fleet_advise", "tool_input": {"question": "refactor?"}}, thread, 2),
+        ("claude mcp: fleet_context_set without serves", mcp("fleet_context_set", key="k", content="refactor the sparkline"), thread, 2),
+        ("claude mcp: fleet_context_set serving P1", mcp("fleet_context_set", key="k", content="serves: P1 the gate rules"), thread, 0),
+        ("codex: bare fleet_context_set without serves", {"tool_name": "fleet_context_set", "tool_input": {"key": "k", "content": "x"}}, thread, 2),
+        ("claude mcp: fleet_delegate serving P1 in the context", mcp("fleet_delegate", task="do z", context="serves: P1"), thread, 0),
+        ("claude mcp: bb_workflow_run script without serves", mcp("bb_workflow_run", script="agent('refactor the sparkline')"), thread, 2),
+        ("claude mcp: bb_workflow_run script serving P1", mcp("bb_workflow_run", script="// serves: P1\nagent('gates')"), thread, 0),
+        ("claude mcp: bb_workflow_run scriptPath to a serving file", mcp("bb_workflow_run", scriptPath=brief), thread, 0),
+        ("claude mcp: bb_workflow_run scriptPath to a file without serves", mcp("bb_workflow_run", scriptPath=nobrief), thread, 2),
+        ("claude mcp: bb_workflow_run a saved workflow by name", mcp("bb_workflow_run", name="review-changes"), thread, 2),
+        ("claude mcp: bb_workflow_run a saved workflow, serves in args", mcp("bb_workflow_run", name="review-changes", args={"q": "serves: P1"}), thread, 0),
+        ("claude mcp: fleet_review is exempt (a claim to the reviewer)", mcp("fleet_review", claim="refactor done"), thread, 0),
+        ("claude mcp: fleet_task_list is not a dispatch", mcp("fleet_task_list"), thread, 0),
         ("no ledger: spawn without serves is allowed", claude_bash("bb thread spawn --prompt x"), "thr_noledger", 0),
         ("no thread id: allowed", claude_bash("bb thread spawn --prompt x"), "", 0),
         # 2026-09-25: a brief in $TMPDIR was denied, the variable read as a directory name.
@@ -696,6 +932,10 @@ def selftest():
         ("claude: read TMPDIR; tell < $TMPDIR/brief", claude_bash("read -r TMPDIR < /dev/null; bb thread tell thr_x < $TMPDIR/brief.md"), thread, 2),
         ("claude: an assignment of another name leaves $TMPDIR/brief readable", claude_bash("X=1; bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 0),
         ("claude: --message-file ~/brief with serves (HOME)", claude_bash("bb thread tell thr_x --message-file ~/brief.md"), thread, 0),
+        # review r2b: a FIFO brief blocked the open until the deadline.
+        ("claude: --message-file FIFO is not read (denied at once)", claude_bash(f"bb thread tell thr_x --message-file {fifo}"), thread, 2),
+        ("claude: tell < FIFO is not read", claude_bash(f"bb thread tell thr_x < {fifo}"), thread, 2),
+        ("claude: --message-file directory is not read", claude_bash(f"bb thread tell thr_x --message-file {tmp}"), thread, 2),
     ]
     saved_env = {k: os.environ.get(k) for k in ("TMPDIR", "HOME", "SCOPE_GATE_UNSET_VAR")}
     os.environ["TMPDIR"], os.environ["HOME"] = tmp, tmp
@@ -730,12 +970,31 @@ def selftest():
         ("an unset variable is named", "bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR/b.md", "$SCOPE_GATE_UNSET_VAR is not set"),
         ("a variable the command sets asks for a literal path",
          "D=$TMPDIR; bb thread tell thr_x --message-file $D/brief.md", "$D is set by this same command"),
+        ("a relative brief after cd asks for an absolute path",
+         "cd $TMPDIR && bb thread tell thr_x --message-file brief.md", "use an absolute path"),
+        ("a FIFO brief says only a plain file is read",
+         f"bb thread tell thr_x --message-file {fifo}", "not a regular file"),
 
     ]:
         out, err = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = io.StringIO(), open(os.devnull, "w")
         try:
             got = hook(json.dumps(claude_bash(cmd)), thread)
+            said = sys.stdout.getvalue()
+        finally:
+            sys.stderr.close()
+            sys.stdout, sys.stderr = out, err
+        ok = got == 2 and needle in said
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} deny message: {label}: rc={got}")
+    for label, payload, needle in [
+        ("an assignment without a body asks for the brief", mcp("fleet_task_update", task="#3", assigneeMemberId="m"), "set body"),
+        ("a saved workflow says its script is not read", mcp("bb_workflow_run", name="w"), "script is not read"),
+    ]:
+        out, err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(payload), thread)
             said = sys.stdout.getvalue()
         finally:
             sys.stderr.close()
@@ -828,6 +1087,20 @@ def selftest():
     spent = "%.3f" % (time.time() - HOOK_HARD_S - 1)
     future = "%.3f" % (time.time() + 3600)
     for label, cmd, t0, want, text in [
+        # review r2b: at the deadline only the call's own words count; a
+        # comment or the tool call's description does not serve.
+        ("deadline: a '# serves: P1' comment does not serve", "bb thread tell thr_x hi # serves: P1", spent, 2, "could not finish"),
+        ("deadline: serves in the description does not serve",
+         {**claude_bash("bb thread tell thr_x hi"), "tool_input": {"command": "bb thread tell thr_x hi", "description": "serves: P1"}},
+         spent, 2, "could not finish"),
+        ("deadline: '#' inside the quoted brief is not a comment", "bb thread tell thr_x 'fix #3, serves: P1'", spent, 0, ""),
+        ("deadline: a FIFO brief is not opened", f"bb thread tell thr_x --message-file {fifo}", spent, 2, "could not finish"),
+        ("deadline: a description that mentions a tell is not a dispatch",
+         {"tool_name": "Bash", "tool_input": {"command": "ls", "description": "then bb thread tell thr_x"}}, spent, 0, ""),
+        ("deadline: fleet_task_create without serves", mcp("fleet_task_create", title="refactor"), spent, 2, "could not finish"),
+        ("deadline: fleet_task_create serving P1", mcp("fleet_task_create", title="x", body="serves: P1"), spent, 0, ""),
+        ("deadline: fleet_task_update status only", mcp("fleet_task_update", task="#3", status="done"), spent, 0, ""),
+        ("deadline: interactions answer --text", "bb thread interactions answer i thr_x --text q=go", spent, 2, "could not finish"),
         ("deadline: undeclared tell denied by shape", "bb thread tell thr_x hi", spent, 2, "could not finish"),
         ("deadline: a quote-split dispatch word is still one", 'bb thr"ea"d tell thr_x hi', spent, 2, "could not finish"),
 
@@ -841,8 +1114,9 @@ def selftest():
     ]:
         env = dict(os.environ, HOME=tmp, SCOPE_LEDGER_DIR=tmp, BB_THREAD_ID=thread, HOOK_T0=t0)
         start = time.monotonic()
+        payload = cmd if isinstance(cmd, dict) else claude_bash(cmd)
         p = subprocess.run([sys.executable, os.path.abspath(__file__), "hook"], env=env, text=True, capture_output=True,
-                           input=json.dumps(claude_bash(cmd)))
+                           input=json.dumps(payload))
         took = time.monotonic() - start
         good = p.returncode == want and text in p.stderr and took < 2.0
         failed += not good
@@ -856,6 +1130,20 @@ def selftest():
         failed += bool(missing) or not carries
         print(f"{'ok  ' if carries and not missing else 'FAIL'} every prompt-carrying bb verb is gated "
               f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
+        # The scan itself reaches nested groups and free-text flags (review
+        # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
+        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond"} - carries)
+        failed += bool(unseen)
+        print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested groups and --text/--value"
+              f"{': not found ' + ', '.join(unseen) if unseen else ''}")
+        # Every agent tool an enabled plugin registers is gated or exempt with
+        # its reason (review r2b D6: task, advise and context tools were neither).
+        tools = plugin_tools()
+        loose = sorted(t for t in tools if t not in MCP_FIELDS and not mcp_exempt(t))
+        failed += bool(loose) or not tools
+        print(f"{'ok  ' if tools and not loose else 'FAIL'} every registered agent tool is gated or exempt "
+              f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
+              f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
     else:
         print("skip bb verb coverage: no bb on PATH")
     with open(DECISIONS) as f:

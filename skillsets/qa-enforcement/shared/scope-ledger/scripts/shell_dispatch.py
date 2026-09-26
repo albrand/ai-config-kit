@@ -25,11 +25,20 @@ shell (`bash <<< '...'`), `env -S '...'`, and a process substitution a shell
 reads (`bash <(echo '...')`, `source <(...)`) are parsed as scripts; and
 `xargs [opts] bb` is a dispatch, since its arguments arrive on stdin.
 
+Review r2b (2026-09-26) added: `thread interactions respond` (its --value is
+free text for the thread) and `thread interactions answer --text`, and
+`fleet member-add --concern` (the concern goes into every member's
+instructions); an answer that only picks offered choices (--choice), and a
+member-add without a concern, carry no new text. ANSI-C quoting (`$'tell'`)
+is decoded before matching, and a dispatch that asks for its help (`--help`,
+`-h`) sends nothing and passes.
+
 Dispatch verbs are every bb verb that hands a thread new text to act on
 (`bb thread --help`, `bb fleet --help`, 2026-09-25): thread spawn|create|fork|
-tell|message|edit-message, thread queue create|update|send, and fleet
-group-create|task-add|advise. scope-gate.py selftest checks the installed
-bb's help for a prompt-carrying verb missing here.
+tell|message|edit-message, thread queue create|update|send, thread
+interactions answer (--text)|respond, and fleet group-create|task-add|advise
+and member-add (--concern). scope-gate.py selftest walks the installed bb's
+help, nested groups included, for a text-carrying verb missing here.
 
 Not covered (documented in SKILL.md known limits): a script run from a file
 (`sh dispatch.sh`), a script piped into a shell (`cat x | sh`), a command
@@ -42,6 +51,11 @@ import shlex
 THREAD_VERBS = ("spawn", "create", "fork", "tell", "message", "edit-message")
 QUEUE_VERBS = ("create", "update", "send")
 FLEET_VERBS = ("group-create", "task-add", "advise")
+# Gated only when the flag is given (None: always): without it they carry no
+# new text for a thread.
+CONDITIONAL_VERBS = {"thread interactions answer": "--text", "thread interactions respond": None,
+                     "fleet member-add": "--concern"}
+HELP_WORDS = ("--help", "-h")
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
 DEFAULTED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}]*)\}$")
@@ -174,6 +188,11 @@ def split_script(script, depth=0):
             i += 1
             continue
         # Unquoted from here.
+        if script.startswith("$'", i):
+            j = _ansi_end(script, i + 2)
+            cur.text.append(script[i:j + 1])
+            i = j + 1
+            continue
         if c in "'\"":
             quote = c
             cur.text.append(c)
@@ -263,8 +282,68 @@ def mask(text):
     return "".join(out)
 
 
+ANSI_ESCAPE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|.)", re.S)
+ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+
+
+def _ansi_end(s, k):
+    """Index of the quote closing an ANSI-C string whose body starts at k."""
+    i = k
+    while i < len(s):
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == "'":
+            return i
+        i += 1
+    return len(s) - 1
+
+
+def _ansi_decode(body):
+    def one(m):
+        e = m.group(1)
+        if e[0] in "xuU":
+            return chr(min(int(e[1:], 16), 0x10FFFF))
+        if e[0] in "01234567":
+            return chr(int(e, 8) & 0xFF)
+        if e[0] == "c" and len(e) == 2:
+            return chr(ord(e[1]) & 0x1F)
+        return ANSI_SIMPLE.get(e, e)
+    return ANSI_ESCAPE.sub(one, body)
+
+
+def ansi_c(text):
+    """The text with each unquoted $'...' decoded into a plain quoted word,
+    so `$'tell'` or `$'\x74ell'` reads as the tell bash runs."""
+    if "$'" not in text:
+        return text
+    out, i, n, q = [], 0, len(text), None
+    while i < n:
+        c = text[i]
+        if q == "'":
+            out.append(c)
+            if c == "'":
+                q = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if q is None and text.startswith("$'", i):
+            j = _ansi_end(text, i + 2)
+            out.append(shlex.quote(_ansi_decode(text[i + 2:j])))
+            i = j + 1
+            continue
+        if c in "'\"":
+            q = c if q is None else (None if q == c else q)
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def words(text):
-    text = mask(text)
+    text = mask(ansi_c(text))
     try:
         return shlex.split(text, posix=True)
     except ValueError:
@@ -382,7 +461,7 @@ def dispatches(script, depth=0):
             continue
         if is_bb(head) or maybe_bb(head):
             verb = _dispatch_verb(rest)
-            if verb:
+            if verb and not any(a in HELP_WORDS for a in rest):
                 found.append((text, list(cmd.heredocs), verb))
             continue
         # `xargs [opts] bb ...` runs bb with words from stdin, so it is a
@@ -400,10 +479,25 @@ def dispatches(script, depth=0):
         # never matches.
         for b in [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
             verb = _dispatch_verb(w[b + 1:])
-            if verb:
+            if verb and not any(a in HELP_WORDS for a in w[b + 1:]):
                 found.append((text, list(cmd.heredocs), verb))
                 break
     return found
+
+
+def changes_dir(script):
+    """Whether any simple command in the script is cd or pushd: a relative
+    brief path is then relative to a directory the hook cannot know."""
+    for cmd in split_script(script):
+        w = words(cmd.string())
+        k = _command_word(w)
+        if k is not None and w[k] in ("cd", "pushd"):
+            return True
+    return False
+
+
+def _flagged(words_, flag):
+    return any(a == flag or a.startswith(flag + "=") for a in words_)
 
 
 def _dispatch_verb(rest):
@@ -417,6 +511,13 @@ def _dispatch_verb(rest):
                 return f"thread {nxt}"
             if a == "thread" and nxt == "queue" and j + 2 < len(rest) and rest[j + 2] in QUEUE_VERBS:
                 return f"thread queue {rest[j + 2]}"
+            if a == "thread" and nxt == "interactions" and j + 2 < len(rest):
+                verb = f"thread interactions {rest[j + 2]}"
+                if verb in CONDITIONAL_VERBS and (CONDITIONAL_VERBS[verb] is None or _flagged(rest[j + 3:], CONDITIONAL_VERBS[verb])):
+                    return verb
+                return None
+            if a == "fleet" and nxt == "member-add" and _flagged(rest[j + 2:], CONDITIONAL_VERBS["fleet member-add"]):
+                return "fleet member-add"
             if a == "fleet" and nxt in FLEET_VERBS:
                 return f"fleet {nxt}"
             return None
