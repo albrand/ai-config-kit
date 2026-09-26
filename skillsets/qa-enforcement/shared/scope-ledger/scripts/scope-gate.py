@@ -56,7 +56,7 @@ import tempfile
 
 sys.dont_write_bytecode = True  # no __pycache__: the four skill homes stay identical
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shell_dispatch import changes_dir, dispatches  # noqa: E402
+from shell_dispatch import MAX_DEPTH, SHELLS, changes_dir, dispatches, words  # noqa: E402
 
 LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/state/agent-quality/scope")
 DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
@@ -106,7 +106,8 @@ HOOK_HARD_S = 10.0
 # `bb thr"ead" tell` reads as the dispatch the shell will run.
 COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
                              r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
-                             r'fleet.{0,20}(group-create|task-add|advise|member-add)', re.I)
+                             r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -402,26 +403,140 @@ def dispatch_texts(payload):
     cmd = command_text(inp)
     if not cmd:
         return [], None
+    texts, verbs = dispatch_bodies(cmd, str(cwd))
+    if not texts:
+        return [], None
+    return texts, "bb " + "/".join(sorted(verbs))
+
+
+class _Every(frozenset):
+    """Every name: in a script bb runs later, no variable's value is known now."""
+    def __contains__(self, name):
+        return True
+
+
+def dispatch_bodies(cmd, cwd, depth=0, later=False):
+    """([body], {verb}) for the dispatches in a shell script: each body is one
+    dispatch's words, its heredocs and the brief files it reads, and must
+    carry its own serves line. `later`: a script bb runs when an automation
+    is due, in a directory and environment the hook cannot know."""
     # Only a command whose command word is bb runs a dispatch; the same words
     # inside a quoted argument (printf, echo, grep, git commit -m) are data.
+    texts, verbs = [], set()
     found = dispatches(cmd)
     if not found:
-        return [], None
-    texts = []
-    assigned = assigned_names(cmd)
-    after_cd = changes_dir(cmd)
-    for text, heredocs, _verb in found:
-        # Each dispatch carries its own serves line: its words, its heredoc,
-        # and the files it reads its brief from.
+        return texts, verbs
+    assigned = _Every() if later else assigned_names(cmd)
+    after_cd = later or changes_dir(cmd)
+    for text, heredocs, verb in found:
+        verbs.add(verb)
+        if verb.startswith("automation "):
+            texts += automation_bodies(text, heredocs, verb, cwd, assigned, after_cd, depth)
+            continue
         body = "\n".join([text, *heredocs])
         for rx in (FILE_FLAG, CAT_SUB, REDIRECT_IN):
             for g in rx.findall(text):
                 path = next((x for x in g if x), "")
                 if path and path != "-":
-                    body += "\n" + read_file_text(path, str(cwd), assigned, after_cd)
+                    body += "\n" + read_file_text(path, cwd, assigned, after_cd)
         texts.append(body)
-    return texts, "bb " + "/".join(sorted({v for _t, _h, v in found}))
+    return texts, verbs
 
+
+def _values(args, flag):
+    return [args[i + 1] if a == flag and i + 1 < len(args) else a[len(flag) + 1:] if a != flag else ""
+            for i, a in enumerate(args) if a == flag or a.startswith(flag + "=")]
+
+
+SCRIPT_EXT = {".js": "node", ".mjs": "node", ".cjs": "node", ".py": "python3"}
+
+
+def script_bodies(script, interpreter, cwd, depth):
+    """The dispatches in a script an automation runs. A shell script is parsed
+    like a command (each dispatch in it needs its own serves line); a node or
+    python3 script is not parsed, so one that reads like a dispatch needs the
+    serves line in its text."""
+    if interpreter in (None, "", *SHELLS):
+        if depth >= MAX_DEPTH:
+            return [script] if COARSE_DISPATCH.search(flatten(script)) else []
+        return dispatch_bodies(script, cwd, depth + 1, later=True)[0]
+    if COARSE_DISPATCH.search(flatten(script)):
+        CALL_NOTES.append(f"A {interpreter} automation script is not parsed: a script that dispatches needs the serves line in its text.")
+        return [script]
+    return []
+
+
+def automation_bodies(text, heredocs, verb, cwd, assigned, after_cd, depth):
+    """What an automation hands an agent: its --prompt (in the command's own
+    words), the dispatches in its --script or --script-file, or, for run,
+    resume and a retarget or reschedule without new text, the prompt or script
+    it already stores. Review r2c: `automation create --in 30s --prompt ...
+    --target-thread thr_x` re-prompted a thread with no serves line."""
+    w = words(text)
+    group = verb.split()[1]
+    k = next((i for i in range(len(w) - 1) if w[i] == "automation" and w[i + 1] == group), None)
+    args = w[k + 2:] if k is not None else w
+    prompts, scripts, files = _values(args, "--prompt"), _values(args, "--script"), _values(args, "--script-file")
+    interpreter = (_values(args, "--interpreter") or [None])[-1]
+    out = []
+    if prompts:
+        body = "\n".join([text, *heredocs])
+        for g in CAT_SUB.findall(text):  # --prompt "$(cat brief.md)"
+            path = next((x for x in g if x), "")
+            if path:
+                body += "\n" + read_file_text(path, cwd, assigned, after_cd)
+        out.append(body)
+    for script in scripts:
+        out += script_bodies(script, interpreter, cwd, depth)
+    for path in files:
+        if _values(args, "--host"):
+            FILE_NOTES.append(f"{path}: --host names the machine holding the script file, so the file the hook would "
+                              f"read is not the one bb copies: pass the script inline with --script, or drop --host")
+            out.append(text)
+            continue
+        noted = len(FILE_NOTES)
+        body = read_file_text(path, cwd, assigned, after_cd)
+        if len(FILE_NOTES) > noted:
+            out.append(text)  # unreadable: only the command's own words can serve
+            continue
+        out += script_bodies(body, interpreter or SCRIPT_EXT.get(os.path.splitext(path)[1].lower()), cwd, depth)
+    if not (prompts or scripts or files) and group in ("run", "resume", "update"):
+        out += stored_automation(args)
+    return out
+
+
+def stored_automation(args):
+    """[the prompt], or the dispatches in the script, an existing automation
+    runs, read with `bb automation show <id> --json`; [""] (so the call is
+    denied, with a note) when it cannot be read."""
+    import subprocess
+    auto = args[0] if args and not args[0].startswith("-") else ""
+    project = (_values(args, "--project") or [None])[-1]
+    why = None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", auto):
+        why = "no automation id before the options"
+    else:
+        bb = os.environ.get("BB_CLI") or shutil_which("bb")
+        cmd = [bb or "bb", "automation", "show", auto, "--json"] + (["--project", project] if project else [])
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                               timeout=max(0.5, min(5.0, HOOK_HARD_S - hook_elapsed() - 1.5)))
+            ex = json.loads(p.stdout).get("execution") if p.returncode == 0 else None
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as e:
+            ex, why = None, type(e).__name__
+        if isinstance(ex, dict) and ex.get("mode") == "agent" and isinstance(ex.get("prompt"), str):
+            CALL_NOTES.append(f"Automation {auto} runs the prompt it stores: put the serves line in it "
+                              f"(`bb automation update {auto} --prompt ...`).")
+            return [ex["prompt"]]
+        if isinstance(ex, dict) and ex.get("mode") == "script" and isinstance(ex.get("script"), str):
+            found = script_bodies(ex["script"], ex.get("interpreter"), "", MAX_DEPTH - 1)
+            if found:
+                CALL_NOTES.append(f"Automation {auto} runs a script that dispatches: each dispatch in it needs its serves line.")
+            return found
+        why = why or f"`bb automation show` gave no prompt or script (exit {p.returncode})"
+    CALL_NOTES.append(f"Automation {auto or '?'}: the prompt or script it stores could not be read ({why}), "
+                      f"so the call is denied: it would run that text.")
+    return [""]
 
 
 def record(entry):
@@ -449,21 +564,41 @@ def hook_elapsed(now=None):
     return max(0.0, (datetime.datetime.now().timestamp() if now is None else now) - t0)
 
 
-# A shell comment outside quotes (keeping quoted strings and escapes). The
-# same expression is in the hooks' jq shape (SCOPE_SHAPE_JQ), so the two
-# deadline decisions read the same words.
-UNCOMMENT = re.compile(r"""('[^']*'|"(?:\\.|[^"\\])*"|\\.)|(?:^|(?<=[\s;&|()]))#[^\n]*""", re.M)
+# A shell comment outside quotes (keeping quoted strings, ANSI-C strings and
+# escapes). The same expressions are in the hooks' jq shape (SCOPE_SHAPE_JQ),
+# so the two deadline decisions read the same words.
+UNCOMMENT = re.compile(r"""(\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S])|(?:^|(?<=[\s;&|()]))(#[^\n]*)""", re.M)
+# Shape splits a command at EVERY ; & | ( ) and newline, quoted or not: more
+# stretches than the shell makes, so a serves line can only be cut off from
+# its dispatch (a deny), never carried into another one.
+SHAPE_SEP = re.compile(r"[;&|()\n]")
+# A stretch that runs a nested script (sh -c, eval, --script, a here-string,
+# env -S, node -e) is denied at the deadline even with a serves line: the line
+# could belong to the outer command, not to the dispatch inside (review r2c).
+NESTED_RUNNER = re.compile(r"(^|\s)-[A-Za-z]*[ce](\s|$)|(^|[\s/])eval(\s|$)|--script|<<<|(^|\s)(-[A-Za-z]*S|--split-string)", re.I)
+# An ANSI-C string with an escape can spell any word (`$'\x74ell'`): such a
+# stretch is dispatch-shaped whatever it reads like.
+ANSI_ESCAPED = re.compile(r"\$'[^']*\\")
 
 
 def flatten(text):
     return re.sub(r"[\\'\"]", "", text)
 
 
+def blank_comments(cmd):
+    """The command with each comment's characters turned into spaces, except
+    the separators, so it splits at the same places as the command itself."""
+    return UNCOMMENT.sub(lambda m: m.group(1) if m.group(1) is not None else re.sub(r"[^;&|()]", " ", m.group(2)), cmd)
+
+
 def shape_text(stdin_text):
-    """The deadline view of a call: its own words when it is dispatch-shaped,
-    else None. Its own words are a gated agent tool's text fields, or the
-    command with its comments dropped; never the tool call's description or
-    a comment, and no brief file is read (a FIFO would block; review r2b)."""
+    """The deadline view of a call: the stretches that must each name an open
+    purpose, or None when nothing in it is dispatch-shaped. A gated agent
+    tool is one stretch, its text fields. A command is split at every
+    separator; a stretch that reads like a dispatch must carry its own serves
+    line, outside comments (a nested runner's stretch never serves). The tool
+    call's description is never read, and no brief file is (a FIFO would
+    block; review r2b)."""
     try:
         payload = json.loads(stdin_text or "{}")
     except ValueError:
@@ -474,18 +609,35 @@ def shape_text(stdin_text):
     m = MCP_TOOL.search(tool)
     if m:
         text = mcp_text(m.group(1), inp)
-        return None if text is None else flatten(text)
+        return None if text is None else [flatten(text)]
     cmd = command_text(inp)
     if not cmd:
         return None
-    flat = flatten(UNCOMMENT.sub(lambda x: x.group(1) or "", cmd))
-    return flat if COARSE_DISPATCH.search(flat) else None
+    cmd = cmd.replace("\\\n", "")
+    raws, owns = SHAPE_SEP.split(cmd), SHAPE_SEP.split(blank_comments(cmd))
+    if len(raws) != len(owns):
+        return [""]  # cannot happen (comments keep their separators); fail closed
+    out = []
+    for raw, own in zip(raws, owns):
+        flat = flatten(raw)
+        if COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw):
+            out.append("" if NESTED_RUNNER.search(flat) else flatten(own))
+    return out or None
 
 
-def shape_serves(thread, flat):
-    """Shape mode: does the (quote-stripped) payload name an OPEN purpose of
-    the ledger, or quote one of its accepted revisions? An unknown or
-    blocked P-id does not count; an unreadable ledger serves nothing."""
+def revision_key(quote):
+    """What of an accepted revision's quote a stretch must contain: the quote,
+    or, when a separator splits it, its part before the first separator if
+    that is at least 20 characters (the rest is in the next stretch). The
+    user's words often hold a ; or a parenthesis."""
+    head = collapse(SHAPE_SEP.split(quote, maxsplit=1)[0])
+    return head if len(head) >= 20 else quote
+
+
+def shape_serves(thread, stretches):
+    """Shape mode: does every stretch name an OPEN purpose of the ledger, or
+    quote one of its accepted revisions? An unknown or blocked P-id does not
+    count; an unreadable ledger serves nothing."""
     try:
         led = read_ledger(thread)
     except Exception:
@@ -493,13 +645,14 @@ def shape_serves(thread, flat):
     if not led:
         return False
     opened = {p["id"] for p in led["purposes"] if p["status"] == "open"}
-    for m in SERVES_P.finditer(flat):
-        if {pid.upper() for pid in re.findall(r"P\d+", m.group(1), re.I)} & opened:
-            return True
-    if re.search(r"serves:\s*revision", flat, re.I):
-        body = collapse(flat)
-        return any(collapse(re.sub(r"[\\'\"]", "", r["quote"])) in body for r in led.get("accepted_revisions", []))
-    return False
+    quotes = [revision_key(q) for q in (collapse(flatten(r["quote"])) for r in led.get("accepted_revisions", [])) if q]
+
+    def serves(flat):
+        for m in SERVES_P.finditer(flat):
+            if {pid.upper() for pid in re.findall(r"P\d+", m.group(1), re.I)} & opened:
+                return True
+        return bool(re.search(r"serves:\s*revision", flat, re.I)) and any(q in collapse(flat) for q in quotes)
+    return all(serves(t) for t in stretches)
 
 
 def hook_under_deadline(thread, stdin=None):
@@ -700,6 +853,9 @@ VERB_EXEMPT = {
     "fleet validate": "a claim sent to the reviewer, not work for a thread",
     "fleet review": "a claim sent to the reviewer, not work for a thread",
     "fleet hermes": "a claim sent to the reviewer, not work for a thread",
+    "terminal send": "types into a terminal session (a shell), not a thread's conversation",
+    "notify send": "a desktop notice to the person, not work for an agent",
+    "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
 }
 
 
@@ -718,6 +874,7 @@ MCP_EXEMPT = {
     "fleet_tokens": "read-only",
     "fleet_provider_stats": "read-only",
     "bb_workflow_result": "a workflow's own agent returning its result to the script, not work for a thread",
+    "AskUserQuestion": "asks the person a question; the answer returns to the asking agent",
     "browser_": "drives the isolated browser; nothing reaches an agent",
     "mcp_": "MCP server sign-in and management; nothing reaches an agent",
 }
@@ -727,10 +884,19 @@ def mcp_exempt(name):
     return name in MCP_EXEMPT or any(k.endswith("_") and name.startswith(k) for k in MCP_EXEMPT)
 
 
-def plugin_tools(bb="bb"):
+def loose_tools(tools):
+    """Swept tools neither gated nor exempt, and registrations whose name the
+    sweep could not read (`?<file>:<line>`)."""
+    return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
+
+
+def plugin_tools(bb="bb", roots=None):
     """{tool: plugin} for every agent tool an enabled bb plugin registers,
-    read from the plugin's source (`bb plugin list --json` gives rootDir)."""
+    read from the plugin's source at any depth (`bb plugin list --json` gives
+    rootDir; `roots` {id: dir} replaces it in tests)."""
     import subprocess
+    if roots is not None:
+        return _swept(roots)
     try:
         listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True,
                                             timeout=60).stdout)
@@ -748,27 +914,59 @@ def plugin_tools(bb="bb"):
             for v in o:
                 walk(v)
     walk(listing)
-    rx = re.compile(r'registerTool\(\s*\{\s*name:\s*"([A-Za-z0-9_-]+)"')
+    return _swept(roots)
+
+
+def _swept(roots):
     tools = {}
     for pid, root in roots.items():
-        base = root.rstrip(os.sep).count(os.sep)
         for dirpath, dirs, files in os.walk(root):
-            deep = dirpath.count(os.sep) - base
-            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "host-data", "test", "tests", "types")] if deep < 3 else []
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "host-data", "test", "tests", "__tests__")]
             for fn in files:
-                if not fn.endswith((".ts", ".mts", ".js", ".mjs", ".cjs")) or fn.endswith(".d.ts"):
+                if (not fn.endswith((".ts", ".mts", ".js", ".mjs", ".cjs")) or fn.endswith(".d.ts")
+                        or ".test." in fn or ".spec." in fn):
                     continue
+                path = os.path.join(dirpath, fn)
                 try:
-                    path = os.path.join(dirpath, fn)
                     if os.path.getsize(path) > 30_000_000:
                         continue
                     with open(path, encoding="utf-8", errors="replace") as f:
                         text = f.read()
                 except OSError:
                     continue
-                for name in rx.findall(text):
+                for name in registered_names(text, os.path.relpath(path, root)):
                     tools.setdefault(name, pid)
     return tools
+
+
+REGISTER = re.compile(r"agents\s*\.\s*registerTool\s*\(\s*(\{|[A-Za-z_$][\w$]*\s*[,)])")
+TOOL_NAME = re.compile(r"""\{\s*name\s*:\s*(?:(["'`])([A-Za-z0-9_.-]+)\1|([A-Za-z_$][\w$]*))|\{\s*(name)\s*[,}]""")
+
+
+def registered_names(text, where):
+    """Tool names in `bb.agents.registerTool({name: ...})` calls: a literal,
+    or a variable resolved from its assignment in the same file (review r2c:
+    `{name:L,...}` was missed). A registration whose name cannot be read is
+    returned as `?<file>:<line>`, so the sweep fails on it instead of
+    passing over it."""
+    out = []
+    for m in REGISTER.finditer(text):
+        line = text.count("\n", 0, m.start()) + 1
+        if m.group(1) != "{":
+            out.append(f"?{where}:{line} (a tool spec in a variable)")
+            continue
+        n = TOOL_NAME.match(text, m.start(1))
+        var = n and (n.group(3) or n.group(4))
+        if n and n.group(2):
+            out.append(n.group(2))
+            continue
+        if var:
+            vals = re.findall(r"(?:^|[^\w$.])" + re.escape(var) + r"""\s*=\s*(["'`])([A-Za-z0-9_.-]+)\1""", text[:m.start()])
+            if vals:
+                out.append(vals[-1][1])
+                continue
+        out.append(f"?{where}:{line} (name {var or 'not literal'})")
+    return out
 
 
 def shutil_which(name):
@@ -782,48 +980,77 @@ def gated_verbs():
             | {f"fleet {v}" for v in FLEET_VERBS} | set(CONDITIONAL_VERBS))
 
 
-def bb_text_verbs(bb="bb"):
-    """Every `bb thread` verb, nested groups included (queue, interactions,
-    section, tabs, ...), and every `bb fleet` verb whose help says it carries
-    text for a thread: a prompt, a message, a charter, a concern, a context, a
-    free-text answer (--text) or value (--value), a title, a question or a
-    claim. Review r2b: the scan stopped at `thread queue` and did not look for
-    --text/--value, so it missed `thread interactions answer|respond`. Each
-    level's help calls run concurrently (about 1 s each)."""
-    import subprocess
+HELP_TEXT = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|--text\b|--value\b|--script\b|--script-file"
+                       r"|--charter\b|--concern\b|--context\b|--body\b|--question\b|\[message\]|<message>|<prompt>"
+                       r"|<text\.\.\.>|\"<(title|question|claim)>\"")
 
-    def helps(paths):
-        procs = {p: subprocess.Popen([bb, *p, "--help"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-                 for p in paths}
-        out = {}
-        for p, proc in procs.items():
-            try:
-                out[p] = proc.communicate(timeout=120)[0] or ""
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                out[p] = ""
-        return out
-    listed = re.compile(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?\s", re.M)
-    text = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|\[message\]|<message>|--charter\b"
-                      r"|--concern\b|--context\b|--text\b|--value\b")
-    carries, level, seen = set(), [("thread",)], set()
-    for _depth in range(4):
+
+def bb_groups(bb="bb"):
+    """Every command group: the core ones in `bb --help` and each enabled
+    plugin's (`bb plugin list --json` cliCommand.name). Review r2c: the top
+    level help lists no plugin group, so `automation` was never scanned."""
+    import subprocess
+    groups = []
+    try:
+        top = subprocess.run([bb, "--help"], capture_output=True, text=True, timeout=60).stdout
+        section = re.split(r"\n(?=\S)", top.split("Commands:", 1)[-1].lstrip("\n"), maxsplit=1)[0]
+        groups += re.findall(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?(?:\s|$)", section, re.M)
+        listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True, timeout=60).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        listing = None
+
+    def walk(o):
+        if isinstance(o, dict):
+            c = o.get("cliCommand")
+            if o.get("enabled") is True and isinstance(c, dict) and isinstance(c.get("name"), str):
+                groups.append(c["name"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    return [g for g in dict.fromkeys(groups) if g != "help"]
+
+
+def bb_text_verbs(bb="bb"):
+    """Every bb command, from every core and plugin group down through nested
+    groups, whose help shows a text-carrying option: a prompt, a message, a
+    script, a charter, a concern, a context, a free-text answer (--text) or
+    value (--value), a body, a question, a title or a claim, or free text
+    (<text...>). Review r2b: the scan stopped at `thread queue`; review r2c:
+    it read only `thread` and `fleet`, so it missed `automation create|update`.
+    Help calls run six at a time (about 0.25 s each)."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    def help_of(path):
+        try:
+            return subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=60,
+                                  stdin=subprocess.DEVNULL).stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    # commander style "  name|alias [options]  Desc", and bb style "  bb group name  Desc"
+    listed = re.compile(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?(?:\s|$)", re.M)
+    bbstyle = re.compile(r"^\s+bb ([a-z-]+(?: [a-z-]+)*?)(?=\s{2,}|\s+[\[<\"-]|$)", re.M)
+    carries, seen, level = set(), set(), [(g,) for g in bb_groups(bb)]
+    for _depth in range(6):
+        with ThreadPoolExecutor(6) as ex:
+            helps = list(ex.map(help_of, level))
         nxt = []
-        for path, out in helps(level).items():
-            if "Commands:" in out:  # a group: walk its commands
-                for v in listed.findall(out.split("Commands:", 1)[1]):
-                    if v != "help" and path + (v,) not in seen:
-                        seen.add(path + (v,))
-                        nxt.append(path + (v,))
-            elif len(path) > 1 and text.search(out):
+        for path, out in zip(level, helps):
+            seen.add(path)
+            parts = out.split("Commands:", 1)
+            subs = listed.findall(parts[1]) if len(parts) > 1 else []
+            subs += [m.split()[-1] for m in bbstyle.findall(out)
+                     if tuple(m.split()[:len(path)]) == path and len(m.split()) == len(path) + 1]
+            subs = [v for v in dict.fromkeys(subs) if v != "help" and path + (v,) not in seen]
+            nxt += [path + (v,) for v in subs]
+            if not subs and len(path) > 1 and HELP_TEXT.search(parts[0]):
                 carries.add(" ".join(path))
         if not nxt:
             break
-        level = nxt
-    fleet = helps([("fleet",)])[("fleet",)]
-    for m in re.finditer(r"^\s+bb fleet (\S+)(.*)$", fleet, re.M):
-        if re.search(r'--charter|--prompt|--message|--concern|--context|--text|--value|"<(title|question|claim)>"', m.group(2)):
-            carries.add(f"fleet {m.group(1)}")
+        level = list(dict.fromkeys(nxt))
     return carries
 
 
@@ -844,6 +1071,21 @@ def selftest():
     nobrief = os.path.join(tmp, "nobrief.md")
     with open(nobrief, "w") as f:
         f.write("Do the thing.\n")
+    # Automation fixtures (review r2c): script files, and a fake bb whose
+    # `automation show <id> --json` returns the stored prompt or script.
+    autos = os.path.join(here, "..", "tests", "fixtures", "automations.json")
+    with open(autos, encoding="utf-8") as f:
+        for name, body in json.load(f)["files"].items():
+            with open(os.path.join(tmp, name), "w") as g:
+                g.write(body)
+    fake_bb = os.path.join(tmp, "fake-bb")
+    with open(fake_bb, "w") as f:
+        f.write(f"#!{sys.executable}\nimport json, sys\nA = json.load(open({os.path.abspath(autos)!r}))['automations']\n"
+                "a = sys.argv[1:]\nif a[:2] == ['automation', 'show'] and len(a) > 2 and a[2] in A:\n"
+                "    print(json.dumps({'id': a[2], 'execution': A[a[2]]}))\n    sys.exit(0)\nsys.exit(1)\n")
+    os.chmod(fake_bb, 0o755)
+    saved_bb_cli = os.environ.get("BB_CLI")
+    os.environ["BB_CLI"] = fake_bb
 
     def claude_bash(cmd):
         return {"tool_name": "Bash", "tool_input": {"command": cmd}}
@@ -974,6 +1216,13 @@ def selftest():
          "cd $TMPDIR && bb thread tell thr_x --message-file brief.md", "use an absolute path"),
         ("a FIFO brief says only a plain file is read",
          f"bb thread tell thr_x --message-file {fifo}", "not a regular file"),
+        ("an automation --script-file on another host asks for an inline script",
+         f"bb automation create --name n --in 1m --script-file {tmp}/auto-tell-ok.sh --host other", "--host names the machine"),
+        ("a run of a stored prompt without serves says where the line goes",
+         "bb automation run auto_plain", "bb automation update auto_plain --prompt"),
+        ("a run whose automation cannot be read says so", "bb automation run auto_missing", "could not be read"),
+        ("a node automation script is not parsed, and the note says so",
+         "bb automation create --name n --in 1m --interpreter node --script \"exec('bb thread tell thr_x hi')\"", "is not parsed"),
 
     ]:
         out, err = sys.stdout, sys.stderr
@@ -1110,6 +1359,12 @@ def selftest():
         ("deadline: an open id in a list serves", "bb thread tell thr_x 'serves: P9, P1 hi'", spent, 0, ""),
         ("deadline: fork is a dispatch", "bb thread fork thr_x --prompt hi", spent, 2, "could not finish"),
         ("deadline: non-dispatch allowed", "ls -la", spent, 0, ""),
+        # review r2c: each dispatch serves on its own at the deadline, too
+        ("deadline: only the first of two tells serves", "bb thread tell thr_a 'serves: P1 x'; bb thread tell thr_b hi", spent, 2, "could not finish"),
+        ("deadline: automation create --prompt without serves", "bb automation create --name n --in 1m --prompt hi", spent, 2, "could not finish"),
+        ("deadline: automation create --prompt serving P1", "bb automation create --name n --in 1m --prompt 'serves: P1 hi'", spent, 0, ""),
+        ("deadline: instructions set without serves", "bb instructions set be terse", spent, 2, "could not finish"),
+        ("deadline: sh -c cannot borrow the outer serves", "sh -c 'bb thread tell thr_a hi' 'serves: P1'", spent, 2, "could not finish"),
         ("future HOOK_T0: normal decision", "bb thread tell thr_x hi", future, 2, "must say which"),
     ]:
         env = dict(os.environ, HOME=tmp, SCOPE_LEDGER_DIR=tmp, BB_THREAD_ID=thread, HOOK_T0=t0)
@@ -1124,6 +1379,33 @@ def selftest():
     # Every bb verb whose help says it hands a thread text to act on is gated
     # (review r1 D3): a new prompt-carrying verb fails here until it is added
     # to shell_dispatch or to VERB_EXEMPT with the reason.
+    # The sweep reads any depth and every way a name is given (review r2c:
+    # `{name:L}` and anything below 3 levels were missed).
+    deep = os.path.join(tmp, "plugin", "a", "b", "c", "d", "e")
+    os.makedirs(deep)
+    with open(os.path.join(deep, "server.js"), "w") as f:
+        f.write('bb.agents.registerTool({ name: "deep_tool" });\nconst L="var_tool";e.agents.registerTool({name:L,description:_});\n'
+                "bb.agents.registerTool({\n  name: 'quoted_tool',\n});\nbb.agents.registerTool(spec);\n"
+                "// prose: bb.agents.registerTool (static tools)\n")
+    swept = plugin_tools(roots={"p": os.path.join(tmp, "plugin")})
+    want_swept = {"deep_tool", "var_tool", "quoted_tool"}
+    good = (want_swept <= set(swept) and sum(t.startswith("?") for t in swept) == 1 and len(swept) == 4
+            and any(t.startswith("?") for t in loose_tools(swept)))
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} the sweep reads any depth, a variable name and a quoted name, and flags a spec it cannot read: {sorted(swept)}")
+    # The help scan's text flags: each option a text-carrying verb shows.
+    shown = ["--prompt <text>", "--message <text>", "--prompt-file <path>", "--message-file <path>", "--text <q=a>",
+             "--value <json>", "--script <inline>", "--script-file <path>", "--charter <text>", "--concern <text>",
+             "--context <text>", "--body <text>", "--question <text>", "tell <thread> [message]", "<message>",
+             "fork <thread> <prompt>", "set <text...> [--json]", 'task-add <group> "<title>"']
+    unmatched = [h for h in shown if not HELP_TEXT.search(h)]
+    failed += bool(unmatched)
+    print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
+    # The fake bb served only the hook cases; the coverage scans read the real one.
+    if saved_bb_cli is None:
+        os.environ.pop("BB_CLI", None)
+    else:
+        os.environ["BB_CLI"] = saved_bb_cli
     if shutil_which("bb"):
         carries = bb_text_verbs()
         missing = sorted(carries - gated_verbs() - set(VERB_EXEMPT))
@@ -1132,14 +1414,15 @@ def selftest():
               f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
-        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond"} - carries)
+        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond",
+                         "automation create", "automation update", "instructions set", "notify send"} - carries)
         failed += bool(unseen)
-        print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested groups and --text/--value"
+        print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested and plugin groups and --text/--value/--script"
               f"{': not found ' + ', '.join(unseen) if unseen else ''}")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
         tools = plugin_tools()
-        loose = sorted(t for t in tools if t not in MCP_FIELDS and not mcp_exempt(t))
+        loose = loose_tools(tools)
         failed += bool(loose) or not tools
         print(f"{'ok  ' if tools and not loose else 'FAIL'} every registered agent tool is gated or exempt "
               f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"

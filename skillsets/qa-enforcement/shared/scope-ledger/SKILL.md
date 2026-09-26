@@ -40,12 +40,28 @@ after the QA ship gate.
 
 - It only acts when `$BB_THREAD_ID` has a ledger.
 - Dispatches it gates: every `bb` verb that hands a thread text, derived
-  from `bb thread --help` (nested groups included) and `bb fleet --help`:
-  `thread spawn|create|fork|tell|message|edit-message`, `thread queue
-  create|update|send`, `thread interactions respond` and `thread interactions
-  answer --text`, and `fleet group-create|task-add|advise` and `fleet
-  member-add --concern`. An answer that only picks offered choices
-  (`--choice`) and a member-add without a concern carry no new text and pass.
+  from the help of every core and plugin command group (nested groups
+  included): `thread spawn|create|fork|tell|message|edit-message`, `thread
+  queue create|update|send`, `thread interactions respond` and `thread
+  interactions answer --text`, `fleet group-create|task-add|advise` and
+  `fleet member-add --concern`, `instructions set` (custom instructions go
+  into every agent), and `automation create|update` with `--prompt` (the
+  prompt an agent runs when the automation is due; `--target-thread`
+  re-prompts an existing thread), `--script` or `--script-file`. An
+  automation's script is scanned like a command: each dispatch in it needs
+  its own serves line. A `--script-file` is read like a brief file; with
+  `--host` (the file is on another machine) or when it cannot be read, the
+  call denies unless the command's own words serve. A node or python3 script
+  is not parsed: one that reads like a dispatch needs the serves line in its
+  text. Inside a script, a relative brief path or a variable in one denies
+  (the script runs later, from a directory and environment the hook cannot
+  know). `automation run|resume`, and an `update` that retargets or
+  reschedules (`--target-thread`, `--cron`, `--at`, `--in`) without new text,
+  fire the text the automation already stores: the gate reads it with `bb
+  automation show <id> --json` and applies the same rule, and denies when it
+  cannot be read. An answer that only picks offered choices (`--choice`), a
+  member-add without a concern, and an automation update of other fields
+  carry no new text and pass.
   Agent tools (`scripts/scope-gate.py` `MCP_FIELDS`, with the fields read):
   `fleet_member_spawn` (prompt, concern), `fleet_member_tell` (message),
   `fleet_delegate` (task, context), `fleet_task_create` (title, body),
@@ -58,16 +74,21 @@ after the QA ship gate.
   matcher the installer writes; Codex runs the chain for every tool. The
   selftest walks bb's help and fails on a text-carrying verb the gate does
   not cover (`fleet validate|review|hermes` are exempt: a claim to the
-  reviewer, not a brief), and reads every enabled plugin's source and fails
-  on a registered agent tool that is neither gated nor in `MCP_EXEMPT` with
-  its reason (read-only tools, `fleet_review`, `fleet_curate`,
-  `fleet_optimization`, `fleet_member_retire`, `bb_workflow_result`, the
-  `browser_*` and `mcp_*` tools). `bb` is matched in any case (`BB`: the filesystem is
+  reviewer, not a brief; `terminal send` types into a shell session;
+  `notify send` is a desktop notice to the person; `voice transcribe` takes
+  a transcription hint), and reads every enabled plugin's source, at any
+  depth, and fails on a registered agent tool that is neither gated nor in
+  `MCP_EXEMPT` with its reason (read-only tools, `fleet_review`,
+  `fleet_curate`, `fleet_optimization`, `fleet_member_retire`,
+  `bb_workflow_result`, `AskUserQuestion`, the `browser_*` and `mcp_*`
+  tools), or whose name it cannot read (a name held in a variable is
+  resolved from the same file). `bb` is matched in any case (`BB`: the filesystem is
   case-insensitive), as a path, as `"$BB_CLI"` or `"${BB_CLI:-bb}"`, and a
   command word only known at run time (`$(...)`, `$VAR`) followed by a
   dispatch verb counts too. ANSI-C quoting (`$'tell'`, `$'\x74ell'`) is
-  decoded first. A dispatch that asks for its help (`--help`, `-h`) sends
-  nothing and passes.
+  decoded first. Only a bare help request (`bb thread tell --help`, nothing
+  else after the verb) passes: a `-h` anywhere else can be an option's value
+  (`--title -h`) or a positional after `--`, and the dispatch runs.
 - Brief files are read: `--prompt-file`, `--message-file`, `$(cat f)`, `< f`
   and heredocs. `~`, `$VAR`, `${VAR}` and `${VAR:-default}` in the path are
   expanded from the hook's environment (the host gives the hook and the
@@ -110,16 +131,23 @@ after the QA ship gate.
   load 160-213); a stage reached after 11 s is not started. Inside the stage
   the Python gate keeps its own deadline at 10 s (`HOOK_HARD_S`). The shape
   decision reads only the call's own words: a gated agent tool's text
-  fields, or the command with its comments dropped; never the tool call's
-  description, and no brief file. With a ledger, a dispatch-shaped call (a
-  gated agent tool, or a command matching `thread … spawn|create|fork|tell|
-  message|edit-message|queue|interactions … answer|respond` or `fleet
-  group-create|task-add|advise|member-add`, any case, quotes and backslashes
-  removed) denies unless those words name an **open** purpose (`serves:
-  P<n>`; a blocked or unknown id does not count) or quote an accepted
-  revision. In shell it is one `jq` run over the payload and the ledger,
-  made before the stages start (so the path after a kill starts no process);
-  no `jq` denies any dispatch word. The same shape block is in
+  fields, or the command; never the tool call's description or a comment,
+  and no brief file. Each dispatch serves on its own, as in the normal
+  decision: the command is split at every `;` `&` `|` `(` `)` and newline,
+  quoted or not (more stretches than the shell makes, so a serves line can
+  only be cut off from its dispatch, never lent to another), and every
+  stretch that is dispatch-shaped (a command matching `thread … spawn|create|
+  fork|tell|message|edit-message|queue|interactions … answer|respond`, `fleet
+  group-create|task-add|advise|member-add`, `automation create|update|run|
+  resume` or `instructions set`, any case, quotes and backslashes removed; or
+  one holding an ANSI-C escape) must name an **open** purpose (`serves:
+  P<n>`; a blocked or unknown id does not count) or an accepted revision
+  (its quote, or its part before a separator if that is 20 characters or
+  more). A stretch that runs a nested script (`sh -c`, `eval`, `--script`,
+  `<<<`, `env -S`, `node -e`) never serves at the deadline. A gated agent
+  tool is one stretch. In shell it is one `jq` run over the payload and the
+  ledger, made before the stages start (so the path after a kill starts no
+  process); no `jq` denies any dispatch word or ANSI-C escape. The same shape block is in
   `scope-gate-hook.sh`, which falls back to it when Python cannot run;
   `hooks/test-hook-chain.sh` checks the copies match and that the `jq` shape
   and `scope-gate.py shape` agree on `tests/fixtures/shape-cases.json`.
@@ -197,17 +225,26 @@ successor's is renumbered past every id and carries `renumbered_from`.
 - The chain's last stage, `coordinator-hook.sh pretool` (coordinator-mode
   edit blocks), is cut at 12.5 s after `HOOK_T0` and then passes, as a host
   timeout would, but inside the 15 s.
-- At the deadline a command whose words read like a dispatch
-  (`echo "bb thread tell ..."`) is denied unless it serves an open purpose,
-  and a `#` line inside a heredoc brief is dropped as a comment. Both fail
-  closed.
+- At the deadline (only when the gate could not finish), these deny even
+  though the normal decision would allow them; each fails closed and a retry
+  gets the normal decision: a command whose words read like a dispatch
+  (`echo "bb thread tell ..."`, a comment that mentions one); a serves line
+  after a separator inside the brief (`"fix it; serves: P1"`) or in a heredoc
+  body (both are another stretch); a dispatch inside `sh -c`, `eval` or an
+  automation `--script`; any stretch with an ANSI-C escape (`IFS=$'\n'`); a
+  revision whose quote splits at a separator less than 20 characters in;
+  and `automation run|resume` (the stored text is not read then).
+- `automation run|resume` and a retarget or reschedule read the stored
+  prompt or script through `bb automation show` (a local server call, well
+  inside the deadline); when bb cannot answer, the call is denied.
 - A brief file written in the same command as the dispatch
   (`printf ... > f && bb thread tell x --message-file f`) is not there when
   the hook reads it, so the dispatch is denied (fails closed).
 - At the shell deadline a brief file is not read: a dispatch whose `serves:`
   is only in a file is denied and has to be retried.
 - `python3 -c '...'` (or any interpreter) that runs `bb` through its own
-  process API is not parsed.
+  process API is not parsed. An automation's node or python3 script is not
+  parsed either: it is gated only when its text reads like a dispatch.
 - TOCTOU: the hook reads a brief file before the command runs, so a brief
   overwritten, copied over, re-linked or edited in place between the two
   (`cp`, `ln -sf`, `sed -i`) is sent unread. It needs the same user as the

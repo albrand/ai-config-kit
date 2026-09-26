@@ -30,15 +30,24 @@ free text for the thread) and `thread interactions answer --text`, and
 `fleet member-add --concern` (the concern goes into every member's
 instructions); an answer that only picks offered choices (--choice), and a
 member-add without a concern, carry no new text. ANSI-C quoting (`$'tell'`)
-is decoded before matching, and a dispatch that asks for its help (`--help`,
-`-h`) sends nothing and passes.
+is decoded before matching.
+
+Review r2c (2026-09-26) added the plugin groups: `automation create|update`
+with --prompt (an agent runs it when due; --target-thread re-prompts an
+existing thread) or --script/--script-file (scope-gate.py scans the script
+for dispatches), `automation run|resume` and an update that retargets or
+reschedules (the stored prompt or script fires; scope-gate.py reads it from
+bb), and `instructions set` (custom instructions injected into every agent).
+Only a bare `bb <verb path> --help|-h` passes as a help request.
 
 Dispatch verbs are every bb verb that hands a thread new text to act on
 (`bb thread --help`, `bb fleet --help`, 2026-09-25): thread spawn|create|fork|
 tell|message|edit-message, thread queue create|update|send, thread
 interactions answer (--text)|respond, and fleet group-create|task-add|advise
-and member-add (--concern). scope-gate.py selftest walks the installed bb's
-help, nested groups included, for a text-carrying verb missing here.
+and member-add (--concern), automation create|update|run|resume, and
+instructions set. scope-gate.py selftest walks the installed bb's help, from
+every core and plugin command group and nested groups included, for a
+text-carrying verb missing here.
 
 Not covered (documented in SKILL.md known limits): a script run from a file
 (`sh dispatch.sh`), a script piped into a shell (`cat x | sh`), a command
@@ -51,10 +60,21 @@ import shlex
 THREAD_VERBS = ("spawn", "create", "fork", "tell", "message", "edit-message")
 QUEUE_VERBS = ("create", "update", "send")
 FLEET_VERBS = ("group-create", "task-add", "advise")
-# Gated only when the flag is given (None: always): without it they carry no
-# new text for a thread.
-CONDITIONAL_VERBS = {"thread interactions answer": "--text", "thread interactions respond": None,
-                     "fleet member-add": "--concern"}
+# Gated only when one of the flags is given (None: always): without them they
+# carry no new text for a thread. An automation's --prompt is the prompt an
+# agent runs when it is due (--target-thread re-prompts an existing thread),
+# and its --script/--script-file is a script bb runs then; run, resume and a
+# retarget or reschedule (--target-thread, --cron, --at, --in) fire the text
+# the automation already stores, which scope-gate.py reads from bb. Custom
+# instructions (`instructions set <text...>`) are injected into every agent.
+CONDITIONAL_VERBS = {"thread interactions answer": ("--text",), "thread interactions respond": None,
+                     "fleet member-add": ("--concern",),
+                     "automation create": ("--prompt", "--script", "--script-file"),
+                     "automation update": ("--prompt", "--script", "--script-file",
+                                           "--target-thread", "--cron", "--at", "--in"),
+                     "automation run": None, "automation resume": None,
+                     "instructions set": None}
+GROUPS = ("thread", "fleet", "automation", "instructions")
 HELP_WORDS = ("--help", "-h")
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
@@ -461,7 +481,7 @@ def dispatches(script, depth=0):
             continue
         if is_bb(head) or maybe_bb(head):
             verb = _dispatch_verb(rest)
-            if verb and not any(a in HELP_WORDS for a in rest):
+            if verb and not bare_help(rest, verb):
                 found.append((text, list(cmd.heredocs), verb))
             continue
         # `xargs [opts] bb ...` runs bb with words from stdin, so it is a
@@ -479,7 +499,7 @@ def dispatches(script, depth=0):
         # never matches.
         for b in [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
             verb = _dispatch_verb(w[b + 1:])
-            if verb and not any(a in HELP_WORDS for a in w[b + 1:]):
+            if verb and not bare_help(w[b + 1:], verb):
                 found.append((text, list(cmd.heredocs), verb))
                 break
     return found
@@ -496,8 +516,16 @@ def changes_dir(script):
     return False
 
 
-def _flagged(words_, flag):
-    return any(a == flag or a.startswith(flag + "=") for a in words_)
+def _flagged(words_, flags):
+    return any(a == f or a.startswith(f + "=") for a in words_ for f in flags)
+
+
+def bare_help(rest, verb):
+    """`bb <verb path> --help|-h` and nothing else: bb prints the help and
+    sends nothing. A help word anywhere else can be an option's value
+    (`--title -h`) or a positional after `--`, and the dispatch runs (review
+    r2c), so it does not count."""
+    return len(rest) == len(verb.split()) + 1 and rest[-1] in HELP_WORDS and rest[:-1] == verb.split()
 
 
 def _dispatch_verb(rest):
@@ -505,8 +533,13 @@ def _dispatch_verb(rest):
     `rest` (the words after bb) is a dispatch, after at most a few global
     options (`--json`, `--host h`)."""
     for j, a in enumerate(rest[:5]):
-        if a in ("thread", "fleet"):
+        if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""
+            if a in ("automation", "instructions"):
+                verb = f"{a} {nxt}"
+                if verb in CONDITIONAL_VERBS and (CONDITIONAL_VERBS[verb] is None or _flagged(rest[j + 2:], CONDITIONAL_VERBS[verb])):
+                    return verb
+                return None
             if a == "thread" and nxt in THREAD_VERBS:
                 return f"thread {nxt}"
             if a == "thread" and nxt == "queue" and j + 2 < len(rest) and rest[j + 2] in QUEUE_VERBS:

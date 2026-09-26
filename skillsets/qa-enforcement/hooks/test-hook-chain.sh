@@ -82,6 +82,23 @@ done
 # chain (the scope-gate-hook.sh prefilter must not let one through unread).
 printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hook.sh"
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
+# No jq (or no answer from it): the grep fallback denies every case the jq
+# shape denies (it is broader: any dispatch word, fails closed).
+mkdir -p "$H/nojq"
+printf '#!/bin/sh\nexit 1\n' > "$H/nojq/jq"
+chmod +x "$H/nojq/jq"
+for i in $(jq -r '.cases | to_entries[] | select(.value.want == 2) | .key' "$H/shape-cases.json"); do
+  label=$(jq -r ".cases[$i].label" "$H/shape-cases.json")
+  payload=$(jq -c ".cases[$i].payload" "$H/shape-cases.json")
+  fb=$(input="$payload" PATH="$H/nojq:$PATH" BB_THREAD_ID="$THR" SCOPE_LEDGER_DIR="$H/.local/state/agent-quality/scope" \
+    sh -c '. "$1"; if scope_dispatch_denied; then echo 2; else echo 0; fi' _ "$H/shape.sh")
+  if [ "$fb" = 2 ]; then
+    echo "ok   no-jq fallback: $label"
+  else
+    echo "FAIL no-jq fallback allowed: $label"
+    fails=$((fails + 1))
+  fi
+done
 for tool in $(jq -r '.cases[].payload.tool_name | select(startswith("mcp__bb-bridge__"))' "$H/shape-cases.json" | sort -u); do
   payload=$(jq -c --arg t "$tool" '[.cases[] | select(.payload.tool_name == $t and .want == 2)][0].payload' "$H/shape-cases.json")
   [ "$payload" = null ] && continue
@@ -119,7 +136,15 @@ cases='0|2|must say|bb thread tell thr_x also refactor it
 13|2|Ship denied|git push origin main
 30|2|could not finish|bb thread tell thr_x also refactor it
 30|0|-|ls -la
-13|2|could not finish|bb thread tell thr_x also refactor it # serves: P1'
+13|2|could not finish|bb thread tell thr_x also refactor it # serves: P1
+0|2|must say|bb automation create --project p --name n --in 1m --prompt also refactor it
+0|2|must say|bb instructions set also refactor it
+0|0|-|bb automation create --project p --name n --in 1m --prompt serves: P1 next step
+0|2|must say|bb thread tell thr_x serves: P1 next; bb thread tell thr_y also refactor it
+13|2|could not finish|bb automation create --project p --name n --in 1m --prompt also refactor it
+13|2|could not finish|bb instructions set also refactor it
+13|2|could not finish|bb thread tell thr_x serves: P1 next; bb thread tell thr_y also refactor it
+13|0|-|bb instructions set serves: P1 keep the QA gates'
 # review r2b: a FIFO brief is not opened (it blocked the gate until its deadline)
 mkfifo "$H/brief.fifo"
 cases="$cases
