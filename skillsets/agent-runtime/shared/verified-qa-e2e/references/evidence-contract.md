@@ -126,8 +126,11 @@ the ship gate refuses a packet that declares any of them unowned, in
 `identity` or in any `identities` entry. The ship gate passes that list to
 this gate (`check <packet> --automation-identities '<json array>'`).
 
-**Labels are compared normalised.** Both sides go through NFKC, lowercase,
-`ß` to `ss`, strip, and lose an `@domain` suffix, so `E2E.patient`,
+**Labels are compared normalised.** Both sides go through NFKC, map the
+Latin punctuation names carry to ASCII (U+2018 and U+2019 to `'`, U+2013 and
+U+2014 to `-`, U+00B7 to `.`: `O’Brien` typed with a macOS smart quote,
+`maria–silva`, `Paral·lel`), lowercase, `ß` to `ss`, strip, and lose an
+`@domain` suffix, so `E2E.patient`,
 `e2e.patient ` and `e2e.patient@meupsi.test` all name `e2e.patient`. A label
 with a character outside printable ASCII and the Latin letter blocks (after
 NFKC) is refused outright: that covers mixed scripts (`e2е.patient` with a
@@ -137,7 +140,9 @@ U+2060, U+FEFF, U+2800, U+3164) and controls. A label that matches a listed
 one only by look-alike letters (`E2E.PATİENT`) is refused too:
 `IDENTITY_LABEL_CONFUSABLE`. A label that is a listed one, or contains one
 between non-alphanumeric boundaries (`e2e.patient (CI)`, `@e2e.patient`,
-`patient (e2e.patient@…)`), declared unowned fails
+`patient (e2e.patient@…)`), before or after the `@domain` drop (so
+`tester @e2e.patient`, which keys as `tester`, still contains it), declared
+unowned fails
 `IDENTITY_LISTED_AS_AUTOMATION`. This gate and ship-gate.py implement one
 spec (not their languages' own casefold, trim or letter tests, which differ);
 the ship-gate selftest runs 20,000 generated labels through both and fails on
@@ -187,6 +192,9 @@ not from a person during it.
 Times (`walk_window.start`/`.end`, `overlap_check.checked_at`) carry an offset,
 `Z` or `+hh:mm`: a time without one is read in local time by one parser and
 UTC by another, so it is refused (`WALK_WINDOW_MISSING`, `OVERLAP_UNCHECKED`).
+So is a date that does not exist (`2026-02-30`, year `0000`) or an offset
+past `:59`; both gates check the calendar date, where `Date.parse` alone
+would roll 2026-02-30 into March.
 
 The origin must be spelled as github.com: `https://github.com/...`,
 `git@github.com:...` or `ssh://git@github.com[:port]/...`. An SSH host alias
@@ -198,7 +206,10 @@ trailing slash, query or fragment. Use the canonical forms.
 Known false refusal: diacritics are stripped for the look-alike check, so an
 unowned `joão.silva` is refused when `joao.silva` is listed (and an `@domain`
 suffix is dropped, so `e2e.patient@other` counts as `e2e.patient`). Both fail
-closed; rename the identity or list it.
+closed; rename the identity or list it. Names outside the Latin script
+(`Иван Петров`, `Ελένη`, `مريم`, CJK, Hangul) and emoji (`🧪 tester`) are
+refused by the label alphabet; name the identity with a Latin-script label.
+
 
 
 

@@ -652,6 +652,10 @@ LABEL_SPACE = "\t\n\x0b\x0c\r \x1c\x1d\x1e\x1f\x85\xa0  -     　�
 _LABEL_STRIP = re.compile("^[" + LABEL_SPACE + "]+|[" + LABEL_SPACE + "]+$")
 _LABEL_ALPHABET = re.compile("[\x20-\x7eÀ-ÖØ-öø-ɏḀ-ỿ]")
 _LABEL_ALNUM = "0-9a-zß-öø-ɏḀ-ỿ"
+# Latin punctuation real names carry, mapped before anything else (review
+# r2a-ter): a macOS smart quote in O’Brien, an en dash in maria–silva, the
+# Catalan middle dot in Paral·lel. Twin of LABEL_PUNCT in qa-e2e-gate.mjs.
+_LABEL_PUNCT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u2013": "-", "\u2014": "-", "\u00b7": "."})
 # Letters that read as a Latin letter (UTS #39 confusables, single letters).
 _LABEL_CONFUSABLES = {
     "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
@@ -661,29 +665,33 @@ _LABEL_CONFUSABLES = {
 }
 
 
-def label_key(label):
-    """The comparable form of an identity label (the spec above)."""
+def _label_nfkc(label):
     import unicodedata
-    s = _LABEL_STRIP.sub("", unicodedata.normalize("NFKC", str(label)).lower().replace("ß", "ss"))
+    return unicodedata.normalize("NFKC", str(label)).translate(_LABEL_PUNCT)
+
+
+def label_key(label, keep_domain=False):
+    """The comparable form of an identity label (the spec above); with
+    keep_domain, before the @domain suffix is dropped."""
+    s = _LABEL_STRIP.sub("", _label_nfkc(label).lower().replace("ß", "ss"))
     at = s.rfind("@")
-    if at > 0:
+    if at > 0 and not keep_domain:
         s = _LABEL_STRIP.sub("", s[:at])
     return s
 
 
-def label_skeleton(label):
+def label_skeleton(label, keep_domain=False):
     """NFD without combining marks, then look-alike letters: `E2E.PATİENT`
     lowercases to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient."""
     import unicodedata
-    s = unicodedata.normalize("NFD", label_key(label))
+    s = unicodedata.normalize("NFD", label_key(label, keep_domain))
     return "".join(_LABEL_CONFUSABLES.get(c, c) for c in s if unicodedata.category(c) != "Mn")
 
 
 def label_problem(label):
     """Why a label cannot be trusted as written, or None: its first character
     outside the label alphabet (printable ASCII and Latin letters)."""
-    import unicodedata
-    for c in unicodedata.normalize("NFKC", str(label)):
+    for c in _label_nfkc(label):
         if not _LABEL_ALPHABET.match(c):
             return "has a character outside the label alphabet (printable ASCII and Latin letters): U+%04X" % ord(c)
     return None
@@ -752,11 +760,12 @@ def origin_repo(root):
 # An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time would be
 # read in the hook's local zone here and as UTC by some parsers, so it is not a
 # time at all (review r2a-bis). Twin of ZONED_TIME in qa-e2e-gate.mjs.
-ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$", re.ASCII)
+ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:(\d{2}))$", re.ASCII)
 
 
 def _iso(s):
-    if not isinstance(s, str) or not ZONED_TIME_RE.match(s.strip()):
+    m = ZONED_TIME_RE.match(s.strip()) if isinstance(s, str) else None
+    if not m or (m.group(1) and int(m.group(1)) > 59):  # fromisoformat takes +05:60; Date.parse does not
         return None
     try:
         return datetime.datetime.fromisoformat(s.strip().replace("Z", "+00:00")).timestamp()
@@ -851,8 +860,12 @@ def owner_run_verify(root, ident, walked_sha, cache=None):
 
 def listed_identity(label, owned):
     """(listed label, how) when `label` names an entry of automation_identities
-    after normalisation ('same') or only by look-alike letters ('confusable')."""
+    after normalisation ('same'), only by look-alike letters ('confusable'), or
+    contains one between non-alphanumeric boundaries ('contains'), before or
+    after its @domain suffix is dropped (review r2a-ter: `tester @e2e.patient`
+    keys as `tester`)."""
     key, skel = label_key(label), label_skeleton(label)
+    whole = {skel, label_skeleton(label, keep_domain=True)}
     names = [o for o in owned if isinstance(o, str)]
     for o in names:
         if label_key(o) == key:
@@ -862,8 +875,10 @@ def listed_identity(label, owned):
             return o, "confusable"
     for o in names:
         k = label_skeleton(o)
-        if k and re.search("(?<![" + _LABEL_ALNUM + "])" + re.escape(k) + "(?![" + _LABEL_ALNUM + "])", skel):
+        rx = "(?<![" + _LABEL_ALNUM + "])" + re.escape(k) + "(?![" + _LABEL_ALNUM + "])"
+        if k and any(re.search(rx, s) for s in whole):
             return o, "contains"
+
     return None
 def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
     rel = qa + "/evidence.json"
@@ -3382,8 +3397,14 @@ def selftest(v4_gate=None, v4_templates=None):
              # review r2a: compound labels, and U+2800 (invisible, category So)
              "patient (e2e.patient@meupsi.test)", "e2e.patient (CI)", "@e2e.patient", "qa.veɴdor", "e2e.pat⠀ient",
              "e2e.patͅient",
-             "qa.patient", "joão.silva", "Straße.qa", "e2e.patients", "xe2e.patient"]
-    refused = probe[:15]
+             # review r2a-ter: a listed label after an @, and scripts other than Latin
+             "tester @e2e.patient", "x@e2e.patient", "Иван Петров", "🧪 tester", "مريم",
+             "qa.patient", "joão.silva", "Straße.qa", "e2e.patients", "xe2e.patient",
+             # review r2a-ter: Latin punctuation real names carry
+             "O’Brien", "o‘neil", "maria–silva", "ana—lima", "Paral·lel"]
+    refused = probe[:20]
+    expect(label_key("O’Brien") == label_key("O'Brien") and label_key("maria–silva") == "maria-silva"
+           and label_key("Paral·lel") == "paral.lel", "smart quotes, dashes and the middle dot key as their ASCII forms")
     # review r2a: one spec in both gates. The reviewer's differential corpus
     # (r2a-repro/diff_labels.py: seed 7, 20,000 mutations of the listed labels
     # plus its fixed probes) goes through both implementations; any difference
@@ -3430,6 +3451,24 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(not differ, "ship-gate.py and qa-e2e-gate.mjs agree on key, problem and listing for all %d corpus labels "
            "(%d differ; first: %s)" % (len(corpus), len(differ), ascii(differ[:2])))
     mjs_verdicts = {l: [r[0], r[1], r[2][0]] for l, r in zip(corpus, mjs_out or [])}
+    # review r2a-ter: both gates accept and refuse the same times (Date.parse
+    # alone takes 2026-02-30 and year 0; fromisoformat alone takes +05:60).
+    times = ["2026-09-25T15:10:00Z", "2026-02-30T00:00Z", "0000-01-01T00:00Z", "2026-02-28T12:00+05:60",
+             "2026-02-28T24:00Z", "2024-02-29T12:00Z", "2026-02-29T12:00Z", "2026-04-31T00:00Z", "2026-13-01T00:00Z",
+             "2026-00-10T00:00Z", "2026-09-25T12:10:00.123456789-03:00", "2026-02-28T12:00+23:59",
+             "2026-02-28T12:00+24:00", "2026-02-28T23:59:60Z", "2026-02-28T23:60Z", "2026-12-31T23:59:59.999Z",
+             "2026-09-25T15:10:00", "2026-09-25 15:10:00Z", "9999-12-31T23:59Z", "0001-01-01T00:00Z"]
+    mjs_t = None
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => process.stdout.write(JSON.stringify("
+              "JSON.parse(process.getBuiltinModule('fs').readFileSync(0, 'utf8')).map((t) => Number.isNaN(m.parseZonedTime(t))))))")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri()],
+                             input=json.dumps(times), capture_output=True, text=True, timeout=60)
+        mjs_t = json.loads(run.stdout) if run.returncode == 0 and run.stdout else None
+    t_differ = [t for t, jt in zip(times, mjs_t or []) if (_iso(t) is None) != jt]
+    expect(mjs_t is not None and not t_differ and _iso("2026-02-30T00:00Z") is None,
+           "ship-gate.py and qa-e2e-gate.mjs agree on %d walk times (differ: %s)" % (len(times), t_differ if mjs_t else "mjs did not run"))
+
     for label in probe:
 
         f9 = []

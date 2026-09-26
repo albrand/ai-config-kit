@@ -47,7 +47,7 @@ in the evidence that the identity is shared. The evidence packet records all
 of it in `authentication.identities`, one block per persona walked
 (verified-qa-e2e evidence contract), and
 the gate refuses a packet that declares any listed identity unowned. Labels
-match after NFKC, lowercase, strip and dropping an `@domain` suffix; a
+match after NFKC, smart quotes and dashes to ASCII, lowercase, strip and dropping an `@domain` suffix; a
 mixed-script, look-alike or non-Latin label, or one containing a listed label, is refused. **CI's own run as the
 walk** is the `owner_run` case: the suite that owns the identity, recording its
 own run, adds `walker: {kind: "owner_run", owner: <the block's owner>, run_id,

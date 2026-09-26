@@ -21,7 +21,19 @@ function failure(code, path, message) {
 // read as local time by some parsers and as UTC by others, so it is not a time
 // at all (review r2a-bis). Twin of ZONED_TIME_RE in ship-gate.py.
 export const ZONED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
-const isoTime = (value) => (nonEmpty(value) && ZONED_TIME.test(value.trim()) ? Date.parse(value.trim()) : NaN);
+// Date.parse rolls 2026-02-30 over to March and takes year 0; ship-gate.py
+// refuses both, so the calendar date must survive a round trip (review
+// r2a-ter). An offset's minutes past 59 are refused on both sides.
+export function parseZonedTime(value) {
+  if (!nonEmpty(value) || !ZONED_TIME.test(value.trim())) return NaN;
+  const s = value.trim();
+  const [y, mo, d] = [Number(s.slice(0, 4)), Number(s.slice(5, 7)), Number(s.slice(8, 10))];
+  const day = new Date(0);
+  day.setUTCFullYear(y, mo - 1, d);
+  if (y < 1 || day.toISOString().slice(0, 10) !== s.slice(0, 10)) return NaN;
+  return Date.parse(s);
+}
+const isoTime = parseZonedTime;
 
 // 2026-09-25, meu-psi: interactive walks signed in as e2e.professional and
 // e2e.patient, the deployed CI suite's own identities on the same preview DB.
@@ -59,6 +71,10 @@ const LABEL_SPACE = "\\t\\n\\x0b\\x0c\\r \\x1c\\x1d\\x1e\\x1f\\x85\\xa0\\u1680\\
 const LABEL_STRIP = new RegExp(`^[${LABEL_SPACE}]+|[${LABEL_SPACE}]+$`, "gu");
 const LABEL_ALPHABET = /^[\x20-\x7eÀ-ÖØ-öø-ɏḀ-ỿ]$/u;
 const LABEL_ALNUM = "0-9a-z\\u00df-\\u00f6\\u00f8-\\u024f\\u1e00-\\u1eff";
+// Latin punctuation real names carry, mapped before anything else (review
+// r2a-ter): O’Brien, maria–silva, Paral·lel. Twin of _LABEL_PUNCT in ship-gate.py.
+const LABEL_PUNCT = { "\u2018": "'", "\u2019": "'", "\u2013": "-", "\u2014": "-", "\u00b7": "." };
+const labelNfkc = (label) => String(label).normalize("NFKC").replace(/[\u2018\u2019\u2013\u2014\u00b7]/gu, (c) => LABEL_PUNCT[c]);
 const LABEL_CONFUSABLES = {
   "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
   "ѕ": "s", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w", "ӏ": "l", "ѵ": "v", "ү": "y",
@@ -66,20 +82,21 @@ const LABEL_CONFUSABLES = {
   "χ": "x", "ω": "w", "ı": "i", "ɑ": "a", "ɩ": "i", "0": "o", "1": "l",
 };
 
-export function labelKey(label) {
-  let s = String(label).normalize("NFKC").toLowerCase().replace(/ß/g, "ss").replace(LABEL_STRIP, "");
+// keepDomain: the key before the @domain suffix is dropped.
+export function labelKey(label, keepDomain = false) {
+  let s = labelNfkc(label).toLowerCase().replace(/ß/g, "ss").replace(LABEL_STRIP, "");
   const at = s.lastIndexOf("@");
-  if (at > 0) s = s.slice(0, at).replace(LABEL_STRIP, "");
+  if (at > 0 && !keepDomain) s = s.slice(0, at).replace(LABEL_STRIP, "");
   return s;
 }
 
 // NFD without combining marks, then look-alike letters: `E2E.PATİENT` lowercases
 // to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient.
-const labelSkeleton = (label) => [...labelKey(label).normalize("NFD")]
+const labelSkeleton = (label, keepDomain = false) => [...labelKey(label, keepDomain).normalize("NFD")]
   .filter((c) => !/\p{Mn}/u.test(c)).map((c) => LABEL_CONFUSABLES[c] ?? c).join("");
 
 export function labelProblem(label) {
-  for (const c of String(label).normalize("NFKC")) {
+  for (const c of labelNfkc(label)) {
     if (!LABEL_ALPHABET.test(c)) {
       const cp = c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
       return `has a character outside the label alphabet (printable ASCII and Latin letters): U+${cp}`;
@@ -93,6 +110,8 @@ const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 export function listedIdentity(label, owned) {
   const key = labelKey(label);
   const skel = labelSkeleton(label);
+  // 'contains' before or after the @domain drop (review r2a-ter: `tester @e2e.patient` keys as `tester`)
+  const whole = [skel, labelSkeleton(label, true)];
   const names = (owned || []).filter((o) => typeof o === "string");
   const same = names.find((o) => labelKey(o) === key);
   if (same !== undefined) return [same, "same"];
@@ -100,7 +119,9 @@ export function listedIdentity(label, owned) {
   if (look !== undefined) return [look, "confusable"];
   const inside = names.find((o) => {
     const k = labelSkeleton(o);
-    return k && new RegExp(`(?<![${LABEL_ALNUM}])${escapeRegExp(k)}(?![${LABEL_ALNUM}])`, "u").test(skel);
+    const rx = new RegExp(`(?<![${LABEL_ALNUM}])${escapeRegExp(k)}(?![${LABEL_ALNUM}])`, "u");
+    return k && whole.some((s) => rx.test(s));
+
   });
   return inside !== undefined ? [inside, "contains"] : null;
 }
@@ -788,6 +809,11 @@ function selftest() {
     }
     owned.authentication.identity = { ...ownedIdentity(0), walk_window: { start: "2026-09-25T12:10:00-03:00", end: "2026-09-25T12:40:00.5-03:00" } };
     if (!evaluateEvidence(owned).ok) throw new Error(`a walk window at -03:00 failed at ${effort}`);
+    // review r2a-ter: Date.parse rolls 2026-02-30 into March; the gate refuses it, as ship-gate.py does.
+    owned.authentication.identity = { ...ownedIdentity(0), walk_window: { start: "2026-02-30T15:10:00Z", end: "2026-02-30T15:40:00Z" } };
+    if (!evaluateEvidence(owned).failures.some(({ code }) => code === "WALK_WINDOW_MISSING")) {
+      throw new Error(`an impossible date passed at ${effort}`);
+    }
 
     delete owned.authentication.identity;
     if (!evaluateEvidence(owned).failures.some(({ code }) => code === "IDENTITY_MISSING")) {
@@ -806,11 +832,16 @@ function selftest() {
     const list = { automationIdentities: ["e2e.patient"] };
     for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient",
       // review r2a: compound labels and U+2800
-      "e2e.patient (CI)", "@e2e.patient", "patient (e2e.patient@meupsi.test)", "e2e.pat⠀ient", "e2e.patͅient"]) {
+      "e2e.patient (CI)", "@e2e.patient", "patient (e2e.patient@meupsi.test)", "e2e.pat⠀ient", "e2e.patͅient",
+      // review r2a-ter: a listed label after an @ (before the @domain drop)
+      "tester @e2e.patient", "x@e2e.patient"]) {
       owned.authentication.identities = [{ ...unownedIdentity(), label }];
       if (evaluateEvidence(owned, list).ok) throw new Error(`label ${JSON.stringify(label)} passed as unowned at ${effort}`);
     }
-    for (const label of ["qa.patient", "e2e.patients", "xe2e.patient", "joão.silva", "Straße.qa"]) {
+    for (const label of ["qa.patient", "e2e.patients", "xe2e.patient", "joão.silva", "Straße.qa",
+      // review r2a-ter: Latin punctuation real names carry
+      "O’Brien", "o‘neil", "maria–silva", "ana—lima", "Paral·lel"]) {
+
       owned.authentication.identities = [{ ...unownedIdentity(), label }];
       if (!evaluateEvidence(owned, list).ok) throw new Error(`the unlisted label ${JSON.stringify(label)} failed at ${effort}`);
     }
