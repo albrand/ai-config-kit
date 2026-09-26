@@ -54,9 +54,11 @@ own run, adds `walker: {kind: "owner_run", owner: <the block's owner>, run_id,
 run_url}` and is not held to the unowned-identity rule; the walk window, the
 after-walk overlap check and the disclosure still apply. It needs the label
 in `automation_identities` and a `run_url` of this repository's `origin`
-naming `run_id`, and the gate checks the run with `gh run view`: it must have
-run on the walked commit, around the walk window (verified-qa-e2e evidence
-contract). Why: on
+naming `run_id` (with `/attempts/<n>` for a re-run), and the gate checks that
+attempt with `gh api`: it must have completed with success, on the walked
+commit, and its own start and last update must enclose the walk window, whose
+times carry an offset (verified-qa-e2e evidence contract). Why: on
+
 
 
 2026-09-25 two interactive walks on meu-psi signed in as the deployed CI

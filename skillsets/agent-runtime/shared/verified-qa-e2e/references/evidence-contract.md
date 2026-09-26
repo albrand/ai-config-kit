@@ -162,12 +162,28 @@ Refused: `WALKER_INVALID` (another `kind`), `OWNER_RUN_OWNER_MISMATCH`,
 
 The ship gate then checks the claim against the world, failing closed: the
 run URL's `<owner>/<repo>` must be the repository's `origin` remote, and
-`gh run view <run_id> --repo <owner>/<repo> --json headSha,createdAt,updatedAt,status`
-(inside the same lookup budget as the deployment provenance lookup) must show
-a run on the walked commit (`rewalk.json` `sha`) whose `createdAt..updatedAt`
-contains the walk window. No `gh`, a failed or timed-out lookup, another
-commit or a window outside the run denies. What stays declarative is that the
-evidence came from that run and not from a person during it.
+`gh api repos/<owner>/<repo>/actions/runs/<run_id>/attempts/<n>` (the attempt
+`run_url` names; without `/attempts/<n>`, `.../runs/<run_id>`, the latest
+attempt), inside the same lookup budget as the deployment provenance lookup
+and once per run attempt per check, must show an attempt that is `completed`
+with conclusion `success`, ran on the walked commit (`rewalk.json` `sha`),
+and whose own `run_started_at..updated_at` contains the walk window. A re-run
+is another attempt with its own window: name the attempt that walked. No
+`gh`, a failed or timed-out lookup, a reply that is not a run, an unfinished
+or unsuccessful attempt, another commit or a window outside the attempt
+denies. What stays declarative is that the evidence came from that run and
+not from a person during it.
+
+Times (`walk_window.start`/`.end`, `overlap_check.checked_at`) carry an offset,
+`Z` or `+hh:mm`: a time without one is read in local time by one parser and
+UTC by another, so it is refused (`WALK_WINDOW_MISSING`, `OVERLAP_UNCHECKED`).
+
+The origin must be spelled as github.com: `https://github.com/...`,
+`git@github.com:...` or `ssh://git@github.com[:port]/...`. An SSH host alias
+(`git@github-work:...`), `ssh.github.com`, `www.github.com` or `http://`
+cannot be tied to a GitHub repository and denies; so does a `run_url` with a
+trailing slash, query or fragment. Use the canonical forms.
+
 
 Known false refusal: diacritics are stripped for the look-alike check, so an
 unowned `joão.silva` is refused when `joao.silva` is listed (and an `@domain`

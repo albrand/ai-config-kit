@@ -73,8 +73,12 @@ Advance in order. Do not draft or publish early and validate afterward.
      is not held to the unowned-identity rule; the walk window, the after-walk
      overlap check and the disclosure still apply. The label must be in the
      repository's `automation_identities`, and `run_url` must be the run's
-     GitHub Actions page (`.../<owner>/<repo>/actions/runs/<run_id>`); the
-     ship gate checks that run with `gh run view` (walked commit, window).
+     GitHub Actions page (`.../<owner>/<repo>/actions/runs/<run_id>`, plus
+     `/attempts/<n>` for a re-run); the ship gate checks that attempt with
+     `gh api` (completed with success, walked commit, the attempt's own
+     window). Times carry an offset (`Z`); the origin is a github.com URL, not
+     an SSH host alias.
+
 
    - Labels are compared after NFKC, casefold, strip and dropping `@domain`;
      a mixed-script or look-alike label is refused outright.

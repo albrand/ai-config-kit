@@ -17,7 +17,11 @@ function failure(code, path, message) {
   return { code, path, message };
 }
 
-const isoTime = (value) => (nonEmpty(value) && /^\d{4}-\d{2}-\d{2}T/.test(value) ? Date.parse(value) : NaN);
+// An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time is
+// read as local time by some parsers and as UTC by others, so it is not a time
+// at all (review r2a-bis). Twin of ZONED_TIME_RE in ship-gate.py.
+export const ZONED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+const isoTime = (value) => (nonEmpty(value) && ZONED_TIME.test(value.trim()) ? Date.parse(value.trim()) : NaN);
 
 // 2026-09-25, meu-psi: interactive walks signed in as e2e.professional and
 // e2e.patient, the deployed CI suite's own identities on the same preview DB.
@@ -118,7 +122,8 @@ export const RUN_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.
 // as automation-owned, naming its run by id and by URL (review r2a D5: a
 // made-up run id, another repository's run URL, or no list at all passed).
 // The ship gate also checks `repo` against the origin remote and the run
-// itself with `gh run view`; this gate, offline, checks what the packet says.
+// attempt itself with `gh api`; this gate, offline, checks what the packet says.
+
 export function ownerRunProblems(identity, owned) {
   const walker = identity.walker;
   if (walker === undefined) return { problems: [], valid: false, repo: null };
@@ -204,7 +209,7 @@ function checkIdentityIsolation(identity, base, failures, owned) {
   const start = isoTime(identity.walk_window?.start);
   const end = isoTime(identity.walk_window?.end);
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
-    failures.push(failure("WALK_WINDOW_MISSING", `${base}.walk_window`, "walk_window.start and .end (ISO 8601, end not before start) are required"));
+    failures.push(failure("WALK_WINDOW_MISSING", `${base}.walk_window`, "walk_window.start and .end (ISO 8601 with an offset, Z or +hh:mm; end not before start) are required"));
   }
   const overlap = identity.overlap_check;
   const checkedAt = isoTime(overlap?.checked_at);
@@ -770,6 +775,18 @@ function selftest() {
     if (!evaluateEvidence(owned).failures.some(({ code }) => code === "CONCURRENT_AUTOMATION_RUN")) {
       throw new Error(`walk overlapping an automated run passed at ${effort}`);
     }
+    // review r2a-bis: a time with no offset is refused; the same instants at -03:00 are not.
+    owned.authentication.identity = { ...ownedIdentity(0), walk_window: { start: "2026-09-25T15:10:00", end: "2026-09-25T15:40:00" } };
+    if (!evaluateEvidence(owned).failures.some(({ code }) => code === "WALK_WINDOW_MISSING")) {
+      throw new Error(`a walk window with no offset passed at ${effort}`);
+    }
+    owned.authentication.identity = { ...ownedIdentity(0), overlap_check: { ...ownedIdentity(0).overlap_check, checked_at: "2026-09-25T15:41:00" } };
+    if (!evaluateEvidence(owned).failures.some(({ code }) => code === "OVERLAP_UNCHECKED")) {
+      throw new Error(`an overlap check time with no offset passed at ${effort}`);
+    }
+    owned.authentication.identity = { ...ownedIdentity(0), walk_window: { start: "2026-09-25T12:10:00-03:00", end: "2026-09-25T12:40:00.5-03:00" } };
+    if (!evaluateEvidence(owned).ok) throw new Error(`a walk window at -03:00 failed at ${effort}`);
+
     delete owned.authentication.identity;
     if (!evaluateEvidence(owned).failures.some(({ code }) => code === "IDENTITY_MISSING")) {
       throw new Error(`walk without a named identity passed at ${effort}`);

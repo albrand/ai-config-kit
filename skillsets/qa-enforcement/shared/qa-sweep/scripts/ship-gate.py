@@ -723,15 +723,18 @@ def owner_run_problems(ident, owned):
     return out
 
 
-# A GitHub Actions run page; twin of RUN_URL in qa-e2e-gate.mjs.
-RUN_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/actions/runs/(\d+)(?:/attempts/\d+)?$")
+# A GitHub Actions run page; twin of RUN_URL in qa-e2e-gate.mjs. ASCII digits
+# only: Python's \d also matches fullwidth ones, which JavaScript's does not.
+RUN_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/actions/runs/(\d+)(?:/attempts/\d+)?$",
+                        re.ASCII)
+RUN_ATTEMPT_RE = re.compile(r"/attempts/(\d+)$", re.ASCII)
 
 
 def owner_run_id(walker):
     rid = walker.get("run_id")
     if isinstance(rid, int) and not isinstance(rid, bool) and rid > 0:
         return str(rid)
-    if isinstance(rid, str) and re.fullmatch(r"\d+", rid.strip()):
+    if isinstance(rid, str) and re.fullmatch(r"\d+", rid.strip(), re.ASCII):
         return rid.strip()
     return None
 
@@ -747,23 +750,74 @@ def origin_repo(root):
     return f"{m.group(1)}/{m.group(2)}".lower() if m else None
 
 
+# An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time would be
+# read in the hook's local zone here and as UTC by some parsers, so it is not a
+# time at all (review r2a-bis). Twin of ZONED_TIME in qa-e2e-gate.mjs.
+ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$", re.ASCII)
+
+
 def _iso(s):
+    if not isinstance(s, str) or not ZONED_TIME_RE.match(s.strip()):
+        return None
     try:
-        return datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
-    except (TypeError, ValueError):
+        return datetime.datetime.fromisoformat(s.strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
         return None
 
 
-def owner_run_verify(root, ident, walked_sha):
-    """What the ship gate checks of a well-formed owner_run beyond the packet
-    (review r2a D5): the run URL's repository is this repository's origin, and
-    the run exists (`gh run view`), was built from the walked commit, and
-    spans the walk window. Every failure is a reason, and a reason denies. The
-    lookup shares the v5 provenance lookup's budget and deadline."""
+def _run_attempt(root, repo, rid, attempt, cache=None):
+    """(run attempt object, None) from the GitHub API, or (None, reason). The
+    named attempt, or the run's latest one when the URL names none. `cache` is
+    one check's: #36 names the same run for two identities, and both lookups
+    shared one 3.2 s budget (review r2a-bis)."""
     global _LOOKUP_DEADLINE
+    key = (repo.lower(), rid, attempt)
+    if cache is not None and key in cache:
+        return cache[key]
+    path = f"repos/{repo}/actions/runs/{rid}" + (f"/attempts/{attempt}" if attempt else "")
+    now = time.monotonic()
+    if _LOOKUP_DEADLINE is None:
+        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)
+    if left < 0.3:
+        return None, f"run {rid}: lookup budget ({LOOKUP_BUDGET_S:.1f} s per command) is spent; retry"
+    try:
+        p = subprocess.run(["gh", "api", path], cwd=root, capture_output=True, text=True, timeout=left,
+                           env=dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1"))
+    except FileNotFoundError:
+        return None, f"run {rid}: the gh CLI is not on the hook's PATH, so the run cannot be checked"
+    except subprocess.TimeoutExpired:
+        return None, f"run {rid}: `gh api {path}` timed out after {left:.1f} s; retry"
+    except Exception as exc:
+        return None, f"run {rid}: `gh api {path}` could not run: {_redact(str(exc))}"
+    if p.returncode != 0:
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        res = None, f"run {rid}: `gh api {path}` failed (rc={p.returncode}: {_redact(lines[-1] if lines else '')})"
+    else:
+        try:
+            run = json.loads(p.stdout)
+        except ValueError:
+            run = None
+        res = (run, None) if isinstance(run, dict) else (None, f"run {rid}: `gh api {path}` returned no run object")
+    if cache is not None:
+        cache[key] = res
+    return res
+
+
+def owner_run_verify(root, ident, walked_sha, cache=None):
+    """What the ship gate checks of a well-formed owner_run beyond the packet
+    (review r2a D5, r2a-bis): the run URL's repository is this repository's
+    origin, and the run attempt the URL names (or the run's latest attempt)
+    exists, completed with success, was built from the walked commit, and
+    spans the walk window from its own start to its last update. Every failure
+    is a reason, and a reason denies. The lookup shares the v5 provenance
+    lookup's budget and deadline."""
     walker = ident["walker"]
-    m = RUN_URL_RE.match(walker["run_url"].strip())
+    url = walker["run_url"].strip()
+    m = RUN_URL_RE.match(url)
     repo, rid = f"{m.group(1)}/{m.group(2)}", m.group(3)
+    am = RUN_ATTEMPT_RE.search(url)
+    attempt = am.group(1) if am else None
     if not root:
         return ["no repository to check the run against (the ship gate verifies an owner_run from its repo)"]
     origin = origin_repo(root)
@@ -771,42 +825,29 @@ def owner_run_verify(root, ident, walked_sha):
         return ["the repository's origin remote is not on github.com, so the run cannot be tied to it"]
     if repo.lower() != origin:
         return [f"walker.run_url is a run of {repo}, not of this repository ({origin})"]
-    now = time.monotonic()
-    if _LOOKUP_DEADLINE is None:
-        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
-    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)
-    if left < 0.3:
-        return [f"run {rid}: lookup budget ({LOOKUP_BUDGET_S:.1f} s per command) is spent; retry"]
-    try:
-        p = subprocess.run(["gh", "run", "view", rid, "--repo", repo, "--json", "headSha,createdAt,updatedAt,status"],
-                           cwd=root, capture_output=True, text=True, timeout=left,
-                           env=dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1"))
-    except FileNotFoundError:
-        return [f"run {rid}: the gh CLI is not on the hook's PATH, so the run cannot be checked"]
-    except subprocess.TimeoutExpired:
-        return [f"run {rid}: `gh run view` timed out after {left:.1f} s; retry"]
-    except Exception as exc:
-        return [f"run {rid}: `gh run view` could not run: {_redact(str(exc))}"]
-    if p.returncode != 0:
-        lines = (p.stderr or p.stdout or "").strip().splitlines()
-        return [f"run {rid}: `gh run view` failed (rc={p.returncode}: {_redact(lines[-1] if lines else '')})"]
-    try:
-        run = json.loads(p.stdout)
-    except ValueError:
-        return [f"run {rid}: `gh run view` returned no JSON"]
+    run, why = _run_attempt(root, repo, rid, attempt, cache)
+    if why:
+        return [why]
+    name = f"run {rid} attempt {run.get('run_attempt') or attempt or '?'}"
     out = []
-    head = str(run.get("headSha") or "").lower()
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        out.append(f"{name} is {run.get('status') or '?'}/{run.get('conclusion') or '-'}, "
+                   f"not completed/success: an unfinished or failed run is not a walk")
+    head = str(run.get("head_sha") or "").lower()
     if not walked_sha:
-        out.append(f"run {rid}: no walked commit (rewalk.json sha) to compare its headSha with")
+        out.append(f"{name}: no walked commit (rewalk.json sha) to compare its head_sha with")
     elif head != str(walked_sha).lower():
-        out.append(f"run {rid} ran on {head[:12] or '?'}, not the walked commit {str(walked_sha)[:12]}")
-    start, end = _iso(run.get("createdAt")), _iso(run.get("updatedAt"))
+        out.append(f"{name} ran on {head[:12] or '?'}, not the walked commit {str(walked_sha)[:12]}")
+    start, end = _iso(run.get("run_started_at")), _iso(run.get("updated_at"))
     w = ident.get("walk_window") if isinstance(ident.get("walk_window"), dict) else {}
     ws, we = _iso(w.get("start")), _iso(w.get("end"))
-    if None in (start, end, ws, we) or not (start <= ws <= we <= end):
-        out.append(f"run {rid} ran {run.get('createdAt')}..{run.get('updatedAt')}; the walk window "
+    if None in (ws, we):
+        out.append(f"walk_window {w.get('start')}..{w.get('end')} is not two ISO 8601 times with an offset (Z or +hh:mm)")
+    elif None in (start, end) or not (start <= ws <= we <= end):
+        out.append(f"{name} ran {run.get('run_started_at')}..{run.get('updated_at')}; the walk window "
                    f"{w.get('start')}..{w.get('end')} is not inside it")
     return out
+
 
 
 def listed_identity(label, owned):
@@ -842,6 +883,7 @@ def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
         auth = json.loads(body).get("authentication") or {}
     except Exception:
         auth = {}
+    run_lookups = {}  # one per check_e2e call, which is one per check
     for ident in declared_identities(auth):
         if not isinstance(ident, dict) or not isinstance(ident.get("label"), str):
             continue
@@ -855,7 +897,7 @@ def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
             fails.append(f"{rel}: identity label {label!r} {problem}: refused, name the identity in one script")
         or_problems = owner_run_problems(ident, owned)
         if "walker" in ident and not or_problems:
-            or_problems = owner_run_verify(root, ident, walked_sha)
+            or_problems = owner_run_verify(root, ident, walked_sha, run_lookups)
         for problem in or_problems:
             fails.append(f"{rel}: identity {label!r} walker: {problem}: refused")
         if hit and hit[1] == "same" and ident.get("owned_by_automation") is not True:
@@ -3371,6 +3413,9 @@ def selftest(v4_gate=None, v4_templates=None):
         "unlisted label": ({**base_or, "label": "e2e.other"}, ["e2e.patient"], False),
         "unowned": ({**base_or, "owned_by_automation": False}, ["e2e.patient"], False),
         "unknown kind": ({**base_or, "walker": {"kind": "borrowed"}}, ["e2e.patient"], False),
+        "fullwidth digits (r2a-bis)": ({**base_or, "walker": {**base_or["walker"], "run_id": "３６１９３６９４６５９",
+                                        "run_url": "https://github.com/albrand/psyche-project/actions/runs/３６１９３６９４６５９"}},
+                                       ["e2e.patient"], False),
     }
     mjs_or = {}
     if shutil.which("node") and os.path.isfile(E2E_GATE):
@@ -3384,43 +3429,120 @@ def selftest(v4_gate=None, v4_templates=None):
         py_ok = not owner_run_problems(ident, lst)
         expect(py_ok == ok, "owner_run %s: ship gate %s" % (name, "accepts" if ok else "refuses"))
         expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
-    # r2a D5: the ship gate ties the run to this repository and checks it with
-    # `gh run view` (stubbed here: offline, deterministic).
+    # r2a D5, r2a-bis: the ship gate ties the run to this repository and checks
+    # the run attempt with `gh api` (stubbed here: offline, deterministic). The
+    # stub answers repos/albrand/psyche-project/actions/runs/<id>[/attempts/<n>]
+    # from <dir>/<path with / as _>.json and logs every call.
     orr = os.path.join(tmp, "owner-run-repo")
     os.makedirs(orr)
     sh("git init -q && git remote add origin git@github.com:albrand/psyche-project.git", cwd=orr)
     orbin = os.path.join(tmp, "owner-run-bin")
     os.makedirs(orbin)
-    ghrun = os.path.join(tmp, "gh-run.json")
+    ghdir = os.path.join(tmp, "gh-api")
+    os.makedirs(ghdir)
     open(os.path.join(orbin, "gh"), "w").write(
         "#!/bin/sh\n[ -n \"$OR_GH_SLEEP\" ] && sleep \"$OR_GH_SLEEP\"\n"
-        "[ \"$1 $2 $3 $4 $5\" = \"run view 36193694659 --repo albrand/psyche-project\" ] || { echo 'unexpected gh call' >&2; exit 1; }\n"
-        f"cat {ghrun}\n")
+        f"echo \"$*\" >> {ghdir}/calls\n"
+        f"f={ghdir}/$(printf %s \"$2\" | tr / _).json\n"
+        "[ \"$1\" = api ] && [ -f \"$f\" ] || { echo 'unexpected gh call' >&2; exit 1; }\n"
+        "cat \"$f\"\n")
     os.chmod(os.path.join(orbin, "gh"), 0o755)
     walked = "a" * 40
-    run_doc = {"headSha": walked, "createdAt": "2026-09-25T15:05:00Z", "updatedAt": "2026-09-25T15:45:00Z", "status": "completed"}
+    runs_path = "repos/albrand/psyche-project/actions/runs/36193694659"
+    run_doc = {"head_sha": walked, "run_attempt": 1, "run_started_at": "2026-09-25T15:05:00Z",
+               "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
     ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
     saved_path = os.environ["PATH"]
 
-    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, sleep=None):
+    def gh_calls():
+        p = os.path.join(ghdir, "calls")
+        return open(p).read().splitlines() if os.path.isfile(p) else []
+
+    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, sleep=None, attempts=None, cache=None,
+               keep_calls=False):
         global _LOOKUP_DEADLINE
-        json.dump(doc, open(ghrun, "w"))
+        for f in os.listdir(ghdir):
+            if not (keep_calls and f == "calls"):
+                os.remove(os.path.join(ghdir, f))
+
+        for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
+            with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
+                f.write(d if isinstance(d, str) else json.dumps(d))
         os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + "/usr/bin:/bin"
         if sleep:
             os.environ["OR_GH_SLEEP"] = sleep
         _LOOKUP_DEADLINE = None
         try:
-            return owner_run_verify(root, ident, sha)
+            return owner_run_verify(root, ident, sha, cache)
         finally:
             os.environ["PATH"] = saved_path
             os.environ.pop("OR_GH_SLEEP", None)
             _LOOKUP_DEADLINE = None
 
     expect(verify(ident_or) == [], "owner_run: right repo, matching id, run on the walked commit around the walk -> pass")
-    expect(any("not the walked commit" in p for p in verify(ident_or, {**run_doc, "headSha": "b" * 40})),
+    expect(gh_calls() == ["api " + runs_path], "owner_run: no attempt named -> the run's latest attempt (%s)" % gh_calls())
+    expect(any("not the walked commit" in p for p in verify(ident_or, {**run_doc, "head_sha": "b" * 40})),
            "owner_run: a run on another commit -> deny")
-    expect(any("not inside it" in p for p in verify(ident_or, {**run_doc, "updatedAt": "2026-09-25T15:30:00Z"})),
+    expect(any("not inside it" in p for p in verify(ident_or, {**run_doc, "updated_at": "2026-09-25T15:30:00Z"})),
            "owner_run: a walk window outside the run -> deny")
+    # r2a-bis: an unfinished or failed run is not a walk.
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "status": "in_progress", "conclusion": None})),
+           "owner_run: a run still in progress -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "conclusion": "failure"})),
+           "owner_run: a failed run -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {k: v for k, v in run_doc.items() if k != "conclusion"})),
+           "owner_run: a run with no conclusion -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "status": "in_progress"})),
+           "owner_run: a run in progress that reports a success conclusion -> deny")
+    # r2a-bis: a re-run moves the run's updated time; the window is the attempt's own.
+    rerun = {**run_doc, "run_attempt": 2, "run_started_at": "2026-09-27T10:00:00Z", "updated_at": "2026-09-27T10:40:00Z"}
+    expect(any("not inside it" in p for p in verify(ident_or, rerun)),
+           "owner_run: a walk in attempt 1, run re-run later, URL names no attempt -> deny (the latest attempt's window)")
+    at1 = {**ident_or, "walker": {**ident_or["walker"], "run_url": ident_or["walker"]["run_url"] + "/attempts/1"}}
+    expect(verify(at1, rerun, attempts={runs_path + "/attempts/1": run_doc}) == [],
+           "owner_run: the same walk, URL names /attempts/1 -> pass on that attempt's window")
+    expect(gh_calls() == ["api " + runs_path + "/attempts/1"], "owner_run: /attempts/1 asks for that attempt (%s)" % gh_calls())
+    late = {**ident_or, "walk_window": {"start": "2026-09-27T10:05:00Z", "end": "2026-09-27T10:20:00Z"}}
+    expect(any("not inside it" in p for p in verify({**late, "walker": at1["walker"]}, rerun, attempts={runs_path + "/attempts/1": run_doc})),
+           "owner_run: a walk during attempt 2 recorded as /attempts/1 -> deny")
+    # r2a-bis: a naive time is read in the local zone, so it is refused.
+    naive = {**ident_or, "walk_window": {"start": "2026-09-25T15:10:00", "end": "2026-09-25T15:40:00"}}
+    expect(any("with an offset" in p for p in verify(naive)), "owner_run: a walk window with no offset -> deny")
+    # Inside a day-long run, so no local-zone reading of the naive times fits it by accident.
+    day = {**run_doc, "run_started_at": "2026-09-25T00:00:00Z", "updated_at": "2026-09-26T00:00:00Z"}
+    naive_mid = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00", "end": "2026-09-25T12:40:00"}}
+    expect(any("with an offset" in p for p in verify(naive_mid, day)), "owner_run: a naive walk window inside a day-long run -> deny")
+    expect(any("not inside it" in p for p in verify(ident_or, {**day, "run_started_at": "2026-09-25T00:00:00"})),
+           "owner_run: a run start with no offset -> deny")
+    fullwidth = "３６１９３６９４６５９"
+    expect(owner_run_id({"run_id": fullwidth}) is None
+           and not RUN_URL_RE.match("https://github.com/albrand/psyche-project/actions/runs/" + fullwidth),
+           "owner_run: fullwidth digits are not a run id or a run URL (ASCII, as in qa-e2e-gate.mjs)")
+    shifted = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00-03:00", "end": "2026-09-25T12:40:00-03:00"}}
+    expect(verify(shifted) == [], "owner_run: the same walk window at -03:00 -> pass")
+    # r2a-bis: a reply that is not a run object denies with a reason, not an exception.
+    for bad in ("[]", "null", "\"x\"", "not json"):
+        r = verify(ident_or, bad)
+        expect(any("returned no run object" in p for p in r), "owner_run: gh replying %s -> deny (%s)" % (bad, r))
+    # r2a-bis: one lookup per run attempt within a check (#36 names one run
+    # twice), and none carried from one check into the next.
+    one_check = {}
+    verify(ident_or, cache=one_check)
+    second = verify(ident_or, {**run_doc, "conclusion": "failure"}, cache=one_check, keep_calls=True)
+    expect(second == [] and len(gh_calls()) == 1, "owner_run: the same run twice in one check -> one gh call (%d)" % len(gh_calls()))
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "conclusion": "failure"}))
+           and verify(ident_or) == [], "owner_run: a later check looks the run up again")
+    verify(ident_or)  # leaves the stub's run doc in place
+    os.remove(os.path.join(ghdir, "calls"))
+    os.environ["PATH"] = orbin + os.pathsep + "/usr/bin:/bin"
+    try:
+        f_two = []
+        check_e2e("q", reader({"q/evidence.json": json.dumps({"authentication": {"identities": [ident_or, dict(ident_or)]}})}),
+                  {"automation_identities": ["e2e.patient"]}, f_two, orr, walked)
+    finally:
+        os.environ["PATH"] = saved_path
+        _LOOKUP_DEADLINE = None
+    expect(len(gh_calls()) == 1, "owner_run: check_e2e with two identities on one run -> one gh call (%d)" % len(gh_calls()))
     expect(any("not on the hook's PATH" in p for p in verify(ident_or, path_first=None)),
            "owner_run: gh unavailable -> deny")
     _LOOKUP_DEADLINE_SAVED = LOOKUP_BUDGET_S
@@ -3429,6 +3551,8 @@ def selftest(v4_gate=None, v4_templates=None):
         expect(any("timed out" in p for p in verify(ident_or, sleep="3")), "owner_run: gh timing out -> deny")
     finally:
         globals()["LOOKUP_BUDGET_S"] = _LOOKUP_DEADLINE_SAVED
+    at9 = {**ident_or, "walker": {**ident_or["walker"], "run_url": ident_or["walker"]["run_url"] + "/attempts/9"}}
+    expect(any("failed (rc=1" in p for p in verify(at9)), "owner_run: an attempt the API does not have -> deny")
     other = {**ident_or, "walker": {**ident_or["walker"], "run_url": "https://github.com/someone/else/actions/runs/36193694659"}}
     expect(any("not of this repository" in p for p in verify(other)), "owner_run: a run of another repository -> deny")
     expect(verify(ident_or, root=None) != [], "owner_run: no repository to check against -> deny")
