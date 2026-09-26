@@ -68,13 +68,18 @@ deny() {
 # `shape` (shape_text + shape_serves); no jq, or no answer from it, denies any
 # dispatch word or ANSI-C escape (fails closed). At the deadline a serves line
 # after a separator inside the brief, or in a heredoc body, is in another
-# stretch and does not count (a deny; the normal decision reads them).
+# stretch and does not count (a deny; the normal decision reads them). A
+# command, group or verb word a substitution is glued into is dispatch-shaped
+# (review r2d: the split eats a `$(...`'s parens, so `bb automation$(echo)
+# run` survives only as a word-final `$`; a backtick or `${` glued to a word
+# (`bb th`x`read tell`, `bb automation${X} run`) keeps the stretch whole):
+# what runs is unknown, and the stretch must serve like any dispatch.
 SCOPE_SHAPE_JQ='
 def flat: gsub("[\\\\\"\\x27]"; "");
 def collapse: gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "");
 def blank: gsub("(?<k>\\$\\x27(?:\\\\[\\s\\S]|[^\\x27\\\\])*\\x27|\\x27[^\\x27]*\\x27|\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"|\\\\[\\s\\S])|(?:^|(?<=[\\s;&|()]))(?<c>#[^\\n]*)";
   if .k != null then .k else (.c | gsub("[^;&|()]"; " ")) end);
-def coarse: test("fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set"; "i");
+def coarse: test("fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|[^\\s]`|[^\\s]\\$\\{|[^\\s$]\\$$"; "i");
 def nested: test("(^|\\s)-[A-Za-z]*[ce](\\s|$)|(^|[\\s/])eval(\\s|$)|--script|<<<|(^|\\s)(-[A-Za-z]*S|--split-string)"; "i");
 def fields: {fleet_member_spawn: ["prompt", "concern"], fleet_member_tell: ["message"],
   fleet_delegate: ["task", "context"], fleet_task_create: ["title", "body"], fleet_task_update: ["title", "body", "blockedReason"],
@@ -125,7 +130,7 @@ scope_dispatch_denied() {
     deny) return 0 ;;
   esac
   printf '%s' "$input" | grep -q "\\$'[^']*\\\\" && return 0
-  scope_flat | grep -qiE 'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions)|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set'
+  scope_flat | grep -qiE 'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions)|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|[^[:space:]]\$\(|[^[:space:]]\$\{|[^[:space:]]`'
 }
 # --- end scope shape ---
 

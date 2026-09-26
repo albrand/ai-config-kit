@@ -175,6 +175,14 @@
     {"label": "plugin config custom-instructions (show)", "want": 0, "command": "bb plugin config custom-instructions"},
     {"label": "plugin config browser set (not agent text)", "want": 0, "command": "bb plugin config browser set viewportWidth 1280"},
     {"label": "plugin list", "want": 0, "command": "bb plugin list --json"},
-    {"label": "automation update --env-json changes what a stored script sends", "want": 2, "command": "bb automation update auto_script --env-json '{\"MSG\":\"refactor\"}'"}
+    {"label": "automation update --env-json changes what a stored script sends", "want": 2, "command": "bb automation update auto_script --env-json '{\"MSG\":\"refactor\"}'"},
+    {"label": "r2d: a verb word glued to a substitution is a dispatch (automation)", "want": 2, "command": "bb automation$(echo) run a1"},
+    {"label": "r2d: a verb word glued to a substitution is a dispatch (thread)", "want": 2, "command": "bb thread$(true) tell thr_x hi"},
+    {"label": "r2d: a command word glued to a substitution is a dispatch", "want": 2, "command": "bb$(echo) thread tell thr_x hi"},
+    {"label": "r2d: a backtick-spelled verb is a dispatch", "want": 2, "command": "bb th`x`read tell thr_x hi"},
+    {"label": "r2d: a verb word glued to a parameter expansion is a dispatch", "want": 2, "command": "bb automation${X} run a1"},
+    {"label": "r2d: a glued verb serving P1 is allowed", "want": 0, "command": "bb thread$(true) tell thr_x 'serves: P1 hi'"},
+    {"label": "r2d: a glued command word serving P1 is allowed", "want": 0, "command": "bb$(echo) thread tell thr_x 'serves: P1 hi'"},
+    {"label": "r2d: an ordinary substitution argument is not a dispatch", "want": 0, "command": "echo \"$(date)\""}
   ]
 }

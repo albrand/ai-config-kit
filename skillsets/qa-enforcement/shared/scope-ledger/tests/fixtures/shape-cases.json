@@ -74,6 +74,14 @@
     {"label": "a revision prefix under 20 characters does not count", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x \"serves: revision \\\"Add this to\\\"\""}, "cwd": "/tmp"}},
     {"label": "plugin run automations create --prompt without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin run automations create --name n --in 1m --prompt refactor"}, "cwd": "/tmp"}},
     {"label": "plugin config custom-instructions set without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin config custom-instructions set instructions \"refactor\""}, "cwd": "/tmp"}},
-    {"label": "plugin config custom-instructions set serving P1", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin config custom-instructions set instructions \"serves: P1 keep\""}, "cwd": "/tmp"}}
+    {"label": "plugin config custom-instructions set serving P1", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin config custom-instructions set instructions \"serves: P1 keep\""}, "cwd": "/tmp"}},
+    {"label": "r2d: glued verb word (automation) is dispatch-shaped", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb automation$(echo) run a1"}, "cwd": "/tmp"}},
+    {"label": "r2d: glued verb word (thread) is dispatch-shaped", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread$(true) tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d: a substitution glued to a command word is dispatch-shaped", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb$(echo) thread tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d: a verb a backtick substitution spells is dispatch-shaped", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb th`x`read tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d: a parameter expansion glued to the verb word", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb automation${X} run a1"}, "cwd": "/tmp"}},
+    {"label": "r2d: a glued verb with serves in the same stretch serves", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb th`x`read tell thr_x 'serves: P1 hi'"}, "cwd": "/tmp"}},
+    {"label": "r2d: an ordinary substitution argument is not dispatch-shaped", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo \"$(date)\""}, "cwd": "/tmp"}},
+    {"label": "r2d: a PID or spaced dollar is not a glued verb word", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo $$"}, "cwd": "/tmp"}}
   ]
 }

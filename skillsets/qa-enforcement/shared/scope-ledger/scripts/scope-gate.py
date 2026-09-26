@@ -579,6 +579,16 @@ NESTED_RUNNER = re.compile(r"(^|\s)-[A-Za-z]*[ce](\s|$)|(^|[\s/])eval(\s|$)|--sc
 # An ANSI-C string with an escape can spell any word (`$'\x74ell'`): such a
 # stretch is dispatch-shaped whatever it reads like.
 ANSI_ESCAPED = re.compile(r"\$'[^']*\\")
+# A substitution glued into a word (review r2d: `bb automation$(echo) run a1`
+# read as no dispatch). The separator split eats a `$(...`'s parens, so that
+# form survives only as a word-final `$` (`bb automation$`): a `$` the shell
+# would expand, not one after a space or another `$` (a PID). A backtick or
+# `${` glued to a word keeps the stretch whole (`bb th`x`read tell`, `bb
+# automation${X} run`). Anything the shell builds at run time is dispatch-
+# shaped: what runs is unknown. The same expressions are in the hooks' jq
+# shape (SCOPE_SHAPE_JQ), so the two deadline decisions read the same words.
+GLUED_SUBST = re.compile(r"[^\s](`|\$\{)")
+GLUED_DOLLAR = re.compile(r"[^\s$]\$$")
 
 
 def flatten(text):
@@ -598,7 +608,9 @@ def shape_text(stdin_text):
     separator; a stretch that reads like a dispatch must carry its own serves
     line, outside comments (a nested runner's stretch never serves). The tool
     call's description is never read, and no brief file is (a FIFO would
-    block; review r2b)."""
+    block; review r2b). A stretch whose command, group or verb word carries a
+    glued substitution (`bb automation$(echo) run`, `bb th`x`read tell`) is
+    dispatch-shaped: what runs is unknown (review r2d)."""
     try:
         payload = json.loads(stdin_text or "{}")
     except ValueError:
@@ -620,7 +632,8 @@ def shape_text(stdin_text):
     out = []
     for raw, own in zip(raws, owns):
         flat = flatten(raw)
-        if COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw):
+        if (COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw)
+                or GLUED_SUBST.search(flat) or GLUED_DOLLAR.search(flat)):
             out.append("" if NESTED_RUNNER.search(flat) else flatten(own))
     return out or None
 
