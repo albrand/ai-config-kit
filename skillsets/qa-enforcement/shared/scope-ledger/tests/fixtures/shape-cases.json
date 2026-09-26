@@ -89,6 +89,10 @@
     {"label": "r2d-followup: a variable verb serving P1 in the same stretch", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread $V tell thr_x 'serves: P1 hi'"}, "cwd": "/tmp"}},
     {"label": "r2d-followup: a read-only verb with a substitution argument (list)", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread list --json"}, "cwd": "/tmp"}},
     {"label": "r2d-followup: a read-only verb with a substitution argument (show $ID)", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread show $ID"}, "cwd": "/tmp"}},
-    {"label": "an assignment's $( is not a word-final glued dollar", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "X=$(date); echo done"}, "cwd": "/tmp"}}
+    {"label": "an assignment's $( is not a word-final glued dollar", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "X=$(date); echo done"}, "cwd": "/tmp"}},
+    {"label": "bare variable glued into automation verb word", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb automation$X run a1"}, "cwd": "/tmp"}},
+    {"label": "positional parameter glued into thread verb word", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread$1 tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "bare variable stays allowed in unrelated command", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo $PATH"}, "cwd": "/tmp"}},
+    {"label": "bare argument variable stays allowed on a serving dispatch", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x '$MSG serves: P1'"}, "cwd": "/tmp"}}
   ]
 }

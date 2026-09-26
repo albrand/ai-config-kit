@@ -84,6 +84,7 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hoo
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
 # No jq (or no answer from it): the grep fallback denies every case the jq
 # shape denies (it is broader: any dispatch word, fails closed).
+bash_payload() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:"/tmp"}'; }
 mkdir -p "$H/nojq"
 printf '#!/bin/sh\nexit 1\n' > "$H/nojq/jq"
 chmod +x "$H/nojq/jq"
@@ -96,6 +97,19 @@ for i in $(jq -r '.cases | to_entries[] | select(.value.want == 2) | .key' "$H/s
     echo "ok   no-jq fallback: $label"
   else
     echo "FAIL no-jq fallback allowed: $label"
+    fails=$((fails + 1))
+  fi
+done
+# The no-jq grep is deliberately broad for dispatches, but an assignment RHS
+# is not a glued dispatch word and must not be denied.
+for cmd in 'X=$(date); echo done' 'echo $PATH' 'bb thread show $ID'; do
+  payload=$(bash_payload "$cmd")
+  fb=$(input="$payload" PATH="$H/nojq:$PATH" BB_THREAD_ID="$THR" SCOPE_LEDGER_DIR="$H/.local/state/agent-quality/scope" \
+    sh -c '. "$1"; if scope_dispatch_denied; then echo 2; else echo 0; fi' _ "$H/shape.sh")
+  if [ "$fb" = 0 ]; then
+    echo "ok   no-jq fallback allowed: $cmd"
+  else
+    echo "FAIL no-jq fallback denied: $cmd"
     fails=$((fails + 1))
   fi
 done
@@ -112,7 +126,6 @@ for tool in $(jq -r '.cases[].payload.tool_name | select(startswith("mcp__bb-bri
     fails=$((fails + 1))
   fi
 done
-bash_payload() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:"/tmp"}'; }
 # case: <ship stage seconds>|<want rc>|<reason the deny must carry, or ->|<command>
 # The chain kills a gate stage 11 s after HOOK_T0 and decides by shape in
 # shell ("could not finish"); a gate reached after that is not started.
@@ -152,6 +165,8 @@ mkfifo "$H/brief.fifo"
 cases="$cases
 0|2|not a regular file|bb thread tell thr_x --message-file $H/brief.fifo
 0|2|must say|bb automation\$(echo) run a1
+0|2|must say|bb automation\$X run a1
+0|2|must say|bb thread\$1 tell thr_x hi
 0|2|must say|bb th\`x\`read tell thr_x hi
 0|2|must say|bb thread \$(echo) tell thr_x hi
 0|0|-|bb thread show \$ID"

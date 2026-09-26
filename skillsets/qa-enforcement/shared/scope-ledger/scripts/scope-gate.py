@@ -595,6 +595,19 @@ ANSI_ESCAPED = re.compile(r"\$'[^']*\\")
 # read the same words.
 GLUED_SUBST = re.compile(r"[^\s](`|\$\{)")
 GLUED_DOLLAR = re.compile(r"[^\s$=]\$$")
+# A bare variable glued into a dispatch's group or verb word hides the word
+# the shell will run. Keep the match in those positions so ordinary `$VAR`
+# arguments remain readable.
+GLUED_VARIABLE = re.compile(
+    r"(?:^|\s)(?:[^\s;&|()]+/)?(?:bb|\$BB_CLI|\$\{BB_CLI[^}]*\})\s+"
+    r"(?:--[A-Za-z-]+(?:=\S+)?\s+)*(?:thread|fleet|automation|instructions)\$[A-Za-z0-9_]"
+    r"|(?:^|\s)(?:[^\s;&|()]+/)?(?:bb|\$BB_CLI|\$\{BB_CLI[^}]*\})\s+"
+    r"(?:--[A-Za-z-]+(?:=\S+)?\s+)*(?:thread\s+(?:spawn|create|fork|tell|message|edit-message)"
+    r"|thread\s+queue\s+(?:create|update|send)|thread\s+interactions\s+(?:answer|respond)"
+    r"|fleet\s+(?:group-create|task-add|advise|member-add)"
+    r"|automation\s+(?:create|update|run|resume)|instructions\s+set)\$[A-Za-z0-9_]",
+    re.I,
+)
 SPACED_DOLLAR = re.compile(r"\s\$$")
 DISPATCH_WORD = re.compile(r"(^|\s)(bb|\$BB_CLI|\$\{BB_CLI[^}]*\}|thread|fleet|automation|instructions)(\s|$)", re.I)
 
@@ -643,6 +656,7 @@ def shape_text(stdin_text):
         flat = flatten(raw)
         if (COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw)
                 or GLUED_SUBST.search(flat) or GLUED_DOLLAR.search(flat)
+                or GLUED_VARIABLE.search(flat)
                 or (SPACED_DOLLAR.search(flat) and DISPATCH_WORD.search(flat))):
             out.append("" if NESTED_RUNNER.search(flat) else flatten(own))
     return out or None

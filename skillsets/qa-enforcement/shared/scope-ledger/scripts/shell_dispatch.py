@@ -433,12 +433,12 @@ def maybe_bb(word):
 
 
 def glued(word):
-    """A word with a substitution or a parameter expansion inside it, not the
-    whole word (`automation$(echo)`, `th`x`read`, `automation${X}`): the shell
-    builds the command, group or verb word it is part of at run time, so what
-    runs is unknown here (review r2d: `bb automation$(echo) run a1` dispatched
-    ungated)."""
-    return (SUBST in word or "${" in word) and not maybe_bb(word)
+    """A word with a substitution or variable expansion inside it, not the
+    whole word (`automation$(echo)`, `th`x`read`, `automation${X}`,
+    `automation$X`): the shell builds the command, group or verb word it is
+    part of at run time, so what runs is unknown here (review r2d:
+    `bb automation$(echo) run a1` dispatched ungated)."""
+    return (SUBST in word or "${" in word or re.search(r"\$[A-Za-z0-9_]", word)) and not maybe_bb(word)
 
 
 def unreadable(word):
