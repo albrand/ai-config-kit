@@ -582,13 +582,21 @@ ANSI_ESCAPED = re.compile(r"\$'[^']*\\")
 # A substitution glued into a word (review r2d: `bb automation$(echo) run a1`
 # read as no dispatch). The separator split eats a `$(...`'s parens, so that
 # form survives only as a word-final `$` (`bb automation$`): a `$` the shell
-# would expand, not one after a space or another `$` (a PID). A backtick or
-# `${` glued to a word keeps the stretch whole (`bb th`x`read tell`, `bb
-# automation${X} run`). Anything the shell builds at run time is dispatch-
-# shaped: what runs is unknown. The same expressions are in the hooks' jq
-# shape (SCOPE_SHAPE_JQ), so the two deadline decisions read the same words.
+# would expand, not one after a space, another `$` (a PID) or an `=` (an
+# assignment, `X=$(...)`: its `$` opens the substitution's parens, it is not
+# part of a word). A backtick or `${` glued to a word keeps the stretch whole
+# (`bb th`x`read tell`, `bb automation${X} run`). A `$(...)` as its own word
+# in the verb zone (`bb thread $(echo) tell`) leaves only a space before the
+# stretch's final `$`: that is dispatch-shaped when the stretch carries a
+# dispatch word too (bb, a path to it, or a group word) — `echo "$(date)"`
+# has none and stays allowed (r2d follow-up). Anything the shell builds at
+# run time is dispatch-shaped: what runs is unknown. The same expressions
+# are in the hooks' jq shape (SCOPE_SHAPE_JQ), so the two deadline decisions
+# read the same words.
 GLUED_SUBST = re.compile(r"[^\s](`|\$\{)")
-GLUED_DOLLAR = re.compile(r"[^\s$]\$$")
+GLUED_DOLLAR = re.compile(r"[^\s$=]\$$")
+SPACED_DOLLAR = re.compile(r"\s\$$")
+DISPATCH_WORD = re.compile(r"(^|\s)(bb|\$BB_CLI|\$\{BB_CLI[^}]*\}|thread|fleet|automation|instructions)(\s|$)", re.I)
 
 
 def flatten(text):
@@ -609,8 +617,9 @@ def shape_text(stdin_text):
     line, outside comments (a nested runner's stretch never serves). The tool
     call's description is never read, and no brief file is (a FIFO would
     block; review r2b). A stretch whose command, group or verb word carries a
-    glued substitution (`bb automation$(echo) run`, `bb th`x`read tell`) is
-    dispatch-shaped: what runs is unknown (review r2d)."""
+    glued substitution (`bb automation$(echo) run`, `bb th`x`read tell`) or a
+    substitution in the verb zone (`bb thread $(echo) tell`) is dispatch-
+    shaped: what runs is unknown (review r2d)."""
     try:
         payload = json.loads(stdin_text or "{}")
     except ValueError:
@@ -633,7 +642,8 @@ def shape_text(stdin_text):
     for raw, own in zip(raws, owns):
         flat = flatten(raw)
         if (COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw)
-                or GLUED_SUBST.search(flat) or GLUED_DOLLAR.search(flat)):
+                or GLUED_SUBST.search(flat) or GLUED_DOLLAR.search(flat)
+                or (SPACED_DOLLAR.search(flat) and DISPATCH_WORD.search(flat))):
             out.append("" if NESTED_RUNNER.search(flat) else flatten(own))
     return out or None
 

@@ -183,6 +183,14 @@
     {"label": "r2d: a verb word glued to a parameter expansion is a dispatch", "want": 2, "command": "bb automation${X} run a1"},
     {"label": "r2d: a glued verb serving P1 is allowed", "want": 0, "command": "bb thread$(true) tell thr_x 'serves: P1 hi'"},
     {"label": "r2d: a glued command word serving P1 is allowed", "want": 0, "command": "bb$(echo) thread tell thr_x 'serves: P1 hi'"},
-    {"label": "r2d: an ordinary substitution argument is not a dispatch", "want": 0, "command": "echo \"$(date)\""}
+    {"label": "r2d: an ordinary substitution argument is not a dispatch", "want": 0, "command": "echo \"$(date)\""},
+    {"label": "r2d-followup: a substitution word in the verb slot is a dispatch ($(echo) after the group)", "want": 2, "command": "bb thread $(echo) tell thr_x hi"},
+    {"label": "r2d-followup: a substitution word in the group slot is a dispatch", "want": 2, "command": "bb $(echo) thread tell thr_x hi"},
+    {"label": "r2d-followup: a variable in the verb slot is a dispatch", "want": 2, "command": "bb thread $V tell thr_x hi"},
+    {"label": "r2d-followup: a substitution word in the verb slot serving P1 is allowed", "want": 0, "command": "bb thread $(echo) tell thr_x 'serves: P1 hi'"},
+    {"label": "read-only verbs with substitutions after them are not dispatches (list)", "want": 0, "command": "bb thread list --json"},
+    {"label": "read-only verbs with substitutions after them are not dispatches (show $ID)", "want": 0, "command": "bb thread show $ID"},
+    {"label": "r2d-followup: a substitution as the plugin id of plugin run is a dispatch", "want": 2, "command": "bb plugin run $(echo) automations create --name n --in 1m --prompt hi"},
+    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"}
   ]
 }

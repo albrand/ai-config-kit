@@ -82,6 +82,13 @@
     {"label": "r2d: a parameter expansion glued to the verb word", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb automation${X} run a1"}, "cwd": "/tmp"}},
     {"label": "r2d: a glued verb with serves in the same stretch serves", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb th`x`read tell thr_x 'serves: P1 hi'"}, "cwd": "/tmp"}},
     {"label": "r2d: an ordinary substitution argument is not dispatch-shaped", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo \"$(date)\""}, "cwd": "/tmp"}},
-    {"label": "r2d: a PID or spaced dollar is not a glued verb word", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo $$"}, "cwd": "/tmp"}}
+    {"label": "r2d: a PID or spaced dollar is not a glued verb word", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "echo $$"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a substitution word in the verb slot (split by the parens)", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread $(echo) tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a substitution word in the group slot", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb $(echo) thread tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a variable in the verb slot reads through the coarse match", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread $V tell thr_x hi"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a variable verb serving P1 in the same stretch", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread $V tell thr_x 'serves: P1 hi'"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a read-only verb with a substitution argument (list)", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread list --json"}, "cwd": "/tmp"}},
+    {"label": "r2d-followup: a read-only verb with a substitution argument (show $ID)", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread show $ID"}, "cwd": "/tmp"}},
+    {"label": "an assignment's $( is not a word-final glued dollar", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "X=$(date); echo done"}, "cwd": "/tmp"}}
   ]
 }

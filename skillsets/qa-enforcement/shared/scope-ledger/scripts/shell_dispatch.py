@@ -441,29 +441,39 @@ def glued(word):
     return (SUBST in word or "${" in word) and not maybe_bb(word)
 
 
-def _glued_verb(rest):
+def unreadable(word):
+    """A word the shell builds at run time — a substitution, parameter
+    expansion or variable as the whole word (`$(echo)`, `${X}`, `$V`) or one
+    glued into it — so the command, group or verb word it sits in cannot be
+    read here (r2d follow-up: `bb thread $(echo) tell thr_x hi` dispatched
+    ungated)."""
+    return maybe_bb(word) or glued(word)
+
+
+def _unreadable_verb(rest):
     """Whether a word the verb scan reads as the group or verb (`bb
-    automation$(echo) run a1`, `bb thread tell$(x) thr_a hi`) is glued: the
-    scan cannot read it, so the dispatch it becomes is unknown."""
+    automation$(echo) run a1`, `bb thread $(echo) tell thr_x hi`, `bb thread
+    tell$(x) thr_a hi`) is built at run time: the scan cannot read it, so the
+    dispatch it becomes is unknown."""
     for j, a in enumerate(rest[:5]):
         if a == "plugin":
             nxt = rest[j + 1:j + 4]
             if nxt[:1] == ["run"] and len(nxt) > 1:
-                return glued(nxt[1]) or _glued_verb(
+                return unreadable(nxt[1]) or _unreadable_verb(
                     [PLUGIN_GROUPS.get(nxt[1], nxt[1])] + rest[j + 3:])
             if nxt[:2] == ["config", "custom-instructions"] and len(nxt) > 2:
-                return glued(nxt[2])
-            return False
+                return unreadable(nxt[2])
+            return any(unreadable(x) for x in nxt)
         if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""
             if a == "thread":
-                if glued(nxt):
+                if unreadable(nxt):
                     return True
                 return (nxt in ("queue", "interactions") and j + 2 < len(rest)
-                        and glued(rest[j + 2]))
-            return glued(nxt)
+                        and unreadable(rest[j + 2]))
+            return unreadable(nxt)
         if not a.startswith("-") and not (j and rest[j - 1].startswith("-")):
-            return glued(a)
+            return unreadable(a)
     return False
 
 
@@ -523,7 +533,7 @@ def dispatches(script, depth=0):
             verb = _dispatch_verb(rest)
             if verb and not bare_help(rest, verb):
                 found.append((text, list(cmd.heredocs), verb))
-            elif glued(head) or _glued_verb(rest):
+            elif glued(head) or _unreadable_verb(rest):
                 # the command, group or verb word is built at run time: what
                 # runs is unknown, so the call is dispatch-shaped (review r2d)
                 found.append((text, list(cmd.heredocs), "substituted"))
@@ -546,7 +556,7 @@ def dispatches(script, depth=0):
             if verb and not bare_help(w[b + 1:], verb):
                 found.append((text, list(cmd.heredocs), verb))
                 break
-            if _glued_verb(w[b + 1:]):
+            if _unreadable_verb(w[b + 1:]):
                 found.append((text, list(cmd.heredocs), "substituted"))
                 break
     return found

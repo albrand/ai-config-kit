@@ -147,11 +147,14 @@ cases='0|2|must say|bb thread tell thr_x also refactor it
 13|0|-|bb instructions set serves: P1 keep the QA gates'
 # review r2b: a FIFO brief is not opened (it blocked the gate until its deadline)
 mkfifo "$H/brief.fifo"
-# review r2d: a substitution glued into a word is dispatch-shaped end to end
+# review r2d: a substitution glued into a word is dispatch-shaped end to end;
+# its follow-up: a substitution as its own word in the verb slot is too
 cases="$cases
 0|2|not a regular file|bb thread tell thr_x --message-file $H/brief.fifo
 0|2|must say|bb automation\$(echo) run a1
-0|2|must say|bb th\`x\`read tell thr_x hi"
+0|2|must say|bb th\`x\`read tell thr_x hi
+0|2|must say|bb thread \$(echo) tell thr_x hi
+0|0|-|bb thread show \$ID"
 for mode in plain slowpy; do
   path="$PATH"
   [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"

@@ -94,8 +94,11 @@ after the QA ship gate.
   command word only known at run time (`$(...)`, `$VAR`) followed by a
   dispatch verb counts too. A command, group or verb word a substitution is
   glued into (`bb automation$(echo) run a1`, `bb th`x`read tell`,
-  `bb automation${X} run`) is dispatch-shaped the same way: what runs is
-  unknown, so it needs its serves line (review r2d). ANSI-C quoting
+  `bb automation${X} run`), or a substitution, parameter expansion or
+  variable as its own word in the verb zone (`bb thread $(echo) tell`,
+  `bb thread $V tell`, `bb $(echo) thread tell`), is dispatch-shaped the
+  same way: what runs is unknown, so it needs its serves line (review r2d
+  and its follow-up). ANSI-C quoting
   (`$'tell'`, `$'\x74ell'`) is
   decoded first. Only a bare help request (`bb thread tell --help`, nothing
   else after the verb) passes: a `-h` anywhere else can be an option's value
@@ -264,9 +267,6 @@ successor's is renumbered past every id and carries `renumbered_from`.
   agent; there is no permission gap, only the time between the reads.
 - `eval "$(...)"` and `sh -c "$(...)"`: the script is only known when the
   substitution runs, so a dispatch it builds is not seen.
-- A substitution as its own word in the verb slot (`bb thread $(echo) tell
-  thr_x hi`, which the shell runs as `bb thread tell`) is not seen either:
-  the glued form is (review r2d), the spaced form leaves no word to read.
 - `bb` under another name (a copy or symlink named otherwise) and a git
   alias that runs `bb` (`git config alias.t '!bb thread tell'`) are not
   parsed.
