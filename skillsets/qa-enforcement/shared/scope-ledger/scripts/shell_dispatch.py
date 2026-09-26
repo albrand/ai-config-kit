@@ -39,6 +39,8 @@ for dispatches), `automation run|resume` and an update that retargets or
 reschedules (the stored prompt or script fires; scope-gate.py reads it from
 bb), and `instructions set` (custom instructions injected into every agent).
 Only a bare `bb <verb path> --help|-h` passes as a help request.
+`bb plugin run <plugin> ...` counts as the plugin's command, and `bb plugin
+config custom-instructions set ...` as `instructions set`.
 
 Dispatch verbs are every bb verb that hands a thread new text to act on
 (`bb thread --help`, `bb fleet --help`, 2026-09-25): thread spawn|create|fork|
@@ -71,10 +73,13 @@ CONDITIONAL_VERBS = {"thread interactions answer": ("--text",), "thread interact
                      "fleet member-add": ("--concern",),
                      "automation create": ("--prompt", "--script", "--script-file"),
                      "automation update": ("--prompt", "--script", "--script-file",
-                                           "--target-thread", "--cron", "--at", "--in"),
+                                           "--target-thread", "--cron", "--at", "--in", "--env-json"),
                      "automation run": None, "automation resume": None,
                      "instructions set": None}
 GROUPS = ("thread", "fleet", "automation", "instructions")
+# `bb plugin run <plugin id> ...` is the explicit form of `bb <command> ...`
+# (review r2d): the plugin ids of the gated plugin groups.
+PLUGIN_GROUPS = {"automations": "automation", "custom-instructions": "instructions", "fleet": "fleet"}
 HELP_WORDS = ("--help", "-h")
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
@@ -533,6 +538,15 @@ def _dispatch_verb(rest):
     `rest` (the words after bb) is a dispatch, after at most a few global
     options (`--json`, `--host h`)."""
     for j, a in enumerate(rest[:5]):
+        if a == "plugin":
+            nxt = rest[j + 1:j + 4]
+            if nxt[:1] == ["run"] and len(nxt) > 1:
+                return _dispatch_verb([PLUGIN_GROUPS.get(nxt[1], nxt[1])] + rest[j + 3:])
+            # the custom instructions are that plugin's setting: `plugin config
+            # custom-instructions set instructions <text>` is `instructions set`
+            if nxt == ["config", "custom-instructions", "set"]:
+                return "instructions set"
+            return None
         if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""
             if a in ("automation", "instructions"):

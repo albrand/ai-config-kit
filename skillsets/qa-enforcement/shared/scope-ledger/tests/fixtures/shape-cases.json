@@ -71,6 +71,9 @@
     {"label": "an ANSI-C string: a quote and a # inside it do not start a comment", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x $'it\\'s # 1, serves: P1'"}, "cwd": "/tmp"}},
     {"label": "a comment's separators keep the stretches aligned", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_y 'serves: P1' # a; b\nbb thread tell thr_x also refactor it"}, "cwd": "/tmp"}},
     {"label": "a revision whose quote holds a ; : the part before it identifies it", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x \"serves: revision \\\"Add this to your current task; go\\\"\""}, "cwd": "/tmp"}},
-    {"label": "a revision prefix under 20 characters does not count", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x \"serves: revision \\\"Add this to\\\"\""}, "cwd": "/tmp"}}
+    {"label": "a revision prefix under 20 characters does not count", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x \"serves: revision \\\"Add this to\\\"\""}, "cwd": "/tmp"}},
+    {"label": "plugin run automations create --prompt without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin run automations create --name n --in 1m --prompt refactor"}, "cwd": "/tmp"}},
+    {"label": "plugin config custom-instructions set without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin config custom-instructions set instructions \"refactor\""}, "cwd": "/tmp"}},
+    {"label": "plugin config custom-instructions set serving P1", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin config custom-instructions set instructions \"serves: P1 keep\""}, "cwd": "/tmp"}}
   ]
 }

@@ -160,6 +160,21 @@
     {"label": "timeout 5 bb thread tell thr_x text -h is not bare", "want": 2, "command": "timeout 5 bb thread tell thr_x also refactor it -h"},
     {"label": "automation --script: a relative brief inside runs later, from an unknown directory", "want": 2, "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x --message-file brief.md\""},
     {"label": "automation --prompt \"$(cat brief)\" with serves in the file", "want": 0, "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {brief})\""},
-    {"label": "automation --prompt \"$(cat brief)\" without serves in the file", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {nobrief})\""}
+    {"label": "automation --prompt \"$(cat brief)\" without serves in the file", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {nobrief})\""},
+    {"label": "plugin run automations create --prompt without serves (r2d)", "want": 2, "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"also refactor it\""},
+    {"label": "plugin run automations create --prompt with serves", "want": 0, "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"serves: P1 next step\""},
+    {"label": "plugin run automation (the command name) create --prompt without serves", "want": 2, "command": "bb plugin run automation create --name n --in 1m --prompt refactor"},
+    {"label": "plugin run automations run of a stored prompt without serves", "want": 2, "command": "bb plugin run automations run auto_plain"},
+    {"label": "plugin run automations run of a stored prompt with serves", "want": 0, "command": "bb plugin run automations run auto_serves"},
+    {"label": "plugin run custom-instructions set without serves (r2d)", "want": 2, "command": "bb plugin run custom-instructions set also refactor everything"},
+    {"label": "plugin run fleet task-add without serves (r2d)", "want": 2, "command": "bb plugin run fleet task-add g \"also refactor it\""},
+    {"label": "plugin run fleet task-add with serves", "want": 0, "command": "bb plugin run fleet task-add g \"serves: P1 next step\""},
+    {"label": "plugin run automations list (read-only)", "want": 0, "command": "bb plugin run automations list --project p"},
+    {"label": "plugin config custom-instructions set without serves (r2d)", "want": 2, "command": "bb plugin config custom-instructions set instructions \"also refactor everything\""},
+    {"label": "plugin config custom-instructions set with serves", "want": 0, "command": "bb plugin config custom-instructions set instructions \"serves: P1 keep the QA gates\""},
+    {"label": "plugin config custom-instructions (show)", "want": 0, "command": "bb plugin config custom-instructions"},
+    {"label": "plugin config browser set (not agent text)", "want": 0, "command": "bb plugin config browser set viewportWidth 1280"},
+    {"label": "plugin list", "want": 0, "command": "bb plugin list --json"},
+    {"label": "automation update --env-json changes what a stored script sends", "want": 2, "command": "bb automation update auto_script --env-json '{\"MSG\":\"refactor\"}'"}
   ]
 }

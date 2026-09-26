@@ -55,11 +55,18 @@ after the QA ship gate.
   is not parsed: one that reads like a dispatch needs the serves line in its
   text. Inside a script, a relative brief path or a variable in one denies
   (the script runs later, from a directory and environment the hook cannot
-  know). `automation run|resume`, and an `update` that retargets or
-  reschedules (`--target-thread`, `--cron`, `--at`, `--in`) without new text,
+  know). `automation run|resume`, and an `update` that retargets,
+  reschedules or re-environments it (`--target-thread`, `--cron`, `--at`,
+  `--in`, `--env-json`) without new text,
   fire the text the automation already stores: the gate reads it with `bb
   automation show <id> --json` and applies the same rule, and denies when it
-  cannot be read. An answer that only picks offered choices (`--choice`), a
+  cannot be read. `bb plugin run <plugin> ...` counts as that plugin's
+  command, and `bb plugin config custom-instructions set ...` (the custom
+  instructions are that plugin's setting) as `instructions set`; the
+  selftest fails on a discoverable plugin RPC method (`bb plugin rpc list`)
+  that is not a read. The serves line of `instructions set` is part of the
+  text every agent then receives, as with `fleet_context_set`. An answer
+  that only picks offered choices (`--choice`), a
   member-add without a concern, and an automation update of other fields
   carry no new text and pass.
   Agent tools (`scripts/scope-gate.py` `MCP_FIELDS`, with the fields read):
@@ -234,6 +241,8 @@ successor's is renumbered past every id and carries `renumbered_from`.
   automation `--script`; any stretch with an ANSI-C escape (`IFS=$'\n'`); a
   revision whose quote splits at a separator less than 20 characters in;
   and `automation run|resume` (the stored text is not read then).
+- An automation that already exists fires on its own schedule without the
+  gate: only a ledger thread's create, update, run and resume are checked.
 - `automation run|resume` and a retarget or reschedule read the stored
   prompt or script through `bb automation show` (a local server call, well
   inside the deadline); when bb cannot answer, the call is denied.

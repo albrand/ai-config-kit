@@ -474,7 +474,7 @@ def automation_bodies(text, heredocs, verb, cwd, assigned, after_cd, depth):
     --target-thread thr_x` re-prompted a thread with no serves line."""
     w = words(text)
     group = verb.split()[1]
-    k = next((i for i in range(len(w) - 1) if w[i] == "automation" and w[i + 1] == group), None)
+    k = next((i for i in range(len(w) - 1) if w[i] in ("automation", "automations") and w[i + 1] == group), None)
     args = w[k + 2:] if k is not None else w
     prompts, scripts, files = _values(args, "--prompt"), _values(args, "--script"), _values(args, "--script-file")
     interpreter = (_values(args, "--interpreter") or [None])[-1]
@@ -878,6 +878,40 @@ MCP_EXEMPT = {
     "browser_": "drives the isolated browser; nothing reaches an agent",
     "mcp_": "MCP server sign-in and management; nothing reaches an agent",
 }
+
+
+# Discoverable plugin RPC methods (`bb plugin rpc list`), by prefix, with why
+# none hands an agent text; the selftest fails on any other method.
+RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits"}
+
+
+def rpc_methods(bb="bb"):
+    """[plugin method] for every discoverable plugin RPC method."""
+    import subprocess
+    try:
+        listing = json.loads(subprocess.run([bb, "plugin", "rpc", "list", "--json"], capture_output=True, text=True,
+                                            timeout=60).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    out = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            m = o.get("method") or o.get("name")
+            if isinstance(m, str) and ("pluginId" in o or "plugin" in o):
+                out.append(m)
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    return out
+
+
+def open_rpc(methods):
+    """The RPC methods no RPC_EXEMPT prefix covers."""
+    return sorted({m for m in methods if not any(m.startswith(p) for p in RPC_EXEMPT)})
 
 
 def mcp_exempt(name):
@@ -1401,6 +1435,9 @@ def selftest():
     unmatched = [h for h in shown if not HELP_TEXT.search(h)]
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
+    good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell"]) == ["fleet.v1.tell"]
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
     # The fake bb served only the hook cases; the coverage scans read the real one.
     if saved_bb_cli is None:
         os.environ.pop("BB_CLI", None)
@@ -1421,6 +1458,13 @@ def selftest():
               f"{': not found ' + ', '.join(unseen) if unseen else ''}")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
+        # Every discoverable plugin RPC method is a read, or gated (review r2d:
+        # `bb plugin rpc call` reaches a plugin without its CLI group).
+        methods = rpc_methods()
+        unexempt = open_rpc(methods or [])
+        failed += methods is None or bool(unexempt)
+        print(f"{'ok  ' if methods is not None and not unexempt else 'FAIL'} every plugin RPC method is a read "
+              f"({len(methods or [])} found){': not exempt: ' + ', '.join(unexempt) if unexempt else ''}")
         tools = plugin_tools()
         loose = loose_tools(tools)
         failed += bool(loose) or not tools
