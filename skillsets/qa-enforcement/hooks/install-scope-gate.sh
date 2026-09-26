@@ -12,16 +12,25 @@ SRC="$KIT/skillsets/qa-enforcement"
 BK="$HOME/.agent-hooks/backups/scope-gate-$(date +%Y-%m-%d)"
 mkdir -p "$BK"
 python3 "$SRC/shared/scope-ledger/scripts/scope-gate.py" selftest >/dev/null 2>&1
-# 1. skill into four homes
+# Hooks fire on every agent's tool call while this runs, so nothing is copied
+# over a live file: a copy is staged beside it and renamed into place. A hook
+# that reads mid-install sees the old file or the new one, never part of one.
+# 1. skill into four homes (between the two renames the skill is absent for a
+#    moment; the wrapper then decides by shape, which fails closed)
 for h in "$HOME/.agents/skills" "$HOME/.bb/skills" "$HOME/.claude/skills" "$HOME/.codex/skills"; do
-  rm -rf "$h/scope-ledger"
-  cp -R "$SRC/shared/scope-ledger" "$h/scope-ledger"
+  rm -rf "$h/scope-ledger.new" "$h/scope-ledger.old"
+  cp -R "$SRC/shared/scope-ledger" "$h/scope-ledger.new"
+  find "$h/scope-ledger.new" -name __pycache__ -type d -prune -exec rm -rf {} +
+  [ -d "$h/scope-ledger" ] && mv "$h/scope-ledger" "$h/scope-ledger.old"
+  mv "$h/scope-ledger.new" "$h/scope-ledger"
+  rm -rf "$h/scope-ledger.old"
 done
 # 2. hook wrappers (backup first)
 for f in coordinator-hook-pretool.sh scope-gate-hook.sh; do
   [ -f "$HOME/.agent-hooks/$f" ] && cp -p "$HOME/.agent-hooks/$f" "$BK/$f"
-  cp "$SRC/hooks/$f" "$HOME/.agent-hooks/$f"
-  chmod +x "$HOME/.agent-hooks/$f"
+  cp "$SRC/hooks/$f" "$HOME/.agent-hooks/$f.new"
+  chmod +x "$HOME/.agent-hooks/$f.new"
+  mv "$HOME/.agent-hooks/$f.new" "$HOME/.agent-hooks/$f"
 done
 # 3. Claude matcher: fleet_member_tell reaches the gate too
 S="$HOME/.claude/settings.json"
