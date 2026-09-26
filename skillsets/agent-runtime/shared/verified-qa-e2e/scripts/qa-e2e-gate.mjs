@@ -20,7 +20,7 @@ function failure(code, path, message) {
 // An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time is
 // read as local time by some parsers and as UTC by others, so it is not a time
 // at all (review r2a-bis). Twin of ZONED_TIME_RE in ship-gate.py.
-export const ZONED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+export const ZONED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 // Date.parse rolls 2026-02-30 over to March and takes year 0; ship-gate.py
 // refuses both, so the calendar date must survive a round trip (review
 // r2a-ter). An offset's minutes past 59 are refused on both sides.

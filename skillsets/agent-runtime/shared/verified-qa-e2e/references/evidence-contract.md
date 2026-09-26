@@ -192,8 +192,9 @@ not from a person during it.
 Times (`walk_window.start`/`.end`, `overlap_check.checked_at`) carry an offset,
 `Z` or `+hh:mm`: a time without one is read in local time by one parser and
 UTC by another, so it is refused (`WALK_WINDOW_MISSING`, `OVERLAP_UNCHECKED`).
-So is a date that does not exist (`2026-02-30`, year `0000`) or an offset
-past `:59`; both gates check the calendar date, where `Date.parse` alone
+So is a date that does not exist (`2026-02-30`, year `0000`, day `00` even as
+`2026-10-00T24:00Z`), a fraction of more than 9 digits, or an offset past
+`:59`; both gates check the calendar date, where `Date.parse` alone
 would roll 2026-02-30 into March.
 
 The origin must be spelled as github.com: `https://github.com/...`,

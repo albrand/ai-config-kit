@@ -760,7 +760,8 @@ def origin_repo(root):
 # An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time would be
 # read in the hook's local zone here and as UTC by some parsers, so it is not a
 # time at all (review r2a-bis). Twin of ZONED_TIME in qa-e2e-gate.mjs.
-ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:(\d{2}))$", re.ASCII)
+# At most 9 fraction digits: V8 misreads 10 or more (review r2a-quater).
+ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:(\d{2}))$", re.ASCII)
 
 
 def _iso(s):
@@ -768,6 +769,9 @@ def _iso(s):
     if not m or (m.group(1) and int(m.group(1)) > 59):  # fromisoformat takes +05:60; Date.parse does not
         return None
     try:
+        # fromisoformat takes 2026-10-00T24:00 (the 24:00 rollover runs first);
+        # the calendar date must exist, as in qa-e2e-gate.mjs (review r2a-quater).
+        datetime.date(int(s.strip()[:4]), int(s.strip()[5:7]), int(s.strip()[8:10]))
         return datetime.datetime.fromisoformat(s.strip().replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
@@ -3457,6 +3461,8 @@ def selftest(v4_gate=None, v4_templates=None):
              "2026-02-28T24:00Z", "2024-02-29T12:00Z", "2026-02-29T12:00Z", "2026-04-31T00:00Z", "2026-13-01T00:00Z",
              "2026-00-10T00:00Z", "2026-09-25T12:10:00.123456789-03:00", "2026-02-28T12:00+23:59",
              "2026-02-28T12:00+24:00", "2026-02-28T23:59:60Z", "2026-02-28T23:60Z", "2026-12-31T23:59:59.999Z",
+             # review r2a-quater: day 00 behind a 24:00 rollover; fractions past 9 digits
+             "2026-10-00T24:00Z", "2026-10-01T12:00:00.123456789Z", "2026-10-01T12:00:00.1234567890Z",
              "2026-09-25T15:10:00", "2026-09-25 15:10:00Z", "9999-12-31T23:59Z", "0001-01-01T00:00Z"]
     mjs_t = None
     if shutil.which("node") and os.path.isfile(E2E_GATE):
