@@ -900,7 +900,7 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
     if not step:
         return None, ""
     start, end = step
-    inline_header = re.match(r"^[ \t]*-[ \t]*env[ \t]*:[ \t]*(.*)$", lines[start])
+    inline_header = re.match(r"^[ \t]*-[ \t]*(?:env|'env'|\"env\")[ \t]*:[ \t]*(.*)$", lines[start])
     if inline_header:
         value = inline_header.group(1).strip()
         if value:
@@ -911,13 +911,14 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
                               len(lines[stop]) - len(lines[stop].lstrip(" \t")) > step_indent + 2):
             stop += 1
         return (start + 1, stop), ""
-    env_indent = step_indent + 2
+    item_prefix = re.match(r"^[ \t]*-[ \t]+", lines[start])
+    property_indent = item_prefix.end() if item_prefix else step_indent + 2
     for index in range(start + 1, end):
-        if len(lines[index]) - len(lines[index].lstrip(" \t")) == env_indent and re.match(
-                r"env[ \t]*:", lines[index].lstrip(" \t")):
+        line_indent = len(lines[index]) - len(lines[index].lstrip(" \t"))
+        if line_indent == property_indent and yaml_key_header(lines[index], "env"):
             stop = index + 1
             while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#") or
-                                  len(lines[stop]) - len(lines[stop].lstrip(" \t")) > env_indent):
+                                  len(lines[stop]) - len(lines[stop].lstrip(" \t")) > property_indent):
                 stop += 1
             return (index, stop), ""
     return None, ""

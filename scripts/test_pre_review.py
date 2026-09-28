@@ -230,7 +230,9 @@ class PreReviewTests(unittest.TestCase):
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
         for fixture in (
                 "workflow-gh-run-empty-step-token-override-aligned-sequence.yml",
-                "workflow-gh-run-empty-step-token-override-quoted-steps.yml"):
+                "workflow-gh-run-empty-step-token-override-quoted-steps.yml",
+                "workflow-gh-run-empty-step-token-override-quoted-env.yml",
+                "workflow-gh-run-empty-step-token-override-spaced-item.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
