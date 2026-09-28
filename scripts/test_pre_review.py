@@ -82,6 +82,17 @@ class PreReviewTests(unittest.TestCase):
         self.assertTrue(any(item["name"] == "eslint-no-floating-promises" for item in packet["commands"]))
         self.assertIn("src/floating-promise.mts", packet["changed_paths"])
 
+    def test_rule_fixture_sources_do_not_self_report_in_pre_review(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        paths = [
+            "scripts/fixtures/pre-review/date-validation.py",
+            "scripts/fixtures/pre-review/floating-promise.ts",
+            "scripts/fixtures/pre-review/url-parser-mismatch.ts",
+        ]
+        hits, check = namespace["builtin_rule_scan"](ROOT, paths)
+        self.assertEqual(hits, [])
+        self.assertEqual(check["status"], "pass")
+
     def test_clean_fixture_has_no_rule_hits(self) -> None:
         self.add_fixture("clean.ts", "src/clean.ts")
         result, packet = self.run_pre_review()
@@ -191,6 +202,15 @@ class PreReviewTests(unittest.TestCase):
             "focused-python-tests", [],
             "pytest not installed; test files are not standalone unittest scripts",
         )])
+
+    def test_standalone_unittest_uses_python_even_when_pytest_shim_exists(self) -> None:
+        test_file = self.repo / "tests" / "test_sample.py"
+        test_file.parent.mkdir()
+        test_file.write_text("import unittest\nif __name__ == '__main__': unittest.main()\n", encoding="utf-8")
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(shutil, "which", return_value="/pyenv/shims/pytest"):
+            commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
+        self.assertEqual(commands, [("focused-python-tests", [sys.executable, "./tests/test_sample.py"], None)])
 
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))

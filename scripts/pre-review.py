@@ -174,6 +174,10 @@ def command_paths(repo: Path, paths: list[str]) -> list[str]:
     return ["./" + path for path in paths]
 
 
+def is_pre_review_fixture(path: str) -> bool:
+    return Path(path).parts[:3] == ("scripts", "fixtures", "pre-review")
+
+
 def git_output(repo: Path, *args: str) -> bytes:
     result = run_capture(["git", *args], repo)
     if result.returncode:
@@ -461,11 +465,15 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
     absolute_js = command_paths(repo, js_tests)
     absolute_ts = command_paths(repo, ts_tests)
     if python_tests:
+        standalone_unittest = all(
+            "unittest.main(" in (repo / path).read_text(encoding="utf-8", errors="replace")
+            for path in python_tests
+        )
         pytest = binary_path(repo, "pytest")
-        if pytest:
-            commands.append(("focused-python-tests", [pytest, *absolute_python], None))
-        elif all("unittest.main(" in (repo / path).read_text(encoding="utf-8", errors="replace") for path in python_tests):
+        if standalone_unittest:
             commands.append(("focused-python-tests", [sys.executable, *absolute_python], None))
+        elif pytest:
+            commands.append(("focused-python-tests", [pytest, *absolute_python], None))
         else:
             commands.append(("focused-python-tests", [], "pytest not installed; test files are not standalone unittest scripts"))
     if js_tests:
@@ -580,6 +588,8 @@ def builtin_rule_scan(repo: Path, paths: list[str]) -> tuple[list[dict[str, Any]
     hits: list[dict[str, Any]] = []
     scanned = 0
     for rel in paths:
+        if is_pre_review_fixture(rel):
+            continue
         path = Path(rel)
         if path.suffix.lower() not in ({".py", ".yml", ".yaml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES):
             continue
@@ -907,7 +917,9 @@ def main(argv: list[str] | None = None) -> int:
     semgrep = binary_path(repo, "semgrep")
     active_rule_files: list[Path] = []
     project_rules = project_rule_files(repo)
-    source_paths = [path for path in paths if Path(path).suffix.lower() in ({".py", ".c", ".h", ".go", ".java", ".yaml", ".yml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)]
+    source_paths = [path for path in paths
+                    if not is_pre_review_fixture(path)
+                    and Path(path).suffix.lower() in ({".py", ".c", ".h", ".go", ".java", ".yaml", ".yml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)]
     if source_paths:
         if semgrep:
             active_rule_files = [starter_rules_path(), *project_rules]
