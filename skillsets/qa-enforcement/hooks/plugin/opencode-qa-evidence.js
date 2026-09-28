@@ -52,7 +52,7 @@ export const server = async ({ client } = {}) => ({
       if (lastUser && textOf(lastUser.parts).includes(NUDGE_MARKER)) return;
       const finalAssistant = [...ordered].reverse().find((item) => item?.info?.role === "assistant");
       if (!finalAssistant) return;
-      const verdict = policy(textOf(finalAssistant.parts), POLICY);
+      const verdict = policy(textOf(finalAssistant.parts), POLICY, { runtime: "opencode", cwd: process.cwd() });
       if (verdict?.decision !== "block") return;
       nudged.add(sessionID);
       await client.session.promptAsync({

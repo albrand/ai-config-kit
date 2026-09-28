@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """One-turn nudge when a final message makes an unsupported completion claim."""
 import json
+import datetime
 import os
 import re
+import subprocess
 import sys
 
 
@@ -30,6 +32,8 @@ NEGATED = re.compile(
 )
 NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGNORECASE)
 REMAINS = re.compile(r"\b(?:what remains|remaining|still needs? to|next steps?|remains? to)\b", re.IGNORECASE)
+EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
+    os.path.expanduser("~"), ".local", "state", "agent-quality", "events.jsonl")
 
 
 def has_evidence_packet(text):
@@ -127,6 +131,73 @@ def transcript_assistant_text(path):
         return ""
 
 
+def event_provider(payload):
+    provider = safe_label(payload.get("provider"))
+    if provider:
+        return provider
+    runtime = safe_label(payload.get("runtime"))
+    if runtime:
+        return runtime
+    transcript = str(payload.get("transcript_path") or payload.get("transcriptPath") or "")
+    if "/.codex/sessions/" in transcript or "/rollout-" in transcript or payload.get("turn_id") is not None or payload.get("model"):
+        return "codex"
+    if "/.claude/projects/" in transcript or payload.get("prompt_id") is not None or str(payload.get("tool_use_id", "")).startswith("toolu_"):
+        return "claude-code"
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude-code"
+    if any(key.startswith("CODEX_") for key in os.environ):
+        return "codex"
+    return safe_label(os.environ.get("QA_GATE_PROVIDER") or os.environ.get("AGENT_PROVIDER"))
+
+
+def safe_label(value):
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value) else ""
+
+
+def event_repo(cwd):
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    try:
+        root = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=1, check=True,
+        ).stdout.strip()
+        return root or cwd
+    except (OSError, subprocess.SubprocessError):
+        return cwd
+
+
+def append_claim_event(payload, claim, decision):
+    """Append only bounded metadata; final message text is never persisted."""
+    try:
+        cwd = payload.get("cwd") or payload.get("working_directory") or ""
+        provider = event_provider(payload)
+        event = {
+            "schema_version": 1,
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "event": "evidence-claim",
+            "cwd": event_repo(cwd),
+            "provider": provider,
+            "runtime": safe_label(payload.get("runtime")),
+            "claim": claim,
+            "decision": decision,
+        }
+        os.makedirs(os.path.dirname(EVENTS), mode=0o700, exist_ok=True)
+        fd = os.open(EVENTS, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            with os.fdopen(fd, "a", encoding="utf-8") as stream:
+                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        # Evidence nudging must not strand a turn if telemetry is unavailable.
+        pass
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -144,6 +215,8 @@ def main():
     if not isinstance(text, str) or not text:
         return 0
     result = inspect(text)
+    if result.get("claim"):
+        append_claim_event(payload, result["claim"], "block" if result["block"] else "allow")
     if result["block"]:
         print(json.dumps({"decision": "block", "reason": result["reason"]}))
     else:

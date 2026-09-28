@@ -41,14 +41,21 @@ requires a persona, target, attempted user outcomes, and a verdict per outcome;
 or the explicit `implemented; workflow NOT RUN` status with remaining work.
 For repositories without `.qa/config.json`, this nudge is the only QA gate:
 there are no tool denials and no generated `.qa/` files. OpenCode lacks a
-blocking Stop callback, so `opencode-qa-evidence.js` observes `session.idle`
-and uses the supported `session.promptAsync` API to inject one continuation;
-the synthetic prompt marker prevents another continuation in that turn. The
-Stop adapter runs the opted-in inventory gate first and preserves its block
-before considering the default evidence nudge.
+blocking Stop callback, so direct OpenCode CLI uses
+`opencode-qa-evidence.js` to observe `session.idle` (or idle `session.status`)
+and inject one continuation through `session.promptAsync`; the marker prevents
+another continuation in that turn. In the BB ACP probe on this host, the
+temporary plugin-load diagnostic produced no ACP initialization or idle-event
+record, and the bare completion reply received no nudge. ACP coverage through
+this plugin is therefore unestablished. A BB fleet `message.dispatch`
+final-claim check with one follow-up message is the proposed ACP path; it
+remains unimplemented pending review. The Stop adapter runs the opted-in
+inventory gate first and preserves its block before considering the default
+evidence nudge.
 
-Events: gate_denied / gate_passed / inventory_closed / rewalk / escape append
-to ~/.local/state/agent-quality/events.jsonl (schema_version 1; no secrets).
+Events: gate_denied / gate_passed / inventory_closed / rewalk / escape and
+metadata-only `evidence-claim` decisions append to
+~/.local/state/agent-quality/events.jsonl (schema_version 1; no message text).
 
 ## Install / rollback on the host
 

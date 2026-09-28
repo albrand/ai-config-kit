@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { policy } from "../lib/qa-evidence-policy.mjs";
 import { server } from "../plugin/opencode-qa-evidence.js";
 
@@ -11,12 +13,28 @@ const evidenceScript = resolve(here, "../../shared/qa-sweep/scripts/evidence-sto
 
 test("OpenCode policy sees a real final claim as a block", () => {
   const fixture = "Done — the fix is implemented.";
-  const adapterVerdict = policy(fixture, evidenceScript);
-  const scriptVerdict = JSON.parse(execFileSync("python3", [evidenceScript], {
-    input: JSON.stringify({ text: fixture }), encoding: "utf8",
-  }));
-  assert.equal(scriptVerdict.decision, "block");
-  assert.equal(adapterVerdict.decision, "block");
+  const directory = mkdtempSync(join(tmpdir(), "qa-evidence-policy-test-"));
+  const eventPath = join(directory, "events.jsonl");
+  const previousEventPath = process.env.QA_GATE_EVENTS_FILE;
+  process.env.QA_GATE_EVENTS_FILE = eventPath;
+  try {
+    const metadata = { runtime: "opencode", cwd: process.cwd() };
+    const adapterVerdict = policy(fixture, evidenceScript, metadata);
+    const scriptVerdict = JSON.parse(execFileSync("python3", [evidenceScript], {
+      input: JSON.stringify({ text: fixture, ...metadata }), encoding: "utf8",
+    }));
+    assert.equal(scriptVerdict.decision, "block");
+    assert.equal(adapterVerdict.decision, "block");
+    const events = readFileSync(eventPath, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(events.length, 2);
+    assert.equal(events[0].runtime, "opencode");
+    assert.equal(events[0].cwd, process.cwd());
+    assert.equal(events[0].decision, "block");
+  } finally {
+    if (previousEventPath === undefined) delete process.env.QA_GATE_EVENTS_FILE;
+    else process.env.QA_GATE_EVENTS_FILE = previousEventPath;
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("OpenCode idle status injects one continuation for a final claim", async () => {

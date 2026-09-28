@@ -32,6 +32,38 @@ class StopHooksTests(unittest.TestCase):
             result = run(["python3", str(EVIDENCE)], data=json.dumps({"transcript_path": str(transcript)}))
             self.assertEqual(json.loads(result.stdout)["decision"], "block")
 
+    def test_claim_events_record_metadata_without_message_text(self):
+        with tempfile.TemporaryDirectory() as temp:
+            events = pathlib.Path(temp) / "events.jsonl"
+            repo = pathlib.Path(temp) / "repo"
+            repo.mkdir()
+            run(["git", "init", "-q", "-b", "main"], cwd=repo)
+            env = dict(os.environ, QA_GATE_EVENTS_FILE=str(events))
+            messages = [
+                {"cwd": str(repo), "runtime": "fixture-runtime", "provider": "fixture-provider",
+                 "text": "Done — PRIVATE_MESSAGE_MUST_NOT_BE_LOGGED."},
+                {"cwd": str(repo), "text": "Implemented; workflow NOT RUN; remaining: execute the workflow."},
+                {"cwd": str(repo), "text": "Still working through the change."},
+                {"cwd": str(repo), "runtime": "PRIVATE RUNTIME LABEL MUST NOT BE LOGGED",
+                 "text": "Done."},
+            ]
+            decisions = []
+            for payload in messages:
+                result = run(["python3", str(EVIDENCE)], env=env, data=json.dumps(payload))
+                decisions.append(json.loads(result.stdout)["decision"])
+            self.assertEqual(decisions, ["block", "allow", "allow", "block"])
+            rows = [json.loads(line) for line in events.read_text().splitlines()]
+            self.assertEqual(len(rows), 3)
+            self.assertEqual([row["decision"] for row in rows], ["block", "allow", "block"])
+            self.assertEqual([row["claim"] for row in rows], ["done", "implemented", "done"])
+            self.assertEqual(rows[0]["runtime"], "fixture-runtime")
+            self.assertEqual(rows[0]["provider"], "fixture-provider")
+            self.assertEqual(rows[0]["cwd"], str(repo.resolve()))
+            self.assertEqual(rows[2]["runtime"], "")
+            self.assertTrue(rows[0]["ts"])
+            self.assertNotIn("PRIVATE_MESSAGE_MUST_NOT_BE_LOGGED", events.read_text())
+            self.assertNotIn("PRIVATE RUNTIME LABEL MUST NOT BE LOGGED", events.read_text())
+
     def test_stop_hook_inventory_precedes_evidence_nudge(self):
         self.assert_stop_fixture("opted-in inventory row wins", opted_in=True, transcript=False,
                                  expected="[qa-sweep]", claim="Done — the workflow is fixed.")
