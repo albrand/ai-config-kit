@@ -1036,7 +1036,9 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
                 if steps:
                     steps_start, steps_end = steps
                     starts = [i for i in range(steps_start + 1, steps_end)
-                              if indent(i) >= steps_indent and lines[i].lstrip(" \t").startswith("-")]
+                              if i not in all_flow_map_continuations
+                              and indent(i) >= steps_indent
+                              and lines[i].lstrip(" \t").startswith("-")]
                     if starts:
                         step_indent = min(indent(i) for i in starts)
                         starts = [i for i in starts if indent(i) == step_indent]
@@ -1245,7 +1247,8 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                         if steps_block:
                             steps_start, steps_end = steps_block
                             step_starts = [i for i in range(steps_start + 1, steps_end)
-                                           if line_indent(i) >= steps_indent
+                                           if i not in all_flow_map_continuations
+                                           and line_indent(i) >= steps_indent
                                            and lines[i].lstrip(" \t").startswith("-")]
                             if step_starts:
                                 step_indent = min(line_indent(i) for i in step_starts)
