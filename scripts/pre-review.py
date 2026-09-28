@@ -983,7 +983,8 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
         if job:
             job_start, job_end = job
             step_indents = [indent(i) for i in range(job_start + 1, job_end)
-                            if lines[i].strip() == "steps:" and indent(i) > job_indent]
+                            if re.fullmatch(r"steps[ \t]*:[ \t]*(?:#.*)?", lines[i].strip())
+                            and indent(i) > job_indent]
             if step_indents:
                 steps_indent = min(step_indents)
                 steps = block(job_start + 1, job_end, "steps", steps_indent)
@@ -1183,7 +1184,8 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 if job_block:
                     job_start, job_end = job_block
                     step_indents = [line_indent(i) for i in range(job_start + 1, job_end)
-                                    if lines[i].strip() == "steps:" and line_indent(i) > job_indent]
+                                    if re.fullmatch(r"steps[ \t]*:[ \t]*(?:#.*)?", lines[i].strip())
+                                    and line_indent(i) > job_indent]
                     if step_indents:
                         steps_indent = min(step_indents)
                         steps_block = find_block(job_start + 1, job_end, "steps", steps_indent)

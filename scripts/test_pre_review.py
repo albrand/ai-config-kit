@@ -225,6 +225,9 @@ class PreReviewTests(unittest.TestCase):
         self.assert_rule_pair("workflow-gh-run-empty-step-token-override.yml",
                               "workflow-gh-run-workflow-inherited-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+        self.assert_rule_pair("workflow-gh-run-empty-step-token-override-commented-steps.yml",
+                              "workflow-gh-run-workflow-inherited-authorized.yml",
+                              ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
         self.assert_rule_pair("workflow-gh-run-empty-job-token-override.yml",
                               "workflow-gh-run-workflow-inherited-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
