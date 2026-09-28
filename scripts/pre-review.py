@@ -723,17 +723,66 @@ def inline_yaml_map_body(value: str) -> str | None:
     return None
 
 
+def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
+    entries: list[str] = []
+    start = 0
+    quote: str | None = None
+    escaped = False
+    depth = 0
+    for index, char in enumerate(body):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            entries.append(body[start:index])
+            start = index + 1
+    entries.append(body[start:])
+
+    result: list[tuple[str, str]] = []
+    for entry in entries:
+        quote = None
+        escaped = False
+        for index, char in enumerate(entry):
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char in {"'", '"'}:
+                quote = char
+            elif char == ":":
+                key = entry[:index].strip()
+                if len(key) >= 2 and key[0] == key[-1] and key[0] in {"'", '"'}:
+                    key = key[1:-1]
+                result.append((key, entry[index + 1:].strip()))
+                break
+    return result
+
+
 def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int] | None, ...],
                              inline_envs: tuple[str, ...] = ()) -> bool:
     """Apply workflow/job/step env precedence and reject statically empty tokens."""
     values: dict[str, str] = {}
-    token_key = r"(?P<name>['\"]?(?:GH_TOKEN|GITHUB_TOKEN)['\"]?)"
-    inline_token = re.compile(token_key + r"[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}]*))")
-
     def apply_inline(value: str) -> None:
-        for match in inline_token.finditer(value):
-            token_value = next((group for group in match.groups()[1:] if group is not None), "").strip()
-            name = match.group("name").strip("'\"")
+        for name, raw_value in inline_yaml_map_entries(value):
+            if name not in {"GH_TOKEN", "GITHUB_TOKEN"}:
+                continue
+            token_value = raw_value
+            if len(token_value) >= 2 and token_value[0] == token_value[-1] and token_value[0] in {"'", '"'}:
+                token_value = token_value[1:-1]
             values[name] = "" if token_value.lower() in {"", "null", "~"} else token_value
 
     for part in env_blocks:
