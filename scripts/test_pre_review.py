@@ -234,6 +234,12 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-step-block-scalar-empty-override.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+        for fixture in (
+                "workflow-gh-run-inline-after-run-empty-override.yml",
+                "workflow-gh-run-inline-after-name-omitted-token.yml",
+                "workflow-gh-run-explicit-indent-empty-token.yml"):
+            self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
+                                  ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
 
     def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
         failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")

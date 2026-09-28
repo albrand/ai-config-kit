@@ -701,15 +701,25 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
                              inline_envs: tuple[str, ...] = ()) -> bool:
     """Apply workflow/job/step env precedence and reject statically empty tokens."""
     values: dict[str, str] = {}
+    inline_token = re.compile(r"\b(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}]*))")
+
+    def apply_inline(value: str) -> None:
+        for match in inline_token.finditer(value):
+            token_value = next((group for group in match.groups()[1:] if group is not None), "").strip()
+            values[match.group(1)] = "" if token_value.lower() in {"", "null", "~"} else token_value
+
     for part in env_blocks:
         if not part:
             continue
         for index, line in enumerate(lines[part[0]:part[1]], part[0]):
+            inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*\{([^}]*)\}", line)
+            if inline_mapping:
+                apply_inline(inline_mapping.group(1))
             match = re.match(r"^[ \t]*(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(.*)$", line)
             if not match:
                 continue
             value = match.group(2).split(" #", 1)[0].strip()
-            if value in {"|", ">", "|-", ">-", "|+", ">+"}:
+            if re.fullmatch(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?", value):
                 scalar_indent = len(line) - len(line.lstrip(" \t"))
                 block_lines = []
                 for child in lines[index + 1:part[1]]:
@@ -720,11 +730,8 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                 value = value[1:-1]
             values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
-    inline_token = re.compile(r"\b(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}\s]+))")
     for inline in inline_envs:
-        for match in inline_token.finditer(inline):
-            value = next((group for group in match.groups()[1:] if group is not None), "")
-            values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
+        apply_inline(inline)
     effective = values.get("GH_TOKEN", values.get("GITHUB_TOKEN", ""))
     return bool(effective)
 
