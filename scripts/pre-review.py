@@ -697,6 +697,81 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
     return hits
 
 
+def workflow_command_authorized(source: str, command_offset: int) -> bool:
+    """Check token and effective permissions inherited by one command's step."""
+    lines = source.splitlines()
+    command_line = source.count("\n", 0, command_offset)
+
+    def indent(index: int) -> int:
+        return len(lines[index]) - len(lines[index].lstrip(" \t"))
+
+    def block(start: int, end: int, key: str, level: int) -> tuple[int, int] | None:
+        for index in range(start, end):
+            if indent(index) == level and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
+                stop = index + 1
+                while stop < end and (not lines[stop].strip() or indent(stop) > level):
+                    stop += 1
+                return index, stop
+        return None
+
+    def text(part: tuple[int, int] | None) -> str:
+        return "\n".join(lines[part[0]:part[1]]) if part else ""
+
+    def has_token(part: tuple[int, int] | None) -> bool:
+        return bool(re.search(r"(?m)^[ \t]+(?:GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*\S+", text(part)))
+
+    jobs = block(0, len(lines), "jobs", 0)
+    job = None
+    job_indent = 0
+    step = None
+    step_indent = 0
+    if jobs:
+        jobs_start, jobs_end = jobs
+        job_key = re.compile(r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$")
+        job_indents = [indent(i) for i in range(jobs_start + 1, jobs_end)
+                       if lines[i].strip() and indent(i) > 0 and job_key.match(lines[i].lstrip(" \t"))]
+        if job_indents:
+            job_indent = min(job_indents)
+            for i in range(jobs_start + 1, jobs_end):
+                if indent(i) != job_indent or not job_key.match(lines[i].lstrip(" \t")):
+                    continue
+                stop = i + 1
+                while stop < jobs_end and (not lines[stop].strip() or indent(stop) > job_indent):
+                    stop += 1
+                if i <= command_line < stop:
+                    job = (i, stop)
+                    break
+        if job:
+            job_start, job_end = job
+            step_indents = [indent(i) for i in range(job_start + 1, job_end)
+                            if lines[i].strip() == "steps:" and indent(i) > job_indent]
+            if step_indents:
+                steps_indent = min(step_indents)
+                steps = block(job_start + 1, job_end, "steps", steps_indent)
+                if steps:
+                    steps_start, steps_end = steps
+                    starts = [i for i in range(steps_start + 1, steps_end)
+                              if indent(i) > steps_indent and lines[i].lstrip(" \t").startswith("-")]
+                    if starts:
+                        step_indent = min(indent(i) for i in starts)
+                        starts = [i for i in starts if indent(i) == step_indent]
+                        for position, i in enumerate(starts):
+                            stop = starts[position + 1] if position + 1 < len(starts) else steps_end
+                            if i <= command_line < stop:
+                                step = (i, stop)
+                                break
+
+    workflow_env = block(0, len(lines), "env", 0)
+    workflow_permissions = block(0, len(lines), "permissions", 0)
+    job_env = block(job[0] + 1, job[1], "env", job_indent + 2) if job else None
+    job_permissions = block(job[0] + 1, job[1], "permissions", job_indent + 2) if job else None
+    step_env = block(step[0] + 1, step[1], "env", step_indent + 2) if step else None
+    token = any(has_token(part) for part in (workflow_env, job_env, step_env))
+    permissions = job_permissions or workflow_permissions
+    actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$", text(permissions)))
+    return token and actions_read
+
+
 def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     js_exts = TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES
@@ -897,6 +972,28 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             hits.append({"rule_id": "pre_review.workflow_gh_run_permissions", "path": rel,
                          "line": source.count("\n", 0, command_offset) + 1,
                          "message": "workflow gh run lookup is missing explicit GH_TOKEN or actions:read permission"})
+
+        # Defect #48: validate every other command independently, not just the first match.
+        command_offsets: list[int] = []
+        run_line = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?(?:run|script)[ \t]*:[ \t]*(?P<value>[^\n]*)")
+        for run_match in run_line.finditer(source):
+            command_offsets.extend(run_match.start("value") + match.start()
+                                   for match in re.finditer(command_pattern, run_match.group("value")))
+        block = re.compile(
+            r"(?m)^[ \t]*(?:-[ \t]*)?(?:run|script)[ \t]*:[ \t]*[|>][+-]?[ \t]*\n"
+            r"(?P<body>(?:[ \t]{2,}[^\n]*(?:\n|$))+)"
+        )
+        for block_match in block.finditer(source):
+            command_offsets.extend(block_match.start("body") + match.start()
+                                   for match in re.finditer(command_pattern, block_match.group("body")))
+        first_line = source.count("\n", 0, command_offset) if command_offset is not None else None
+        for offset in sorted(set(command_offsets)):
+            if source.count("\n", 0, offset) == first_line:
+                continue  # The existing first-command check already handles this line.
+            if not workflow_command_authorized(source, offset):
+                hits.append({"rule_id": "pre_review.workflow_gh_run_permissions", "path": rel,
+                             "line": source.count("\n", 0, offset) + 1,
+                             "message": "workflow gh run lookup is missing explicit GH_TOKEN or actions:read permission"})
 
     # Defect #49: an explicitly cited uppercase constant must exist in tracked code, not only review prose.
     cited = re.compile(r"(?i)\b(?:cited|citation(?:\s+of)?|reference\s+to)\b[^\n]{0,100}\b([A-Z][A-Z0-9]*_[A-Z0-9_]{2,})\b")

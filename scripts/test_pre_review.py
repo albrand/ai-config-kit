@@ -215,6 +215,13 @@ class PreReviewTests(unittest.TestCase):
         self.assert_rule_pair("workflow-gh-run-named-folded-missing-actions.yml",
                               "workflow-gh-run-job-inherited-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+        for fixture in (
+                "workflow-gh-run-mixed-jobs-authorized-first.yml",
+                "workflow-gh-run-mixed-jobs-unauthorized-first.yml",
+                "workflow-gh-run-mixed-steps-authorized-first.yml",
+                "workflow-gh-run-mixed-steps-unauthorized-first.yml"):
+            self.assert_rule_pair(fixture, "workflow-gh-run-named-authorized.yml",
+                                  ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
 
     def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
         failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")
