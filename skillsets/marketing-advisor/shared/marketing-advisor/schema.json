@@ -6,6 +6,7 @@
  "properties": {
   "asset_id": {"type": "string"},
   "judge": {"type": "string"},
+  "judge_cost_usd": {"type": ["number", "null"], "description": "sum of this run's judge calls' own cost reports (claude -p total_cost_usd); null if a call reported none"},
   "criteria": {"type": "array", "items": {"type": "object", "required": ["id", "pass"],
    "properties": {"id": {"enum": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"]}, "pass": {"enum": [true, false, "na"]}, "evidence": {"type": "string"}}}},
   "founder_principles": {"type": "array", "items": {"type": "object", "required": ["id", "pass"],
