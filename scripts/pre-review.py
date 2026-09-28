@@ -697,6 +697,24 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
     return hits
 
 
+def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int] | None, ...]) -> bool:
+    """Apply workflow/job/step env precedence and reject statically empty tokens."""
+    values: dict[str, str] = {}
+    for part in env_blocks:
+        if not part:
+            continue
+        for line in lines[part[0]:part[1]]:
+            match = re.match(r"^[ \t]*(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(.*)$", line)
+            if not match:
+                continue
+            value = match.group(2).split(" #", 1)[0].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
+    effective = values.get("GH_TOKEN", values.get("GITHUB_TOKEN", ""))
+    return bool(effective)
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -716,9 +734,6 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
 
     def text(part: tuple[int, int] | None) -> str:
         return "\n".join(lines[part[0]:part[1]]) if part else ""
-
-    def has_token(part: tuple[int, int] | None) -> bool:
-        return bool(re.search(r"(?m)^[ \t]+(?:GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*\S+", text(part)))
 
     jobs = block(0, len(lines), "jobs", 0)
     job = None
@@ -766,7 +781,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     job_env = block(job[0] + 1, job[1], "env", job_indent + 2) if job else None
     job_permissions = block(job[0] + 1, job[1], "permissions", job_indent + 2) if job else None
     step_env = block(step[0] + 1, step[1], "env", step_indent + 2) if step else None
-    token = any(has_token(part) for part in (workflow_env, job_env, step_env))
+    token = effective_workflow_token(lines, (workflow_env, job_env, step_env))
     permissions = job_permissions or workflow_permissions
     actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$", text(permissions)))
     return token and actions_read
@@ -911,9 +926,6 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             def block_text(block: tuple[int, int] | None) -> str:
                 return "\n".join(lines[block[0]:block[1]]) if block else ""
 
-            def has_token(env_block: tuple[int, int] | None) -> bool:
-                return bool(re.search(r"(?m)^[ \t]+(?:GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*\S+", block_text(env_block)))
-
             jobs_block = find_block(0, len(lines), "jobs", 0)
             job_block = None
             job_indent = 0
@@ -963,7 +975,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             job_env = find_block(job_block[0] + 1, job_block[1], "env", job_indent + 2) if job_block else None
             job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_indent + 2) if job_block else None
             step_env = find_block(step_block[0] + 1, step_block[1], "env", step_indent + 2) if step_block else None
-            token = any(has_token(block) for block in (workflow_env, job_env, step_env))
+            token = effective_workflow_token(lines, (workflow_env, job_env, step_env))
             effective_permissions = job_permissions or workflow_permissions
             actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$",
                                          block_text(effective_permissions)))
