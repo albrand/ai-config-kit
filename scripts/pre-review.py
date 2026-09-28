@@ -945,6 +945,11 @@ def yaml_key_header(line: str, key: str) -> bool:
     return bool(re.match(rf"{quoted}[ \t]*:", line.strip()))
 
 
+def yaml_mapping_key_header(line: str) -> bool:
+    return bool(re.fullmatch(r"(?:[A-Za-z0-9_-]+|'[^']+'|\"[^\"]+\")[ \t]*:[ \t]*(?:#.*)?",
+                             line.strip()))
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -975,13 +980,12 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     step_indent = 0
     if jobs:
         jobs_start, jobs_end = jobs
-        job_key = re.compile(r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$")
         job_indents = [indent(i) for i in range(jobs_start + 1, jobs_end)
-                       if lines[i].strip() and indent(i) > 0 and job_key.match(lines[i].lstrip(" \t"))]
+                       if lines[i].strip() and indent(i) > 0 and yaml_mapping_key_header(lines[i])]
         if job_indents:
             job_indent = min(job_indents)
             for i in range(jobs_start + 1, jobs_end):
-                if indent(i) != job_indent or not job_key.match(lines[i].lstrip(" \t")):
+                if indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
                     continue
                 stop = i + 1
                 while stop < jobs_end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
@@ -1178,12 +1182,11 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 jobs_start, jobs_end = jobs_block
                 job_indents = [line_indent(i) for i in range(jobs_start + 1, jobs_end)
                                if lines[i].strip() and line_indent(i) > 0
-                               and re.match(r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$", lines[i].lstrip(" \t"))]
+                               and yaml_mapping_key_header(lines[i])]
                 if job_indents:
                     job_indent = min(job_indents)
                     for i in range(jobs_start + 1, jobs_end):
-                        if line_indent(i) != job_indent or not re.match(
-                                r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$", lines[i].lstrip(" \t")):
+                        if line_indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
                             continue
                         stop = i + 1
                         while stop < jobs_end and (not lines[stop].strip()
