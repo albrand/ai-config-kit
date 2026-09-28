@@ -923,6 +923,20 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
     return None, ""
 
 
+def include_flow_map_close(lines: list[str], part: tuple[int, int] | None, boundary: int
+                           ) -> tuple[int, int] | None:
+    if not part:
+        return part
+    for index in range(part[0], part[1]):
+        header = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*(.*)$", lines[index])
+        if not header or not header.group(1).lstrip().startswith("{"):
+            continue
+        value, stop = inline_yaml_map_value(header.group(1).strip(), lines, index, boundary)
+        if inline_yaml_map_body(value) is not None:
+            return (part[0], max(part[1], stop))
+    return part
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -989,6 +1003,9 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     job_env = block(job[0] + 1, job[1], "env", job_indent + 2) if job else None
     job_permissions = block(job[0] + 1, job[1], "permissions", job_indent + 2) if job else None
     step_env, inline_step_env = workflow_step_env(lines, step, step_indent)
+    workflow_env = include_flow_map_close(lines, workflow_env, len(lines))
+    job_env = include_flow_map_close(lines, job_env, job[1]) if job else job_env
+    step_env = include_flow_map_close(lines, step_env, step[1]) if step else step_env
     token = effective_workflow_token(lines, (workflow_env, job_env, step_env), (inline_step_env,))
     permissions = job_permissions or workflow_permissions
     actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$", text(permissions)))
@@ -1183,6 +1200,9 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             job_env = find_block(job_block[0] + 1, job_block[1], "env", job_indent + 2) if job_block else None
             job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_indent + 2) if job_block else None
             step_env, inline_step_env = workflow_step_env(lines, step_block, step_indent)
+            workflow_env = include_flow_map_close(lines, workflow_env, len(lines))
+            job_env = include_flow_map_close(lines, job_env, job_block[1]) if job_block else job_env
+            step_env = include_flow_map_close(lines, step_env, step_block[1]) if step_block else step_env
             token = effective_workflow_token(lines, (workflow_env, job_env, step_env), (inline_step_env,))
             effective_permissions = job_permissions or workflow_permissions
             actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$",
