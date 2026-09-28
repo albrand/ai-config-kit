@@ -737,11 +737,36 @@ def inline_yaml_map_body(value: str) -> str | None:
     return None
 
 
+def strip_yaml_comment(value: str) -> str:
+    """Remove a YAML comment outside quoted scalars."""
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(value):
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif quote == "'":
+            if char == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                continue
+            elif char == quote:
+                quote = None
+        elif char in {"'", '"'} and inline_yaml_quote_starts(value[:index]):
+            quote = char
+        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value
+
+
 def inline_yaml_map_value(value: str, lines: list[str], index: int, end: int) -> tuple[str, int]:
     """Join a flow map continued on indented lines; return its value and next line."""
+    value = strip_yaml_comment(value)
     stop = index + 1
     while value.startswith("{") and inline_yaml_map_body(value) is None and stop < end:
-        value += " " + lines[stop].strip()
+        value += " " + strip_yaml_comment(lines[stop].strip())
         stop += 1
     return value, stop
 
