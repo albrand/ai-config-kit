@@ -187,6 +187,10 @@ class PreReviewTests(unittest.TestCase):
         self.assert_rule_pair("external-json-unchecked.py", "external-json-checked.py", "scripts/api_reply.py",
                               "pre_review.external_response_shape")
 
+    def test_external_json_shape_rule_respects_exception_guard(self) -> None:
+        self.assert_rule_pair("external-json-exception-unchecked.py", "external-json-exception-guarded.py",
+                              "scripts/api_reply.py", "pre_review.external_response_shape")
+
     def test_workflow_gh_run_permissions_rule_failing_and_passing_fixtures(self) -> None:
         self.assert_rule_pair("workflow-gh-run-missing-access.yml", "workflow-gh-run-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")

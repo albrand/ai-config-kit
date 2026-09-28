@@ -619,6 +619,48 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
 
 def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
+    # A dereference caught by a broad handler cannot escape with the wrong shape.
+    # Keep this AST check Python-only; the companion checks remain readable regexes.
+    protected_offsets: set[int] = set()
+    protected_lines: set[int] = set()
+    if Path(path).suffix.lower() == ".py":
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+            lines = source.splitlines(keepends=True)
+            line_starts: list[int] = []
+            cursor = 0
+            for line in lines:
+                line_starts.append(cursor)
+                cursor += len(line)
+
+            def node_offset(node: ast.AST) -> int:
+                line = lines[node.lineno - 1]  # type: ignore[attr-defined]
+                char_column = len(line.encode("utf-8")[:node.col_offset].decode("utf-8"))  # type: ignore[attr-defined]
+                return line_starts[node.lineno - 1] + char_column
+
+            def catches_shape_error(handler: ast.ExceptHandler) -> bool:
+                if handler.type is None:
+                    return True
+                names = {node.id for node in ast.walk(handler.type) if isinstance(node, ast.Name)}
+                return bool(names & {"Exception", "BaseException", "AttributeError", "TypeError"})
+
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Call, ast.Attribute)):
+                    continue
+                current: ast.AST = node
+                while current in parents:
+                    parent = parents[current]
+                    if isinstance(parent, ast.Try):
+                        if current in parent.body and any(catches_shape_error(handler) for handler in parent.handlers):
+                            protected_offsets.add(node_offset(node))
+                            for statement in parent.body:
+                                protected_lines.update(range(statement.lineno, statement.end_lineno + 1))
+                        break
+                    current = parent
     # Defect #47: an external JSON object is dereferenced before its shape is checked.
     assignment = re.compile(
         r"(?m)^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*requests\.[A-Za-z_]\w*\([^\n]*\)\.json\(\)"
@@ -633,7 +675,10 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
         window = source[match.end():end]
         escaped = re.escape(name)
         access = re.search(attribute_template.format(escaped), window)
-        if access and not re.search(guard_template.format(escaped), window[:access.start()]):
+        absolute_access = match.end() + access.start() if access else -1
+        access_line = source.count("\n", 0, absolute_access) + 1
+        if (access and absolute_access not in protected_offsets and access_line not in protected_lines
+                and not re.search(guard_template.format(escaped), window[:access.start()])):
             line = source.count("\n", 0, match.start()) + 1
             hits.append({"rule_id": "pre_review.external_response_shape", "path": path,
                          "line": line, "message": f"external JSON response {name} is accessed before a shape guard"})
@@ -644,6 +689,8 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
         direct = re.search(rf"json\.loads\s*\(\s*{name}\s*\)\s*\.\s*(?:get|items|keys|values)\s*\(", source[body_match.end():])
         if direct:
             absolute = body_match.end() + direct.start()
+            if absolute in protected_offsets or source.count("\n", 0, absolute) + 1 in protected_lines:
+                continue
             hits.append({"rule_id": "pre_review.external_response_shape", "path": path,
                          "line": source.count("\n", 0, absolute) + 1,
                          "message": "external evidence JSON is dereferenced before a dict/schema check"})
