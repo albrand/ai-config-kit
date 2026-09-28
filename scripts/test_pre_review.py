@@ -281,7 +281,9 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-multiline-quoted-hash-job.yml",
                 "workflow-gh-run-multiline-quoted-hash-step.yml",
                 "workflow-gh-run-multiline-quoted-hash-job-aligned-close.yml",
-                "workflow-gh-run-multiline-quoted-hash-step-aligned-close.yml"):
+                "workflow-gh-run-multiline-quoted-hash-step-aligned-close.yml",
+                "workflow-gh-run-unindented-comment-job-boundary.yml",
+                "workflow-gh-run-unindented-comment-step-boundary.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
 

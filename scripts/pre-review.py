@@ -907,7 +907,7 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
             value, stop = inline_yaml_map_value(value, lines, start, end)
             return (start, stop), value
         stop = start + 1
-        while stop < end and (not lines[stop].strip() or
+        while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#") or
                               len(lines[stop]) - len(lines[stop].lstrip(" \t")) > step_indent + 2):
             stop += 1
         return (start + 1, stop), ""
@@ -916,7 +916,7 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
         if len(lines[index]) - len(lines[index].lstrip(" \t")) == env_indent and re.match(
                 r"env[ \t]*:", lines[index].lstrip(" \t")):
             stop = index + 1
-            while stop < end and (not lines[stop].strip() or
+            while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#") or
                                   len(lines[stop]) - len(lines[stop].lstrip(" \t")) > env_indent):
                 stop += 1
             return (index, stop), ""
@@ -949,7 +949,8 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
         for index in range(start, end):
             if indent(index) == level and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
                 stop = index + 1
-                while stop < end and (not lines[stop].strip() or indent(stop) > level):
+                while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
+                                      or indent(stop) > level):
                     stop += 1
                 return index, stop
         return None
@@ -973,7 +974,8 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
                 if indent(i) != job_indent or not job_key.match(lines[i].lstrip(" \t")):
                     continue
                 stop = i + 1
-                while stop < jobs_end and (not lines[stop].strip() or indent(stop) > job_indent):
+                while stop < jobs_end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
+                                           or indent(stop) > job_indent):
                     stop += 1
                 if i <= command_line < stop:
                     job = (i, stop)
@@ -1143,7 +1145,9 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 for index in range(start, end):
                     if line_indent(index) == indent and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
                         stop = index + 1
-                        while stop < end and (not lines[stop].strip() or line_indent(stop) > indent):
+                        while stop < end and (not lines[stop].strip()
+                                              or lines[stop].lstrip().startswith("#")
+                                              or line_indent(stop) > indent):
                             stop += 1
                         return index, stop
                 return None
@@ -1169,7 +1173,9 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                                 r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$", lines[i].lstrip(" \t")):
                             continue
                         stop = i + 1
-                        while stop < jobs_end and (not lines[stop].strip() or line_indent(stop) > job_indent):
+                        while stop < jobs_end and (not lines[stop].strip()
+                                                   or lines[stop].lstrip().startswith("#")
+                                                   or line_indent(stop) > job_indent):
                             stop += 1
                         if i <= command_line < stop:
                             job_block = (i, stop)
