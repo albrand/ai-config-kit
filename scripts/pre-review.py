@@ -955,11 +955,12 @@ def yaml_mapping_entry(line: str) -> bool:
 
 
 def mapping_child_indent(lines: list[str], start: int, end: int, parent_indent: int) -> int:
-    candidates = [len(line) - len(line.lstrip(" \t")) for line in lines[start:end]
-                  if line.strip() and not line.lstrip().startswith(("#", "-"))
-                  and len(line) - len(line.lstrip(" \t")) > parent_indent
-                  and yaml_mapping_entry(line)]
-    return min(candidates) if candidates else parent_indent + 2
+    for line in lines[start:end]:
+        line_indent = len(line) - len(line.lstrip(" \t"))
+        if (line.strip() and not line.lstrip().startswith(("#", "-"))
+                and line_indent > parent_indent and yaml_mapping_entry(line)):
+            return line_indent
+    return parent_indent + 2
 
 
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
