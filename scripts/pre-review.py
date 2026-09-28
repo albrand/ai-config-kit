@@ -712,10 +712,10 @@ def inline_yaml_map_body(value: str) -> str | None:
                     escaped = True
                 elif char == quote:
                     quote = None
-            elif char == "'" and index + 1 < len(value) and value[index + 1] == "'":
-                escaped = True
             elif escaped:
                 escaped = False
+            elif char == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                escaped = True
             elif char == quote:
                 quote = None
             continue
@@ -746,10 +746,10 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
                     escaped = True
                 elif char == quote:
                     quote = None
-            elif char == "'" and index + 1 < len(body) and body[index + 1] == "'":
-                escaped = True
             elif escaped:
                 escaped = False
+            elif char == "'" and index + 1 < len(body) and body[index + 1] == "'":
+                escaped = True
             elif char == quote:
                 quote = None
             continue
@@ -778,10 +778,10 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
                         escaped = True
                     elif char == quote:
                         quote = None
-                elif char == "'" and index + 1 < len(entry) and entry[index + 1] == "'":
-                    escaped = True
                 elif escaped:
                     escaped = False
+                elif char == "'" and index + 1 < len(entry) and entry[index + 1] == "'":
+                    escaped = True
                 elif char == quote:
                     quote = None
             elif char in {"'", '"'} and (not entry[:index].rstrip() or entry[:index].rstrip().endswith(":")):
