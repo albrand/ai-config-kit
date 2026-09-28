@@ -750,8 +750,10 @@ def strip_yaml_comment(value: str) -> str:
             elif char == quote:
                 quote = None
         elif quote == "'":
-            if char == "'" and index + 1 < len(value) and value[index + 1] == "'":
-                continue
+            if escaped:
+                escaped = False
+            elif char == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                escaped = True
             elif char == quote:
                 quote = None
         elif char in {"'", '"'} and inline_yaml_quote_starts(value[:index]):
