@@ -980,7 +980,21 @@ def yaml_quoted_scalar_continuations(lines: list[str]) -> set[int]:
     continuation_lines: set[int] = set()
     quote: str | None = None
     escaped = False
+    block_scalar_indent: int | None = None
     for line_index, line in enumerate(lines):
+        line_indent = len(line) - len(line.lstrip(" \t"))
+        if block_scalar_indent is not None:
+            if not line.strip() or line_indent > block_scalar_indent:
+                continuation_lines.add(line_index)
+                continue
+            block_scalar_indent = None
+        if quote is None and not line.strip():
+            continue
+        if quote is None and line.lstrip().startswith("#"):
+            continue
+        if quote is None and re.search(r":[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#.*)?$", line):
+            block_scalar_indent = line_indent
+            continue
         if quote is not None:
             continuation_lines.add(line_index)
         for index, char in enumerate(line):
@@ -998,6 +1012,8 @@ def yaml_quoted_scalar_continuations(lines: list[str]) -> set[int]:
                     escaped = True
                 elif char == quote:
                     quote = None
+            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                break
             elif char in {"'", '"'} and inline_yaml_quote_starts(line[:index]):
                 quote = char
     return continuation_lines

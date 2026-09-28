@@ -259,7 +259,8 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-step-flow-map-dash-continuation-multiline.yml",
                 "workflow-gh-run-step-flow-map-dash-continuation-single-line.yml",
                 "workflow-gh-run-step-name-dash-scalar-multiline.yml",
-                "workflow-gh-run-step-name-dash-scalar-single-line.yml"):
+                "workflow-gh-run-step-name-dash-scalar-single-line.yml",
+                "workflow-gh-run-comment-quoted-apostrophe-before-steps.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
@@ -324,6 +325,18 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-unindented-comment-step-boundary.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+
+    def test_quoted_scalar_tracking_ignores_comments_and_block_scalars(self) -> None:
+        scanner = runpy.run_path(str(SCRIPT))["yaml_quoted_scalar_continuations"]
+        lines = ["# note: 'example", "      - run: |", "          echo \"unclosed",
+                 "          - block content", "      - run: gh run view \"$RUN_ID\""]
+        continuations = scanner(lines)
+        self.assertNotIn(0, continuations)
+        self.assertIn(2, continuations)
+        self.assertIn(3, continuations)
+        self.assertNotIn(4, continuations)
+        multiline_scalar = ["      - name: 'hello", "      - harmless'", "        run: command"]
+        self.assertIn(1, scanner(multiline_scalar))
 
     def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
         failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")
