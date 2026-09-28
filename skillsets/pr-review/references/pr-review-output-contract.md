@@ -14,6 +14,14 @@ separate and may record exact validation evidence for the user.
 Never add AI attribution on PR surfaces: no model names, no "Generated with..."
 footer, no "Claude Code" signature, no AI disclaimer, and no watermark.
 
+Before the first LLM review submission, attach both JSON and Markdown packets
+from `python3 scripts/pre-review.py` to `bb fleet validate --evidence` and any
+advisor round; keep LLM review focused on semantic gaps left by deterministic
+checks. When a review finds a defect, its fix must add the cheapest
+deterministic detector that would catch it (regex, Semgrep, lint, test, fixture,
+or probe); if only semantic review can catch it, say so in one line. Put generic
+rules in the kit starter pack and project-specific rules in `.review-rules/`.
+
 ## PR Body Contract
 
 When preparing, editing, or replacing a PR body, use only this shape:

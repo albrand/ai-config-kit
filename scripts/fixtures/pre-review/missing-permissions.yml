@@ -1,0 +1,9 @@
+name: token-use
+on: workflow_dispatch
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api /repos/example/project/actions/runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

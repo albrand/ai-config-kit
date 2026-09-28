@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import json
+import os
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "pre-review.py"
+FIXTURES = ROOT / "scripts" / "fixtures" / "pre-review"
+
+
+def git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+class PreReviewTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="pre-review-")
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Pre-review fixture")
+        git(self.repo, "config", "user.email", "pre-review@example.invalid")
+        (self.repo / "README.md").write_text("fixture base\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "fixture base")
+        self.output = self.base / "packet"
+
+    def add_fixture(self, fixture: str, target: str | None = None) -> Path:
+        relative = Path(target or fixture)
+        destination = self.repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(FIXTURES / fixture, destination)
+        return destination
+
+    def run_pre_review(self, *args: str, env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        command = [sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "HEAD",
+                   "--output-dir", str(self.output), *args]
+        result = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=env, check=False)
+        packet = json.loads((self.output / "pre-review.json").read_text(encoding="utf-8"))
+        summary = (self.output / "pre-review.md").read_bytes()
+        encoded = (self.output / "pre-review.json").read_bytes()
+        self.assertEqual(packet["packet_bytes"], len(encoded) + len(summary))
+        self.assertLessEqual(packet["packet_bytes"], packet["packet_budget_bytes"])
+        self.assertEqual(packet["packet_budget_bytes"], 64 * 1024)
+        self.assertEqual(packet["schema_version"], 1)
+        self.assertIn("head_sha", packet)
+        self.assertIn("merge_base_sha", packet["base"])
+        self.assertIn("changed_paths", packet)
+        self.assertIn("raw_diff_bytes", packet)
+        self.assertTrue(all(len(item["output_tail"].encode("utf-8")) <= 4096 for item in packet["commands"]))
+        self.assertTrue(any(item["name"] == "built-in-rule-scan" for item in packet["commands"]))
+        return result, packet
+
+    @staticmethod
+    def rule_ids(packet: dict[str, object]) -> set[str]:
+        return {str(hit["rule_id"]) for hit in packet["rule_hits"]}  # type: ignore[index]
+
+    def test_floating_promise_fixture_fails_with_named_rule(self) -> None:
+        self.add_fixture("floating-promise.ts", "src/floating-promise.mts")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pre_review.no_floating_promises", self.rule_ids(packet))
+        self.assertTrue(any(item["name"] == "eslint-no-floating-promises" for item in packet["commands"]))
+        self.assertIn("src/floating-promise.mts", packet["changed_paths"])
+
+    def test_clean_fixture_has_no_rule_hits(self) -> None:
+        self.add_fixture("clean.ts", "src/clean.ts")
+        result, packet = self.run_pre_review()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(packet["rule_hits"], [])
+
+    def test_workflow_without_permissions_fails_with_named_rule(self) -> None:
+        self.add_fixture("missing-permissions.yml", ".github/workflows/token-use.yml")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pre_review.github_token_permissions", self.rule_ids(packet))
+
+    def test_python_date_digit_regex_fails_with_named_rule(self) -> None:
+        self.add_fixture("date-validation.py", "scripts/date_validation.py")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pre_review.python_unicode_digits", self.rule_ids(packet))
+
+    def test_safe_url_vetting_does_not_hit_mismatch_rule(self) -> None:
+        self.add_fixture("safe-database-url.ts", "src/safe-database-url.ts")
+        result, packet = self.run_pre_review()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn("pre_review.url_parser_mismatch", self.rule_ids(packet))
+
+    def test_url_parser_mismatch_fixture_has_named_rule(self) -> None:
+        self.add_fixture("url-parser-mismatch.ts", "src/database-url.ts")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pre_review.url_parser_mismatch", self.rule_ids(packet))
+
+    def test_project_rules_are_passed_to_semgrep_when_installed(self) -> None:
+        self.add_fixture("date-validation.py", "src/date_validation.py")
+        project_rules = self.repo / ".review-rules" / "local.yml"
+        project_rules.parent.mkdir()
+        project_rules.write_text("rules: []\n", encoding="utf-8")
+        fake_bin = self.base / "bin"
+        fake_bin.mkdir()
+        semgrep = fake_bin / "semgrep"
+        semgrep.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({'results': []}))\n", encoding="utf-8")
+        semgrep.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        result, packet = self.run_pre_review(env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(packet["active_rule_files"], [
+            str(ROOT / "skillsets/pr-review/semgrep/pre-review.yml"),
+            str(project_rules.resolve()),
+        ])
+        semgrep_command = next(item for item in packet["commands"] if item["name"] == "semgrep")
+        self.assertIn(str(project_rules.resolve()), semgrep_command["command"])
+
+    def test_unresolvable_base_fails_closed_without_packet(self) -> None:
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "missing/base",
+                                 "--output-dir", str(self.output)], cwd=self.repo, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("base ref cannot be resolved", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_skip_tests_is_explicit_and_does_not_run_a_test_command(self) -> None:
+        self.add_fixture("date-validation.py", "scripts/test_date_validation.py")
+        result, packet = self.run_pre_review("--skip-tests")
+        self.assertNotEqual(result.returncode, 0)
+        test_command = next(item for item in packet["commands"] if item["name"] == "focused-tests")
+        self.assertEqual(test_command["status"], "skip")
+        self.assertIn("skipped by --skip-tests", test_command["output_tail"])
+        self.assertIsNone(test_command["exit_code"])
+
+    def test_skip_repo_lint_records_skip_without_running_package_script(self) -> None:
+        (self.repo / "package.json").write_text(
+            json.dumps({"scripts": {"lint": "node -e \"process.exit(99)\""}}), encoding="utf-8"
+        )
+        result, packet = self.run_pre_review("--skip-repo-lint")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        lint = next(item for item in packet["commands"] if item["name"] == "repo-lint")
+        self.assertEqual(lint["status"], "skip")
+        self.assertIsNone(lint["exit_code"])
+        self.assertIn("skipped by --skip-repo-lint", lint["output_tail"])
+
+    def test_typescript_test_runner_missing_is_skipped_without_package_manager_exec(self) -> None:
+        (self.repo / "package.json").write_text(
+            json.dumps({"scripts": {"test": "vitest run"}}), encoding="utf-8"
+        )
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(shutil, "which", return_value=None):
+            commands = namespace["focused_test_commands"](self.repo, ["src/example.test.ts"])
+        self.assertEqual(commands, [("focused-typescript-tests", [], "vitest not installed")])
+
+    def test_python_pytest_style_file_is_not_reported_as_run_without_pytest(self) -> None:
+        test_file = self.repo / "tests" / "test_sample.py"
+        test_file.parent.mkdir()
+        test_file.write_text("def test_example():\n    assert True\n", encoding="utf-8")
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(shutil, "which", return_value=None):
+            commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"])
+        self.assertEqual(commands, [(
+            "focused-python-tests", [],
+            "pytest not installed; test files are not standalone unittest scripts",
+        )])
+
+    def test_hyphenated_python_source_finds_underscored_test_file(self) -> None:
+        test_file = self.repo / "scripts" / "test_pre_review.py"
+        test_file.parent.mkdir()
+        test_file.write_text("import unittest\nunittest.main()\n", encoding="utf-8")
+        git(self.repo, "add", "scripts/test_pre_review.py")
+        namespace = runpy.run_path(str(SCRIPT))
+        self.assertEqual(
+            namespace["related_test_paths"](self.repo, ["scripts/pre-review.py"]),
+            ["scripts/test_pre_review.py"],
+        )
+
+    def test_default_packet_directory_is_excluded_on_repeated_run(self) -> None:
+        self.add_fixture("clean.ts", "src/clean.ts")
+        command = [sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "HEAD"]
+        first = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+        first_packet = json.loads((self.repo / ".pre-review" / "pre-review.json").read_text(encoding="utf-8"))
+        second = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
+        second_packet = json.loads((self.repo / ".pre-review" / "pre-review.json").read_text(encoding="utf-8"))
+        self.assertEqual(first_packet["changed_paths"], second_packet["changed_paths"])
+        self.assertFalse(any(path.startswith(".pre-review/") for path in second_packet["changed_paths"]))
+        self.assertEqual(first_packet["dirty"], second_packet["dirty"])
+
+    def test_oversized_packet_is_bounded_and_fails_explicitly(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        packet: dict[str, object] = {
+            "schema_version": 1,
+            "repo": str(self.repo),
+            "head_sha": "a" * 40,
+            "base": {"ref": "main", "sha": "b" * 40, "merge_base_sha": "b" * 40},
+            "dirty": True,
+            "changed_paths": [f"src/module-{index:04d}.py" for index in range(2400)],
+            "commands": [],
+            "rule_hits": [{"rule_id": "fixture.rule", "path": f"src/module-{index:04d}.py",
+                           "line": index + 1, "message": "fixture finding"} for index in range(2400)],
+            "active_rule_files": [],
+            "available_project_rule_files": [],
+            "raw_diff_bytes": 0,
+            "packet_bytes": 0,
+            "packet_budget_bytes": 64 * 1024,
+            "budget_excess_bytes": 0,
+        }
+        json_bytes, markdown_bytes = namespace["finalize_packet"](packet)
+        self.assertLessEqual(len(json_bytes) + len(markdown_bytes), 64 * 1024)
+        self.assertTrue(packet["packet_overflow"])
+        self.assertGreater(packet["budget_excess_bytes"], 0)
+        self.assertGreater(packet["changed_paths_omitted"], 0)
+        self.assertGreater(packet["rule_hits_omitted"], 0)
+        self.assertTrue(any(command["name"] == "packet-budget" and command["status"] == "fail"
+                            for command in packet["commands"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
