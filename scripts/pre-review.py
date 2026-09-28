@@ -992,7 +992,8 @@ def yaml_quoted_scalar_continuations(lines: list[str]) -> set[int]:
             continue
         if quote is None and line.lstrip().startswith("#"):
             continue
-        if quote is None and re.search(r":[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#.*)?$", line):
+        scalar_header = strip_yaml_comments(line) if quote is None else line
+        if quote is None and re.search(r":[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*$", scalar_header):
             block_scalar_indent = line_indent
             continue
         if quote is not None:
