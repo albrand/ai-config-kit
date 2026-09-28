@@ -950,6 +950,18 @@ def yaml_mapping_key_header(line: str) -> bool:
                              line.strip()))
 
 
+def yaml_mapping_entry(line: str) -> bool:
+    return bool(re.match(r"(?:[A-Za-z0-9_-]+|'[^']+'|\"[^\"]+\")[ \t]*:", line.strip()))
+
+
+def mapping_child_indent(lines: list[str], start: int, end: int, parent_indent: int) -> int:
+    candidates = [len(line) - len(line.lstrip(" \t")) for line in lines[start:end]
+                  if line.strip() and not line.lstrip().startswith(("#", "-"))
+                  and len(line) - len(line.lstrip(" \t")) > parent_indent
+                  and yaml_mapping_entry(line)]
+    return min(candidates) if candidates else parent_indent + 2
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -996,9 +1008,10 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
                     break
         if job:
             job_start, job_end = job
+            job_fields_indent = mapping_child_indent(lines, job_start + 1, job_end, job_indent)
             step_indents = [indent(i) for i in range(job_start + 1, job_end)
                             if yaml_key_header(lines[i], "steps")
-                            and indent(i) > job_indent]
+                            and indent(i) == job_fields_indent]
             if step_indents:
                 steps_indent = min(step_indents)
                 steps = block(job_start + 1, job_end, "steps", steps_indent)
@@ -1017,8 +1030,9 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
 
     workflow_env = block(0, len(lines), "env", 0)
     workflow_permissions = block(0, len(lines), "permissions", 0)
-    job_env = block(job[0] + 1, job[1], "env", job_indent + 2) if job else None
-    job_permissions = block(job[0] + 1, job[1], "permissions", job_indent + 2) if job else None
+    job_fields_indent = mapping_child_indent(lines, job[0] + 1, job[1], job_indent) if job else job_indent + 2
+    job_env = block(job[0] + 1, job[1], "env", job_fields_indent) if job else None
+    job_permissions = block(job[0] + 1, job[1], "permissions", job_fields_indent) if job else None
     step_env, inline_step_env = workflow_step_env(lines, step, step_indent)
     workflow_env = include_flow_map_close(lines, workflow_env, len(lines))
     job_env = include_flow_map_close(lines, job_env, job[1]) if job else job_env
@@ -1198,9 +1212,10 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                             break
                 if job_block:
                     job_start, job_end = job_block
+                    job_fields_indent = mapping_child_indent(lines, job_start + 1, job_end, job_indent)
                     step_indents = [line_indent(i) for i in range(job_start + 1, job_end)
                                     if yaml_key_header(lines[i], "steps")
-                                    and line_indent(i) > job_indent]
+                                    and line_indent(i) == job_fields_indent]
                     if step_indents:
                         steps_indent = min(step_indents)
                         steps_block = find_block(job_start + 1, job_end, "steps", steps_indent)
@@ -1220,8 +1235,10 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
 
             workflow_env = find_block(0, len(lines), "env", 0)
             workflow_permissions = find_block(0, len(lines), "permissions", 0)
-            job_env = find_block(job_block[0] + 1, job_block[1], "env", job_indent + 2) if job_block else None
-            job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_indent + 2) if job_block else None
+            job_fields_indent = (mapping_child_indent(lines, job_block[0] + 1, job_block[1], job_indent)
+                                 if job_block else job_indent + 2)
+            job_env = find_block(job_block[0] + 1, job_block[1], "env", job_fields_indent) if job_block else None
+            job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_fields_indent) if job_block else None
             step_env, inline_step_env = workflow_step_env(lines, step_block, step_indent)
             workflow_env = include_flow_map_close(lines, workflow_env, len(lines))
             job_env = include_flow_map_close(lines, job_env, job_block[1]) if job_block else job_env
