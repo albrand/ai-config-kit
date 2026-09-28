@@ -143,7 +143,13 @@ class PreReviewTests(unittest.TestCase):
                 ("workflow-gh-run-mixed-explicit-indent-block-header.yml",
                  "workflow-gh-run-mixed-explicit-indent-block-header-authorized.yml"),
                 ("workflow-gh-run-mixed-chomp-indent-block-header.yml",
-                 "workflow-gh-run-mixed-chomp-indent-block-header-authorized.yml")):
+                 "workflow-gh-run-mixed-chomp-indent-block-header-authorized.yml"),
+                ("workflow-gh-run-mixed-commented-block-header-blank-line.yml",
+                 "workflow-gh-run-mixed-commented-block-header-blank-line-authorized.yml"),
+                ("workflow-gh-run-mixed-explicit-indent-block-header-blank-line.yml",
+                 "workflow-gh-run-mixed-explicit-indent-block-header-blank-line-authorized.yml"),
+                ("workflow-gh-run-mixed-chomp-indent-block-header-blank-line.yml",
+                 "workflow-gh-run-mixed-chomp-indent-block-header-blank-line-authorized.yml")):
             self.assert_rule_pair(failing, passing, ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
 

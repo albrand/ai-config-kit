@@ -1336,7 +1336,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
         block = re.compile(
             r"(?m)^[ \t]*(?:-[ \t]*)?(?:run|script)[ \t]*:[ \t]*[|>]"
             r"(?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#.*)?\n"
-            r"(?P<body>(?:[ \t]{2,}[^\n]*(?:\n|$))+)"
+            r"(?P<body>(?:[ \t]{2,}[^\n]*(?:\n|$)|[ \t]*\n)+)"
         )
         for block_match in block.finditer(source):
             command_offsets.extend(block_match.start("body") + match.start()
