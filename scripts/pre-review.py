@@ -937,6 +937,11 @@ def include_flow_map_close(lines: list[str], part: tuple[int, int] | None, bound
     return part
 
 
+def yaml_key_header(line: str, key: str) -> bool:
+    quoted = rf"(?:{re.escape(key)}|'(?:{re.escape(key)})'|\"(?:{re.escape(key)})\")"
+    return bool(re.match(rf"{quoted}[ \t]*:", line.strip()))
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -947,10 +952,12 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
 
     def block(start: int, end: int, key: str, level: int) -> tuple[int, int] | None:
         for index in range(start, end):
-            if indent(index) == level and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
+            if indent(index) == level and yaml_key_header(lines[index], key):
                 stop = index + 1
                 while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
-                                      or indent(stop) > level):
+                                      or indent(stop) > level
+                                      or (key == "steps" and indent(stop) == level
+                                          and lines[stop].lstrip(" \t").startswith("-"))):
                     stop += 1
                 return index, stop
         return None
@@ -983,7 +990,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
         if job:
             job_start, job_end = job
             step_indents = [indent(i) for i in range(job_start + 1, job_end)
-                            if re.fullmatch(r"steps[ \t]*:[ \t]*(?:#.*)?", lines[i].strip())
+                            if yaml_key_header(lines[i], "steps")
                             and indent(i) > job_indent]
             if step_indents:
                 steps_indent = min(step_indents)
@@ -991,7 +998,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
                 if steps:
                     steps_start, steps_end = steps
                     starts = [i for i in range(steps_start + 1, steps_end)
-                              if indent(i) > steps_indent and lines[i].lstrip(" \t").startswith("-")]
+                              if indent(i) >= steps_indent and lines[i].lstrip(" \t").startswith("-")]
                     if starts:
                         step_indent = min(indent(i) for i in starts)
                         starts = [i for i in starts if indent(i) == step_indent]
@@ -1144,11 +1151,13 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
 
             def find_block(start: int, end: int, key: str, indent: int) -> tuple[int, int] | None:
                 for index in range(start, end):
-                    if line_indent(index) == indent and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
+                    if line_indent(index) == indent and yaml_key_header(lines[index], key):
                         stop = index + 1
                         while stop < end and (not lines[stop].strip()
                                               or lines[stop].lstrip().startswith("#")
-                                              or line_indent(stop) > indent):
+                                              or line_indent(stop) > indent
+                                              or (key == "steps" and line_indent(stop) == indent
+                                                  and lines[stop].lstrip(" \t").startswith("-"))):
                             stop += 1
                         return index, stop
                 return None
@@ -1184,7 +1193,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 if job_block:
                     job_start, job_end = job_block
                     step_indents = [line_indent(i) for i in range(job_start + 1, job_end)
-                                    if re.fullmatch(r"steps[ \t]*:[ \t]*(?:#.*)?", lines[i].strip())
+                                    if yaml_key_header(lines[i], "steps")
                                     and line_indent(i) > job_indent]
                     if step_indents:
                         steps_indent = min(step_indents)
@@ -1192,7 +1201,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                         if steps_block:
                             steps_start, steps_end = steps_block
                             step_starts = [i for i in range(steps_start + 1, steps_end)
-                                           if line_indent(i) > steps_indent
+                                           if line_indent(i) >= steps_indent
                                            and lines[i].lstrip(" \t").startswith("-")]
                             if step_starts:
                                 step_indent = min(line_indent(i) for i in step_starts)
