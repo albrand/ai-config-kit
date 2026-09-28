@@ -816,8 +816,83 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 if embedded_command:
                     command_offset = block_match.start("body") + embedded_command.start()
                     break
-        token = re.search(r"(?m)^\s*(?:GH_TOKEN|GITHUB_TOKEN)\s*:\s*\S+", source)
-        actions_read = re.search(r"(?m)^[ \t]*permissions[ \t]*:[ \t]*(?:\n(?:[ \t]+[^\n]*)?)*?^[ \t]+actions[ \t]*:[ \t]*read[ \t]*$", source)
+        token = actions_read = False
+        if command_offset is not None:
+            lines = source.splitlines()
+            command_line = source.count("\n", 0, command_offset)
+
+            def line_indent(index: int) -> int:
+                return len(lines[index]) - len(lines[index].lstrip(" \t"))
+
+            def find_block(start: int, end: int, key: str, indent: int) -> tuple[int, int] | None:
+                for index in range(start, end):
+                    if line_indent(index) == indent and re.match(rf"{re.escape(key)}[ \t]*:", lines[index].lstrip(" \t")):
+                        stop = index + 1
+                        while stop < end and (not lines[stop].strip() or line_indent(stop) > indent):
+                            stop += 1
+                        return index, stop
+                return None
+
+            def block_text(block: tuple[int, int] | None) -> str:
+                return "\n".join(lines[block[0]:block[1]]) if block else ""
+
+            def has_token(env_block: tuple[int, int] | None) -> bool:
+                return bool(re.search(r"(?m)^[ \t]+(?:GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*\S+", block_text(env_block)))
+
+            jobs_block = find_block(0, len(lines), "jobs", 0)
+            job_block = None
+            job_indent = 0
+            steps_block = None
+            step_block = None
+            step_indent = 0
+            if jobs_block:
+                jobs_start, jobs_end = jobs_block
+                job_indents = [line_indent(i) for i in range(jobs_start + 1, jobs_end)
+                               if lines[i].strip() and line_indent(i) > 0
+                               and re.match(r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$", lines[i].lstrip(" \t"))]
+                if job_indents:
+                    job_indent = min(job_indents)
+                    for i in range(jobs_start + 1, jobs_end):
+                        if line_indent(i) != job_indent or not re.match(
+                                r"^[A-Za-z0-9_-]+[ \t]*:[ \t]*(?:#.*)?$", lines[i].lstrip(" \t")):
+                            continue
+                        stop = i + 1
+                        while stop < jobs_end and (not lines[stop].strip() or line_indent(stop) > job_indent):
+                            stop += 1
+                        if i <= command_line < stop:
+                            job_block = (i, stop)
+                            break
+                if job_block:
+                    job_start, job_end = job_block
+                    step_indents = [line_indent(i) for i in range(job_start + 1, job_end)
+                                    if lines[i].strip() == "steps:" and line_indent(i) > job_indent]
+                    if step_indents:
+                        steps_indent = min(step_indents)
+                        steps_block = find_block(job_start + 1, job_end, "steps", steps_indent)
+                        if steps_block:
+                            steps_start, steps_end = steps_block
+                            step_starts = [i for i in range(steps_start + 1, steps_end)
+                                           if line_indent(i) > steps_indent
+                                           and lines[i].lstrip(" \t").startswith("-")]
+                            if step_starts:
+                                step_indent = min(line_indent(i) for i in step_starts)
+                                scoped_steps = [i for i in step_starts if line_indent(i) == step_indent]
+                                for position, i in enumerate(scoped_steps):
+                                    stop = scoped_steps[position + 1] if position + 1 < len(scoped_steps) else steps_end
+                                    if i <= command_line < stop:
+                                        step_block = (i, stop)
+                                        break
+
+            workflow_env = find_block(0, len(lines), "env", 0)
+            workflow_permissions = find_block(0, len(lines), "permissions", 0)
+            job_env = find_block(job_block[0] + 1, job_block[1], "env", job_indent + 2) if job_block else None
+            job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_indent + 2) if job_block else None
+            step_env = find_block(step_block[0] + 1, step_block[1], "env", step_indent + 2) if step_block else None
+            token = any(has_token(block) for block in (workflow_env, job_env, step_env))
+            effective_permissions = job_permissions or workflow_permissions
+            actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$",
+                                         block_text(effective_permissions)))
+
         if command_offset is not None and (not token or not actions_read):
             hits.append({"rule_id": "pre_review.workflow_gh_run_permissions", "path": rel,
                          "line": source.count("\n", 0, command_offset) + 1,
