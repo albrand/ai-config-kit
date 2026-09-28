@@ -236,6 +236,16 @@ class PreReviewTests(unittest.TestCase):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
+        for fixture in (
+                "workflow-gh-run-quoted-inline-env-workflow-single-empty.yml",
+                "workflow-gh-run-quoted-inline-env-workflow-double-empty.yml",
+                "workflow-gh-run-quoted-inline-env-job-single-empty.yml",
+                "workflow-gh-run-quoted-inline-env-job-double-empty.yml",
+                "workflow-gh-run-quoted-inline-env-step-single-empty.yml",
+                "workflow-gh-run-quoted-inline-env-step-double-empty.yml"):
+            self.assert_rule_pair(fixture, "workflow-gh-run-quoted-inline-env-all-scopes-authorized.yml",
+                                  ".github/workflows/inspect-run.yml",
+                                  "pre_review.workflow_gh_run_permissions")
         self.assert_rule_pair("workflow-gh-run-empty-job-token-override.yml",
                               "workflow-gh-run-workflow-inherited-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")

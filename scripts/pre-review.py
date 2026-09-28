@@ -865,7 +865,8 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
         for index, line in enumerate(lines[part[0]:part[1]], part[0]):
             if index in flow_map_continuations:
                 continue
-            inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*(.*)$", line)
+            inline_mapping = re.match(
+                r"^[ \t]*(?:-[ \t]*)?(?:env|'env'|\"env\")[ \t]*:[ \t]*(.*)$", line)
             if inline_mapping:
                 inline_value, next_index = inline_yaml_map_value(
                     inline_mapping.group(1).strip(), lines, index, part[1])
@@ -929,7 +930,8 @@ def include_flow_map_close(lines: list[str], part: tuple[int, int] | None, bound
     if not part:
         return part
     for index in range(part[0], part[1]):
-        header = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*(.*)$", lines[index])
+        header = re.match(
+            r"^[ \t]*(?:-[ \t]*)?(?:env|'env'|\"env\")[ \t]*:[ \t]*(.*)$", lines[index])
         if not header or not header.group(1).lstrip().startswith("{"):
             continue
         value, stop = inline_yaml_map_value(header.group(1).strip(), lines, index, boundary)
