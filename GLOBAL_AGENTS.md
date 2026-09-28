@@ -16,6 +16,9 @@ Counterpart review and orchestration are advisory the same way.
 
 - One ticket, one PR. Never split a fix into several PRs unless the parts ship
   independently; each split multiplies reviews, screenshots and rebases.
+- Defects found by one QA walk ship as one batch: run focused tests for each
+  fix, close that batch's inventory, then do one full workflow re-walk at the
+  batch head. Do not re-walk after each fix PR.
 - Precision comes from reading the failing path and reproducing it before
   editing, and exercising the fix after, not from more review rounds. After a
   fix, re-run only the tests that cover it; the full suite runs once, on the
