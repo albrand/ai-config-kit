@@ -697,6 +697,12 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
     return hits
 
 
+def inline_yaml_quote_starts(prefix: str) -> bool:
+    """A quote opens a scalar only at a key/value boundary, not inside plain text."""
+    segment = re.split(r"[,{\[]", prefix)[-1].strip()
+    return not segment or (segment.endswith(":") and segment.count(":") == 1)
+
+
 def inline_yaml_map_body(value: str) -> str | None:
     if not value.startswith("{"):
         return None
@@ -719,8 +725,8 @@ def inline_yaml_map_body(value: str) -> str | None:
             elif char == quote:
                 quote = None
             continue
-        prefix = value[:index].rstrip()
-        if char in {"'", '"'} and (not prefix or prefix[-1] in "{:, "):
+        prefix = value[:index]
+        if char in {"'", '"'} and inline_yaml_quote_starts(prefix):
             quote = char
         elif char == "{":
             depth += 1
@@ -753,8 +759,8 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
             elif char == quote:
                 quote = None
             continue
-        prefix = body[start:index].rstrip()
-        if char in {"'", '"'} and (not prefix or prefix[-1] in ":,"):
+        prefix = body[start:index]
+        if char in {"'", '"'} and inline_yaml_quote_starts(prefix):
             quote = char
         elif char in "{[":
             depth += 1
@@ -784,7 +790,7 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
                     escaped = True
                 elif char == quote:
                     quote = None
-            elif char in {"'", '"'} and (not entry[:index].rstrip() or entry[:index].rstrip().endswith(":")):
+            elif char in {"'", '"'} and inline_yaml_quote_starts(entry[:index]):
                 quote = char
             elif char == ":":
                 key = entry[:index].strip()
