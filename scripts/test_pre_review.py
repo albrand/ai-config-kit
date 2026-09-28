@@ -136,6 +136,17 @@ class PreReviewTests(unittest.TestCase):
             self.assert_rule_pair(failing, passing, ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
 
+    def test_workflow_gh_run_mixed_scalar_header_variants(self) -> None:
+        for failing, passing in (
+                ("workflow-gh-run-mixed-commented-block-header.yml",
+                 "workflow-gh-run-mixed-commented-block-header-authorized.yml"),
+                ("workflow-gh-run-mixed-explicit-indent-block-header.yml",
+                 "workflow-gh-run-mixed-explicit-indent-block-header-authorized.yml"),
+                ("workflow-gh-run-mixed-chomp-indent-block-header.yml",
+                 "workflow-gh-run-mixed-chomp-indent-block-header-authorized.yml")):
+            self.assert_rule_pair(failing, passing, ".github/workflows/inspect-run.yml",
+                                  "pre_review.workflow_gh_run_permissions")
+
     def test_python_date_digit_regex_fails_with_named_rule(self) -> None:
         self.add_fixture("date-validation.py", "scripts/date_validation.py")
         result, packet = self.run_pre_review()
