@@ -194,6 +194,9 @@ class PreReviewTests(unittest.TestCase):
     def test_workflow_gh_run_permissions_rule_failing_and_passing_fixtures(self) -> None:
         self.assert_rule_pair("workflow-gh-run-missing-access.yml", "workflow-gh-run-authorized.yml",
                               ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+        self.assert_rule_pair("workflow-gh-run-multiline-missing-access.yml",
+                              "workflow-gh-run-multiline-authorized.yml",
+                              ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
 
     def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
         failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")

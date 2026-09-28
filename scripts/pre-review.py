@@ -801,12 +801,26 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
     for rel, source in contents.items():
         if not rel.startswith(".github/workflows/") or Path(rel).suffix.lower() not in {".yml", ".yaml"}:
             continue
-        command = re.search(r"(?m)^\s*(?:-\s*)?(?:run|script)\s*:\s*[^\n]*(?:\bgh\s+run\s+(?:view|list)\b|ship-gate(?:\.py)?\s+check)", source)
+        command_pattern = r"\bgh\s+run\s+(?:view|list)\b|ship-gate(?:\.py)?\s+check"
+        command = re.search(
+            rf"(?m)^[ \t]*(?:-[ \t]*)?(?:run|script)[ \t]*:[ \t]*[^\n]*{command_pattern}", source)
+        command_offset = command.start() if command else None
+        if command_offset is None:
+            # Defect #48: shell commands also appear inside YAML literal/folded run blocks.
+            block = re.compile(
+                r"(?m)^[ \t]*-[ \t]*(?:run|script)[ \t]*:[ \t]*[|>][+-]?[ \t]*\n"
+                r"(?P<body>(?:[ \t]{2,}[^\n]*(?:\n|$))+)"
+            )
+            for block_match in block.finditer(source):
+                embedded_command = re.search(command_pattern, block_match.group("body"))
+                if embedded_command:
+                    command_offset = block_match.start("body") + embedded_command.start()
+                    break
         token = re.search(r"(?m)^\s*(?:GH_TOKEN|GITHUB_TOKEN)\s*:\s*\S+", source)
         actions_read = re.search(r"(?m)^[ \t]*permissions[ \t]*:[ \t]*(?:\n(?:[ \t]+[^\n]*)?)*?^[ \t]+actions[ \t]*:[ \t]*read[ \t]*$", source)
-        if command and (not token or not actions_read):
+        if command_offset is not None and (not token or not actions_read):
             hits.append({"rule_id": "pre_review.workflow_gh_run_permissions", "path": rel,
-                         "line": source.count("\n", 0, command.start()) + 1,
+                         "line": source.count("\n", 0, command_offset) + 1,
                          "message": "workflow gh run lookup is missing explicit GH_TOKEN or actions:read permission"})
 
     # Defect #49: an explicitly cited uppercase constant must exist in tracked code, not only review prose.
