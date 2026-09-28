@@ -34,6 +34,8 @@ class PreReviewTests(unittest.TestCase):
         (self.repo / "README.md").write_text("fixture base\n", encoding="utf-8")
         git(self.repo, "add", "README.md")
         git(self.repo, "commit", "-m", "fixture base")
+        self.initial_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.initial_sha)
         self.output = self.base / "packet"
 
     def add_fixture(self, fixture: str, target: str | None = None) -> Path:
@@ -43,9 +45,13 @@ class PreReviewTests(unittest.TestCase):
         shutil.copyfile(FIXTURES / fixture, destination)
         return destination
 
-    def run_pre_review(self, *args: str, env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
-        command = [sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "HEAD",
-                   "--output-dir", str(self.output), *args]
+    def run_pre_review(self, *args: str, env: dict[str, str] | None = None,
+                       base: str | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        command = [sys.executable, str(SCRIPT), "--repo", str(self.repo),
+                   "--output-dir", str(self.output)]
+        if base:
+            command.extend(["--base", base])
+        command.extend(args)
         result = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env, check=False)
         packet = json.loads((self.output / "pre-review.json").read_text(encoding="utf-8"))
@@ -198,7 +204,9 @@ class PreReviewTests(unittest.TestCase):
 
     def test_environment_failures_are_unverified_errors(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
-        for output in (b"EPERM: operation not permitted", b"DATABASE_URL is not set", b"no server is available",
+        for output in (b"EPERM: operation not permitted", b"DATABASE_URL is not set",
+                       b"refusing to provision fixture identities: DATABASE_URL is not a postgres:// URL",
+                       b"no server is available", b"Operation not permitted (os error 1)",
                        b"Process from config.webServer was not able to start. Exit code: 127; next: command not found"):
             with self.subTest(output=output), patch.object(
                 namespace["subprocess"], "run",
@@ -217,6 +225,70 @@ class PreReviewTests(unittest.TestCase):
             commands = namespace["focused_test_commands"](self.repo, ["e2e/example.spec.ts"])
         output_dir = Path(commands[0][1][commands[0][1].index("--output") + 1])
         self.assertFalse(output_dir.is_relative_to(self.repo))
+
+    def test_bare_webserver_binary_resolves_from_repo_node_modules(self) -> None:
+        self.add_fixture("playwright-bare-bin.config.ts", "playwright.config.ts")
+        local_bin = self.repo / "node_modules" / ".bin"
+        local_bin.mkdir(parents=True)
+        server = local_bin / "fixture-web-server"
+        server.write_text("#!/bin/sh\nprintf 'fixture server started\\n'\n", encoding="utf-8")
+        server.chmod(0o755)
+        namespace = runpy.run_path(str(SCRIPT))
+        command = namespace["record_command"]("web-server", ["fixture-web-server"], self.repo)
+        self.assertEqual(command["status"], "pass", command["output_tail"])
+        self.assertIn("fixture server started", command["output_tail"])
+
+    def test_pr_mode_ignores_worktree_paths_and_reports_out_of_diff_lint(self) -> None:
+        (self.repo / "package.json").write_text(
+            json.dumps({"scripts": {"lint": "configured repository lint"}}), encoding="utf-8"
+        )
+        (self.repo / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        changed = self.repo / "src" / "change.ts"
+        changed.parent.mkdir()
+        changed.write_text("export const changed = true;\n", encoding="utf-8")
+        git(self.repo, "add", "package.json", "pnpm-lock.yaml", "src/change.ts")
+        git(self.repo, "commit", "-m", "PR change")
+        outside_path = "journals/card17-untracked.md"
+        outside = self.repo / outside_path
+        outside.parent.mkdir()
+        outside.write_text("format issue outside the PR\n", encoding="utf-8")
+        fake_bin = self.base / "bin"
+        fake_bin.mkdir()
+        pnpm = fake_bin / "pnpm"
+        pnpm.write_text("#!/bin/sh\nprintf '[warn] journals/card17-untracked.md\\n'\nexit 1\n", encoding="utf-8")
+        pnpm.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+
+        pr_result, pr_packet = self.run_pre_review(env=env, base=self.initial_sha)
+        self.assertEqual(pr_packet["review_scope"], "committed-range")
+        self.assertCountEqual(pr_packet["changed_paths"], ["package.json", "pnpm-lock.yaml", "src/change.ts"])
+        self.assertEqual(pr_packet["excluded_worktree_paths"], [outside_path])
+        pr_lint = next(item for item in pr_packet["commands"] if item["name"] == "repo-lint")
+        self.assertEqual(pr_lint["status"], "outside_diff")
+        self.assertEqual(pr_lint["outside_diff_paths"], [outside_path])
+        self.assertEqual(pr_result.returncode, 0, pr_result.stderr + pr_result.stdout)
+
+        worktree_result, worktree_packet = self.run_pre_review(env=env)
+        self.assertEqual(worktree_packet["review_scope"], "working-tree")
+        self.assertIn(outside_path, worktree_packet["changed_paths"])
+        worktree_lint = next(item for item in worktree_packet["commands"] if item["name"] == "repo-lint")
+        self.assertEqual(worktree_lint["status"], "fail")
+        self.assertNotIn("_raw_output", worktree_lint)
+        self.assertNotEqual(worktree_result.returncode, 0)
+
+    def test_pr_lint_does_not_hide_in_diff_findings_before_output_tail(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        command = {
+            "status": "fail",
+            "output_tail": "journals/card17-untracked.md:1: format issue",
+            "_raw_output": "src/change.ts:1: actual PR defect\n" + ("padding\n" * 1000)
+                            + "journals/card17-untracked.md:1: format issue",
+        }
+        classified = namespace["classify_outside_diff_lint"](command, ["src/change.ts"])
+        self.assertEqual(classified["status"], "fail")
+        self.assertNotIn("outside_diff_paths", classified)
+        self.assertNotIn("_raw_output", classified)
 
     def test_hyphenated_python_source_finds_underscored_test_file(self) -> None:
         test_file = self.repo / "scripts" / "test_pre_review.py"

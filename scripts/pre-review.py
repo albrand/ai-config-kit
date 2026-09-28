@@ -25,8 +25,9 @@ TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
 ENVIRONMENT_ERROR_PATTERNS = (
     re.compile(r"\b(?:EPERM|EACCES|EMFILE)\b", re.I),
-    re.compile(r"(?:missing|required|not set|undefined)[^\n]{0,80}DATABASE_URL|DATABASE_URL[^\n]{0,80}(?:missing|required|not set|undefined)", re.I),
-    re.compile(r"\bno server\b|ECONNREFUSED|connection refused|could not connect|command not found|(?:was|is) not able to start|unable to start", re.I),
+    re.compile(r"(?:missing|required|not set|undefined)[^\n]{0,80}DATABASE_URL|DATABASE_URL[^\n]{0,120}(?:missing|required|not set|undefined|not a|invalid|cannot)", re.I),
+    re.compile(r"refusing to provision[^\n]{0,120}DATABASE_URL", re.I),
+    re.compile(r"\bno server\b|ECONNREFUSED|connection refused|could not connect|command not found|(?:was|is) not able to start|unable to start|operation not permitted", re.I),
 )
 def starter_rules_path() -> Path:
     installed = Path(__file__).resolve().parent.parent / "semgrep" / "pre-review.yml"
@@ -39,9 +40,18 @@ class PreReviewError(Exception):
     """An unrecoverable pre-review setup error."""
 
 
-def run_capture(argv: list[str], cwd: Path, timeout: float = 30) -> subprocess.CompletedProcess[bytes]:
+def repo_command_environment(repo: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    local_bins = repo / "node_modules" / ".bin"
+    environment["PATH"] = str(local_bins) + os.pathsep + environment.get("PATH", "")
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return environment
+
+
+def run_capture(argv: list[str], cwd: Path, timeout: float = 30,
+                env: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=timeout, check=False, shell=False)
+                          timeout=timeout, check=False, shell=False, env=env)
 
 
 def output_tail(raw: bytes) -> str:
@@ -86,7 +96,8 @@ def nul_paths(raw: bytes) -> set[str]:
     return {os.fsdecode(part) for part in raw.split(b"\0") if part}
 
 
-def changed_paths(repo: Path, merge_base: str, output_dir: Path) -> tuple[list[str], bool, int]:
+def changed_paths(repo: Path, merge_base: str, output_dir: Path, *,
+                  include_worktree: bool = True) -> tuple[list[str], bool, int, list[str]]:
     committed = git_output(repo, "diff", "--name-only", "-z", f"{merge_base}..HEAD")
     working = git_output(repo, "diff", "--name-only", "-z", "HEAD", "--")
     untracked = git_output(repo, "ls-files", "--others", "--exclude-standard", "-z")
@@ -109,8 +120,14 @@ def changed_paths(repo: Path, merge_base: str, output_dir: Path) -> tuple[list[s
         if entry[:2] in {b"R ", b" C", b"RC", b" R", b"C ", b" C"}:
             index += 1
         index += 1
-    paths = sorted(path for path in (nul_paths(committed) | nul_paths(working) | nul_paths(untracked)) if included(path))
+    committed_paths = nul_paths(committed)
+    working_paths = nul_paths(working) | nul_paths(untracked)
+    review_paths = committed_paths | working_paths if include_worktree else committed_paths
+    paths = sorted(path for path in review_paths if included(path))
+    excluded_worktree_paths = sorted(path for path in working_paths - committed_paths if included(path))
     committed_diff = git_output(repo, "diff", "--binary", f"{merge_base}..HEAD", "--")
+    if not include_worktree:
+        return paths, dirty, len(committed_diff), excluded_worktree_paths
     working_diff = git_output(repo, "diff", "--binary", "HEAD", "--")
     untracked_diff_bytes = 0
     for rel in nul_paths(untracked):
@@ -122,7 +139,39 @@ def changed_paths(repo: Path, merge_base: str, output_dir: Path) -> tuple[list[s
         if diff.returncode not in {0, 1}:
             raise PreReviewError(f"cannot measure untracked file diff: {rel}")
         untracked_diff_bytes += len(diff.stdout)
-    return paths, dirty, len(committed_diff) + len(working_diff) + untracked_diff_bytes
+    return paths, dirty, len(committed_diff) + len(working_diff) + untracked_diff_bytes, []
+
+
+def lint_reported_paths(output: str) -> list[str]:
+    pattern = re.compile(
+        r"^\s*(?:\[warn\]\s+)?(?P<path>(?:\./)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9_-]+)"
+        r"(?::\d+(?::\d+)?|\(\d+(?:,\d+)?\))?(?:\s|$)"
+    )
+    paths = set()
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            path = match.group("path").removeprefix("./")
+            paths.add(path)
+    return sorted(paths)
+
+
+def classify_outside_diff_lint(command: dict[str, Any], changed: list[str]) -> dict[str, Any]:
+    if command["status"] != "fail":
+        command.pop("_raw_output", None)
+        return command
+    reported = lint_reported_paths(command.get("_raw_output", command["output_tail"]))
+    changed_set = {path.removeprefix("./") for path in changed}
+    if not reported or any(path in changed_set for path in reported):
+        command.pop("_raw_output", None)
+        return command
+    command["status"] = "outside_diff"
+    command["outside_diff_paths"] = reported
+    command["output_tail"] = (
+        command["output_tail"] + f"\nout-of-diff issues: {len(reported)} file(s): " + ", ".join(reported)
+    )
+    command.pop("_raw_output", None)
+    return command
 
 
 def binary_path(repo: Path, name: str) -> str | None:
@@ -141,12 +190,15 @@ def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 1
         return command
     started = time.monotonic()
     try:
-        result = run_capture(argv, repo, timeout=timeout * timeout_scale)
+        result = run_capture(argv, repo, timeout=timeout * timeout_scale,
+                             env=repo_command_environment(repo))
         tail = output_tail(result.stdout).replace(str(repo), "<repo>")
         is_environment_error = result.returncode != 0 and environment_error(tail)
         command.update(status="error" if is_environment_error else ("pass" if result.returncode == 0 else "fail"),
                        exit_code=result.returncode, output_tail=tail,
                        duration_ms=round((time.monotonic() - started) * 1000))
+        if name == "repo-lint":
+            command["_raw_output"] = result.stdout.decode("utf-8", "replace")
         if is_environment_error:
             command.update(verification="unverified", error_kind="environment",
                            output_tail=(tail + "\nenvironment error; result is unverified").strip())
@@ -422,9 +474,13 @@ def semgrep_result(raw: bytes, repo: Path) -> list[dict[str, Any]]:
 def markdown_summary(packet: dict[str, Any]) -> bytes:
     lines = ["# Pre-review summary", "", f"- Repository: `{packet['repo']}`",
              f"- Head: `{packet['head_sha']}`", f"- Base: `{packet['base']['ref']}` ({packet['base']['sha']})",
+             f"- Review scope: `{packet.get('review_scope', 'working-tree')}`",
              f"- Dirty: `{str(packet['dirty']).lower()}`", f"- Changed paths: {packet['changed_path_count']}",
              f"- Raw diff bytes: {packet['raw_diff_bytes']}", f"- Packet bytes: {packet['packet_bytes']} / {packet['packet_budget_bytes']}",
-             "", "## Checks", ""]
+             f"- Worktree-only paths excluded from range: {len(packet.get('excluded_worktree_paths', []))}",
+             "", "## Excluded worktree paths", ""]
+    lines.extend(f"- `{path}`" for path in packet.get("excluded_worktree_paths", []))
+    lines.extend(["", "## Checks", ""])
     for command in packet["commands"]:
         verification = f"; verification {command['verification']}" if command.get("verification") else ""
         duration = f"; {command['duration_ms']} ms" if command.get("duration_ms") is not None else ""
@@ -559,7 +615,9 @@ def main(argv: list[str] | None = None) -> int:
             pass
         else:
             raise PreReviewError("output directory must be outside the reviewed repository")
-        paths, dirty, raw_diff_bytes = changed_paths(repo, merge_sha, output_dir)
+        pr_mode = args.base is not None
+        paths, dirty, raw_diff_bytes, excluded_worktree_paths = changed_paths(
+            repo, merge_sha, output_dir, include_worktree=not pr_mode)
     except PreReviewError as error:
         print(f"pre-review: {error}", file=sys.stderr)
         return 2
@@ -600,8 +658,13 @@ def main(argv: list[str] | None = None) -> int:
 
     lint = package_script(package, manager, ("lint", "lint:check", "check:lint"))
     if lint:
-        commands.append(record_command("repo-lint", lint, repo, timeout_scale=args.timeout_scale,
-                                       skip_reason="skipped by --skip-repo-lint" if args.skip_repo_lint else None))
+        lint_check = record_command("repo-lint", lint, repo, timeout_scale=args.timeout_scale,
+                                    skip_reason="skipped by --skip-repo-lint" if args.skip_repo_lint else None)
+        if pr_mode:
+            lint_check = classify_outside_diff_lint(lint_check, paths)
+        else:
+            lint_check.pop("_raw_output", None)
+        commands.append(lint_check)
 
     if has_ts:
         eslint = binary_path(repo, "eslint")
@@ -639,7 +702,8 @@ def main(argv: list[str] | None = None) -> int:
             semgrep_args.extend(command_paths(repo, source_paths))
             try:
                 semgrep_started = time.monotonic()
-                semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale)
+                semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale,
+                                          env=repo_command_environment(repo))
                 semgrep_tail = output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")
                 is_environment_error = semgrep_run.returncode != 0 and environment_error(semgrep_tail)
                 if not is_environment_error:
@@ -678,8 +742,10 @@ def main(argv: list[str] | None = None) -> int:
         "repo": str(repo),
         "head_sha": head_sha,
         "base": {"ref": base_ref, "sha": base_sha, "merge_base_sha": merge_sha},
+        "review_scope": "committed-range" if pr_mode else "working-tree",
         "dirty": dirty,
         "changed_paths": paths,
+        "excluded_worktree_paths": excluded_worktree_paths,
         "commands": commands,
         "rule_hits": list(unique_hits.values()),
         "active_rule_files": [str(path.resolve()) for path in active_rule_files],
