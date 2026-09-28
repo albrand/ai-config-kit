@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
 import hashlib
 import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,6 +23,7 @@ from typing import Any
 PACKET_BUDGET = 64 * 1024
 OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
+MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
 ENVIRONMENT_ERROR_PATTERNS = (
@@ -41,12 +44,108 @@ class PreReviewError(Exception):
     """An unrecoverable pre-review setup error."""
 
 
-def repo_command_environment(repo: Path) -> dict[str, str]:
+def repo_command_environment(repo: Path, output_dir: Path | None = None) -> dict[str, str]:
     environment = os.environ.copy()
     local_bins = repo / "node_modules" / ".bin"
     environment["PATH"] = str(local_bins) + os.pathsep + environment.get("PATH", "")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    if output_dir:
+        environment["TMPDIR"] = str(output_dir)
     return environment
+
+
+def execution_plan(tracked_clean: bool, head_matches: bool, free_bytes: int) -> tuple[str, str | None]:
+    if tracked_clean and head_matches:
+        return "in-place", None
+    if free_bytes < MIN_FREE_BYTES:
+        gib = free_bytes / (1024**3)
+        return "unverified", f"environment: disk {gib:.1f} GiB free is below 20 GiB; detached worktree hydration skipped"
+    return "detached-worktree", None
+
+
+def porcelain_result(before: bytes, after: bytes) -> dict[str, Any]:
+    unchanged = before == after
+    result = {"name": "source-porcelain-unchanged", "command": ["git", "status", "--porcelain"],
+              "status": "pass" if unchanged else "fail", "exit_code": 0 if unchanged else 1,
+              "output_tail": "source porcelain unchanged" if unchanged else "tier defect: source porcelain changed during pre-review",
+              "duration_ms": 0}
+    if not unchanged:
+        result.update(error_kind="tier-defect", verification="failed")
+    return result
+
+
+def tracked_tree_clean(repo: Path) -> bool:
+    result = run_capture(["git", "status", "--porcelain=v1", "--untracked-files=no"], repo)
+    if result.returncode:
+        raise PreReviewError("cannot inspect tracked working-tree status")
+    return not result.stdout
+
+
+def workspace_error(name: str, reason: str) -> dict[str, Any]:
+    return {"name": name, "command": [], "status": "error", "exit_code": None,
+            "verification": "unverified", "error_kind": "environment", "duration_ms": None,
+            "output_tail": reason}
+
+
+def add_detached_worktree(source_repo: Path, head_sha: str) -> tuple[Path | None, str | None, Any | None]:
+    worktree_root = Path(tempfile.mkdtemp(prefix="pre-review-worktree-"))
+    worktree = worktree_root / "repo"
+    result = run_capture(["git", "worktree", "add", "--detach", str(worktree), head_sha],
+                         source_repo, timeout=120)
+    if result.returncode:
+        shutil.rmtree(worktree_root, ignore_errors=True)
+        return None, "environment: could not create detached review worktree: " + output_tail(result.stdout).strip(), None
+
+    def cleanup() -> subprocess.CompletedProcess[bytes]:
+        result = run_capture(["git", "worktree", "remove", str(worktree)], source_repo, timeout=120)
+        if result.returncode:
+            return result
+        try:
+            worktree_root.rmdir()
+        except OSError:
+            pass
+        atexit.unregister(cleanup)
+        return result
+
+    atexit.register(cleanup)
+    return worktree, None, cleanup
+
+
+def hydrate_checkout(repo: Path, output_dir: Path) -> str | None:
+    package, manager = package_metadata(repo)
+    has_lockfile = any((repo / name).is_file() for name in
+                       ("pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock"))
+    if not package or not has_lockfile:
+        return None
+    if shutil.disk_usage(repo).free < MIN_FREE_BYTES:
+        gib = shutil.disk_usage(repo).free / (1024**3)
+        return f"environment: disk {gib:.1f} GiB free is below 20 GiB; dependency hydration skipped"
+    wt_deps = Path.home() / ".local" / "bin" / "wt-deps"
+    if not wt_deps.is_file() or not os.access(wt_deps, os.X_OK):
+        return "environment: ~/.local/bin/wt-deps is unavailable; dependency hydration skipped"
+    result = run_capture([str(wt_deps), str(repo)], repo, timeout=1200,
+                         env=repo_command_environment(repo, output_dir))
+    if result.returncode:
+        return "environment: wt-deps failed: " + output_tail(result.stdout).strip()
+
+    scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
+    if isinstance(scripts, dict) and isinstance(scripts.get("postinstall"), str):
+        codegen = [manager, "run", "postinstall"] if manager else []
+    else:
+        dependencies = {}
+        for key in ("dependencies", "devDependencies"):
+            items = package.get(key, {})
+            if isinstance(items, dict):
+                dependencies.update(items)
+        prisma = binary_path(repo, "prisma") if "prisma" in dependencies or "@prisma/client" in dependencies else None
+        codegen = [prisma, "generate"] if prisma else []
+    if not codegen:
+        return None
+    result = run_capture(codegen, repo, timeout=600,
+                         env=repo_command_environment(repo, output_dir))
+    if result.returncode:
+        return "environment: declared code generation failed: " + output_tail(result.stdout).strip()
+    return None
 
 
 def run_capture(argv: list[str], cwd: Path, timeout: float = 30,
@@ -208,16 +307,25 @@ def binary_path(repo: Path, name: str) -> str | None:
 
 
 def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 120,
-                   timeout_scale: float = 1.0, skip_reason: str | None = None) -> dict[str, Any]:
+                   timeout_scale: float = 1.0, skip_reason: str | None = None,
+                   output_dir: Path | None = None,
+                   unavailable_reason: str | None = None) -> dict[str, Any]:
     command = {"name": name, "command": argv, "status": "not-run", "exit_code": None,
                "output_tail": "", "duration_ms": None}
     if skip_reason:
         command.update(status="skip", output_tail=skip_reason)
         return command
+    if unavailable_reason:
+        return workspace_error(name, unavailable_reason)
     started = time.monotonic()
     try:
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        environment = repo_command_environment(repo, output_dir)
+        if name == "focused-playwright-tests" and output_dir:
+            environment["PLAYWRIGHT_JSON_OUTPUT_FILE"] = str(output_dir / "playwright-report.json")
         result = run_capture(argv, repo, timeout=timeout * timeout_scale,
-                             env=repo_command_environment(repo))
+                             env=environment)
         tail = output_tail(result.stdout).replace(str(repo), "<repo>")
         is_environment_error = result.returncode != 0 and environment_error(tail)
         command.update(status="error" if is_environment_error else ("pass" if result.returncode == 0 else "fail"),
@@ -263,6 +371,48 @@ def package_script(package: dict[str, Any], manager: str | None, candidates: tup
     return None
 
 
+def readonly_typecheck_command(repo: Path, package: dict[str, Any], manager: str | None) -> list[str] | None:
+    scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
+    if not manager or not isinstance(scripts, dict):
+        return None
+    name = next((candidate for candidate in ("typecheck", "type-check", "check:types")
+                 if isinstance(scripts.get(candidate), str)), None)
+    if not name:
+        return None
+    raw = scripts[name]
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        return [manager, "run", name]
+    prefixes = (("tsc",), ("pnpm", "exec", "tsc"), ("npx", "--no-install", "tsc"))
+    prefix = next((candidate for candidate in prefixes if tuple(tokens[:len(candidate)]) == candidate), None)
+    if not prefix or any(token in {"&&", "||", ";", "|"} for token in tokens):
+        return [manager, "run", name]
+    tsc = binary_path(repo, "tsc")
+    if not tsc:
+        return [manager, "run", name]
+    args = tokens[len(prefix):]
+    filtered: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--incremental", "--tsBuildInfoFile"}:
+            if token == "--tsBuildInfoFile" or (index + 1 < len(args) and args[index + 1] in {"true", "false"}):
+                index += 1
+            if token == "--tsBuildInfoFile" and index + 1 < len(args):
+                index += 1
+            index += 1
+            continue
+        if token.startswith("--incremental=") or token.startswith("--tsBuildInfoFile="):
+            index += 1
+            continue
+        filtered.append(token)
+        index += 1
+    if "--noEmit" not in filtered:
+        filtered.append("--noEmit")
+    return [tsc, *filtered, "--incremental", "false"]
+
+
 def has_mypy_config(repo: Path) -> bool:
     if any((repo / filename).is_file() for filename in ("mypy.ini", ".mypy.ini", "setup.cfg")):
         return True
@@ -297,7 +447,8 @@ def related_test_paths(repo: Path, paths: list[str]) -> list[str]:
     return sorted(tests)
 
 
-def focused_test_commands(repo: Path, tests: list[str], skip_tests: bool = False) -> list[tuple[str, list[str], str | None]]:
+def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
+                          skip_tests: bool = False) -> list[tuple[str, list[str], str | None]]:
     if skip_tests:
         return [("focused-tests", [], "skipped by --skip-tests; test commands were not run")]
     if not tests:
@@ -327,9 +478,9 @@ def focused_test_commands(repo: Path, tests: list[str], skip_tests: bool = False
         if playwright_tests:
             playwright = binary_path(repo, "playwright")
             config = repo / "playwright.config.ts"
-            output_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:12]
-            playwright_output = Path(tempfile.gettempdir()) / f"pre-review-playwright-{output_key}-{os.getpid()}"
+            playwright_output = output_dir / "playwright-test-results"
             command = [playwright, "test", "--config", str(config), "--output", str(playwright_output),
+                       "--reporter=json",
                        *command_paths(repo, playwright_tests)] if playwright and config.is_file() else []
             reason = None if command else ("playwright not installed" if not playwright else "playwright.config.ts not found")
             commands.append(("focused-playwright-tests", command, reason))
@@ -501,6 +652,8 @@ def markdown_summary(packet: dict[str, Any]) -> bytes:
     lines = ["# Pre-review summary", "", f"- Repository: `{packet['repo']}`",
              f"- Head: `{packet['head_sha']}`", f"- Base: `{packet['base']['ref']}` ({packet['base']['sha']})",
              f"- Review scope: `{packet.get('review_scope', 'working-tree')}`",
+             f"- Execution mode: `{packet.get('execution', {}).get('mode', 'unknown')}`",
+             f"- Source porcelain unchanged: `{str(packet.get('source_porcelain_unchanged', False)).lower()}`",
              f"- Dirty: `{str(packet['dirty']).lower()}`", f"- Changed paths: {packet['changed_path_count']}",
              f"- Raw diff bytes: {packet['raw_diff_bytes']}", f"- Packet bytes: {packet['packet_bytes']} / {packet['packet_budget_bytes']}",
              f"- Worktree-only paths excluded from range: {len(packet.get('excluded_worktree_paths', []))}",
@@ -614,6 +767,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base", help=f"base ref to compare (default: {DEFAULT_BASE})")
     parser.add_argument("--base-sha", help="resolved base commit SHA from the source repository")
     parser.add_argument("--merge-base-sha", help="resolved source-repository merge-base commit SHA")
+    parser.add_argument("--head-sha", help="reviewed head SHA; defaults to the source repository HEAD")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository directory (default: current directory)")
     parser.add_argument("--output-dir", type=Path, help="packet directory (default: a temp directory outside the repo)")
     parser.add_argument("--skip-tests", action="store_true",
@@ -629,29 +783,68 @@ def main(argv: list[str] | None = None) -> int:
     args = make_parser().parse_args(argv)
     if args.timeout_scale <= 0:
         make_parser().error("--timeout-scale must be greater than zero")
+    worktree: Path | None = None
+    cleanup_worktree: Any | None = None
+    source_status_before = b""
+    source_repo = Path.cwd()
+    execution_mode = "in-place"
+    setup_error: str | None = None
+    tracked_clean = False
     try:
-        repo = resolve_repo(args.repo.resolve())
-        base_ref, base_sha, merge_sha = resolve_base(repo, args.base, args.base_sha, args.merge_base_sha)
-        repo_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:16]
+        source_repo = resolve_repo(args.repo.resolve())
+        source_status_before = git_output(source_repo, "status", "--porcelain")
+        source_head_sha = os.fsdecode(git_output(source_repo, "rev-parse", "HEAD").strip())
+        reviewed_head_sha = args.head_sha or source_head_sha
+        resolved_head = run_capture(["git", "rev-parse", "--verify", f"{reviewed_head_sha}^{{commit}}"], source_repo)
+        if resolved_head.returncode:
+            raise PreReviewError("reviewed head SHA is not available in the source repository")
+        reviewed_head_sha = os.fsdecode(resolved_head.stdout.strip())
+        base_ref, base_sha, merge_sha = resolve_base(source_repo, args.base, args.base_sha, args.merge_base_sha)
+        free_bytes = shutil.disk_usage(source_repo).free
+        tracked_clean = tracked_tree_clean(source_repo)
+        execution_mode, setup_error = execution_plan(
+            tracked_clean, source_head_sha == reviewed_head_sha, free_bytes)
+        repo = source_repo
+        if execution_mode == "detached-worktree":
+            worktree, setup_error, cleanup_worktree = add_detached_worktree(source_repo, reviewed_head_sha)
+            if worktree:
+                repo = worktree.resolve()
+                if shutil.disk_usage(source_repo).free < MIN_FREE_BYTES:
+                    free_bytes = shutil.disk_usage(source_repo).free
+                    setup_error = f"environment: disk {free_bytes / (1024**3):.1f} GiB free is below 20 GiB; dependency hydration skipped"
+                else:
+                    setup_error = hydrate_checkout(repo, Path(tempfile.gettempdir()))
+
+        repo_key = hashlib.sha256(str(source_repo).encode("utf-8")).hexdigest()[:16]
         output_dir = args.output_dir if args.output_dir and args.output_dir.is_absolute() else (
-            repo / args.output_dir if args.output_dir else Path(tempfile.gettempdir()) / "agent-config-kit-pre-review" / repo_key / str(os.getpid())
+            source_repo / args.output_dir if args.output_dir else Path(tempfile.gettempdir()) / "agent-config-kit-pre-review" / repo_key / str(os.getpid())
         )
         output_dir = output_dir.resolve()
-        try:
-            output_dir.relative_to(repo)
-        except ValueError:
-            pass
-        else:
+        if output_dir.is_relative_to(source_repo) or (repo != source_repo and output_dir.is_relative_to(repo)):
             raise PreReviewError("output directory must be outside the reviewed repository")
         pr_mode = args.base is not None or args.base_sha is not None or args.merge_base_sha is not None
+        if args.head_sha is not None:
+            pr_mode = True
         paths, dirty, raw_diff_bytes, excluded_worktree_paths = changed_paths(
             repo, merge_sha, output_dir, include_worktree=not pr_mode)
+        output_dir.mkdir(parents=True, exist_ok=True)
     except PreReviewError as error:
+        if cleanup_worktree:
+            cleanup_worktree()
         print(f"pre-review: {error}", file=sys.stderr)
         return 2
 
-    head_sha = os.fsdecode(git_output(repo, "rev-parse", "HEAD").strip())
+    head_sha = reviewed_head_sha
     commands: list[dict[str, Any]] = []
+    target_error = setup_error if execution_mode == "unverified" or (execution_mode == "detached-worktree" and not worktree) else None
+    dependency_error = setup_error if worktree else None
+
+    def run_check(name: str, argv: list[str], *, timeout: float = 120,
+                  skip_reason: str | None = None, requires_hydration: bool = False) -> dict[str, Any]:
+        return record_command(name, argv, repo, timeout=timeout, timeout_scale=args.timeout_scale,
+                              skip_reason=skip_reason, output_dir=output_dir,
+                              unavailable_reason=target_error or (dependency_error if requires_hydration else None))
+
     builtin_started = time.monotonic()
     hits, built_in = builtin_rule_scan(repo, paths)
     built_in["duration_ms"] = round((time.monotonic() - builtin_started) * 1000)
@@ -663,31 +856,27 @@ def main(argv: list[str] | None = None) -> int:
     has_md = any(Path(path).suffix.lower() in {".md", ".markdown"} for path in paths)
     workflows = [path for path in paths if path.startswith(".github/workflows/") and Path(path).suffix.lower() in {".yml", ".yaml"}]
 
-    typecheck = package_script(package, manager, ("typecheck", "type-check", "check:types"))
+    typecheck = readonly_typecheck_command(repo, package, manager)
     if typecheck:
-        commands.append(record_command("repo-typecheck", typecheck, repo, timeout_scale=args.timeout_scale))
+        commands.append(run_check("repo-typecheck", typecheck, requires_hydration=True))
     elif (repo / "tsconfig.json").is_file():
         tsc = binary_path(repo, "tsc")
-        cache_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:16]
-        cache_file = Path(tempfile.gettempdir()) / f"pre-review-tsbuildinfo-{cache_key}.tsbuildinfo"
-        commands.append(record_command("typescript-typecheck", [tsc, "--noEmit", "--incremental",
-                                                                 "--tsBuildInfoFile", str(cache_file)] if tsc else [], repo,
-                                       timeout_scale=args.timeout_scale,
-                                       skip_reason=None if tsc else "tsc not installed"))
+        commands.append(run_check("typescript-typecheck", [tsc, "--noEmit", "--incremental", "false"] if tsc else [],
+                                  skip_reason=None if tsc else "tsc not installed", requires_hydration=True))
     elif has_ts:
-        commands.append(record_command("typescript-typecheck", [], repo, skip_reason="no configured TypeScript project"))
+        commands.append(run_check("typescript-typecheck", [], skip_reason="no configured TypeScript project",
+                                  requires_hydration=True))
 
     if has_py and has_mypy_config(repo):
         mypy = binary_path(repo, "mypy")
         python_files = [path for path in paths if path.endswith(".py")]
-        commands.append(record_command("python-mypy", [mypy, *command_paths(repo, python_files)] if mypy else [], repo,
-                                       timeout_scale=args.timeout_scale,
-                                       skip_reason=None if mypy else "mypy not installed"))
+        commands.append(run_check("python-mypy", [mypy, *command_paths(repo, python_files)] if mypy else [],
+                                  skip_reason=None if mypy else "mypy not installed"))
 
     lint = package_script(package, manager, ("lint", "lint:check", "check:lint"))
     if lint:
-        lint_check = record_command("repo-lint", lint, repo, timeout_scale=args.timeout_scale,
-                                    skip_reason="skipped by --skip-repo-lint" if args.skip_repo_lint else None)
+        lint_check = run_check("repo-lint", lint, requires_hydration=True,
+                               skip_reason="skipped by --skip-repo-lint" if args.skip_repo_lint else None)
         if pr_mode:
             lint_check = classify_outside_diff_lint(lint_check, paths)
         else:
@@ -699,23 +888,21 @@ def main(argv: list[str] | None = None) -> int:
         config_present = any((repo / name).exists() for name in ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml"))
         ts_files = [path for path in paths if Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES]
         if eslint and config_present:
-            commands.append(record_command("eslint-no-floating-promises", [eslint, "--rule", "@typescript-eslint/no-floating-promises:error", *command_paths(repo, ts_files)], repo, timeout_scale=args.timeout_scale))
+            commands.append(run_check("eslint-no-floating-promises", [eslint, "--rule", "@typescript-eslint/no-floating-promises:error", *command_paths(repo, ts_files)], requires_hydration=True))
         else:
             reason = "eslint not installed" if not eslint else "no configured eslint project"
-            commands.append(record_command("eslint-no-floating-promises", [], repo, timeout_scale=args.timeout_scale, skip_reason=reason))
+            commands.append(run_check("eslint-no-floating-promises", [], skip_reason=reason, requires_hydration=True))
 
     if workflows:
         actionlint = binary_path(repo, "actionlint")
-        commands.append(record_command("actionlint", [actionlint, *command_paths(repo, workflows)] if actionlint else [], repo,
-                                       timeout_scale=args.timeout_scale,
-                                       skip_reason=None if actionlint else "actionlint not installed"))
+        commands.append(run_check("actionlint", [actionlint, *command_paths(repo, workflows)] if actionlint else [],
+                                  skip_reason=None if actionlint else "actionlint not installed"))
 
     if has_md:
         markdownlint = binary_path(repo, "markdownlint-cli2") or binary_path(repo, "markdownlint")
         markdown_files = [path for path in paths if Path(path).suffix.lower() in {".md", ".markdown"}]
-        commands.append(record_command("markdownlint", [markdownlint, *command_paths(repo, markdown_files)] if markdownlint else [], repo,
-                                       timeout_scale=args.timeout_scale,
-                                       skip_reason=None if markdownlint else "markdownlint not installed"))
+        commands.append(run_check("markdownlint", [markdownlint, *command_paths(repo, markdown_files)] if markdownlint else [],
+                                  skip_reason=None if markdownlint else "markdownlint not installed"))
 
     semgrep = binary_path(repo, "semgrep")
     active_rule_files: list[Path] = []
@@ -728,36 +915,41 @@ def main(argv: list[str] | None = None) -> int:
             for rule_file in active_rule_files:
                 semgrep_args.extend(["--config", str(rule_file)])
             semgrep_args.extend(command_paths(repo, source_paths))
-            try:
-                semgrep_started = time.monotonic()
-                semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale,
-                                          env=repo_command_environment(repo))
-                semgrep_tail = output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")
-                is_environment_error = semgrep_run.returncode != 0 and environment_error(semgrep_tail)
-                if not is_environment_error:
-                    hits.extend(semgrep_result(semgrep_run.stdout, repo))
-                commands.append({"name": "semgrep", "command": semgrep_args,
-                                 "status": "error" if is_environment_error else ("fail" if semgrep_run.returncode else "pass"),
-                                 "exit_code": semgrep_run.returncode,
-                                 "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
-                                 "output_tail": semgrep_tail})
-                if is_environment_error:
-                    commands[-1].update(verification="unverified", error_kind="environment",
-                                        output_tail=(semgrep_tail + "\nenvironment error; result is unverified").strip())
-            except subprocess.TimeoutExpired as error:
-                raw = error.stdout or b""
-                if isinstance(raw, str):
-                    raw = raw.encode("utf-8", errors="replace")
-                commands.append({"name": "semgrep", "command": semgrep_args, "status": "timeout",
-                                 "exit_code": None, "verification": "unverified",
-                                 "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
-                                 "output_tail": (output_tail(raw) + "\ncommand timed out; result is unverified").strip()})
+            if target_error:
+                commands.append(workspace_error("semgrep", target_error))
+            else:
+                try:
+                    semgrep_started = time.monotonic()
+                    semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale,
+                                              env=repo_command_environment(repo, output_dir))
+                    semgrep_tail = output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")
+                    is_environment_error = semgrep_run.returncode != 0 and environment_error(semgrep_tail)
+                    if not is_environment_error:
+                        hits.extend(semgrep_result(semgrep_run.stdout, repo))
+                    commands.append({"name": "semgrep", "command": semgrep_args,
+                                     "status": "error" if is_environment_error else ("fail" if semgrep_run.returncode else "pass"),
+                                     "exit_code": semgrep_run.returncode,
+                                     "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
+                                     "output_tail": semgrep_tail})
+                    if is_environment_error:
+                        commands[-1].update(verification="unverified", error_kind="environment",
+                                            output_tail=(semgrep_tail + "\nenvironment error; result is unverified").strip())
+                except subprocess.TimeoutExpired as error:
+                    raw = error.stdout or b""
+                    if isinstance(raw, str):
+                        raw = raw.encode("utf-8", errors="replace")
+                    commands.append({"name": "semgrep", "command": semgrep_args, "status": "timeout",
+                                     "exit_code": None, "verification": "unverified",
+                                     "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
+                                     "output_tail": (output_tail(raw) + "\ncommand timed out; result is unverified").strip()})
         else:
-            commands.append(record_command("semgrep", [], repo, timeout_scale=args.timeout_scale, skip_reason="semgrep not installed"))
+            commands.append(run_check("semgrep", [], skip_reason="semgrep not installed"))
 
     tests = related_test_paths(repo, paths)
-    commands.extend(record_command(name, argv, repo, timeout_scale=args.timeout_scale, skip_reason=reason)
-                    for name, argv, reason in focused_test_commands(repo, tests, args.skip_tests))
+    commands.extend(run_check(name, argv, skip_reason=reason,
+                              requires_hydration=name in {"focused-playwright-tests", "focused-typescript-tests",
+                                                          "focused-node-tests"})
+                    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests))
 
     # Keep rule IDs stable and avoid reporting the same finding from both the
     # built-in safety net and Semgrep.
@@ -765,10 +957,37 @@ def main(argv: list[str] | None = None) -> int:
     for hit in hits:
         key = (hit.get("rule_id"), hit.get("path"), hit.get("line"), hit.get("message"))
         unique_hits[key] = hit
+    cleanup_failed = False
+    if cleanup_worktree:
+        cleanup_result = cleanup_worktree()
+        if cleanup_result.returncode:
+            cleanup_failed = True
+            commands.append(workspace_error(
+                "temporary-worktree-cleanup",
+                "environment: git worktree remove failed: " + output_tail(cleanup_result.stdout).strip()))
+    try:
+        source_status_after = git_output(source_repo, "status", "--porcelain")
+        source_head_after = os.fsdecode(git_output(source_repo, "rev-parse", "HEAD").strip())
+        status_check = porcelain_result(source_status_before, source_status_after)
+        commands.append(status_check)
+        if source_head_after != source_head_sha:
+            commands.append({"name": "source-head-unchanged", "command": ["git", "rev-parse", "HEAD"],
+                             "status": "fail", "exit_code": 1,
+                             "output_tail": "source HEAD changed during pre-review",
+                             "duration_ms": 0})
+    except PreReviewError as error:
+        source_status_after = b""
+        commands.append(workspace_error("source-porcelain-unchanged", f"environment: {error}"))
     packet = {
         "schema_version": 1,
         "repo": str(repo),
+        "source_repo": str(source_repo),
         "head_sha": head_sha,
+        "execution": {"mode": execution_mode, "reviewed_head_sha": reviewed_head_sha,
+                      "source_head_sha": source_head_sha, "tracked_tree_clean": tracked_clean,
+                      "preparation_error": setup_error},
+        "source_porcelain_unchanged": source_status_before == source_status_after,
+        "temporary_worktree_cleanup_failed": cleanup_failed,
         "base": {"ref": base_ref, "sha": base_sha, "merge_base_sha": merge_sha},
         "review_scope": "committed-range" if pr_mode else "working-tree",
         "dirty": dirty,

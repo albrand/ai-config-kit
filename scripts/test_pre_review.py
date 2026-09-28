@@ -177,7 +177,7 @@ class PreReviewTests(unittest.TestCase):
         )
         namespace = runpy.run_path(str(SCRIPT))
         with patch.object(shutil, "which", return_value=None):
-            commands = namespace["focused_test_commands"](self.repo, ["src/example.test.ts"])
+            commands = namespace["focused_test_commands"](self.repo, ["src/example.test.ts"], self.output)
         self.assertEqual(commands, [("focused-typescript-tests", [], "vitest not installed")])
 
     def test_python_pytest_style_file_is_not_reported_as_run_without_pytest(self) -> None:
@@ -186,7 +186,7 @@ class PreReviewTests(unittest.TestCase):
         test_file.write_text("def test_example():\n    assert True\n", encoding="utf-8")
         namespace = runpy.run_path(str(SCRIPT))
         with patch.object(shutil, "which", return_value=None):
-            commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"])
+            commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
         self.assertEqual(commands, [(
             "focused-python-tests", [],
             "pytest not installed; test files are not standalone unittest scripts",
@@ -295,9 +295,101 @@ class PreReviewTests(unittest.TestCase):
         (self.repo / "playwright.config.ts").write_text("export default {};\n", encoding="utf-8")
         namespace = runpy.run_path(str(SCRIPT))
         with patch.object(namespace["shutil"], "which", return_value="/bin/playwright"):
-            commands = namespace["focused_test_commands"](self.repo, ["e2e/example.spec.ts"])
+            commands = namespace["focused_test_commands"](self.repo, ["e2e/example.spec.ts"], self.output)
         output_dir = Path(commands[0][1][commands[0][1].index("--output") + 1])
         self.assertFalse(output_dir.is_relative_to(self.repo))
+        self.assertIn("--reporter=json", commands[0][1])
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(namespace["subprocess"], "run",
+                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+            namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
+                                        output_dir=self.output)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["PLAYWRIGHT_JSON_OUTPUT_FILE"], str(self.output / "playwright-report.json"))
+        self.assertEqual(environment["TMPDIR"], str(self.output))
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(namespace["subprocess"], "run",
+                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+            namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
+                                        output_dir=self.output)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["PLAYWRIGHT_JSON_OUTPUT_FILE"], str(self.output / "playwright-report.json"))
+        self.assertEqual(environment["TMPDIR"], str(self.output))
+
+    def test_clean_matching_checkout_uses_in_place_even_below_disk_floor(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        gib = 1024**3
+        self.assertEqual(namespace["execution_plan"](True, True, 17 * gib), ("in-place", None))
+
+    def test_clean_pr_head_runs_in_place_and_preserves_porcelain(self) -> None:
+        changed = self.repo / "src" / "change.ts"
+        changed.parent.mkdir()
+        changed.write_text("export const change = true;\n", encoding="utf-8")
+        git(self.repo, "add", "src/change.ts")
+        git(self.repo, "commit", "-m", "PR change")
+        before = subprocess.check_output(["git", "status", "--porcelain"], cwd=self.repo)
+        result, packet = self.run_pre_review("--base", "origin/main")
+        after = subprocess.check_output(["git", "status", "--porcelain"], cwd=self.repo)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(packet["execution"]["mode"], "in-place")
+        self.assertTrue(packet["source_porcelain_unchanged"])
+        self.assertEqual(before, after)
+        self.assertEqual(next(item for item in packet["commands"]
+                              if item["name"] == "source-porcelain-unchanged")["status"], "pass")
+
+    def test_dirty_or_mismatched_checkout_uses_detached_worktree_when_capacity_allows(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        gib = 1024**3
+        self.assertEqual(namespace["execution_plan"](False, True, 21 * gib), ("detached-worktree", None))
+        self.assertEqual(namespace["execution_plan"](True, False, 21 * gib), ("detached-worktree", None))
+
+    def test_dirty_checkout_skips_worktree_hydration_below_disk_floor(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        gib = 1024**3
+        mode, reason = namespace["execution_plan"](False, True, 17 * gib)
+        self.assertEqual(mode, "unverified")
+        self.assertIn("disk 17.0 GiB free is below 20 GiB", reason)
+
+    def test_source_porcelain_unchanged_assertion_reports_both_outcomes(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        before = b"?? journals/draft.md\n"
+        same = namespace["porcelain_result"](before, before)
+        changed = namespace["porcelain_result"](before, before + b" M src/index.ts\n")
+        self.assertEqual(same["status"], "pass")
+        self.assertEqual(changed["status"], "fail")
+        self.assertEqual(changed["error_kind"], "tier-defect")
+        self.assertEqual(same["command"], ["git", "status", "--porcelain"])
+
+    def test_runner_records_tier_defect_when_a_check_changes_source_porcelain(self) -> None:
+        (self.repo / "package.json").write_text(
+            json.dumps({"scripts": {"lint": "configured repository lint"}}), encoding="utf-8"
+        )
+        (self.repo / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        changed = self.repo / "src" / "change.ts"
+        changed.parent.mkdir()
+        changed.write_text("export const changed = true;\n", encoding="utf-8")
+        git(self.repo, "add", "package.json", "pnpm-lock.yaml", "src/change.ts")
+        git(self.repo, "commit", "-m", "PR change")
+        fake_bin = self.base / "bin"
+        fake_bin.mkdir()
+        pnpm = fake_bin / "pnpm"
+        pnpm.write_text("#!/bin/sh\nprintf 'tier side effect\\n' > tier-created.txt\n", encoding="utf-8")
+        pnpm.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        result, packet = self.run_pre_review("--base", "origin/main", env=env)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(packet["source_porcelain_unchanged"])
+        status = next(item for item in packet["commands"] if item["name"] == "source-porcelain-unchanged")
+        self.assertEqual(status["status"], "fail")
+        self.assertEqual(status["error_kind"], "tier-defect")
+
+    def test_direct_tsc_typecheck_disables_incremental_output(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        package = {"scripts": {"typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .cache/types.tsbuildinfo"}}
+        with patch.object(shutil, "which", return_value="/repo/node_modules/.bin/tsc"):
+            command = namespace["readonly_typecheck_command"](self.repo, package, "pnpm")
+        self.assertEqual(command, ["/repo/node_modules/.bin/tsc", "--noEmit", "--incremental", "false"])
 
     def test_bare_webserver_binary_resolves_from_repo_node_modules(self) -> None:
         self.add_fixture("playwright-bare-bin.config.ts", "playwright.config.ts")
