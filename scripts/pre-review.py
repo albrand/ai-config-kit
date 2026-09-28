@@ -963,6 +963,19 @@ def mapping_child_indent(lines: list[str], start: int, end: int, parent_indent: 
     return parent_indent + 2
 
 
+def yaml_env_flow_map_continuations(lines: list[str], start: int, end: int) -> set[int]:
+    continuation_lines: set[int] = set()
+    for index in range(start, end):
+        header = re.match(r"^[ \t]*(?:-[ \t]*)?(?:env|'env'|\"env\")[ \t]*:[ \t]*(.*)$",
+                          lines[index])
+        if not header or not header.group(1).lstrip().startswith("{"):
+            continue
+        value, stop = inline_yaml_map_value(header.group(1).strip(), lines, index, end)
+        if stop > index + 1 and inline_yaml_map_body(value) is not None:
+            continuation_lines.update(range(index + 1, stop))
+    return continuation_lines
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
@@ -993,16 +1006,18 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     step_indent = 0
     if jobs:
         jobs_start, jobs_end = jobs
+        flow_map_continuations = yaml_env_flow_map_continuations(lines, jobs_start + 1, jobs_end)
         job_indents = [indent(i) for i in range(jobs_start + 1, jobs_end)
-                       if lines[i].strip() and indent(i) > 0 and yaml_mapping_key_header(lines[i])]
+                       if lines[i].strip() and i not in flow_map_continuations
+                       and indent(i) > 0 and yaml_mapping_key_header(lines[i])]
         if job_indents:
             job_indent = min(job_indents)
             for i in range(jobs_start + 1, jobs_end):
-                if indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
+                if i in flow_map_continuations or indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
                     continue
                 stop = i + 1
                 while stop < jobs_end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
-                                           or indent(stop) > job_indent):
+                                           or indent(stop) > job_indent or stop in flow_map_continuations):
                     stop += 1
                 if i <= command_line < stop:
                     job = (i, stop)
@@ -1195,18 +1210,20 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             step_indent = 0
             if jobs_block:
                 jobs_start, jobs_end = jobs_block
+                flow_map_continuations = yaml_env_flow_map_continuations(lines, jobs_start + 1, jobs_end)
                 job_indents = [line_indent(i) for i in range(jobs_start + 1, jobs_end)
-                               if lines[i].strip() and line_indent(i) > 0
+                               if lines[i].strip() and i not in flow_map_continuations and line_indent(i) > 0
                                and yaml_mapping_key_header(lines[i])]
                 if job_indents:
                     job_indent = min(job_indents)
                     for i in range(jobs_start + 1, jobs_end):
-                        if line_indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
+                        if i in flow_map_continuations or line_indent(i) != job_indent or not yaml_mapping_key_header(lines[i]):
                             continue
                         stop = i + 1
                         while stop < jobs_end and (not lines[stop].strip()
                                                    or lines[stop].lstrip().startswith("#")
-                                                   or line_indent(stop) > job_indent):
+                                                   or line_indent(stop) > job_indent
+                                                   or stop in flow_map_continuations):
                             stop += 1
                         if i <= command_line < stop:
                             job_block = (i, stop)
