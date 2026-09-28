@@ -34,7 +34,7 @@ Counterpart review and orchestration are advisory the same way.
 - When a process rule and shipping conflict, ship and say which rule you set
   aside. The hard prohibitions (email, the bb app, credentials, public exposure,
   personal browser, dead feature flags, worktree removal) never yield.
-- Before the first LLM review, attach the deterministic pre-review JSON and Markdown evidence packet; every found defect must add its cheapest reusable deterministic detector or state in one line why only semantic review can catch it.
+- Before LLM review, run `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py`, attach its JSON/Markdown packet, and add a reusable check for each defect.
 <!-- delivery-first:end -->
 
 ## Core Operating Principles

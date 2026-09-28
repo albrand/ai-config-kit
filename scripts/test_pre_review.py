@@ -60,6 +60,7 @@ class PreReviewTests(unittest.TestCase):
         self.assertIn("changed_paths", packet)
         self.assertIn("raw_diff_bytes", packet)
         self.assertTrue(all(len(item["output_tail"].encode("utf-8")) <= 4096 for item in packet["commands"]))
+        self.assertTrue(all("duration_ms" in item for item in packet["commands"]))
         self.assertTrue(any(item["name"] == "built-in-rule-scan" for item in packet["commands"]))
         return result, packet
 
@@ -120,7 +121,7 @@ class PreReviewTests(unittest.TestCase):
         result, packet = self.run_pre_review(env=env)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(packet["active_rule_files"], [
-            str(ROOT / "skillsets/pr-review/semgrep/pre-review.yml"),
+            str((ROOT / "skillsets/pr-review/semgrep/pre-review.yml").resolve()),
             str(project_rules.resolve()),
         ])
         semgrep_command = next(item for item in packet["commands"] if item["name"] == "semgrep")
@@ -175,6 +176,16 @@ class PreReviewTests(unittest.TestCase):
             "pytest not installed; test files are not standalone unittest scripts",
         )])
 
+    def test_command_timeout_is_unverified_not_failure(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(namespace["subprocess"], "run", side_effect=subprocess.TimeoutExpired(["slow-check"], 1, output=b"still running")):
+            command = namespace["record_command"]("slow-check", ["slow-check"], self.repo)
+        self.assertEqual(command["status"], "timeout")
+        self.assertEqual(command["verification"], "unverified")
+        self.assertIsNone(command["exit_code"])
+        self.assertIn("result is unverified", command["output_tail"])
+        self.assertNotEqual(command["status"], "fail")
+
     def test_hyphenated_python_source_finds_underscored_test_file(self) -> None:
         test_file = self.repo / "scripts" / "test_pre_review.py"
         test_file.parent.mkdir()
@@ -184,6 +195,17 @@ class PreReviewTests(unittest.TestCase):
         self.assertEqual(
             namespace["related_test_paths"](self.repo, ["scripts/pre-review.py"]),
             ["scripts/test_pre_review.py"],
+        )
+
+    def test_typescript_source_finds_sibling_spec_test(self) -> None:
+        spec = self.repo / "src" / "module.spec.ts"
+        spec.parent.mkdir()
+        spec.write_text("import { test } from 'node:test';\n", encoding="utf-8")
+        git(self.repo, "add", "src/module.spec.ts")
+        namespace = runpy.run_path(str(SCRIPT))
+        self.assertEqual(
+            namespace["related_test_paths"](self.repo, ["src/module.ts"]),
+            ["src/module.spec.ts"],
         )
 
     def test_default_packet_directory_is_excluded_on_repeated_run(self) -> None:

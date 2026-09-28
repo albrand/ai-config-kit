@@ -48,7 +48,7 @@ tools; and every inventory row records whether it predates this change.
 ## P0 Scope: `.qa/workflow.json`
 
 Before the first LLM review submission, attach both JSON and Markdown packets
-from `python3 scripts/pre-review.py` to `bb fleet validate --evidence` and any
+from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
 advisor round; keep LLM review focused on semantic gaps left by deterministic
 checks. Each defect fix must add the cheapest deterministic detector that
 would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one

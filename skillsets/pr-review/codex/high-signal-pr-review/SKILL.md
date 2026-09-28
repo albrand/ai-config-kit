@@ -11,7 +11,7 @@ Do not split analysis from posting unless the user explicitly asks for draft/no-
 the target is not a postable PR, or posting is blocked.
 
 Before the first LLM review submission, attach both JSON and Markdown packets
-from `python3 scripts/pre-review.py` to `bb fleet validate --evidence` and any
+from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
 advisor round; focus the LLM review on semantic gaps left by deterministic
 checks. Each defect fix must add the cheapest deterministic detector that
 would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one

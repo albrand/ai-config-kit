@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +23,18 @@ OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
-STARTER_RULES = Path(__file__).resolve().parents[1] / "skillsets" / "pr-review" / "semgrep" / "pre-review.yml"
+def starter_rules_path() -> Path:
+    installed = Path(__file__).resolve().parent.parent / "semgrep" / "pre-review.yml"
+    if installed.is_file():
+        return installed
+    return Path(__file__).resolve().parents[1] / "skillsets" / "pr-review" / "semgrep" / "pre-review.yml"
 
 
 class PreReviewError(Exception):
     """An unrecoverable pre-review setup error."""
 
 
-def run_capture(argv: list[str], cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess[bytes]:
+def run_capture(argv: list[str], cwd: Path, timeout: float = 30) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           timeout=timeout, check=False, shell=False)
 
@@ -117,25 +123,29 @@ def binary_path(repo: Path, name: str) -> str | None:
     return shutil.which(name)
 
 
-def record_command(name: str, argv: list[str], repo: Path, *, timeout: int = 120,
-                   skip_reason: str | None = None) -> dict[str, Any]:
+def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 120,
+                   timeout_scale: float = 1.0, skip_reason: str | None = None) -> dict[str, Any]:
     command = {"name": name, "command": argv, "status": "not-run", "exit_code": None,
-               "output_tail": ""}
+               "output_tail": "", "duration_ms": None}
     if skip_reason:
         command.update(status="skip", output_tail=skip_reason)
         return command
+    started = time.monotonic()
     try:
-        result = run_capture(argv, repo, timeout=timeout)
+        result = run_capture(argv, repo, timeout=timeout * timeout_scale)
         tail = output_tail(result.stdout).replace(str(repo), "<repo>")
         command.update(status="pass" if result.returncode == 0 else "fail",
-                       exit_code=result.returncode, output_tail=tail)
+                       exit_code=result.returncode, output_tail=tail,
+                       duration_ms=round((time.monotonic() - started) * 1000))
     except FileNotFoundError:
         command.update(status="skip", output_tail="not installed")
     except subprocess.TimeoutExpired as error:
         raw = error.stdout or b""
         if isinstance(raw, str):
             raw = raw.encode("utf-8", errors="replace")
-        command.update(status="fail", output_tail=(output_tail(raw) + "\ncommand timed out" ).strip())
+        command.update(status="timeout", verification="unverified",
+                       output_tail=(output_tail(raw) + "\ncommand timed out; result is unverified").strip(),
+                       duration_ms=round((time.monotonic() - started) * 1000))
     return command
 
 
@@ -176,6 +186,7 @@ def has_mypy_config(repo: Path) -> bool:
 
 def test_stem(path: Path) -> str:
     stem = path.stem.lower().replace("-", "_")
+    stem = re.sub(r"[._](?:test|spec)$", "", stem)
     return stem[5:] if stem.startswith("test_") else stem
 
 
@@ -220,6 +231,17 @@ def focused_test_commands(repo: Path, tests: list[str], skip_tests: bool = False
         commands.append(("focused-node-tests", [node, "--test", *absolute_js] if node else [],
                          None if node else "node not installed"))
     if ts_tests:
+        playwright_tests = [path for path in ts_tests if path.startswith("e2e/") and path.endswith(".spec.ts")]
+        remaining_ts_tests = [path for path in ts_tests if path not in playwright_tests]
+        if playwright_tests:
+            playwright = binary_path(repo, "playwright")
+            config = repo / "playwright.config.ts"
+            command = [playwright, "test", "--config", str(config), *command_paths(repo, playwright_tests)] if playwright and config.is_file() else []
+            reason = None if command else ("playwright not installed" if not playwright else "playwright.config.ts not found")
+            commands.append(("focused-playwright-tests", command, reason))
+        if not remaining_ts_tests:
+            return commands
+        absolute_ts = command_paths(repo, remaining_ts_tests)
         package, _manager = package_metadata(repo)
         scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
         if isinstance(scripts, dict) and isinstance(scripts.get("test"), str) and "vitest" in scripts["test"]:
@@ -306,7 +328,8 @@ def builtin_rule_scan(repo: Path, paths: list[str]) -> tuple[list[dict[str, Any]
                              "line": line, "message": "WHATWG URL hostname vetting precedes use of the same value by a database client"})
     check = {"name": "built-in-rule-scan", "command": ["pre-review built-in rules", *paths],
              "status": "fail" if hits else "pass", "exit_code": 1 if hits else 0,
-             "output_tail": f"scanned {scanned} changed source/config file(s); {len(hits)} hit(s)"}
+             "output_tail": f"scanned {scanned} changed source/config file(s); {len(hits)} hit(s)",
+             "duration_ms": 0}
     return hits, check
 
 
@@ -348,7 +371,9 @@ def markdown_summary(packet: dict[str, Any]) -> bytes:
              f"- Raw diff bytes: {packet['raw_diff_bytes']}", f"- Packet bytes: {packet['packet_bytes']} / {packet['packet_budget_bytes']}",
              "", "## Checks", ""]
     for command in packet["commands"]:
-        lines.append(f"- `{command['name']}`: **{command['status']}** (exit {command['exit_code']}); {command['output_tail'][:240]}")
+        verification = f"; verification {command['verification']}" if command.get("verification") else ""
+        duration = f"; {command['duration_ms']} ms" if command.get("duration_ms") is not None else ""
+        lines.append(f"- `{command['name']}`: **{command['status']}** (exit {command['exit_code']}){verification}{duration}; {command['output_tail'][:240]}")
     lines.extend(["", "## Rule hits", ""])
     if packet["rule_hits"]:
         for hit in packet["rule_hits"]:
@@ -393,6 +418,7 @@ def finalize_packet(packet: dict[str, Any]) -> tuple[bytes, bytes]:
         packet["packet_overflow"] = True
         packet["commands"].append({"name": "packet-budget", "command": ["pre-review packet-size limit"],
                                    "status": "fail", "exit_code": 1,
+                                   "duration_ms": 0,
                                    "output_tail": "evidence was compacted to keep JSON plus Markdown within 64 KiB"})
         packet["budget_excess_bytes"] = len(json_bytes) + len(markdown_bytes) - PACKET_BUDGET
         for command in packet["commands"]:
@@ -455,11 +481,15 @@ def make_parser() -> argparse.ArgumentParser:
                         help="record focused tests as skipped without running them (default: focused tests enabled)")
     parser.add_argument("--skip-repo-lint", action="store_true",
                         help="record the repository lint script as skipped without running it")
+    parser.add_argument("--timeout-scale", type=float, default=1.0,
+                        help="multiply each check timeout by this positive value (default: 1.0)")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = make_parser().parse_args(argv)
+    if args.timeout_scale <= 0:
+        make_parser().error("--timeout-scale must be greater than zero")
     try:
         repo = resolve_repo(args.repo.resolve())
         base_ref, base_sha, merge_sha = resolve_base(repo, args.base)
@@ -471,7 +501,9 @@ def main(argv: list[str] | None = None) -> int:
 
     head_sha = os.fsdecode(git_output(repo, "rev-parse", "HEAD").strip())
     commands: list[dict[str, Any]] = []
+    builtin_started = time.monotonic()
     hits, built_in = builtin_rule_scan(repo, paths)
+    built_in["duration_ms"] = round((time.monotonic() - builtin_started) * 1000)
     commands.append(built_in)
 
     package, manager = package_metadata(repo)
@@ -482,10 +514,14 @@ def main(argv: list[str] | None = None) -> int:
 
     typecheck = package_script(package, manager, ("typecheck", "type-check", "check:types"))
     if typecheck:
-        commands.append(record_command("repo-typecheck", typecheck, repo))
+        commands.append(record_command("repo-typecheck", typecheck, repo, timeout_scale=args.timeout_scale))
     elif (repo / "tsconfig.json").is_file():
         tsc = binary_path(repo, "tsc")
-        commands.append(record_command("typescript-typecheck", [tsc, "--noEmit", "--incremental", "false"] if tsc else [], repo,
+        cache_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:16]
+        cache_file = Path(tempfile.gettempdir()) / f"pre-review-tsbuildinfo-{cache_key}.tsbuildinfo"
+        commands.append(record_command("typescript-typecheck", [tsc, "--noEmit", "--incremental",
+                                                                 "--tsBuildInfoFile", str(cache_file)] if tsc else [], repo,
+                                       timeout_scale=args.timeout_scale,
                                        skip_reason=None if tsc else "tsc not installed"))
     elif has_ts:
         commands.append(record_command("typescript-typecheck", [], repo, skip_reason="no configured TypeScript project"))
@@ -494,11 +530,12 @@ def main(argv: list[str] | None = None) -> int:
         mypy = binary_path(repo, "mypy")
         python_files = [path for path in paths if path.endswith(".py")]
         commands.append(record_command("python-mypy", [mypy, *command_paths(repo, python_files)] if mypy else [], repo,
+                                       timeout_scale=args.timeout_scale,
                                        skip_reason=None if mypy else "mypy not installed"))
 
     lint = package_script(package, manager, ("lint", "lint:check", "check:lint"))
     if lint:
-        commands.append(record_command("repo-lint", lint, repo,
+        commands.append(record_command("repo-lint", lint, repo, timeout_scale=args.timeout_scale,
                                        skip_reason="skipped by --skip-repo-lint" if args.skip_repo_lint else None))
 
     if has_ts:
@@ -506,20 +543,22 @@ def main(argv: list[str] | None = None) -> int:
         config_present = any((repo / name).exists() for name in ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml"))
         ts_files = [path for path in paths if Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES]
         if eslint and config_present:
-            commands.append(record_command("eslint-no-floating-promises", [eslint, "--rule", "@typescript-eslint/no-floating-promises:error", *command_paths(repo, ts_files)], repo))
+            commands.append(record_command("eslint-no-floating-promises", [eslint, "--rule", "@typescript-eslint/no-floating-promises:error", *command_paths(repo, ts_files)], repo, timeout_scale=args.timeout_scale))
         else:
             reason = "eslint not installed" if not eslint else "no configured eslint project"
-            commands.append(record_command("eslint-no-floating-promises", [], repo, skip_reason=reason))
+            commands.append(record_command("eslint-no-floating-promises", [], repo, timeout_scale=args.timeout_scale, skip_reason=reason))
 
     if workflows:
         actionlint = binary_path(repo, "actionlint")
         commands.append(record_command("actionlint", [actionlint, *command_paths(repo, workflows)] if actionlint else [], repo,
+                                       timeout_scale=args.timeout_scale,
                                        skip_reason=None if actionlint else "actionlint not installed"))
 
     if has_md:
         markdownlint = binary_path(repo, "markdownlint-cli2") or binary_path(repo, "markdownlint")
         markdown_files = [path for path in paths if Path(path).suffix.lower() in {".md", ".markdown"}]
         commands.append(record_command("markdownlint", [markdownlint, *command_paths(repo, markdown_files)] if markdownlint else [], repo,
+                                       timeout_scale=args.timeout_scale,
                                        skip_reason=None if markdownlint else "markdownlint not installed"))
 
     semgrep = binary_path(repo, "semgrep")
@@ -528,29 +567,33 @@ def main(argv: list[str] | None = None) -> int:
     source_paths = [path for path in paths if Path(path).suffix.lower() in ({".py", ".c", ".h", ".go", ".java", ".yaml", ".yml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)]
     if source_paths:
         if semgrep:
-            active_rule_files = [STARTER_RULES, *project_rules]
+            active_rule_files = [starter_rules_path(), *project_rules]
             semgrep_args = [semgrep, "scan", "--json", "--error"]
             for rule_file in active_rule_files:
                 semgrep_args.extend(["--config", str(rule_file)])
             semgrep_args.extend(command_paths(repo, source_paths))
             try:
-                semgrep_run = run_capture(semgrep_args, repo, timeout=180)
+                semgrep_started = time.monotonic()
+                semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale)
                 hits.extend(semgrep_result(semgrep_run.stdout, repo))
                 commands.append({"name": "semgrep", "command": semgrep_args,
                                  "status": "fail" if semgrep_run.returncode else "pass",
                                  "exit_code": semgrep_run.returncode,
+                                 "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
                                  "output_tail": output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")})
             except subprocess.TimeoutExpired as error:
                 raw = error.stdout or b""
                 if isinstance(raw, str):
                     raw = raw.encode("utf-8", errors="replace")
-                commands.append({"name": "semgrep", "command": semgrep_args, "status": "fail",
-                                 "exit_code": None, "output_tail": (output_tail(raw) + "\ncommand timed out").strip()})
+                commands.append({"name": "semgrep", "command": semgrep_args, "status": "timeout",
+                                 "exit_code": None, "verification": "unverified",
+                                 "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
+                                 "output_tail": (output_tail(raw) + "\ncommand timed out; result is unverified").strip()})
         else:
-            commands.append(record_command("semgrep", [], repo, skip_reason="semgrep not installed"))
+            commands.append(record_command("semgrep", [], repo, timeout_scale=args.timeout_scale, skip_reason="semgrep not installed"))
 
     tests = related_test_paths(repo, paths)
-    commands.extend(record_command(name, argv, repo, skip_reason=reason)
+    commands.extend(record_command(name, argv, repo, timeout_scale=args.timeout_scale, skip_reason=reason)
                     for name, argv, reason in focused_test_commands(repo, tests, args.skip_tests))
 
     # Keep rule IDs stable and avoid reporting the same finding from both the
@@ -585,7 +628,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Packet bytes: {packet['packet_bytes']} / {PACKET_BUDGET}")
     if packet["budget_excess_bytes"]:
         print(f"Packet budget excess: {packet['budget_excess_bytes']} bytes")
-    return 1 if packet["budget_excess_bytes"] or any(item["status"] == "fail" for item in commands) or packet["rule_hits"] else 0
+    if packet["budget_excess_bytes"] or any(item["status"] == "fail" for item in commands) or packet["rule_hits"]:
+        return 1
+    if any(item["status"] == "timeout" for item in commands):
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
