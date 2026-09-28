@@ -218,6 +218,79 @@ class PreReviewTests(unittest.TestCase):
                 self.assertEqual(command["error_kind"], "environment")
                 self.assertNotEqual(command["status"], "fail")
 
+    def test_generated_or_dependency_module_missing_is_environment_error(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        for output in (b"Cannot find module '@/prisma/client' or its corresponding type declarations.",
+                       b"Cannot find package 'node_modules/example-runtime' imported from app.ts",
+                       b"Cannot find module 'react' or its corresponding type declarations.",
+                       b"Cannot find package '@radix-ui/react-tabs' imported from app.ts"):
+            with self.subTest(output=output), patch.object(
+                namespace["subprocess"], "run",
+                return_value=subprocess.CompletedProcess(["tsc"], 2, output),
+            ):
+                command = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
+                self.assertEqual(command["status"], "error")
+                self.assertEqual(command["verification"], "unverified")
+                self.assertEqual(command["error_kind"], "environment")
+
+        with patch.object(
+            namespace["subprocess"], "run",
+            return_value=subprocess.CompletedProcess(
+                ["tsc"], 2, b"Cannot find module './missing-source' or its corresponding type declarations."
+            ),
+        ):
+            source_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
+        self.assertEqual(source_error["status"], "fail")
+        with patch.object(
+            namespace["subprocess"], "run",
+            return_value=subprocess.CompletedProcess(
+                ["tsc"], 2, b"Cannot find module '@/missing-source' or its corresponding type declarations."
+            ),
+        ):
+            alias_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
+        self.assertEqual(alias_error["status"], "fail")
+
+    def test_source_base_shas_override_stale_clone_origin_ref(self) -> None:
+        git(self.repo, "checkout", "-b", "source-base")
+        source_file = self.repo / "src" / "source-base.ts"
+        source_file.parent.mkdir()
+        source_file.write_text("export const sourceBase = true;\n", encoding="utf-8")
+        git(self.repo, "add", "src/source-base.ts")
+        git(self.repo, "commit", "-m", "source base commit")
+        source_base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", source_base_sha)
+
+        git(self.repo, "checkout", "-b", "stale-base", self.initial_sha)
+        wrong_file = self.repo / "stale-base-only.txt"
+        wrong_file.write_text("wrong ref\n", encoding="utf-8")
+        git(self.repo, "add", "stale-base-only.txt")
+        git(self.repo, "commit", "-m", "stale clone origin ref")
+        stale_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+
+        git(self.repo, "checkout", "source-base")
+        changed = self.repo / "src" / "change.ts"
+        changed.write_text("export const change = true;\n", encoding="utf-8")
+        git(self.repo, "add", "src/change.ts")
+        git(self.repo, "commit", "-m", "PR change")
+        head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo, text=True).strip()
+
+        clone = self.base / "clone"
+        subprocess.run(["git", "clone", "--no-hardlinks", "--branch", "source-base",
+                        str(self.repo), str(clone)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        git(clone, "update-ref", "refs/remotes/origin/main", stale_sha)
+        clone_output = self.base / "clone-packet"
+        result = subprocess.run([
+            sys.executable, str(SCRIPT), "--repo", str(clone), "--base", "origin/main",
+            "--base-sha", source_base_sha, "--merge-base-sha", source_base_sha,
+            "--output-dir", str(clone_output), "--skip-tests", "--skip-repo-lint",
+        ], cwd=clone, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        packet = json.loads((clone_output / "pre-review.json").read_text(encoding="utf-8"))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(packet["base"]["sha"], source_base_sha)
+        self.assertEqual(packet["base"]["merge_base_sha"], source_base_sha)
+        self.assertEqual(packet["head_sha"], head_sha)
+        self.assertEqual(packet["changed_paths"], ["src/change.ts"])
+
     def test_playwright_output_is_external_to_reviewed_repo(self) -> None:
         (self.repo / "playwright.config.ts").write_text("export default {};\n", encoding="utf-8")
         namespace = runpy.run_path(str(SCRIPT))

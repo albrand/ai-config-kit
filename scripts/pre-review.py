@@ -28,6 +28,7 @@ ENVIRONMENT_ERROR_PATTERNS = (
     re.compile(r"(?:missing|required|not set|undefined)[^\n]{0,80}DATABASE_URL|DATABASE_URL[^\n]{0,120}(?:missing|required|not set|undefined|not a|invalid|cannot)", re.I),
     re.compile(r"refusing to provision[^\n]{0,120}DATABASE_URL", re.I),
     re.compile(r"\bno server\b|ECONNREFUSED|connection refused|could not connect|command not found|(?:was|is) not able to start|unable to start|operation not permitted", re.I),
+    re.compile(r"cannot find (?:module|package)[^\n]{0,180}(?:@/prisma/client|node_modules|generated|\.prisma)", re.I),
 )
 def starter_rules_path() -> Path:
     installed = Path(__file__).resolve().parent.parent / "semgrep" / "pre-review.yml"
@@ -59,7 +60,15 @@ def output_tail(raw: bytes) -> str:
 
 
 def environment_error(tail: str) -> bool:
-    return any(pattern.search(tail) for pattern in ENVIRONMENT_ERROR_PATTERNS)
+    if any(pattern.search(tail) for pattern in ENVIRONMENT_ERROR_PATTERNS):
+        return True
+    for match in re.finditer(r"cannot find (?:module|package)\s+['\"]([^'\"]+)['\"]", tail, re.I):
+        module = match.group(1)
+        if module.startswith("@/prisma/client") or module.startswith("@/generated/"):
+            return True
+        if not module.startswith(("./", "../", "/", "@/")):
+            return True
+    return False
 
 
 def command_paths(repo: Path, paths: list[str]) -> list[str]:
@@ -80,8 +89,25 @@ def resolve_repo(start: Path) -> Path:
     return Path(os.fsdecode(result.stdout.strip())).resolve()
 
 
-def resolve_base(repo: Path, requested: str | None) -> tuple[str, str, str]:
+def resolve_base(repo: Path, requested: str | None, base_sha_override: str | None = None,
+                 merge_base_override: str | None = None) -> tuple[str, str, str]:
     ref = requested or DEFAULT_BASE
+    if bool(base_sha_override) != bool(merge_base_override):
+        raise PreReviewError("--base-sha and --merge-base-sha must be supplied together")
+    if base_sha_override and merge_base_override:
+        base = run_capture(["git", "rev-parse", "--verify", f"{base_sha_override}^{{commit}}"], repo)
+        merge = run_capture(["git", "rev-parse", "--verify", f"{merge_base_override}^{{commit}}"], repo)
+        if base.returncode:
+            raise PreReviewError("provided base SHA is not available as a commit object")
+        if merge.returncode:
+            raise PreReviewError("provided merge-base SHA is not available as a commit object")
+        base_sha = os.fsdecode(base.stdout.strip())
+        merge_sha = os.fsdecode(merge.stdout.strip())
+        for ancestor, descendant, label in ((merge_sha, "HEAD", "HEAD"), (merge_sha, base_sha, "base")):
+            result = run_capture(["git", "merge-base", "--is-ancestor", ancestor, descendant], repo)
+            if result.returncode:
+                raise PreReviewError(f"provided merge-base SHA is not an ancestor of {label}")
+        return ref, base_sha, merge_sha
     resolved = run_capture(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], repo)
     if resolved.returncode:
         raise PreReviewError(f"base ref cannot be resolved to a commit: {ref}")
@@ -586,6 +612,8 @@ def write_packet(output_dir: Path, packet: dict[str, Any]) -> tuple[Path, Path]:
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", help=f"base ref to compare (default: {DEFAULT_BASE})")
+    parser.add_argument("--base-sha", help="resolved base commit SHA from the source repository")
+    parser.add_argument("--merge-base-sha", help="resolved source-repository merge-base commit SHA")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository directory (default: current directory)")
     parser.add_argument("--output-dir", type=Path, help="packet directory (default: a temp directory outside the repo)")
     parser.add_argument("--skip-tests", action="store_true",
@@ -603,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
         make_parser().error("--timeout-scale must be greater than zero")
     try:
         repo = resolve_repo(args.repo.resolve())
-        base_ref, base_sha, merge_sha = resolve_base(repo, args.base)
+        base_ref, base_sha, merge_sha = resolve_base(repo, args.base, args.base_sha, args.merge_base_sha)
         repo_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:16]
         output_dir = args.output_dir if args.output_dir and args.output_dir.is_absolute() else (
             repo / args.output_dir if args.output_dir else Path(tempfile.gettempdir()) / "agent-config-kit-pre-review" / repo_key / str(os.getpid())
@@ -615,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
         else:
             raise PreReviewError("output directory must be outside the reviewed repository")
-        pr_mode = args.base is not None
+        pr_mode = args.base is not None or args.base_sha is not None or args.merge_base_sha is not None
         paths, dirty, raw_diff_bytes, excluded_worktree_paths = changed_paths(
             repo, merge_sha, output_dir, include_worktree=not pr_mode)
     except PreReviewError as error:
