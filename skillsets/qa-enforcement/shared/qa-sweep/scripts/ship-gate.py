@@ -154,6 +154,7 @@ GITHUB_GRAPHQL_WRITE_RE = re.compile(
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
+_SELFTEST_LOOKUP_BUDGET_S = None
 _LOOKUP_DEADLINE = None
 # The whole PreToolUse decision must land before the host's hook timeout: a
 # timed-out hook lets the command run (verified 2026-09-25: a live probe on
@@ -1548,12 +1549,13 @@ def deployment_commit(root, ref, team, cwd):
         return None, ("deployment %r: no deployment id or URL to resolve its source commit from"
                       % (ref or ""))
     now = time.monotonic()
+    lookup_budget = max(LOOKUP_BUDGET_S, _SELFTEST_LOOKUP_BUDGET_S or LOOKUP_BUDGET_S)
     if _LOOKUP_DEADLINE is None:
-        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+        _LOOKUP_DEADLINE = now + lookup_budget
     left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)  # leave time to check the commit
     if left < 0.3:
         return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
-                      "ship one deployment per command" % (host, LOOKUP_BUDGET_S))
+                      "ship one deployment per command" % (host, lookup_budget))
     path = "/v13/deployments/%s%s" % (host, ("?" + team) if team else "")
     env = dict(os.environ, VERCEL_TELEMETRY_DISABLED="1", NO_COLOR="1")
     try:
@@ -2263,6 +2265,9 @@ def main():
     cmd = argv[0] if argv else "check"
     rest = parse_args(argv[1:])
     if cmd == "hook":
+        if rest.get("selftest-fixture"):
+            global _SELFTEST_LOOKUP_BUDGET_S
+            _SELFTEST_LOOKUP_BUDGET_S = 30.0
         return hook()  # hook() stashes raw input for the crash fail-closed path
     if cmd == "stop":
         return stop()
@@ -3166,11 +3171,17 @@ def selftest(v4_gate=None, v4_templates=None):
     # checked only HEAD and so allowed them; allow cases run with HEAD on the
     # unwalked feat, where v4 denied them. Every one of them flips between
     # 77b8d56 and v5, except the controls marked "control".
-    def hook5(root, command, env=None):
+    def hook5(root, command, env=None, fixture_timeout=True):
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
-        return subprocess.run(["python3", V4GATE, "hook"], cwd=root, input=payload, capture_output=True,
-                              text=True, env=dict(os.environ, QA_GATE_NO_GH="1", **(env or {})))
+        child_env = dict(os.environ, QA_GATE_NO_GH="1", **(env or {}))
+        child_env.pop("QA_GATE_SELFTEST", None)
+        child_env.pop("QA_GATE_SELFTEST_LOOKUP_BUDGET_S", None)
+        args = ["python3", V4GATE, "hook"]
+        if fixture_timeout:
+            args.append("--selftest-fixture")
+        return subprocess.run(args, cwd=root, input=payload, capture_output=True,
+                              text=True, env=child_env)
 
     def deny5(root, command, name, why, env=None):
         p = hook5(root, command, env)
@@ -3226,7 +3237,13 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
     deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
-    deny5(r9, "vercel promote dpl_slow", "lookup past the hook budget", "timed out")
+    expect(LOOKUP_BUDGET_S == 3.2, "v5: production provenance lookup budget remains 3.2 s")
+    p = hook5(r9, "vercel promote dpl_slow",
+              env={"QA_GATE_SELFTEST": "1", "QA_GATE_SELFTEST_LOOKUP_BUDGET_S": "30"},
+              fixture_timeout=False)
+    expect(p.returncode == 2 and "timed out after 3.2 s" in p.stderr,
+           "v5 DENY  production lookup budget times out the slow fake at 3.2 s [%s]"
+           % " ".join(p.stderr.split())[-110:])
     deny5(r9, "vercel promote dpl_foreign", "source commit not in this clone", "not in this clone")
     deny5(r9, "vercel promote dpl_nogit", "deployment without git metadata", "no git provenance")
     deny5(r9, "vercel promote dpl_dirty", "deployment built from a dirty tree", "uncommitted changes")
