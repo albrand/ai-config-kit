@@ -976,11 +976,39 @@ def yaml_env_flow_map_continuations(lines: list[str], start: int, end: int) -> s
     return continuation_lines
 
 
+def yaml_quoted_scalar_continuations(lines: list[str]) -> set[int]:
+    continuation_lines: set[int] = set()
+    quote: str | None = None
+    escaped = False
+    for line_index, line in enumerate(lines):
+        if quote is not None:
+            continuation_lines.add(line_index)
+        for index, char in enumerate(line):
+            if quote == '"':
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif quote == "'":
+                if escaped:
+                    escaped = False
+                elif char == "'" and index + 1 < len(line) and line[index + 1] == "'":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char in {"'", '"'} and inline_yaml_quote_starts(line[:index]):
+                quote = char
+    return continuation_lines
+
+
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
     command_line = source.count("\n", 0, command_offset)
     all_flow_map_continuations = yaml_env_flow_map_continuations(lines, 0, len(lines))
+    quoted_scalar_continuations = yaml_quoted_scalar_continuations(lines)
 
     def indent(index: int) -> int:
         return len(lines[index]) - len(lines[index].lstrip(" \t"))
@@ -1036,7 +1064,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
                 if steps:
                     steps_start, steps_end = steps
                     starts = [i for i in range(steps_start + 1, steps_end)
-                              if i not in all_flow_map_continuations
+                              if i not in all_flow_map_continuations and i not in quoted_scalar_continuations
                               and indent(i) >= steps_indent
                               and lines[i].lstrip(" \t").startswith("-")]
                     if starts:
@@ -1191,6 +1219,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                 return len(lines[index]) - len(lines[index].lstrip(" \t"))
 
             all_flow_map_continuations = yaml_env_flow_map_continuations(lines, 0, len(lines))
+            quoted_scalar_continuations = yaml_quoted_scalar_continuations(lines)
 
             def find_block(start: int, end: int, key: str, indent: int) -> tuple[int, int] | None:
                 for index in range(start, end):
@@ -1248,6 +1277,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
                             steps_start, steps_end = steps_block
                             step_starts = [i for i in range(steps_start + 1, steps_end)
                                            if i not in all_flow_map_continuations
+                                           and i not in quoted_scalar_continuations
                                            and line_indent(i) >= steps_indent
                                            and lines[i].lstrip(" \t").startswith("-")]
                             if step_starts:
