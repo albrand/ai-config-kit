@@ -697,22 +697,63 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
     return hits
 
 
-def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int] | None, ...]) -> bool:
+def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int] | None, ...],
+                             inline_envs: tuple[str, ...] = ()) -> bool:
     """Apply workflow/job/step env precedence and reject statically empty tokens."""
     values: dict[str, str] = {}
     for part in env_blocks:
         if not part:
             continue
-        for line in lines[part[0]:part[1]]:
+        for index, line in enumerate(lines[part[0]:part[1]], part[0]):
             match = re.match(r"^[ \t]*(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(.*)$", line)
             if not match:
                 continue
             value = match.group(2).split(" #", 1)[0].strip()
+            if value in {"|", ">", "|-", ">-", "|+", ">+"}:
+                scalar_indent = len(line) - len(line.lstrip(" \t"))
+                block_lines = []
+                for child in lines[index + 1:part[1]]:
+                    if child.strip() and len(child) - len(child.lstrip(" \t")) <= scalar_indent:
+                        break
+                    block_lines.append(child.strip())
+                value = "\n".join(block_lines).strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                 value = value[1:-1]
             values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
+    inline_token = re.compile(r"\b(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}\s]+))")
+    for inline in inline_envs:
+        for match in inline_token.finditer(inline):
+            value = next((group for group in match.groups()[1:] if group is not None), "")
+            values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
     effective = values.get("GH_TOKEN", values.get("GITHUB_TOKEN", ""))
     return bool(effective)
+
+
+def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_indent: int
+                      ) -> tuple[tuple[int, int] | None, str]:
+    if not step:
+        return None, ""
+    start, end = step
+    inline_header = re.match(r"^[ \t]*-[ \t]*env[ \t]*:[ \t]*(.*)$", lines[start])
+    if inline_header:
+        value = inline_header.group(1).strip()
+        if value:
+            return (start, start + 1), value
+        stop = start + 1
+        while stop < end and (not lines[stop].strip() or
+                              len(lines[stop]) - len(lines[stop].lstrip(" \t")) > step_indent + 2):
+            stop += 1
+        return (start + 1, stop), ""
+    env_indent = step_indent + 2
+    for index in range(start + 1, end):
+        if len(lines[index]) - len(lines[index].lstrip(" \t")) == env_indent and re.match(
+                r"env[ \t]*:", lines[index].lstrip(" \t")):
+            stop = index + 1
+            while stop < end and (not lines[stop].strip() or
+                                  len(lines[stop]) - len(lines[stop].lstrip(" \t")) > env_indent):
+                stop += 1
+            return (index, stop), ""
+    return None, ""
 
 
 def workflow_command_authorized(source: str, command_offset: int) -> bool:
@@ -780,8 +821,8 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     workflow_permissions = block(0, len(lines), "permissions", 0)
     job_env = block(job[0] + 1, job[1], "env", job_indent + 2) if job else None
     job_permissions = block(job[0] + 1, job[1], "permissions", job_indent + 2) if job else None
-    step_env = block(step[0] + 1, step[1], "env", step_indent + 2) if step else None
-    token = effective_workflow_token(lines, (workflow_env, job_env, step_env))
+    step_env, inline_step_env = workflow_step_env(lines, step, step_indent)
+    token = effective_workflow_token(lines, (workflow_env, job_env, step_env), (inline_step_env,))
     permissions = job_permissions or workflow_permissions
     actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$", text(permissions)))
     return token and actions_read
@@ -974,8 +1015,8 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             workflow_permissions = find_block(0, len(lines), "permissions", 0)
             job_env = find_block(job_block[0] + 1, job_block[1], "env", job_indent + 2) if job_block else None
             job_permissions = find_block(job_block[0] + 1, job_block[1], "permissions", job_indent + 2) if job_block else None
-            step_env = find_block(step_block[0] + 1, step_block[1], "env", step_indent + 2) if step_block else None
-            token = effective_workflow_token(lines, (workflow_env, job_env, step_env))
+            step_env, inline_step_env = workflow_step_env(lines, step_block, step_indent)
+            token = effective_workflow_token(lines, (workflow_env, job_env, step_env), (inline_step_env,))
             effective_permissions = job_permissions or workflow_permissions
             actions_read = bool(re.search(r"(?m)^[ \t]+actions[ \t]*:[ \t]*read(?:[ \t]+#.*)?$",
                                          block_text(effective_permissions)))
