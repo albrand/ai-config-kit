@@ -697,6 +697,32 @@ def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]
     return hits
 
 
+def inline_yaml_map_body(value: str) -> str | None:
+    if not value.startswith("{"):
+        return None
+    quote: str | None = None
+    escaped = False
+    depth = 0
+    for index, char in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return value[1:index]
+    return None
+
+
 def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int] | None, ...],
                              inline_envs: tuple[str, ...] = ()) -> bool:
     """Apply workflow/job/step env precedence and reject statically empty tokens."""
@@ -714,9 +740,11 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
         if not part:
             continue
         for index, line in enumerate(lines[part[0]:part[1]], part[0]):
-            inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*\{([^}]*)\}", line)
+            inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*(.*)$", line)
             if inline_mapping:
-                apply_inline(inline_mapping.group(1))
+                body = inline_yaml_map_body(inline_mapping.group(1).strip())
+                if body is not None:
+                    apply_inline(body)
             match = re.match(r"^[ \t]*(['\"]?(?:GH_TOKEN|GITHUB_TOKEN)['\"]?)[ \t]*:[ \t]*(.*)$", line)
             if not match:
                 continue
