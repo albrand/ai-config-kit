@@ -705,14 +705,22 @@ def inline_yaml_map_body(value: str) -> str | None:
     depth = 0
     for index, char in enumerate(value):
         if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\":
+            if quote == '"':
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char == "'" and index + 1 < len(value) and value[index + 1] == "'":
                 escaped = True
+            elif escaped:
+                escaped = False
             elif char == quote:
                 quote = None
             continue
-        if char in {"'", '"'}:
+        prefix = value[:index].rstrip()
+        if char in {"'", '"'} and (not prefix or prefix[-1] in "{:, "):
             quote = char
         elif char == "{":
             depth += 1
@@ -731,14 +739,22 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
     depth = 0
     for index, char in enumerate(body):
         if quote:
-            if escaped:
-                escaped = False
-            elif char == "\\":
+            if quote == '"':
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char == "'" and index + 1 < len(body) and body[index + 1] == "'":
                 escaped = True
+            elif escaped:
+                escaped = False
             elif char == quote:
                 quote = None
             continue
-        if char in {"'", '"'}:
+        prefix = body[start:index].rstrip()
+        if char in {"'", '"'} and (not prefix or prefix[-1] in ":,"):
             quote = char
         elif char in "{[":
             depth += 1
@@ -755,13 +771,20 @@ def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
         escaped = False
         for index, char in enumerate(entry):
             if quote:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
+                if quote == '"':
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == quote:
+                        quote = None
+                elif char == "'" and index + 1 < len(entry) and entry[index + 1] == "'":
                     escaped = True
+                elif escaped:
+                    escaped = False
                 elif char == quote:
                     quote = None
-            elif char in {"'", '"'}:
+            elif char in {"'", '"'} and (not entry[:index].rstrip() or entry[:index].rstrip().endswith(":")):
                 quote = char
             elif char == ":":
                 key = entry[:index].strip()

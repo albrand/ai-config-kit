@@ -257,6 +257,13 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-quoted-note-before-empty-job-token.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+        for fixture in (
+                "workflow-gh-run-single-quote-backslash-job.yml",
+                "workflow-gh-run-plain-apostrophe-job.yml",
+                "workflow-gh-run-single-quote-backslash-step.yml",
+                "workflow-gh-run-plain-apostrophe-step.yml"):
+            self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
+                                  ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
 
     def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
         failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")
