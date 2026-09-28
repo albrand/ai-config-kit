@@ -980,6 +980,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
     """Check token and effective permissions inherited by one command's step."""
     lines = source.splitlines()
     command_line = source.count("\n", 0, command_offset)
+    all_flow_map_continuations = yaml_env_flow_map_continuations(lines, 0, len(lines))
 
     def indent(index: int) -> int:
         return len(lines[index]) - len(lines[index].lstrip(" \t"))
@@ -989,6 +990,7 @@ def workflow_command_authorized(source: str, command_offset: int) -> bool:
             if indent(index) == level and yaml_key_header(lines[index], key):
                 stop = index + 1
                 while stop < end and (not lines[stop].strip() or lines[stop].lstrip().startswith("#")
+                                      or stop in all_flow_map_continuations
                                       or indent(stop) > level
                                       or (key == "steps" and indent(stop) == level
                                           and lines[stop].lstrip(" \t").startswith("-"))):
@@ -1186,12 +1188,15 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
             def line_indent(index: int) -> int:
                 return len(lines[index]) - len(lines[index].lstrip(" \t"))
 
+            all_flow_map_continuations = yaml_env_flow_map_continuations(lines, 0, len(lines))
+
             def find_block(start: int, end: int, key: str, indent: int) -> tuple[int, int] | None:
                 for index in range(start, end):
                     if line_indent(index) == indent and yaml_key_header(lines[index], key):
                         stop = index + 1
                         while stop < end and (not lines[stop].strip()
                                               or lines[stop].lstrip().startswith("#")
+                                              or stop in all_flow_map_continuations
                                               or line_indent(stop) > indent
                                               or (key == "steps" and line_indent(stop) == indent
                                                   and lines[stop].lstrip(" \t").startswith("-"))):

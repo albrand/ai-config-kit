@@ -254,7 +254,8 @@ class PreReviewTests(unittest.TestCase):
                 "workflow-gh-run-quoted-job-id-double-job-empty-extra-indent.yml",
                 "workflow-gh-run-quoted-job-id-single-step-empty-extra-indent.yml",
                 "workflow-gh-run-job-indent-flow-map-continuation.yml",
-                "workflow-gh-run-job-indent-flow-map-continuation-aligned-id.yml"):
+                "workflow-gh-run-job-indent-flow-map-continuation-aligned-id.yml",
+                "workflow-gh-run-job-indent-flow-map-continuation-column-zero.yml"):
             self.assert_rule_pair(fixture, "workflow-gh-run-workflow-inherited-authorized.yml",
                                   ".github/workflows/inspect-run.yml",
                                   "pre_review.workflow_gh_run_permissions")
