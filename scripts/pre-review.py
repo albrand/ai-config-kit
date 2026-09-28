@@ -746,7 +746,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
 
         if suffix in {".md", ".markdown"}:
             # Defect #52: markdown emphasis swallows a glob-like token outside code spans.
-            glob = re.compile(r"(?<!`)\*[A-Za-z0-9_.-]*\.[A-Za-z0-9_.-]*\*(?!`)|(?<!`)\b[A-Za-z0-9_-]+\.\*(?!`)")
+            glob = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")
             hits.extend(regex_hit("pre_review.markdown_glob_code_span", rel, source, glob,
                                   "glob-like token is emphasis text; wrap it in a Markdown code span"))
 
