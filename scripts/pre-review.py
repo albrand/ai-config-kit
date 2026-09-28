@@ -856,7 +856,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
         all_pass = re.search(r"(?is)\"verdict\"\s*:\s*\"PASS\"", rewalk) and not re.search(
             r"(?is)\"verdict\"\s*:\s*\"(?:FAIL|BLOCKED|ERROR)\"", rewalk
         )
-        if open_item and all_pass:
+        if open_item.search(plan) and all_pass:
             passing = re.search(r"(?is)\"verdict\"\s*:\s*\"PASS\"", rewalk)
             hits.append({"rule_id": "pre_review.plan_rewalk_unresolved_conflict", "path": rewalk_path,
                          "line": rewalk.count("\n", 0, passing.start()) + 1,
