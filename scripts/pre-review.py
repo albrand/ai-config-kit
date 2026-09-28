@@ -701,12 +701,14 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
                              inline_envs: tuple[str, ...] = ()) -> bool:
     """Apply workflow/job/step env precedence and reject statically empty tokens."""
     values: dict[str, str] = {}
-    inline_token = re.compile(r"\b(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}]*))")
+    token_key = r"(?P<name>['\"]?(?:GH_TOKEN|GITHUB_TOKEN)['\"]?)"
+    inline_token = re.compile(token_key + r"[ \t]*:[ \t]*(?:\"([^\"]*)\"|'([^']*)'|([^,}]*))")
 
     def apply_inline(value: str) -> None:
         for match in inline_token.finditer(value):
             token_value = next((group for group in match.groups()[1:] if group is not None), "").strip()
-            values[match.group(1)] = "" if token_value.lower() in {"", "null", "~"} else token_value
+            name = match.group("name").strip("'\"")
+            values[name] = "" if token_value.lower() in {"", "null", "~"} else token_value
 
     for part in env_blocks:
         if not part:
@@ -715,7 +717,7 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
             inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*\{([^}]*)\}", line)
             if inline_mapping:
                 apply_inline(inline_mapping.group(1))
-            match = re.match(r"^[ \t]*(GH_TOKEN|GITHUB_TOKEN)[ \t]*:[ \t]*(.*)$", line)
+            match = re.match(r"^[ \t]*(['\"]?(?:GH_TOKEN|GITHUB_TOKEN)['\"]?)[ \t]*:[ \t]*(.*)$", line)
             if not match:
                 continue
             value = match.group(2).split(" #", 1)[0].strip()
@@ -729,7 +731,8 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
                 value = "\n".join(block_lines).strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
                 value = value[1:-1]
-            values[match.group(1)] = "" if value.lower() in {"", "null", "~"} else value
+            name = match.group(1).strip("'\"")
+            values[name] = "" if value.lower() in {"", "null", "~"} else value
     for inline in inline_envs:
         apply_inline(inline)
     effective = values.get("GH_TOKEN", values.get("GITHUB_TOKEN", ""))
