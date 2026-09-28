@@ -74,6 +74,17 @@ class PreReviewTests(unittest.TestCase):
     def rule_ids(packet: dict[str, object]) -> set[str]:
         return {str(hit["rule_id"]) for hit in packet["rule_hits"]}  # type: ignore[index]
 
+    def assert_rule_pair(self, failing_fixture: str, passing_fixture: str, target: str,
+                         rule_id: str, passing_target: str | None = None) -> None:
+        failed_path = self.add_fixture(failing_fixture, target)
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(rule_id, self.rule_ids(packet))
+        failed_path.unlink()
+        self.add_fixture(passing_fixture, passing_target or target)
+        _result, passing_packet = self.run_pre_review()
+        self.assertNotIn(rule_id, self.rule_ids(passing_packet))
+
     def test_floating_promise_fixture_fails_with_named_rule(self) -> None:
         self.add_fixture("floating-promise.ts", "src/floating-promise.mts")
         result, packet = self.run_pre_review()
@@ -81,6 +92,15 @@ class PreReviewTests(unittest.TestCase):
         self.assertIn("pre_review.no_floating_promises", self.rule_ids(packet))
         self.assertTrue(any(item["name"] == "eslint-no-floating-promises" for item in packet["commands"]))
         self.assertIn("src/floating-promise.mts", packet["changed_paths"])
+
+    def test_floating_promise_regex_fixture_fails_and_safe_fixture_passes(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        failing = (FIXTURES / "floating-promise.ts").read_text(encoding="utf-8")
+        passing = (FIXTURES / "floating-promise-safe.ts").read_text(encoding="utf-8")
+        self.assertIn("pre_review.no_floating_promises",
+                      {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/floating.ts": failing})})
+        self.assertNotIn("pre_review.no_floating_promises",
+                         {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/floating.ts": passing})})
 
     def test_rule_fixture_sources_do_not_self_report_in_pre_review(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
@@ -132,6 +152,88 @@ class PreReviewTests(unittest.TestCase):
         result, packet = self.run_pre_review()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pre_review.url_parser_mismatch", self.rule_ids(packet))
+
+    def test_identity_label_normalization_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("identity-label-raw.ts", "identity-label-normalized.ts", "src/identity.ts",
+                              "pre_review.identity_label_normalization")
+
+    def test_python_identity_membership_rule_failing_and_passing_fixtures(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        failed = (FIXTURES / "identity-membership-raw.py").read_text(encoding="utf-8")
+        passed = (FIXTURES / "identity-membership-normalized.py").read_text(encoding="utf-8")
+        self.assertIn("pre_review.identity_label_normalization",
+                      {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/identity.py": failed})})
+        self.assertNotIn("pre_review.identity_label_normalization",
+                         {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/identity.py": passed})})
+
+    def test_remote_demo_database_guard_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("remote-demo-db-unprotected.ts", "remote-demo-db-guarded.ts", "src/demo-seed.ts",
+                              "pre_review.remote_database_seed_target_guard")
+
+    def test_demo_login_password_rule_failing_and_passing_fixtures(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        failed = (FIXTURES / "demo-login-unprotected.ts").read_text(encoding="utf-8")
+        passed = (FIXTURES / "demo-login-guarded.ts").read_text(encoding="utf-8")
+        self.assertIn("pre_review.remote_database_seed_target_guard",
+                      {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/demo-seed.ts": failed})})
+        self.assertNotIn("pre_review.remote_database_seed_target_guard",
+                         {hit["rule_id"] for hit in namespace["study_regex_hits"](self.repo, {"src/demo-seed.ts": passed})})
+
+    def test_legacy_identity_hostname_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("legacy-identity-hostname.ts", "shared-identity-target-guard.ts", "src/target.ts",
+                              "pre_review.legacy_identity_hostname_guard")
+
+    def test_external_json_shape_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("external-json-unchecked.py", "external-json-checked.py", "scripts/api_reply.py",
+                              "pre_review.external_response_shape")
+
+    def test_workflow_gh_run_permissions_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("workflow-gh-run-missing-access.yml", "workflow-gh-run-authorized.yml",
+                              ".github/workflows/inspect-run.yml", "pre_review.workflow_gh_run_permissions")
+
+    def test_cited_symbol_rule_failing_and_passing_fixtures(self) -> None:
+        failed_path = self.add_fixture("cited-absent-symbol.md", "docs/review-citation.md")
+        self.add_fixture("cited-symbol-comment-only.ts", "src/comment.ts")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("pre_review.cited_symbol_exists", self.rule_ids(packet))
+        failed_path.unlink()
+        self.add_fixture("cited-present-symbol.md", "docs/review-citation.md")
+        self.add_fixture("cited-symbol-defined.ts", "src/gate.ts")
+        git(self.repo, "add", "src/gate.ts")
+        _result, passing_packet = self.run_pre_review()
+        self.assertNotIn("pre_review.cited_symbol_exists", self.rule_ids(passing_packet))
+
+    def test_markdown_glob_rule_failing_and_passing_fixtures(self) -> None:
+        self.assert_rule_pair("markdown-unbackticked-glob.md", "markdown-backticked-glob.md",
+                              "docs/glob.md", "pre_review.markdown_glob_code_span")
+
+    def test_plan_rewalk_consistency_rule_failing_and_passing_fixtures(self) -> None:
+        plan = self.add_fixture("unresolved-plan.md", ".qa/plan.md")
+        rewalk = self.add_fixture("passing-rewalk.json", ".qa/rewalk.json")
+        result, packet = self.run_pre_review()
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("pre_review.plan_rewalk_unresolved_conflict", self.rule_ids(packet))
+        plan.unlink()
+        rewalk.unlink()
+        self.add_fixture("passing-plan.md", ".qa/plan.md")
+        self.add_fixture("passing-rewalk.json", ".qa/rewalk.json")
+        _result, passing_packet = self.run_pre_review()
+        self.assertNotIn("pre_review.plan_rewalk_unresolved_conflict", self.rule_ids(passing_packet))
+
+    def test_static_study_coverage_is_11_of_11(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        self.assertEqual(len(namespace["STUDY_STATIC_DEFECT_RULES"]), 11)
+        self.assertEqual(set(namespace["STUDY_STATIC_DEFECT_RULES"]),
+                         {"12", "30", "31", "33", "45", "47", "48", "49", "51", "52", "55"})
+
+    def test_builtin_rule_pack_is_active_without_semgrep(self) -> None:
+        self.add_fixture("clean.ts", "src/clean.ts")
+        result, packet = self.run_pre_review()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertGreaterEqual(len(packet["active_builtin_rules"]), 12)
+        self.assertEqual(packet["study_static_covered"], packet["study_static_total"])
+        self.assertTrue(any(str(path).endswith("pre-review.yml") for path in packet["active_rule_files"]))
 
     def test_project_rules_are_passed_to_semgrep_when_installed(self) -> None:
         self.add_fixture("date-validation.py", "src/date_validation.py")

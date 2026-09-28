@@ -26,6 +26,33 @@ DEFAULT_BASE = "origin/main"
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
+BUILTIN_RULE_IDS = [
+    "pre_review.url_parser_mismatch",
+    "pre_review.github_token_permissions",
+    "pre_review.external_response_shape",
+    "pre_review.python_unicode_digits",
+    "pre_review.no_floating_promises",
+    "pre_review.identity_label_normalization",
+    "pre_review.remote_database_seed_target_guard",
+    "pre_review.legacy_identity_hostname_guard",
+    "pre_review.workflow_gh_run_permissions",
+    "pre_review.cited_symbol_exists",
+    "pre_review.markdown_glob_code_span",
+    "pre_review.plan_rewalk_unresolved_conflict",
+]
+STUDY_STATIC_DEFECT_RULES = {
+    "12": "pre_review.identity_label_normalization",
+    "30": "pre_review.url_parser_mismatch",
+    "31": "pre_review.remote_database_seed_target_guard",
+    "33": "pre_review.legacy_identity_hostname_guard",
+    "45": "pre_review.python_unicode_digits",
+    "47": "pre_review.external_response_shape",
+    "48": "pre_review.workflow_gh_run_permissions",
+    "49": "pre_review.cited_symbol_exists",
+    "51": "pre_review.no_floating_promises",
+    "52": "pre_review.markdown_glob_code_span",
+    "55": "pre_review.plan_rewalk_unresolved_conflict",
+}
 ENVIRONMENT_ERROR_PATTERNS = (
     re.compile(r"\b(?:EPERM|EACCES|EMFILE)\b", re.I),
     re.compile(r"(?:missing|required|not set|undefined)[^\n]{0,80}DATABASE_URL|DATABASE_URL[^\n]{0,120}(?:missing|required|not set|undefined|not a|invalid|cannot)", re.I),
@@ -584,14 +611,231 @@ def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
     return hits
 
 
+def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], message: str) -> list[dict[str, Any]]:
+    return [{"rule_id": rule_id, "path": path,
+             "line": source.count("\n", 0, match.start()) + 1, "message": message}
+            for match in pattern.finditer(source)]
+
+
+def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    # Defect #47: an external JSON object is dereferenced before its shape is checked.
+    assignment = re.compile(
+        r"(?m)^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*requests\.[A-Za-z_]\w*\([^\n]*\)\.json\(\)"
+    )
+    attribute_template = r"\b{0}\s*\.\s*([A-Za-z_]\w*)"
+    guard_template = r"\bisinstance\s*\(\s*{0}\s*,\s*(?:dict|Mapping)\s*\)|\bvalidate\s*\(\s*{0}\b"
+    for match in assignment.finditer(source):
+        name = match.group("name")
+        # Restrict the plain regex to this function-sized window to avoid unrelated guards.
+        function_end = re.search(r"(?m)^\s*(?:async\s+)?def\s+\w+|^\s*class\s+\w+", source[match.end():])
+        end = match.end() + function_end.start() if function_end else len(source)
+        window = source[match.end():end]
+        escaped = re.escape(name)
+        access = re.search(attribute_template.format(escaped), window)
+        if access and not re.search(guard_template.format(escaped), window[:access.start()]):
+            line = source.count("\n", 0, match.start()) + 1
+            hits.append({"rule_id": "pre_review.external_response_shape", "path": path,
+                         "line": line, "message": f"external JSON response {name} is accessed before a shape guard"})
+    # Defect #47: direct `.get` on JSON read from the gate's external evidence reader is unguarded.
+    external_body = re.compile(r"(?m)^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*rd\[\s*[\"']read[\"']\s*\]\s*\(")
+    for body_match in external_body.finditer(source):
+        name = re.escape(body_match.group("name"))
+        direct = re.search(rf"json\.loads\s*\(\s*{name}\s*\)\s*\.\s*(?:get|items|keys|values)\s*\(", source[body_match.end():])
+        if direct:
+            absolute = body_match.end() + direct.start()
+            hits.append({"rule_id": "pre_review.external_response_shape", "path": path,
+                         "line": source.count("\n", 0, absolute) + 1,
+                         "message": "external evidence JSON is dereferenced before a dict/schema check"})
+    return hits
+
+
+def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    js_exts = TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES
+
+    for rel, source in contents.items():
+        suffix = Path(rel).suffix.lower()
+        if suffix == ".py":
+            # Defect #12: raw identity-label membership accepts case, whitespace, and Unicode confusables.
+            membership = re.compile(r"\b[A-Za-z_]\w*\s*\.\s*get\(\s*['\"](?:label|identity|email)['\"]\s*\)\s+in\s+[A-Za-z_]\w*")
+            for match in membership.finditer(source):
+                context = source[max(0, match.start() - 500):match.end()]
+                if not re.search(r"normalize\s*\(|toNFKC\s*\(|normalize_label\s*\(", context):
+                    hits.append({"rule_id": "pre_review.identity_label_normalization", "path": rel,
+                                 "line": source.count("\n", 0, match.start()) + 1,
+                                 "message": "identity label membership is compared literally without normalization"})
+        if suffix in js_exts:
+            # Defect #12: identity labels are compared literally without Unicode normalization.
+            equality = re.compile(
+                r"\b(?P<label>[A-Za-z_$]*(?:identity|label|email)[\w$]*)\s*(?:===|==)\s*"
+                r"(?P<expected>(?:expected|known|allowed|trusted)[\w$]*)|"
+                r"\b(?P<expected2>(?:expected|known|allowed|trusted)[\w$]*)\s*(?:===|==)\s*"
+                r"(?P<label2>[A-Za-z_$]*(?:identity|label|email)[\w$]*)"
+            )
+            for match in equality.finditer(source):
+                context = source[max(0, match.start() - 500):match.end()]
+                if not re.search(r"\.\s*normalize\s*\(|toNFKC\s*\(", context):
+                    hits.append({"rule_id": "pre_review.identity_label_normalization", "path": rel,
+                                 "line": source.count("\n", 0, match.start()) + 1,
+                                 "message": "identity label is compared literally without nearby Unicode normalization"})
+
+            # Defect #31: a demo credential is written through a remote-capable DATABASE_URL without a target guard.
+            direct_database_write = (
+                re.search(r"\b(?:new\s+(?:Pool|Client)\s*\(|pg\.connect\s*\()", source)
+                and re.search(r"\bDATABASE_URL\b", source)
+                and re.search(r"password\s*[:=]\s*[\"'`][^\"'`]{4,}[\"'`]", source, re.I)
+            )
+            demo_credential_write = (
+                re.search(r"\bdemoLoginPassword\b", source)
+                and re.search(r"\b(?:prisma\.[\w.]+\.(?:create|update)|createAccount|updatePassword)\s*\(", source)
+            )
+            if (direct_database_write or demo_credential_write) and not re.search(r"target[-_]guard", source, re.I):
+                match = re.search(r"\b(?:new\s+(?:Pool|Client)\s*\(|pg\.connect\s*\()", source)
+                if not match:
+                    match = re.search(r"\bdemoLoginPassword\b", source)
+                hits.append({"rule_id": "pre_review.remote_database_seed_target_guard", "path": rel,
+                             "line": source.count("\n", 0, match.start()) + 1,
+                             "message": "demo password is seeded through DATABASE_URL without a target guard"})
+
+            # Defect #33: hostname-plus-prefix validation remains instead of the shared database target guard.
+            hostname = re.search(
+                r"(?:const|let|var)\s+(\w+)\s*=\s*new\s+URL\s*\([^\n)]*(?:DATABASE_URL|databaseUrl)[^\n)]*\)",
+                source,
+            )
+            direct_hostname = re.search(r"new\s+URL\s*\([^\n)]*\)\s*\.\s*hostname", source)
+            legacy_host_check = bool(
+                (hostname and re.search(rf"\b{re.escape(hostname.group(1))}\s*\.\s*hostname\s*\.\s*startsWith\s*\(", source))
+                or (direct_hostname and re.search(r"\.\s*startsWith\s*\(", source))
+            )
+            if (legacy_host_check and not re.search(r"target[-_]guard", source, re.I)):
+                hits.append({"rule_id": "pre_review.legacy_identity_hostname_guard", "path": rel,
+                             "line": source.count("\n", 0, (hostname or direct_hostname).start()) + 1,
+                             "message": "legacy hostname/startsWith validation does not use the shared target guard"})
+
+            # Defect #30: WHATWG hostname vetting can disagree with the runtime PostgreSQL parser.
+            mismatch = re.compile(
+                r"(?:const|let|var)\s+(\w+)\s*=\s*new\s+URL\s*\(\s*(\w+)\s*\)"
+                r"[\s\S]{0,1200}?\1\s*\.\s*hostname[\s\S]{0,1200}?"
+                r"\b(?:Pool|Client)\s*\(\s*\{[\s\S]{0,500}?connectionString\s*:\s*\2\b"
+            )
+            for match in mismatch.finditer(source):
+                hits.append({"rule_id": "pre_review.url_parser_mismatch", "path": rel,
+                             "line": source.count("\n", 0, match.start()) + 1,
+                             "message": "WHATWG URL hostname vetting precedes use of the same value by a database client"})
+            # Defect #30: database-host authorization based on WHATWG URL.hostname can miss pg query overrides.
+            host_check = re.compile(
+                r"(?:new\s+URL\s*\(|parseUrl\s*=)[\s\S]{0,1800}?(?:DATABASE_URL|databaseUrl|connectionString)[\s\S]{0,1800}?\.hostname"
+            )
+            parser_import = re.search(r"pg-connection-string", source) and re.search(r"\bparse\s*\([^\n)]*(?:DATABASE_URL|databaseUrl|connectionString)", source)
+            for match in host_check.finditer(source):
+                if not parser_import:
+                    hits.append({"rule_id": "pre_review.url_parser_mismatch", "path": rel,
+                                 "line": source.count("\n", 0, match.start()) + 1,
+                                 "message": "database host is authorized with WHATWG URL.hostname instead of pg-connection-string"})
+
+            # Defect #51: `void` suppresses lint while an async function's rejection is unhandled.
+            async_names = set(re.findall(r"(?m)\b(?:const|let|var)\s+(\w+)\s*=\s*async\b|\basync\s+function\s+(\w+)", source))
+            async_names = {name for pair in async_names for name in pair if name}
+            call_names = "|".join(map(re.escape, sorted(async_names | {"continueHop", "readToken"})))
+            floating = re.compile(rf"(?m)^\s*void\s+(?:{call_names})\s*\([^;\n]*\)\s*;") if call_names else re.compile(r"(?!)")
+            for match in floating.finditer(source):
+                hits.append({"rule_id": "pre_review.no_floating_promises", "path": rel,
+                             "line": source.count("\n", 0, match.start()) + 1,
+                             "message": "Promise expression is neither awaited nor returned"})
+
+        if suffix in {".md", ".markdown"}:
+            # Defect #52: markdown emphasis swallows a glob-like token outside code spans.
+            glob = re.compile(r"(?<!`)\*[A-Za-z0-9_.-]*\.[A-Za-z0-9_.-]*\*(?!`)|(?<!`)\b[A-Za-z0-9_-]+\.\*(?!`)")
+            hits.extend(regex_hit("pre_review.markdown_glob_code_span", rel, source, glob,
+                                  "glob-like token is emphasis text; wrap it in a Markdown code span"))
+
+    # Defect #48: gh run lookups need both a token in the job and actions:read permission.
+    for rel, source in contents.items():
+        if not rel.startswith(".github/workflows/") or Path(rel).suffix.lower() not in {".yml", ".yaml"}:
+            continue
+        command = re.search(r"(?m)^\s*(?:-\s*)?(?:run|script)\s*:\s*[^\n]*(?:\bgh\s+run\s+(?:view|list)\b|ship-gate(?:\.py)?\s+check)", source)
+        token = re.search(r"(?m)^\s*(?:GH_TOKEN|GITHUB_TOKEN)\s*:\s*\S+", source)
+        actions_read = re.search(r"(?m)^[ \t]*permissions[ \t]*:[ \t]*(?:\n(?:[ \t]+[^\n]*)?)*?^[ \t]+actions[ \t]*:[ \t]*read[ \t]*$", source)
+        if command and (not token or not actions_read):
+            hits.append({"rule_id": "pre_review.workflow_gh_run_permissions", "path": rel,
+                         "line": source.count("\n", 0, command.start()) + 1,
+                         "message": "workflow gh run lookup is missing explicit GH_TOKEN or actions:read permission"})
+
+    # Defect #49: an explicitly cited uppercase constant must exist in tracked code, not only review prose.
+    cited = re.compile(r"(?i)\b(?:cited|citation(?:\s+of)?|reference\s+to)\b[^\n]{0,100}\b([A-Z][A-Z0-9]*_[A-Z0-9_]{2,})\b")
+    for rel, source in contents.items():
+        if Path(rel).suffix.lower() not in {".md", ".markdown"}:
+            continue
+        for match in cited.finditer(source):
+            symbol = match.group(1)
+            declaration = re.compile(
+                rf"(?m)^\s*(?:(?:export|const|let|var)\s+)?{re.escape(symbol)}\s*(?:=|:)"
+            )
+            grep_declaration = (
+                rf"^[[:space:]]*(export[[:space:]]+)?(const[[:space:]]+|let[[:space:]]+|var[[:space:]]+)?"
+                rf"{re.escape(symbol)}[[:space:]]*(=|:)"
+            )
+            present_in_changed_code = any(declaration.search(code) for other, code in contents.items()
+                                          if Path(other).suffix.lower() in js_exts | {".py", ".go", ".java", ".c", ".h", ".sh"})
+            if not present_in_changed_code:
+                # Search declarations only; comments and incidental references are not definitions.
+                result = run_capture(["git", "grep", "-n", "-E", "-e", grep_declaration, "--",
+                                     "*.py", "*.ts", "*.tsx", "*.js", "*.mjs", "*.go", "*.java", "*.c", "*.h", "*.sh"], repo)
+                if result.returncode:
+                    hits.append({"rule_id": "pre_review.cited_symbol_exists", "path": rel,
+                                 "line": source.count("\n", 0, match.start()) + 1,
+                                 "message": f"review prose cites {symbol}, but no tracked source definition/reference exists"})
+
+    # Defect #55: unresolved plan items cannot be reported as passing in the rewalk JSON.
+    plan_path = next((path for path in contents if path.endswith(".qa/plan.md")), None)
+    rewalk_path = next((path for path in contents if path.endswith(".qa/rewalk.json")), None)
+    if plan_path or rewalk_path:
+        plan_path = plan_path or ".qa/plan.md"
+        rewalk_path = rewalk_path or ".qa/rewalk.json"
+        for companion in (plan_path, rewalk_path):
+            if companion not in contents:
+                try:
+                    contents[companion] = (repo / companion).read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    pass
+        plan_path = plan_path if plan_path in contents else None
+        rewalk_path = rewalk_path if rewalk_path in contents else None
+    if plan_path and rewalk_path:
+        plan = contents[plan_path]
+        rewalk = contents[rewalk_path]
+        # Defect #55: an escalated or unfixed plan item conflicts with an all-green rewalk.
+        open_item = re.compile(r"(?is)(?:\bR\d+/CL-\d+\b|\bCL-\d+\s*\(R\d+\))[\s\S]{0,500}?(?:unresolved|not resolved|still open|escalated|not fixed|remains open)")
+        all_pass = re.search(r"(?is)\"verdict\"\s*:\s*\"PASS\"", rewalk) and not re.search(
+            r"(?is)\"verdict\"\s*:\s*\"(?:FAIL|BLOCKED|ERROR)\"", rewalk
+        )
+        if open_item and all_pass:
+            passing = re.search(r"(?is)\"verdict\"\s*:\s*\"PASS\"", rewalk)
+            hits.append({"rule_id": "pre_review.plan_rewalk_unresolved_conflict", "path": rewalk_path,
+                         "line": rewalk.count("\n", 0, passing.start()) + 1,
+                         "message": "plan retains an unresolved/escalated item while the rewalk reports only PASS"})
+        unresolved = re.compile(r"(?im)^.*\b(R\d+/[A-Z][A-Z0-9_-]*-\d+)\b.*\b(?:unresolved|not resolved|still open)\b.*$")
+        for match in unresolved.finditer(plan):
+            item_id = match.group(1)
+            escaped_id = re.escape(item_id)
+            passing = re.compile(rf"(?is)[\"'](?:id|key)[\"']\s*:\s*[\"']{escaped_id}[\"'][^{{}}]{{0,400}}[\"'](?:status|verdict|result)[\"']\s*:\s*[\"']PASS[\"']")
+            if passing.search(rewalk):
+                hits.append({"rule_id": "pre_review.plan_rewalk_unresolved_conflict", "path": rewalk_path,
+                             "line": rewalk.count("\n", 0, passing.search(rewalk).start()) + 1,
+                             "message": f"rewalk reports {item_id} as PASS while the plan still marks it unresolved"})
+
+    return hits
+
+
 def builtin_rule_scan(repo: Path, paths: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     hits: list[dict[str, Any]] = []
+    contents: dict[str, str] = {}
     scanned = 0
     for rel in paths:
         if is_pre_review_fixture(rel):
             continue
         path = Path(rel)
-        if path.suffix.lower() not in ({".py", ".yml", ".yaml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES):
+        if path.suffix.lower() not in ({".py", ".yml", ".yaml", ".md", ".markdown", ".json"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES):
             continue
         target = (repo / path).resolve()
         try:
@@ -600,29 +844,24 @@ def builtin_rule_scan(repo: Path, paths: list[str]) -> tuple[list[dict[str, Any]
         except (OSError, UnicodeError, ValueError):
             continue
         scanned += 1
+        contents[rel] = source
         if path.suffix.lower() == ".py":
+            # Defect #45: Python's Unicode-aware digit class disagrees with the downstream ASCII parser.
             hits.extend(python_digit_rule(rel, source))
-        if path.suffix.lower() in {".yml", ".yaml"} and (".github/workflows/" in f"/{rel}" or rel.startswith(".github/workflows/")):
+            hits.extend(external_response_shape_hits(rel, source))
+        if path.suffix.lower() in {".yml", ".yaml"} and rel.startswith(".github/workflows/"):
+            # Port of pre_review.github_token_permissions: token use requires an explicit permissions block.
             token_use = bool(re.search(r"(?:secrets\.GITHUB_TOKEN|\bGH_TOKEN\b)", source))
             permission_declared = bool(re.search(r"(?m)^\s*permissions\s*:", source))
             if token_use and not permission_declared:
+                match = re.search(r"(?:secrets\.GITHUB_TOKEN|\bGH_TOKEN\b)", source)
                 hits.append({"rule_id": "pre_review.github_token_permissions", "path": rel,
-                             "line": 1, "message": "workflow uses the GitHub token without declaring permissions"})
-        if path.suffix.lower() in (TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES):
-            for match in re.finditer(r"(?m)^\s*(Promise\.(?:resolve|reject)\s*\([^;\n]*\))\s*;", source):
-                line = source.count("\n", 0, match.start()) + 1
-                hits.append({"rule_id": "pre_review.no_floating_promises", "path": rel,
-                             "line": line, "message": "Promise expression is neither awaited nor returned"})
-            for match in re.finditer(
-                r"(?:const|let|var)\s+(\w+)\s*=\s*new\s+URL\s*\(\s*(\w+)\s*\)[\s\S]{0,1200}?\1\s*\.\s*hostname[\s\S]{0,1200}?\b(?:Pool|Client)\s*\(\s*\{[\s\S]{0,500}?connectionString\s*:\s*\2\b",
-                source,
-            ):
-                line = source.count("\n", 0, match.start()) + 1
-                hits.append({"rule_id": "pre_review.url_parser_mismatch", "path": rel,
-                             "line": line, "message": "WHATWG URL hostname vetting precedes use of the same value by a database client"})
+                             "line": source.count("\n", 0, match.start()) + 1,
+                             "message": "workflow uses the GitHub token without declaring permissions"})
+    hits.extend(study_regex_hits(repo, contents))
     check = {"name": "built-in-rule-scan", "command": ["pre-review built-in rules", *paths],
              "status": "fail" if hits else "pass", "exit_code": 1 if hits else 0,
-             "output_tail": f"scanned {scanned} changed source/config file(s); {len(hits)} hit(s)",
+             "output_tail": f"scanned {scanned} changed source/config file(s); {len(BUILTIN_RULE_IDS)} built-in rule(s) active; {len(hits)} hit(s)",
              "duration_ms": 0}
     return hits, check
 
@@ -680,6 +919,9 @@ def markdown_summary(packet: dict[str, Any]) -> bytes:
             lines.append(f"- `{hit['rule_id']}` — `{hit['path']}:{hit.get('line')}`: {hit['message']}")
     else:
         lines.append("- None")
+    lines.extend(["", "## Built-in rule coverage", "",
+                  f"- Dependency-free rules active: {len(packet.get('active_builtin_rules', []))}",
+                  f"- Study R/S defect classes covered: {packet.get('study_static_covered', 0)}/{packet.get('study_static_total', 0)}"])
     lines.extend(["", "## Active rule files", ""])
     lines.extend(f"- `{path}`" for path in packet["active_rule_files"])
     if not packet["active_rule_files"]:
@@ -915,14 +1157,14 @@ def main(argv: list[str] | None = None) -> int:
                                   skip_reason=None if markdownlint else "markdownlint not installed"))
 
     semgrep = binary_path(repo, "semgrep")
-    active_rule_files: list[Path] = []
+    active_rule_files: list[Path] = [starter_rules_path()] if paths else []
     project_rules = project_rule_files(repo)
     source_paths = [path for path in paths
                     if not is_pre_review_fixture(path)
                     and Path(path).suffix.lower() in ({".py", ".c", ".h", ".go", ".java", ".yaml", ".yml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)]
     if source_paths:
         if semgrep:
-            active_rule_files = [starter_rules_path(), *project_rules]
+            active_rule_files = list(dict.fromkeys([starter_rules_path(), *project_rules]))
             semgrep_args = [semgrep, "scan", "--json", "--error"]
             for rule_file in active_rule_files:
                 semgrep_args.extend(["--config", str(rule_file)])
@@ -967,8 +1209,8 @@ def main(argv: list[str] | None = None) -> int:
     # built-in safety net and Semgrep.
     unique_hits: dict[tuple[Any, ...], dict[str, Any]] = {}
     for hit in hits:
-        key = (hit.get("rule_id"), hit.get("path"), hit.get("line"), hit.get("message"))
-        unique_hits[key] = hit
+        key = (hit.get("rule_id"), hit.get("path"), hit.get("line"))
+        unique_hits.setdefault(key, hit)
     cleanup_failed = False
     if cleanup_worktree:
         cleanup_result = cleanup_worktree()
@@ -1007,6 +1249,10 @@ def main(argv: list[str] | None = None) -> int:
         "excluded_worktree_paths": excluded_worktree_paths,
         "commands": commands,
         "rule_hits": list(unique_hits.values()),
+        "active_builtin_rules": BUILTIN_RULE_IDS,
+        "study_static_covered": len(STUDY_STATIC_DEFECT_RULES),
+        "study_static_total": 11,
+        "study_static_defect_rules": STUDY_STATIC_DEFECT_RULES,
         "active_rule_files": [str(path.resolve()) for path in active_rule_files],
         "available_project_rule_files": [path.relative_to(repo).as_posix() for path in project_rules],
         "raw_diff_bytes": raw_diff_bytes,

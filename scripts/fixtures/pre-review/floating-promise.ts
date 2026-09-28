@@ -1,5 +1,5 @@
-async function updateRecord(): Promise<void> {
-  Promise.resolve("updated");
+async function continueHop(): Promise<void> {
+  await Promise.resolve("continued");
 }
 
-void updateRecord();
+void continueHop();
