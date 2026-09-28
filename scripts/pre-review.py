@@ -808,7 +808,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
         if command_offset is None:
             # Defect #48: shell commands also appear inside YAML literal/folded run blocks.
             block = re.compile(
-                r"(?m)^[ \t]*-[ \t]*(?:run|script)[ \t]*:[ \t]*[|>][+-]?[ \t]*\n"
+                r"(?m)^[ \t]*(?:-[ \t]*)?(?:run|script)[ \t]*:[ \t]*[|>][+-]?[ \t]*\n"
                 r"(?P<body>(?:[ \t]{2,}[^\n]*(?:\n|$))+)"
             )
             for block_match in block.finditer(source):
