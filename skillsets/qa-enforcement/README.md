@@ -12,8 +12,9 @@ from the qa-speed-quality research report §2 (report at
   `clusters`, `record`, `selftest`) and templates (git pre-push, GitHub
   Actions job, .qa/config example).
 - `hooks/` — host wiring: `qa-ship-gate-hook.sh` (PreToolUse),
-  `qa-stop-hook.sh` (Stop), the extended `coordinator-hook-pretool.sh`, and
-  `install.sh`.
+  `qa-stop-hook.sh` (Stop), `opencode-qa-evidence.js` (OpenCode session.idle),
+  and the plugin's `lib/qa-evidence-policy.mjs` helper,
+  the extended `coordinator-hook-pretool.sh`, and `install.sh`.
 
 ## How it enforces
 
@@ -35,12 +36,24 @@ required-check template (the unforgeable layer; agents self-attest the .qa
 files), and a Stop hook that keeps a turn alive while inventory rows are open
 (Claude honors stop_hook_active + 8-block cap; Codex trust recorded 2026-09-24).
 
+The final-claim evidence nudge is default-on at Stop for every repository. It
+requires a persona, target, attempted user outcomes, and a verdict per outcome;
+or the explicit `implemented; workflow NOT RUN` status with remaining work.
+For repositories without `.qa/config.json`, this nudge is the only QA gate:
+there are no tool denials and no generated `.qa/` files. OpenCode lacks a
+blocking Stop callback, so `opencode-qa-evidence.js` observes `session.idle`
+and uses the supported `session.promptAsync` API to inject one continuation;
+the synthetic prompt marker prevents another continuation in that turn. The
+Stop adapter runs the opted-in inventory gate first and preserves its block
+before considering the default evidence nudge.
+
 Events: gate_denied / gate_passed / inventory_closed / rewalk / escape append
 to ~/.local/state/agent-quality/events.jsonl (schema_version 1; no secrets).
 
 ## Install / rollback on the host
 
-Install: `hooks/install.sh <staging>` (backs up replaced files). Rollback:
+Install: `hooks/install.sh <staging>` (backs up replaced files and refreshes
+Codex hook trust after the final hook-config write). Rollback:
 ```
 cp ~/.agent-hooks/backups/qa-ship-gate-2026-09-24/coordinator-hook-pretool.sh ~/.agent-hooks/coordinator-hook-pretool.sh
 cp ~/.agent-hooks/backups/qa-ship-gate-2026-09-24/claude-settings.json ~/.claude/settings.json

@@ -16,6 +16,21 @@ verified: 2026-09-25
 
 # QA sweep: discover everything, cluster, plan once, fix, re-walk
 
+## Final completion claims
+
+Across repositories, a final claim that work is done, ready, working, fixed,
+tested, verified, or validated needs an evidence packet containing:
+
+- the persona;
+- the target (stack plus commit SHA, or URL plus deployment ID);
+- the user outcomes attempted;
+- a verdict for each outcome.
+
+When the workflow has not been run, say `implemented; workflow NOT RUN` and name
+what remains. The Stop nudge applies even when a repository has no `.qa/`
+configuration. Repositories without `.qa/config.json` do not receive the QA
+ship gate, and the nudge never creates `.qa/` files or denies tool calls.
+
 The unit of work is the workflow, not the defect in front of you. The failure
 this skill exists to stop: find 1 error, fix 1, deploy 1, repeat. Every phase
 below has an artifact and a checker; the ship-gate script is the enforcement,
