@@ -737,6 +737,15 @@ def inline_yaml_map_body(value: str) -> str | None:
     return None
 
 
+def inline_yaml_map_value(value: str, lines: list[str], index: int, end: int) -> tuple[str, int]:
+    """Join a flow map continued on indented lines; return its value and next line."""
+    stop = index + 1
+    while value.startswith("{") and inline_yaml_map_body(value) is None and stop < end:
+        value += " " + lines[stop].strip()
+        stop += 1
+    return value, stop
+
+
 def inline_yaml_map_entries(body: str) -> list[tuple[str, str]]:
     entries: list[str] = []
     start = 0
@@ -817,12 +826,18 @@ def effective_workflow_token(lines: list[str], env_blocks: tuple[tuple[int, int]
     for part in env_blocks:
         if not part:
             continue
+        flow_map_continuations: set[int] = set()
         for index, line in enumerate(lines[part[0]:part[1]], part[0]):
+            if index in flow_map_continuations:
+                continue
             inline_mapping = re.match(r"^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*(.*)$", line)
             if inline_mapping:
-                body = inline_yaml_map_body(inline_mapping.group(1).strip())
+                inline_value, next_index = inline_yaml_map_value(
+                    inline_mapping.group(1).strip(), lines, index, part[1])
+                body = inline_yaml_map_body(inline_value)
                 if body is not None:
                     apply_inline(body)
+                    flow_map_continuations.update(range(index + 1, next_index))
             match = re.match(r"^[ \t]*(['\"]?(?:GH_TOKEN|GITHUB_TOKEN)['\"]?)[ \t]*:[ \t]*(.*)$", line)
             if not match:
                 continue
@@ -854,7 +869,8 @@ def workflow_step_env(lines: list[str], step: tuple[int, int] | None, step_inden
     if inline_header:
         value = inline_header.group(1).strip()
         if value:
-            return (start, start + 1), value
+            value, stop = inline_yaml_map_value(value, lines, start, end)
+            return (start, stop), value
         stop = start + 1
         while stop < end and (not lines[stop].strip() or
                               len(lines[stop]) - len(lines[stop].lstrip(" \t")) > step_indent + 2):
