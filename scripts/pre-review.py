@@ -23,6 +23,11 @@ OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
+ENVIRONMENT_ERROR_PATTERNS = (
+    re.compile(r"\b(?:EPERM|EACCES|EMFILE)\b", re.I),
+    re.compile(r"(?:missing|required|not set|undefined)[^\n]{0,80}DATABASE_URL|DATABASE_URL[^\n]{0,80}(?:missing|required|not set|undefined)", re.I),
+    re.compile(r"\bno server\b|ECONNREFUSED|connection refused|could not connect|command not found|(?:was|is) not able to start|unable to start", re.I),
+)
 def starter_rules_path() -> Path:
     installed = Path(__file__).resolve().parent.parent / "semgrep" / "pre-review.yml"
     if installed.is_file():
@@ -41,6 +46,10 @@ def run_capture(argv: list[str], cwd: Path, timeout: float = 30) -> subprocess.C
 
 def output_tail(raw: bytes) -> str:
     return raw[-OUTPUT_TAIL_BUDGET:].decode("utf-8", errors="replace")
+
+
+def environment_error(tail: str) -> bool:
+    return any(pattern.search(tail) for pattern in ENVIRONMENT_ERROR_PATTERNS)
 
 
 def command_paths(repo: Path, paths: list[str]) -> list[str]:
@@ -134,9 +143,13 @@ def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 1
     try:
         result = run_capture(argv, repo, timeout=timeout * timeout_scale)
         tail = output_tail(result.stdout).replace(str(repo), "<repo>")
-        command.update(status="pass" if result.returncode == 0 else "fail",
+        is_environment_error = result.returncode != 0 and environment_error(tail)
+        command.update(status="error" if is_environment_error else ("pass" if result.returncode == 0 else "fail"),
                        exit_code=result.returncode, output_tail=tail,
                        duration_ms=round((time.monotonic() - started) * 1000))
+        if is_environment_error:
+            command.update(verification="unverified", error_kind="environment",
+                           output_tail=(tail + "\nenvironment error; result is unverified").strip())
     except FileNotFoundError:
         command.update(status="skip", output_tail="not installed")
     except subprocess.TimeoutExpired as error:
@@ -236,7 +249,10 @@ def focused_test_commands(repo: Path, tests: list[str], skip_tests: bool = False
         if playwright_tests:
             playwright = binary_path(repo, "playwright")
             config = repo / "playwright.config.ts"
-            command = [playwright, "test", "--config", str(config), *command_paths(repo, playwright_tests)] if playwright and config.is_file() else []
+            output_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:12]
+            playwright_output = Path(tempfile.gettempdir()) / f"pre-review-playwright-{output_key}-{os.getpid()}"
+            command = [playwright, "test", "--config", str(config), "--output", str(playwright_output),
+                       *command_paths(repo, playwright_tests)] if playwright and config.is_file() else []
             reason = None if command else ("playwright not installed" if not playwright else "playwright.config.ts not found")
             commands.append(("focused-playwright-tests", command, reason))
         if not remaining_ts_tests:
@@ -258,18 +274,56 @@ def focused_test_commands(repo: Path, tests: list[str], skip_tests: bool = False
 
 
 def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
-    if Path(path).name.lower().find("date") < 0 and not re.search(r"\b(date|day|month|year|timestamp)\b", source, re.I):
-        return []
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError:
         return []
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    imported_ascii_flags = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "re"
+        for alias in node.names if alias.name in {"A", "ASCII"}
+    }
+    regex_module_names = {
+        alias.asname or alias.name
+        for node in ast.walk(tree) if isinstance(node, ast.Import)
+        for alias in node.names if alias.name == "re"
+    } | {"re"}
+
+    def flag_is_ascii(node: ast.AST | None) -> bool:
+        if node is None:
+            return False
+        for part in ast.walk(node):
+            if (isinstance(part, ast.Attribute) and part.attr in {"A", "ASCII"}
+                    and isinstance(part.value, ast.Name) and part.value.id in regex_module_names):
+                return True
+            if isinstance(part, ast.Name) and part.id in imported_ascii_flags:
+                return True
+        return False
+
+    def validation_context(call: ast.AST) -> bool:
+        names = [Path(path).stem]
+        current = call
+        while current in parents:
+            current = parents[current]
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.append(current.name)
+            elif isinstance(current, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                targets = current.targets if isinstance(current, ast.Assign) else [current.target]
+                names.extend(ast.unparse(target) for target in targets)
+        context = " ".join(re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower().replace("_", " ") for name in names)
+        domain = re.search(r"\b(date|day|month|year|timestamp|id|sha(?:1|256|512)?|version)\b", context)
+        validation = re.search(r"\b(valid(?:ate|ation|ated)?|accept(?:ed|ance)?|parse(?:d|r)?)\b", context)
+        return bool(domain and validation)
+
     hits: list[dict[str, Any]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
         func = node.func
-        if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name) or func.value.id != "re":
+        if (not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name)
+                or func.value.id not in regex_module_names):
             continue
         if func.attr not in {"compile", "match", "fullmatch", "search"}:
             continue
@@ -279,16 +333,17 @@ def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
             continue
         if not isinstance(pattern, str) or r"\d" not in pattern:
             continue
-        flags: ast.AST | None = None
-        if func.attr == "compile" and len(node.args) > 1:
-            flags = node.args[1]
+        positional_flag = 1 if func.attr == "compile" else 2
+        flags = node.args[positional_flag] if len(node.args) > positional_flag else None
         for keyword in node.keywords:
             if keyword.arg == "flags":
                 flags = keyword.value
-        flag_text = ast.dump(flags) if flags is not None else ""
-        if "ASCII" not in flag_text and not re.search(r"\bA\b", flag_text):
+        anchored = func.attr in {"match", "fullmatch"} or bool(
+            re.match(r"^(?:\\A|\^)", pattern) and re.search(r"(?:\\Z|\\z|\$)$", pattern)
+        )
+        if anchored and validation_context(node) and not flag_is_ascii(flags):
             hits.append({"rule_id": "pre_review.python_unicode_digits", "path": path,
-                         "line": node.lineno, "message": r"date or identifier regex uses \d without re.ASCII"})
+                         "line": node.lineno, "message": r"anchored date/identifier validation uses \d without re.ASCII"})
     return hits
 
 
@@ -476,7 +531,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", help=f"base ref to compare (default: {DEFAULT_BASE})")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository directory (default: current directory)")
-    parser.add_argument("--output-dir", type=Path, default=Path(".pre-review"), help="packet directory (default: .pre-review)")
+    parser.add_argument("--output-dir", type=Path, help="packet directory (default: a temp directory outside the repo)")
     parser.add_argument("--skip-tests", action="store_true",
                         help="record focused tests as skipped without running them (default: focused tests enabled)")
     parser.add_argument("--skip-repo-lint", action="store_true",
@@ -493,7 +548,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         repo = resolve_repo(args.repo.resolve())
         base_ref, base_sha, merge_sha = resolve_base(repo, args.base)
-        output_dir = args.output_dir if args.output_dir.is_absolute() else repo / args.output_dir
+        repo_key = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:16]
+        output_dir = args.output_dir if args.output_dir and args.output_dir.is_absolute() else (
+            repo / args.output_dir if args.output_dir else Path(tempfile.gettempdir()) / "agent-config-kit-pre-review" / repo_key / str(os.getpid())
+        )
+        output_dir = output_dir.resolve()
+        try:
+            output_dir.relative_to(repo)
+        except ValueError:
+            pass
+        else:
+            raise PreReviewError("output directory must be outside the reviewed repository")
         paths, dirty, raw_diff_bytes = changed_paths(repo, merge_sha, output_dir)
     except PreReviewError as error:
         print(f"pre-review: {error}", file=sys.stderr)
@@ -575,12 +640,18 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 semgrep_started = time.monotonic()
                 semgrep_run = run_capture(semgrep_args, repo, timeout=180 * args.timeout_scale)
-                hits.extend(semgrep_result(semgrep_run.stdout, repo))
+                semgrep_tail = output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")
+                is_environment_error = semgrep_run.returncode != 0 and environment_error(semgrep_tail)
+                if not is_environment_error:
+                    hits.extend(semgrep_result(semgrep_run.stdout, repo))
                 commands.append({"name": "semgrep", "command": semgrep_args,
-                                 "status": "fail" if semgrep_run.returncode else "pass",
+                                 "status": "error" if is_environment_error else ("fail" if semgrep_run.returncode else "pass"),
                                  "exit_code": semgrep_run.returncode,
                                  "duration_ms": round((time.monotonic() - semgrep_started) * 1000),
-                                 "output_tail": output_tail(semgrep_run.stdout).replace(str(repo), "<repo>")})
+                                 "output_tail": semgrep_tail})
+                if is_environment_error:
+                    commands[-1].update(verification="unverified", error_kind="environment",
+                                        output_tail=(semgrep_tail + "\nenvironment error; result is unverified").strip())
             except subprocess.TimeoutExpired as error:
                 raw = error.stdout or b""
                 if isinstance(raw, str):
@@ -630,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Packet budget excess: {packet['budget_excess_bytes']} bytes")
     if packet["budget_excess_bytes"] or any(item["status"] == "fail" for item in commands) or packet["rule_hits"]:
         return 1
-    if any(item["status"] == "timeout" for item in commands):
+    if any(item["status"] in {"timeout", "error"} for item in commands):
         return 2
     return 0
 

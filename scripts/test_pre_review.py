@@ -94,6 +94,16 @@ class PreReviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pre_review.python_unicode_digits", self.rule_ids(packet))
 
+    def test_python_date_regex_with_re_ascii_has_no_digit_rule_hit(self) -> None:
+        self.add_fixture("ascii-date-validation.py", "scripts/date_validation.py")
+        _result, packet = self.run_pre_review()
+        self.assertNotIn("pre_review.python_unicode_digits", self.rule_ids(packet))
+
+    def test_api_version_detector_has_no_digit_rule_hit(self) -> None:
+        self.add_fixture("api-version-detector.py", "scripts/api_version_detector.py")
+        _result, packet = self.run_pre_review()
+        self.assertNotIn("pre_review.python_unicode_digits", self.rule_ids(packet))
+
     def test_safe_url_vetting_does_not_hit_mismatch_rule(self) -> None:
         self.add_fixture("safe-database-url.ts", "src/safe-database-url.ts")
         result, packet = self.run_pre_review()
@@ -186,6 +196,28 @@ class PreReviewTests(unittest.TestCase):
         self.assertIn("result is unverified", command["output_tail"])
         self.assertNotEqual(command["status"], "fail")
 
+    def test_environment_failures_are_unverified_errors(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        for output in (b"EPERM: operation not permitted", b"DATABASE_URL is not set", b"no server is available",
+                       b"Process from config.webServer was not able to start. Exit code: 127; next: command not found"):
+            with self.subTest(output=output), patch.object(
+                namespace["subprocess"], "run",
+                return_value=subprocess.CompletedProcess(["check"], 1, output),
+            ):
+                command = namespace["record_command"]("environment-check", ["check"], self.repo)
+                self.assertEqual(command["status"], "error")
+                self.assertEqual(command["verification"], "unverified")
+                self.assertEqual(command["error_kind"], "environment")
+                self.assertNotEqual(command["status"], "fail")
+
+    def test_playwright_output_is_external_to_reviewed_repo(self) -> None:
+        (self.repo / "playwright.config.ts").write_text("export default {};\n", encoding="utf-8")
+        namespace = runpy.run_path(str(SCRIPT))
+        with patch.object(namespace["shutil"], "which", return_value="/bin/playwright"):
+            commands = namespace["focused_test_commands"](self.repo, ["e2e/example.spec.ts"])
+        output_dir = Path(commands[0][1][commands[0][1].index("--output") + 1])
+        self.assertFalse(output_dir.is_relative_to(self.repo))
+
     def test_hyphenated_python_source_finds_underscored_test_file(self) -> None:
         test_file = self.repo / "scripts" / "test_pre_review.py"
         test_file.parent.mkdir()
@@ -213,12 +245,15 @@ class PreReviewTests(unittest.TestCase):
         command = [sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "HEAD"]
         first = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-        first_packet = json.loads((self.repo / ".pre-review" / "pre-review.json").read_text(encoding="utf-8"))
+        first_packet_path = Path(first.stdout.split("JSON packet: ", 1)[1].splitlines()[0])
+        self.assertFalse(first_packet_path.is_relative_to(self.repo))
+        first_packet = json.loads(first_packet_path.read_text(encoding="utf-8"))
         second = subprocess.run(command, cwd=self.repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
-        second_packet = json.loads((self.repo / ".pre-review" / "pre-review.json").read_text(encoding="utf-8"))
+        second_packet_path = Path(second.stdout.split("JSON packet: ", 1)[1].splitlines()[0])
+        self.assertFalse(second_packet_path.is_relative_to(self.repo))
+        second_packet = json.loads(second_packet_path.read_text(encoding="utf-8"))
         self.assertEqual(first_packet["changed_paths"], second_packet["changed_paths"])
-        self.assertFalse(any(path.startswith(".pre-review/") for path in second_packet["changed_paths"]))
         self.assertEqual(first_packet["dirty"], second_packet["dirty"])
 
     def test_oversized_packet_is_bounded_and_fails_explicitly(self) -> None:
