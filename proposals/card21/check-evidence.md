@@ -173,7 +173,7 @@ deletion, direct bypass permission, an `unless necessary` exception, and
 task-specific `explicitly permitted/allowed to bypass` clauses, both
 `never`/`do not` exception forms, passive permission, and conditional action
 forms, condition-first bypass forms, and exception-before-prohibition variants
-all fail for each home (64 mutations). The checker also passes all four
+all fail for each home (68 mutations). The checker also passes all four
 unchanged live-home files and the kit source.
 
 Live homes were not modified. The renderer remains in proposal mode; its
