@@ -1,4 +1,4 @@
-"""Find the `bb thread spawn|create|tell|message` invocations in a shell script.
+"""Find prompt-carrying `bb thread` invocations in a shell script.
 
 The gate matched the dispatch words anywhere in a command, so a quoted string
 that merely MENTIONED them was treated as a dispatch: on 2026-09-25 it denied
@@ -44,8 +44,8 @@ config custom-instructions set ...` as `instructions set`.
 
 Dispatch verbs are every bb verb that hands a thread new text to act on
 (`bb thread --help`, `bb fleet --help`, 2026-09-25): thread spawn|create|fork|
-tell|message|edit-message, thread queue create|update|send, thread
-interactions answer (--text)|respond, and fleet group-create|task-add|advise
+tell|message|edit-message, thread queue create|update|send, thread draft set,
+thread interactions answer (--text)|respond, and fleet group-create|task-add|advise
 and member-add (--concern), automation create|update|run|resume, and
 instructions set. scope-gate.py selftest walks the installed bb's help, from
 every core and plugin command group and nested groups included, for a
@@ -61,6 +61,7 @@ import shlex
 
 THREAD_VERBS = ("spawn", "create", "fork", "tell", "message", "edit-message")
 QUEUE_VERBS = ("create", "update", "send")
+THREAD_MULTI_VERBS = {"queue": QUEUE_VERBS, "draft": ("set",)}
 FLEET_VERBS = ("group-create", "task-add", "advise")
 # Gated only when one of the flags is given (None: always): without them they
 # carry no new text for a thread. An automation's --prompt is the prompt an
@@ -70,6 +71,7 @@ FLEET_VERBS = ("group-create", "task-add", "advise")
 # the automation already stores, which scope-gate.py reads from bb. Custom
 # instructions (`instructions set <text...>`) are injected into every agent.
 CONDITIONAL_VERBS = {"thread interactions answer": ("--text",), "thread interactions respond": None,
+                     "thread draft set": ("--message-file",),
                      "fleet member-add": ("--concern",),
                      "automation create": ("--prompt", "--script", "--script-file"),
                      "automation update": ("--prompt", "--script", "--script-file",
@@ -577,6 +579,22 @@ def _flagged(words_, flags):
     return any(a == f or a.startswith(f + "=") for a in words_ for f in flags)
 
 
+def _draft_set_has_positional_message(words_):
+    """The draft CLI has <threadId> [message]; only a supplied message dispatches."""
+    positional = []
+    skip_value = False
+    for word in words_:
+        if skip_value:
+            skip_value = False
+        elif word in ("--file", "--image"):
+            skip_value = True
+        elif word.startswith("--"):
+            continue
+        else:
+            positional.append(word)
+    return len(positional) > 1
+
+
 def bare_help(rest, verb):
     """`bb <verb path> --help|-h` and nothing else: bb prints the help and
     sends nothing. A help word anywhere else can be an option's value
@@ -586,7 +604,7 @@ def bare_help(rest, verb):
 
 
 def _dispatch_verb(rest):
-    """'thread tell', 'thread queue create', 'fleet group-create', ... when
+    """'thread tell', 'thread queue create', 'thread draft set', ... when
     `rest` (the words after bb) is a dispatch, after at most a few global
     options (`--json`, `--host h`)."""
     for j, a in enumerate(rest[:5]):
@@ -608,8 +626,17 @@ def _dispatch_verb(rest):
                 return None
             if a == "thread" and nxt in THREAD_VERBS:
                 return f"thread {nxt}"
-            if a == "thread" and nxt == "queue" and j + 2 < len(rest) and rest[j + 2] in QUEUE_VERBS:
-                return f"thread queue {rest[j + 2]}"
+            if a == "thread" and nxt in THREAD_MULTI_VERBS and j + 2 < len(rest):
+                subverb = rest[j + 2]
+                if subverb in THREAD_MULTI_VERBS[nxt]:
+                    verb = f"thread {nxt} {subverb}"
+                    tail = rest[j + 3:]
+                    if verb == "thread draft set":
+                        if (_flagged(tail, CONDITIONAL_VERBS[verb])
+                                or _draft_set_has_positional_message(tail)):
+                            return verb
+                    else:
+                        return verb
             if a == "thread" and nxt == "interactions" and j + 2 < len(rest):
                 verb = f"thread interactions {rest[j + 2]}"
                 if verb in CONDITIONAL_VERBS and (CONDITIONAL_VERBS[verb] is None or _flagged(rest[j + 3:], CONDITIONAL_VERBS[verb])):

@@ -1046,8 +1046,9 @@ def shutil_which(name):
 
 
 def gated_verbs():
-    from shell_dispatch import THREAD_VERBS, QUEUE_VERBS, FLEET_VERBS, CONDITIONAL_VERBS
-    return ({f"thread {v}" for v in THREAD_VERBS} | {f"thread queue {v}" for v in QUEUE_VERBS}
+    from shell_dispatch import THREAD_VERBS, THREAD_MULTI_VERBS, FLEET_VERBS, CONDITIONAL_VERBS
+    return ({f"thread {v}" for v in THREAD_VERBS}
+            | {f"thread {group} {verb}" for group, verbs in THREAD_MULTI_VERBS.items() for verb in verbs}
             | {f"fleet {v}" for v in FLEET_VERBS} | set(CONDITIONAL_VERBS))
 
 
@@ -1177,6 +1178,9 @@ def selftest():
         ("claude: serving blocked-on-user P2 is denied", claude_bash('bb thread spawn --prompt "serves: P2 go"'), thread, 2),
         ("claude: serving unknown P9 is denied", claude_bash('bb thread tell thr_abc "serves: P9 go"'), thread, 2),
         ("claude: tell without serves", claude_bash('bb thread tell thr_abc "please also refactor the sparkline"'), thread, 2),
+        ("claude: draft set without serves", claude_bash('bb thread draft set thr_abc "revise the prompt"'), thread, 2),
+        ("claude: draft set serving open P1", claude_bash('bb thread draft set thr_abc "serves: P1\nrevise the prompt"'), thread, 0),
+        ("claude: draft set --message-file with serves", claude_bash(f"bb thread draft set --message-file {brief} thr_abc"), thread, 0),
         ("claude: \"$BB_CLI\" thread message without serves", claude_bash('"$BB_CLI" thread message thr_abc "hi"'), thread, 2),
         ("claude: /abs/path/bb thread create without serves", claude_bash("/usr/local/bin/bb thread create --prompt x"), thread, 2),
         ("claude: heredoc brief with serves", claude_bash("bb thread spawn --prompt-file - <<'EOF'\nserves: P1\nwork\nEOF"), thread, 0),
@@ -1488,7 +1492,7 @@ def selftest():
               f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
-        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond",
+        unseen = sorted({"thread queue create", "thread draft set", "thread interactions answer", "thread interactions respond",
                          "automation create", "automation update", "instructions set", "notify send"} - carries)
         failed += bool(unseen)
         print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested and plugin groups and --text/--value/--script"
