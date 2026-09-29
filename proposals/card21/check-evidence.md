@@ -126,9 +126,10 @@ supersede input classes, and write-owner mismatch block in each provider; all
 30 `--files` mutations are rejected.
 The app/bundle fixtures separately delete and reverse the quit, kill, replace,
 move, delete, and overwrite prohibitions in all four rendered homes; all 48
-`--files` mutations are rejected. A second fixture adds a task exception to
-each prohibition and appends a contradictory permission for each action; all
-48 exception/permission mutations fail through `--files`.
+`--files` mutations are rejected. A second fixture wraps a task exception onto
+the following line for each prohibition and adds both a task-specific `you may`
+permission and an explicit allowed-permission sentence; all 72
+exception/permission mutations fail through `--files`.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.

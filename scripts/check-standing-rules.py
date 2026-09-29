@@ -704,27 +704,33 @@ def contradicted_rule(name: str, text: str) -> bool:
             return True
     contradictions = {
         "bb-app-never-quit": re.compile(
-            r"(?is)(?:never quit[^\n]{0,150}\b(?:unless|except)\b|"
-            r"quitting the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+            r"(?is)(?:never quit(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+quit.{0,100}running bb app\b|"
+            r"quitting the running bb app.{0,80}\b(?:allowed|permitted)\b)"
         ),
         "bb-app-never-kill": re.compile(
-            r"(?is)(?:never kill[^\n]{0,150}\b(?:unless|except)\b|"
-            r"killing the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+            r"(?is)(?:never kill(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+kill.{0,100}running bb app\b|"
+            r"killing the running bb app.{0,80}\b(?:allowed|permitted)\b)"
         ),
         "bb-app-never-replace": re.compile(
-            r"(?is)(?:never replace[^\n]{0,150}\b(?:unless|except)\b|"
-            r"replacing the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+            r"(?is)(?:never replace(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+replace.{0,100}running bb app\b|"
+            r"replacing the running bb app.{0,80}\b(?:allowed|permitted)\b)"
         ),
         "bb-app-bundle-never-move": re.compile(
-            r"(?is)(?:never move[^\n]{0,150}\b(?:unless|except)\b|"
+            r"(?is)(?:never move(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+move.{0,100}/Applications/bb\.app\b|"
             r"moving `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
         ),
         "bb-app-bundle-never-delete": re.compile(
-            r"(?is)(?:never delete[^\n]{0,150}\b(?:unless|except)\b|"
+            r"(?is)(?:never delete(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+delete.{0,100}/Applications/bb\.app\b|"
             r"deleting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
         ),
         "bb-app-bundle-never-overwrite": re.compile(
-            r"(?is)(?:never overwrite[^\n]{0,150}\b(?:unless|except)\b|"
+            r"(?is)(?:never overwrite(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
+            r"\b(?:you\s+)?(?:may|can)\s+overwrite.{0,100}/Applications/bb\.app\b|"
             r"overwriting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
         ),
         "browser-never-access-unowned": re.compile(

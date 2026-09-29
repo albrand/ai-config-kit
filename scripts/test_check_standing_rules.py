@@ -565,26 +565,32 @@ class StandingRuleCheckerTest(unittest.TestCase):
         clauses = {
             "bb-app-never-quit": (
                 "Never quit the running bb app.",
+                "For this task, you may quit the running bb app.",
                 "Quitting the running bb app is allowed.",
             ),
             "bb-app-never-kill": (
                 "Never kill the running bb app.",
+                "For this task, you may kill the running bb app.",
                 "Killing the running bb app is allowed.",
             ),
             "bb-app-never-replace": (
                 "Never replace the running bb app.",
+                "For this task, you may replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",
+                "For this task, you may move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-delete": (
                 "Never delete `/Applications/bb.app`.",
+                "For this task, you may delete `/Applications/bb.app`.",
                 "Deleting `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-overwrite": (
                 "Never overwrite `/Applications/bb.app`.",
+                "For this task, you may overwrite `/Applications/bb.app`.",
                 "Overwriting `/Applications/bb.app` is allowed.",
             ),
         }
@@ -608,17 +614,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
             for provider_index, path in enumerate(candidates):
-                for rule, (original, permission) in clauses.items():
+                for rule, (original, task_permission, explicit_permission) in clauses.items():
                     mutations = (
-                        ("exception", original[:-1] + " unless needed to finish the task."),
-                        ("contradictory permission", permission),
+                        ("wrapped exception", original + "\n  unless needed to finish the task."),
+                        ("task-specific permission", task_permission),
+                        ("explicit permission", explicit_permission),
                     )
                     for mutation, replacement in mutations:
                         with self.subTest(provider=path.name, rule=rule, mutation=mutation):
                             for candidate, content in zip(candidates, intact):
                                 candidate.write_text(content, encoding="utf-8")
                             content = intact[provider_index]
-                            if mutation == "exception":
+                            if mutation == "wrapped exception":
                                 self.assertIn(original, content)
                                 content = content.replace(original, replacement, 1)
                             else:
