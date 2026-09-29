@@ -702,17 +702,17 @@ def contradicted_rule(name: str, text: str) -> bool:
             ),
         }
         sentence_breaks = ".!?;"
+        plain_text = re.sub(r"[*_`]+", "", text)
         for action, target in app_command_targets.items():
-            for match in re.finditer(rf"\b{action}\b", text, re.IGNORECASE):
+            for match in re.finditer(rf"\b{action}\b", plain_text, re.IGNORECASE):
                 clause_start = max(
-                    (text.rfind(mark, 0, match.start()) for mark in sentence_breaks),
+                    (plain_text.rfind(mark, 0, match.start()) for mark in sentence_breaks),
                     default=-1,
                 )
-                prefix = text[clause_start + 1 : match.start()]
-                plain_prefix = re.sub(r"[*_`]+", "", prefix)
-                if direct_negation.search(plain_prefix) or negated_action_list.search(plain_prefix):
+                prefix = plain_text[clause_start + 1 : match.start()]
+                if direct_negation.search(prefix) or negated_action_list.search(prefix):
                     continue
-                if target.search(text[match.end() : match.end() + 500]):
+                if target.search(plain_text[match.end() : match.end() + 500]):
                     return True
         recovery_exemption = re.compile(
             r"(?is)\b(?:recovery|emergency|urgent|disaster[- ]recovery)"
