@@ -686,7 +686,9 @@ def contradicted_rule(name: str, text: str) -> bool:
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
         for match in re.finditer(
-            r"(?i)\bbypass(?:ing)?\s+(?:a\s+)?safety-hook block\b", text
+            r"(?i)\bbypass(?:ing)?\s+(?:(?:a|the|this|that)\s+)?"
+            r"safety-hook block\b",
+            text,
         ):
             clause_start = max(
                 text.rfind("\n", 0, match.start()),
