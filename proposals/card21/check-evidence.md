@@ -169,9 +169,10 @@ OK
 
 Safety-hook block policy has a dedicated regex and contradiction veto. Through
 the real `--files` entrypoint, each of four intact rendered homes passes;
-deletion, explicit bypass permission, and an `unless necessary` exception all
-fail for each home (12 mutations). The checker also passes all four unchanged
-live-home files and the kit source.
+deletion, direct bypass permission, an `unless necessary` exception, and
+task-specific `explicitly permitted/allowed to bypass` clauses all fail for
+each home (20 mutations). The checker also passes all four unchanged live-home
+files and the kit source.
 
 Live homes were not modified. The renderer remains in proposal mode; its
 `--install` option was not run.
