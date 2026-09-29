@@ -24,7 +24,7 @@ Remove only clean worktrees you created; never remove your own live bb environme
 Do not add AI attribution, signatures, or watermarks.
 Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
-Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config.
+Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and apply the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
 Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
 For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 """
@@ -104,6 +104,71 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         or "no fixed profile for this path and exact known-home content" in output,
                         output,
                     )
+
+    def test_rendered_profiles_reject_each_security_obligation_mutation(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        mutations = {
+            "security-first-scope": (
+                "Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config",
+                "Security-first defaults only apply to styling",
+            ),
+            "security-required-gate": (
+                "`QUALITY_GATES.md` Security Gate",
+                "`QUALITY_GATES.md` optional suggestions",
+            ),
+            "security-supply-chain-priority": (
+                "prioritize supply-chain/build-config compromise",
+                "ignore supply-chain/build-config compromise",
+            ),
+            "security-residual-exposure": (
+                "rate residual exposure after mitigations, not scanner labels",
+                "trust scanner labels without residual review",
+            ),
+            "security-active-testing-authorization": (
+                "Active testing requires authorization and must stay defensive",
+                "Active testing may occur without authorization and need not be defensive",
+            ),
+            "security-no-offensive-tooling": (
+                "never build offensive, self-propagating, evasive, or mass-targeting tools",
+                "offensive, self-propagating, evasive, or mass-targeting tools are allowed",
+            ),
+            "security-high-stakes-sweep": (
+                "one pass is not sign-off: use `adversarial-security-sweep`",
+                "one pass is sign-off; skip the security sweep",
+            ),
+            "security-strongest-exploit-path": (
+                "keep exploit validation, severity, and fix design on the strongest reasoning path",
+                "use a weak path for exploit validation, severity, and fix design",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-security-profile-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [path.read_text(encoding="utf-8") for path in (rendered / name for name in names)]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stderr)
+
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(rule=rule):
+                    for path, content in zip(candidates, intact):
+                        self.assertIn(original, content)
+                        path.write_text(content.replace(original, weakened, 1), encoding="utf-8")
+                    result = run_checker()
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertIn(rule, result.stdout + result.stderr)
 
     def test_weakened_email_consent_exceptions_fail(self):
         weakened = INTACT.replace(

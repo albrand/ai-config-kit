@@ -50,7 +50,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 
 ## Security and hard prohibitions
 
-- Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and the `QUALITY_GATES.md` Security Gate; judge residual exposure after existing mitigations. Use `adversarial-security-sweep` for high-stakes review. Active testing must be authorized and defensive.
+- Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
 - Never add/fill a recipient, open/edit a compose surface, or send email without approval for that exact message in this conversation. Do not use the user's live mail client to test a send path; inspect its construction or use a designated disposable account.
 - Never type, paste, or handle credentials. The user performs login.
 - For any browser E2E, authentication, seeded identity, manual login handoff, QA publication, or E2E completion, load `verified-qa-e2e` and pass its deterministic gate; a missing or failing gate blocks the requested action at every reasoning effort.

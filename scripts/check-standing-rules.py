@@ -258,6 +258,35 @@ RULES: dict[str, re.Pattern[str]] = {
         r"verdict.{0,220}NOT RUN"
     ),
     "security-first": re.compile(r"(?is)security-first defaults"),
+    "security-first-scope": re.compile(
+        r"(?is)security-first defaults.{0,350}auth.{0,70}access\s+control.{0,70}secrets.{0,70}crypto.{0,90}"
+        r"external input.{0,90}outbound requests.{0,90}dependencies.{0,80}build/config"
+    ),
+    "security-required-gate": re.compile(
+        r"(?is)load.{0,100}SECURITY_AND_PENTEST\.md.{0,100}QUALITY_GATES\.md.{0,50}Security Gate"
+    ),
+    "security-supply-chain-priority": re.compile(
+        r"(?is)(?:supply-chain.{0,100}build-config compromise.{0,35}first|"
+        r"prioritize supply-chain/build-config compromise)"
+    ),
+    "security-residual-exposure": re.compile(
+        r"(?is)residual exposure after\s+(?:existing\s+)?mitigations.{0,80}"
+        r"(?:(?:rather than|not) )?(?:raw )?scanner labels"
+    ),
+    "security-active-testing-authorization": re.compile(
+        r"(?is)(?:active testing (?:must be authorized and defensive|requires authorization and must stay defensive)|"
+        r"establish authorization before active testing)"
+    ),
+    "security-no-offensive-tooling": re.compile(
+        r"(?is)never build offensive, self-propagating, evasive,? or mass-targeting (?:tools|tooling)"
+    ),
+    "security-high-stakes-sweep": re.compile(
+        r"(?is)high-stakes review.{0,100}(?:one pass is not sign-off|single pass is not a sign-off).{0,100}"
+        r"adversarial-security-sweep"
+    ),
+    "security-strongest-exploit-path": re.compile(
+        r"(?is)exploit[- ]validation.{0,70}severity.{0,70}fix[- ]design.{0,70}strongest reasoning path"
+    ),
     "no-gc-user-owned-state": re.compile(
         r"(?is)never garbage-collect repositories,\s*journals,\s*user-owned sessions,\s*or active sessions"
     ),
@@ -433,10 +462,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "d803401a54b03f620e8c04c5bd688cc74247631fbe230e578be797f43fc65ec3": "proposal-claude",
-    "58d708ddc4e62bc6885c204748d794e669ad47ac61113f98ca53aab9423bb709": "proposal-codex",
-    "cfb83e980c13972973ed39bb706f46a4d34847ca8b08eb1511ba315c3434a581": "proposal-opencode",
-    "a120143aa82cb667a3aff5a49e882e92e37035b3848f55805da12563fa5ea761": "proposal-bb",
+    "f227426b763a96bf471b64e2097a9db161266b13dfcf6b7f10b43753d6619be2": "proposal-claude",
+    "81de14ddb628ed392afc9982fdea109eac9ee91acd3f28e25abc61498f2c31ca": "proposal-codex",
+    "0e5691222e267aecd39eea4bd5acccc6e53d5be34e3d5c8c3d2b00d445536230": "proposal-opencode",
+    "8200dbfb887d50bfa07e9b0926a530d6f87611d36a26f714f92f4c4a30fea5b0": "proposal-bb",
 }
 
 

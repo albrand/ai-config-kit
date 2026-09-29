@@ -10,10 +10,10 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (72 regexes;
-32 Claude, 41 Codex, 37 OpenCode, 34 bb, and 65 kit rules applicable). The
-rendered proposals plus kit source also passed all 72 regexes: 56 Claude, 72
-Codex, 65 OpenCode, 65 bb, and 65 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (80 regexes;
+40 Claude, 49 Codex, 45 OpenCode, 42 bb, and 73 kit rules applicable). The
+rendered proposals plus kit source also passed all 80 regexes: 64 Claude, 80
+Codex, 73 OpenCode, 73 bb, and 73 kit rules applicable. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **31 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **32 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -50,6 +50,12 @@ standalone mutations cover `CMUX_SOCKET_CAPABILITY`/`CMUX_*`, `acp-hermes-agent
 --model`, broker SSH stdin, local terminal sockets, and the absolute ban on
 placing or retaining source on Hermes, including a mutation that retains the
 old “never ask Hermes to mount” wording.
+The security gate has separate regexes and rendered-path CLI mutations for
+scope, required references, supply-chain priority, residual-exposure review,
+authorized defensive testing, offensive-tooling prohibition, high-stakes sweep,
+and strongest exploit-validation path. Every mutation is rejected across all
+four proposal homes; intact proposals pass.
+
 The real `--files` entrypoint also accepts native-shaped home paths. Intact
 native baseline fixtures pass; intact rendered homes at native paths pass;
 deleting/weakening a required rule in an installed artifact fails because its
@@ -91,19 +97,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (72 regexes)
+PASS all 5 files contain all applicable rules (80 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (72 regexes)
+PASS all 5 files contain all applicable rules (80 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 31 tests
+Ran 32 tests
 OK
 ```
 

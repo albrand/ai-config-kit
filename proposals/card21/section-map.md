@@ -31,6 +31,7 @@ the bb overlay.
 
 The renderer is `scripts/render-standing-homes.py`; it writes only proposal
 artifacts by default. It supports an explicit `--install` mode, which was not
-run. `scripts/check-standing-rules.py` validates fixed per-home rule inventories
-and strict rendered proposals; it does not decide applicability from candidate
-text.
+run. `scripts/check-standing-rules.py` validates fixed per-home rule inventories.
+At a native path it accepts only exact SHA-256 fingerprints for an unchanged
+legacy home or the exact rendered install artifact; any edited or unknown
+content fails closed. Rendered paths use strict proposal inventories.
