@@ -696,6 +696,8 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"(?:is|are)\s+(?:explicitly\s+|generally\s+)?(?:allowed|permitted)|"
             r"bypass\s+(?:a\s+)?safety-hook block.{0,80}"
             r"(?:when|if)\s+(?:necessary|needed|required)|"
+            r"if\s+(?:necessary|needed|required).{0,80}"
+            r"bypass\s+(?:a\s+)?safety-hook block|"
             r"(?:may|can|could|is allowed to|is permitted to).{0,40}bypass"
             r".{0,100}safety-hook block"
         )
