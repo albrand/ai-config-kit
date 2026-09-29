@@ -685,8 +685,16 @@ def contradicted_rule(name: str, text: str) -> bool:
         if advisory_defect.search(text):
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
+        recovery_exemption = re.compile(
+            r"(?is)\b(?:recovery|emergency|urgent)\s+"
+            r"(?:operations|actions|work|tasks)\b.{0,80}"
+            r"\b(?:exempt|excluded|not subject to)\b.{0,60}"
+            r"\b(?:this|that|the)\s+(?:rule|prohibition|policy|requirement|ban)\b"
+        )
+        if recovery_exemption.search(text):
+            return True
         exemption_word = re.compile(
-            r"(?i)\b(?:exempt|exemption|exception|except|unless)\b|not subject to"
+            r"(?i)\b(?:exempt|exemption|exception|except|unless|excluded|exclusion)\b|not subject to"
         )
         lines = text.splitlines()
         for index, line in enumerate(lines):

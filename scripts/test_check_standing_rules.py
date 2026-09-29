@@ -542,6 +542,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 original + "\n- Recovery operations are not subject to this prohibition.",
                 original + "\n- Recovery operations are not subject to this prohibition.",
                 original + "\n- Recovery operations are exempt from this rule.",
+                original + "\n- Recovery operations are exempt from this rule.",
+                original + "\n- Recovery operations are excluded from this rule.",
+                original + "\n\n- Recovery operations are exempt from this rule.",
             ):
                 with self.subTest(home=name, mutation=mutation):
                     with tempfile.TemporaryDirectory() as temp_dir:
