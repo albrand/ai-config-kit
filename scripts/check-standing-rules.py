@@ -699,7 +699,11 @@ def contradicted_rule(name: str, text: str) -> bool:
                 if re.match(r"^\s*[-*]\s", continuation):
                     if (
                         exemption_word.search(continuation)
-                        and re.search(r"(?i)\b(?:this|that|the) prohibition\b", continuation)
+                        and re.search(
+                            r"(?i)\b(?:this|that|the)\s+"
+                            r"(?:rule|prohibition|policy|requirement|ban)\b",
+                            continuation,
+                        )
                     ):
                         return True
                     break
