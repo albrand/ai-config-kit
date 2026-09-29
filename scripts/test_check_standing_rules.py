@@ -23,6 +23,7 @@ Do not add AI attribution, signatures, or watermarks.
 Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
 Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config.
+Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
 """
 
 
@@ -85,6 +86,21 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "another agent's/user's worktree, ", ""
         ) + "\nHistorical note: another agent's worktree was protected.\n"
         self.assertIn("worktree-not-owned", CHECKER.missing_rules(damaged))
+
+    def test_entire_worktree_policy_cannot_be_historical_only(self):
+        start = INTACT.index("Remove only clean worktrees you created;")
+        end = INTACT.index("\nDo not add AI attribution", start)
+        policy = INTACT[start:end]
+        damaged = INTACT[:start] + "Historical note (no longer binding): " + policy + INTACT[end:]
+        missing = CHECKER.missing_rules(damaged, require_optional=True)
+        self.assertTrue(any(name.startswith("worktree-") for name in missing))
+
+    def test_gc_prohibition_deletion_fails_in_codex_scope(self):
+        damaged = INTACT.replace(
+            "Never garbage-collect repositories, journals, user-owned sessions, or active sessions.",
+            "Historical note: Never garbage-collect repositories, journals, user-owned sessions, or active sessions.",
+        )
+        self.assertIn("no-gc-user-owned-state", CHECKER.missing_rules(damaged, require_optional=True))
 
     def test_deleted_rule_in_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

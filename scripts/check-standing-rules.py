@@ -83,10 +83,14 @@ RULES: dict[str, re.Pattern[str]] = {
         r"verdict.{0,220}NOT RUN"
     ),
     "security-first": re.compile(r"(?is)security-first defaults"),
+    "no-gc-user-owned-state": re.compile(
+        r"(?is)never garbage-collect repositories,\s*journals,\s*user-owned sessions,\s*or active sessions"
+    ),
 }
 OPTIONAL_WHEN_ABSENT = {
     "no-pkill-pgrep-app-kill-path",
     "worktree-own-bb-environment",
+    "no-gc-user-owned-state",
 }
 
 HOME_FILES = (
@@ -98,24 +102,40 @@ HOME_FILES = (
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 
-def missing_rules(text: str, require_optional: bool = False) -> list[str]:
+def missing_rules(
+    text: str,
+    require_optional: bool = False,
+    required_optional: set[str] | None = None,
+) -> list[str]:
     missing: list[str] = []
     for name, pattern in RULES.items():
+        match = pattern.search(text)
+        required = require_optional or (required_optional is not None and name in required_optional)
         if (
             name in OPTIONAL_WHEN_ABSENT
-            and not require_optional
+            and not required
             and not optional_present(name, text)
         ):
             continue
-        if not pattern.search(text):
+        if not match or historical_clause(text, match.start()):
             missing.append(name)
     return missing
+
+
+def historical_clause(text: str, position: int) -> bool:
+    start = text.rfind("\n", 0, position) + 1
+    end = text.find("\n", position)
+    if end < 0:
+        end = len(text)
+    return bool(re.search(r"(?i)historical note|no longer binding", text[start:end]))
 
 
 def optional_present(name: str, text: str) -> bool:
     if name == "no-pkill-pgrep-app-kill-path":
         return bool(re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", text))
     if name == "worktree-own-bb-environment":
+        return bool(RULES[name].search(text))
+    if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     return True
 
@@ -126,14 +146,28 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if not path.is_file():
             failures.append(f"{path}: file missing")
             continue
-        strict = path.resolve() == KIT_SOURCE.resolve() or "rendered-homes" in path.parts
+        resolved = path.resolve()
+        rendered = "rendered-homes" in path.parts
+        strict = resolved == KIT_SOURCE.resolve() or rendered
         content = path.read_text(encoding="utf-8")
-        missing = missing_rules(content, require_optional=strict)
+        required_optional: set[str] = set()
+        if strict:
+            required_optional.update({
+                "no-pkill-pgrep-app-kill-path",
+                "worktree-own-bb-environment",
+            })
+        if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
+            "~/.codex/AGENTS.md"
+        ).expanduser().resolve():
+            required_optional.add("no-gc-user-owned-state")
+        missing = missing_rules(content, required_optional=required_optional)
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")
         else:
             applicable = len(RULES) - sum(
-                name in OPTIONAL_WHEN_ABSENT and not optional_present(name, content)
+                name in OPTIONAL_WHEN_ABSENT
+                and name not in required_optional
+                and not optional_present(name, content)
                 for name in RULES
             )
             print(f"PASS {path}: {applicable} applicable standing rules")

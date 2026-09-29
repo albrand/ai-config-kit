@@ -19,6 +19,7 @@ All four homes report the same modification time: `2026-09-28 17:00:01`.
 The task's first home inventory was taken on 2026-09-28; the unchanged earlier
 modification time is additional evidence that no installation occurred.
 
-Claude's before-source size is `wc -c` = 45,926 bytes. Summing original-side
-lines in the refreshed unified diff also yields 45,926 bytes; the former 45,848
-estimate is superseded.
+Claude's before-source size is `wc -c` = 45,926 bytes. Concatenating the
+original-side lines in the refreshed unified diff yields the same byte count
+and SHA-256 as the source: `e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd`.
+The former 45,848 estimate is superseded by this byte-for-byte match.

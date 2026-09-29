@@ -43,7 +43,7 @@ multiple topics on a row share the stated origin, not a generated source.
 | Home | Compact source for shared sections | Home-only source |
 |---|---|---|
 | Claude | `GLOBAL_AGENTS.md`, injected from the bb data-dir into each provider-backed turn | `proposals/card21/hard-rules.md`, compact Claude adapter, and the typed block emitted by `scripts/typed-decisions-sync.py` |
-| Codex | `GLOBAL_AGENTS.md` | `proposals/card21/hard-rules.md`, Codex routing/board overlay, and the typed sync block |
+| Codex | `GLOBAL_AGENTS.md` | `proposals/card21/hard-rules.md`, Codex routing/board/context-GC overlay, and the typed sync block |
 | OpenCode | `GLOBAL_AGENTS.md` | `proposals/card21/hard-rules.md`, OpenCode board/executor/session overlay, and the typed sync block |
 | bb | `GLOBAL_AGENTS.md` is the file itself | bb login, Hermes, and child-routing overlay |
 
@@ -64,9 +64,11 @@ multiple topics on a row share the stated origin, not a generated source.
 | Hermes transport, child routing, browser login handoff | bb adapter | `CMUX_HERMES_ORCHESTRATION.md`, verified bb commands |
 
 Some project/provider policies have no shared global counterpart and remain in
-the relevant overlay: Codex board/OpenCode/Replit routing; OpenCode executor and
-session lease; bb provider-neutral login, Hermes, and child routing. Claude has
-no additional provider-specific policy in its current home.
+the relevant overlay: Codex board/OpenCode/Replit routing and the ban on
+garbage-collecting repositories, journals, user-owned or active sessions;
+OpenCode executor and session lease; bb provider-neutral login, Hermes, and
+child routing. Claude has no additional provider-specific policy in its current
+home.
 
 The renderer `scripts/render-standing-homes.py` combines these checked-in
 sources and writes reviewable proposals under `proposals/card21/rendered-homes`.
