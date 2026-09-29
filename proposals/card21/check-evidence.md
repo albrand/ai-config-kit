@@ -175,14 +175,15 @@ task-specific commands for quit, kill (including “forcibly kill”), replace,
 move, delete, and overwrite of the running app/bundle, including each action
 phrased “you must [action],” both
 with “also” and “first,”
+and colon-delimited task prefixes,
 `never`/`do not` exception forms, passive permission, and conditional action
 forms, condition-first bypass forms, and exception-before-prohibition variants
-all fail for each home (252 mutations). The checker also passes all four
+all fail for each home (276 mutations). The checker also passes all four
 unchanged live-home files and the kit source.
 
 After generalizing direct-command detection across all six app/bundle actions
-and their “you must,” “you must also,” and “you must first” forms, the complete
-test module passed again (45 tests).
+and their “you must,” “you must also,” “you must first,” and colon-prefixed
+forms, the complete test module passed again (45 tests).
 The focused case passes all four intact homes and rejects each appended command
 through `--files` for every rendered home.
 
