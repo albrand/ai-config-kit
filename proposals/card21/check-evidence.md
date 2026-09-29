@@ -248,3 +248,41 @@ The rendered-proposal command also passed: Claude 93, Codex 115, OpenCode 108,
 bb 108, and kit 104 applicable rules; all 45 archived baseline rules retained.
 The exact-head pre-review packet and its full test result are recorded with the
 final pushed revision evidence.
+
+## Final source-semantic and installer repairs (2026-09-29)
+
+The prior counts above are historical checkpoints. After current-main
+reconciliation and the two named preservation repairs, the current candidate
+has 48 matched archived rules (not 45); `kit-preservation.md` and
+`measurements.md` record the corrected candidate digest and sizes.
+
+| Claim | Command | Expected | Observed | Artifact |
+|---|---|---|---|---|
+| Typed-decision wording and mutation coverage | `python3 -m unittest scripts.test_check_standing_rules.StandingRuleCheckerTest.test_typed_decision_source_preserves_and_mutation_checks_three_imperatives -v` | Compact sync block and kit block retain all three imperatives; each weakening mutation fails | 1 test, OK | `scripts/test_check_standing_rules.py`, `scripts/check-standing-rules.py` |
+| Board-rule repair remains protected | `python3 -m unittest scripts.test_check_standing_rules.StandingRuleCheckerTest.test_codex_board_gate_and_inventory_mutations_fail -v` | Full trigger, required inventory/detail reads, and blocker semantics survive mutation checks | 1 test, OK | `scripts/test_check_standing_rules.py` |
+| Installer refuses changed targets | `python3 -m unittest scripts.test_render_standing_homes -v` | Refuse drift before writes; preserve backup collision; roll back partial replacement; reject duplicate manifest rows | 4 tests, OK | `scripts/test_render_standing_homes.py` |
+| Archived rule preservation | `python3 -m unittest scripts.test_check_standing_rules.StandingRuleCheckerTest.test_archived_kit_baseline_rules_are_retained_with_deletion_coverage -v` | Every baseline-matched clause remains and deleting one is rejected | 1 test, OK; 48/48 retained | `proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md`, `proposals/card21/kit-preservation.md` |
+| Legacy live homes and kit source | `python3 scripts/check-standing-rules.py --preserve-baseline proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md` | All four unchanged homes and kit source satisfy applicable rules and archived baseline | PASS: Claude 67, Codex 82, OpenCode 72, bb 66, kit 107; 48 archived; 118 regexes | `scripts/check-standing-rules.py` |
+| Rendered proposal homes and kit source | `python3 scripts/check-standing-rules.py --files proposals/card21/rendered-homes/CLAUDE.md proposals/card21/rendered-homes/codex-AGENTS.md proposals/card21/rendered-homes/opencode-AGENTS.md proposals/card21/rendered-homes/bb-AGENTS.md GLOBAL_AGENTS.md` | All proposed homes retain every applicable standing rule | PASS: Claude 96, Codex 118, OpenCode 111, bb 111, kit 107; 118 regexes | `proposals/card21/rendered-homes/`, `scripts/check-standing-rules.py` |
+| Live-home fingerprints | `shasum -a 256 ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.config/opencode/AGENTS.md ~/.bb/AGENTS.md` | Match recorded pre-install fingerprint values | All four match `live-home-hashes.md`; no live file was written | `proposals/card21/live-home-hashes.md` |
+| Whitespace integrity | `git diff --check` | No whitespace errors | PASS | Candidate diff |
+
+Final proposed bytes are Claude 7,888, Codex 10,800, OpenCode 9,712, and bb
+23,420. Loaded contexts are 31,308 bytes for Claude+bb (57.2% reduction) and
+34,220 bytes for Codex+bb (57.3% reduction). See `measurements.md` for token
+approximations and line counts. Full-context home diffs are
+`/private/tmp/card21-home-diffs/claude.diff`, `codex.diff`, `opencode.diff`,
+and `bb.diff`.
+
+The installer remains unrun; no global home has been installed. Exact-head
+pre-review, push, Hermes, and PR evidence will be appended after the new
+candidate is committed and pushed.
+
+The checker’s proposal-home SHA allow-list was updated with the four current
+rendered artifacts. The focused intact-fixture and native-home entrypoint tests
+pass against those fingerprints. An exploratory run of the full checker test
+module was stopped during its exhaustive safety-hook CLI mutation matrix to
+limit shared-host load; it is not recorded as a suite pass. The affected intact
+fixture, native-home fingerprints, typed-decision mutations, board mutations,
+archived-baseline mutations, and installer preflight/rollback tests were then
+run directly and passed.

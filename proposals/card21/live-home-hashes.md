@@ -1,14 +1,12 @@
 # Live home noninstallation evidence
 
-These SHA-256 values were captured after final proposal rendering. The renderer
-read each home and wrote only to the proposal/diff directories; `--install` was
-never run. No task command wrote to a live home. The files therefore remained
-at the same content observed during the initial inventory and diff generation.
-No pre-edit digest was captured, so the identity claim rests on the recorded
-read-only command sequence rather than a pair of independently timestamped
-hash snapshots.
+These SHA-256 values were observed after proposal rendering and before any
+installation attempt; no pre-edit digest was captured. The renderer's installer
+requires every target to match these recorded fingerprints before it creates
+backups or replaces any home. The homes were read only during capture and
+recheck; `--install` was not run.
 
-| Home | SHA-256 after proposal rendering |
+| Home | SHA-256 observed after rendering / before install |
 |---|---|
 | Claude | `e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd` |
 | Codex | `2f7433b7928b17aacbe3988519788300760e8239c840121db5cf3b1f089d871b` |
@@ -16,8 +14,9 @@ hash snapshots.
 | bb | `db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c` |
 
 All four homes report the same modification time: `2026-09-28 17:00:01`.
-The task's first home inventory was taken on 2026-09-28; the unchanged earlier
-modification time is additional evidence that no installation occurred.
+The task's first home inventory was taken on 2026-09-28; this unchanged
+modification time and the read-only capture/recheck sequence support that no
+installation occurred.
 
 The four full-context diffs were generated with
 `scripts/render-standing-homes.py --full-context-diffs`. Reconstructing the old

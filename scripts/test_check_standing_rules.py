@@ -1,8 +1,10 @@
 """Focused fixtures for check-standing-rules.py."""
 
+import ast
 import importlib.util
 import contextlib
 import io
+import re
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,7 @@ Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
 Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and apply the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
 Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls.
+An out-of-space answer is a failed decision; never interpret it. High confidence still requires checks for irreversible, security, and release decisions. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it.
 Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
 For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 """
@@ -48,7 +51,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
         self.assertEqual(missing, [])
-        self.assertEqual(count, 45)
+        self.assertEqual(count, 48)
 
         baseline_rules = [
             name for name, pattern in CHECKER.RULES.items()
@@ -196,6 +199,58 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         damaged, required_optional=rules, skip_rules=skip
                     ),
                 )
+
+    def test_typed_decision_source_preserves_and_mutation_checks_three_imperatives(self):
+        sync_path = SCRIPT.parent / "typed-decisions-sync.py"
+        module = ast.parse(sync_path.read_text(encoding="utf-8"))
+        assignment = next(
+            node for node in module.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "GLOBAL_BLOCK"
+                    for target in node.targets)
+        )
+        sync_block = ast.literal_eval(assignment.value)
+        kit_text = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        kit_block = re.search(
+            r"(?s)<!-- typed-decisions:begin -->.*?<!-- typed-decisions:end -->",
+            kit_text,
+        ).group(0)
+        sources = [sync_block, kit_block]
+        rules = {
+            "typed-decisions-out-of-space-fails",
+            "typed-decisions-resolve-origin",
+            "typed-decisions-confidence-keeps-release-checks",
+        }
+        skip = set(CHECKER.RULES) - rules
+        for source in sources:
+            self.assertEqual(
+                [], CHECKER.missing_rules(source, required_optional=rules, skip_rules=skip)
+            )
+
+        mutations = {
+            "typed-decisions-out-of-space-fails": (
+                "out-of-space answer is a failed decision; never interpret it",
+                "out-of-space answer may be interpreted",
+            ),
+            "typed-decisions-resolve-origin": (
+                "resolve it as held or overturned when truth arrives, even if another agent made it",
+                "resolve it when truth arrives",
+            ),
+            "typed-decisions-confidence-keeps-release-checks": (
+                "high confidence still requires the checks for irreversible, security, and release decisions",
+                "high confidence does not replace irreversible or security checks",
+            ),
+        }
+        for rule, (original, weakened) in mutations.items():
+            with self.subTest(rule=rule):
+                for source in sources:
+                    damaged = source.replace(original, weakened, 1)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(
+                            damaged, required_optional=rules, skip_rules=skip
+                        ),
+                    )
 
     def test_rendered_profiles_require_all_three_credential_bans(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

@@ -40,7 +40,7 @@
 <!-- typed-decisions:begin -->
 ## Typed decisions
 
-Declare the answer space first; ask one atomic question at a time against identical state; compute the verdict. High confidence acts, medium verifies, low/out-of-space escalates. Confidence needs measured checks, isolated agreement, or resolved history, never self-report. Record each gated decision with a findable `--ref` and resolve it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
+Declare the answer space first; ask one atomic question at a time against identical state; compute the verdict. An out-of-space answer is a failed decision; never interpret it. High confidence acts, medium verifies, low/out-of-space escalates; high confidence still requires the checks for irreversible, security, and release decisions. Confidence needs measured checks, isolated agreement, or resolved history, never self-report. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->
 
 ## Claude Code adapter

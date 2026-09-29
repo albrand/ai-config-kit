@@ -392,6 +392,18 @@ RULES: dict[str, re.Pattern[str]] = {
     "typed-decisions-jev-no-hooks-or-secrets": re.compile(
         r"(?is)never (?:use Jev )?in a blocking hook.{0,100}(?:never )?with secrets"
     ),
+    "typed-decisions-out-of-space-fails": re.compile(
+        r"(?is)(?:out-of-space answer.{0,60}failed decision.{0,60}never interpret|"
+        r"answer outside it\s+is a failed decision,\s+never one to\s+interpret)"
+    ),
+    "typed-decisions-resolve-origin": re.compile(
+        r"(?is)(?:resolve it as held or overturned.{0,100}even if another agent made it|"
+        r"resolve it.{0,80}held or overturned.{0,80}truth arrives.{0,100}another agent)"
+    ),
+    "typed-decisions-confidence-keeps-release-checks": re.compile(
+        r"(?is)high(?:-\s*|\s+)confidence.{0,100}(?:requires|gets).{0,40}checks.{0,100}"
+        r"irreversible.{0,80}security.{0,100}release"
+    ),
     "no-gc-user-owned-state": re.compile(
         r"(?is)never garbage-collect repositories,\s*journals,\s*user-owned sessions,\s*or active sessions"
     ),
@@ -502,6 +514,9 @@ OPTIONAL_WHEN_ABSENT = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
+    "typed-decisions-out-of-space-fails",
+    "typed-decisions-resolve-origin",
+    "typed-decisions-confidence-keeps-release-checks",
     "board-gate-all-repositories-and-workflows",
     "board-access-before-work-and-blocker",
     "board-inventory-fields",
@@ -533,6 +548,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-out-of-space-fails",
+        "typed-decisions-resolve-origin",
+        "typed-decisions-confidence-keeps-release-checks",
     },
     "codex": {
         "context-gc-boundary", "context-gc-managed-runner-self-check",
@@ -548,6 +566,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-out-of-space-fails",
+        "typed-decisions-resolve-origin",
+        "typed-decisions-confidence-keeps-release-checks",
         "board-gate-all-repositories-and-workflows",
         "board-access-before-work-and-blocker",
         "board-inventory-fields",
@@ -567,6 +588,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-out-of-space-fails",
+        "typed-decisions-resolve-origin",
+        "typed-decisions-confidence-keeps-release-checks",
     },
     "bb": {
         "credentials-never-paste", "credentials-never-handle",
@@ -577,6 +601,9 @@ LIVE_HOME_RULES = {
         "browser-no-foreground-takeover-claim", "child-thread-cap-six-with-orchestration",
         "hermes-agent-no-model-override", "browser-no-standard-preamble",
         "hermes-no-project-source",
+        "typed-decisions-out-of-space-fails",
+        "typed-decisions-resolve-origin",
+        "typed-decisions-confidence-keeps-release-checks",
     },
 }
 KIT_BASELINE_RULES = {
@@ -610,6 +637,9 @@ KIT_BASELINE_RULES = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
+    "typed-decisions-out-of-space-fails",
+    "typed-decisions-resolve-origin",
+    "typed-decisions-confidence-keeps-release-checks",
     "board-gate-all-repositories-and-workflows",
     "board-access-before-work-and-blocker",
 }
@@ -650,10 +680,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "83108ab1c496983ba94eca18bce14db8cfd46ec90b476e37e8f0325f76b45c01": "proposal-claude",
-    "1b6675c50e7fa0e56cf568ca22ee1ed3fcfc8b1ffe9cf144e816ab1c4d91f317": "proposal-codex",
-    "cdfc20616b88931a85a0e262c6f763bf3ca94ed2d91c21005b5c14ec981e7570": "proposal-opencode",
-    "48e2a22ac5e13f97d9e5069c6e959be87e53d3cf0ae20f6a5411ed6b0a33de2e": "proposal-bb",
+    "61c59efe20df8b6abc01c433692adfab90057e77556a6a76d377e645fdc4b23a": "proposal-claude",
+    "04df6fb26c355e68b64a48a03229bd7f11fcb4bec3734d84d31fbd8d3f97c0f6": "proposal-codex",
+    "8385e4e018cbb8d3c117dcc7b55f57203719061000f81ecea55744cad589d9f7": "proposal-opencode",
+    "394df2d11ad7fa2ae997a51a047ae626769f3c5b7cec188b7c49a11d6759f46a": "proposal-bb",
 }
 
 
