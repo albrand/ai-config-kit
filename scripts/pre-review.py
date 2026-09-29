@@ -25,8 +25,7 @@ OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120
 FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS = 10
-MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS = 600
-FOCUSED_TEST_DISCOVERY_TIMEOUT_SECONDS = 30
+FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS = 600
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
@@ -553,68 +552,34 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
     return commands
 
 
-def discover_unittest_case_count(repo: Path, path: str) -> int | None:
-    """Load a unittest module without running its main-guard setup or test cases."""
-    probe = (
-        "import runpy, sys, types, unittest\n"
-        "path = sys.argv[1]\n"
-        "module_name = '__pre_review_discovery__'\n"
-        "namespace = runpy.run_path(path, run_name=module_name)\n"
-        "module = types.ModuleType(module_name)\n"
-        "module.__dict__.update(namespace)\n"
-        "sys.modules[module_name] = module\n"
-        "suite = unittest.defaultTestLoader.loadTestsFromModule(module)\n"
-        "print('__PRE_REVIEW_TEST_COUNT__=' + str(suite.countTestCases()))\n"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", probe, str((repo / path).resolve())],
-            cwd=repo, text=True, capture_output=True, check=False, shell=False,
-            timeout=FOCUSED_TEST_DISCOVERY_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    marker = "__PRE_REVIEW_TEST_COUNT__="
-    for line in reversed(result.stdout.splitlines()):
-        if line.startswith(marker):
-            try:
-                count = int(line[len(marker):])
-            except ValueError:
-                return None
-            return count if count >= 0 else None
-    return None
-
-
 def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
-    """Budget up to ten seconds per discovered case, with a ten-minute cap."""
+    """Give each standalone unittest script a ten-minute slice."""
     case_count = 0
+    standalone_script_count = 0
+    other_test_file_count = 0
     for path in tests:
         try:
             source = (repo / path).read_text(encoding="utf-8", errors="replace")
         except OSError:
-            return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
+            return FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * max(len(tests), 1)
         if "unittest.main(" in source:
-            discovered = discover_unittest_case_count(repo, path)
-            if discovered is None or discovered == 0:
-                return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
-            case_count += discovered
+            standalone_script_count += 1
             continue
+        other_test_file_count += 1
         try:
             tree = ast.parse(source, filename=path)
         except SyntaxError:
-            return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
+            return FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * max(len(tests), 1)
         case_count += sum(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name.startswith("test")
             for node in ast.walk(tree)
         )
-    case_count = max(case_count, len(tests), 1)
-    return min(
-        MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS,
-        max(DEFAULT_CHECK_TIMEOUT_SECONDS, case_count * FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS),
-    )
+    other_file_budget = (max(DEFAULT_CHECK_TIMEOUT_SECONDS,
+                             case_count * FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS)
+                         if other_test_file_count else 0)
+    standalone_budget = standalone_script_count * FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS
+    return standalone_budget + other_file_budget or DEFAULT_CHECK_TIMEOUT_SECONDS
 
 
 def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:

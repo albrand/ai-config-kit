@@ -500,7 +500,7 @@ class PreReviewTests(unittest.TestCase):
             commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
         self.assertEqual(commands, [("focused-python-tests", [sys.executable, "./tests/test_sample.py"], None)])
 
-    def test_unittest_discovery_does_not_repeat_main_guard_setup(self) -> None:
+    def test_standalone_unittest_main_guard_setup_runs_once(self) -> None:
         marker = self.base / "main-guard-setup-ran"
         test_file = self.repo / "tests" / "test_sample.py"
         test_file.parent.mkdir()
@@ -572,13 +572,23 @@ class PreReviewTests(unittest.TestCase):
                 for marker in markers:
                     self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
 
-    def test_focused_python_timeout_scales_to_suite_and_bounds_hung_suite(self) -> None:
+    def test_focused_python_timeout_uses_per_file_slices_and_bounds_hung_suite(self) -> None:
         source_file = self.repo / "src" / "feature.py"
         source_file.parent.mkdir()
         source_file.write_text("VALUE = 1\n", encoding="utf-8")
         test_file = self.repo / "tests" / "test_feature.py"
         test_file.parent.mkdir()
         marker = self.base / "main-guard-suite-setup-ran"
+        sibling_test = self.repo / "tests" / "test_sibling.py"
+        sibling_test.write_text(
+            "import unittest\n"
+            "class SiblingTests(unittest.TestCase):\n"
+            "    def test_sibling(self):\n"
+            "        self.assertTrue(True)\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
 
         def write_suite(sleep_seconds: float) -> None:
             test_file.write_text(
@@ -586,6 +596,9 @@ class PreReviewTests(unittest.TestCase):
                 "from pathlib import Path\n"
                 "import unittest\n"
                 f"SLEEP_SECONDS = {sleep_seconds!r}\n"
+                "class OrdinaryFeatureTests(unittest.TestCase):\n"
+                "    def test_ordinary_case(self):\n"
+                "        self.assertTrue(True)\n"
                 "if __name__ == '__main__':\n"
                 f"    marker = Path({str(marker)!r})\n"
                 "    if marker.exists():\n"
@@ -593,7 +606,7 @@ class PreReviewTests(unittest.TestCase):
                 "    marker.write_text('once', encoding='utf-8')\n"
                 "    class GeneratedFeatureTests(unittest.TestCase):\n"
                 "        pass\n"
-                "    for index in range(31):\n"
+                "    for index in range(30):\n"
                 "        def generated_test(self, index=index):\n"
                 "            if index == 0:\n"
                 "                time.sleep(SLEEP_SECONDS)\n"
@@ -607,24 +620,29 @@ class PreReviewTests(unittest.TestCase):
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture selected Python suite")
 
-        # The main guard creates 31 cases, so safe discovery cannot count them
-        # without repeating setup. --timeout-scale makes the conservative
-        # ten-minute fallback 1.2 seconds while one case slice is 20 ms.
+        # The main guard creates 30 cases plus one ordinary case, while a
+        # second standalone file adds another per-file slice. The 600 ms
+        # per-file slices yield a 1.2 s aggregate budget, so the 800 ms case
+        # exceeds one slice but completes without running setup twice.
         marker.unlink(missing_ok=True)
-        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
+        git(self.repo, "add", "src/feature.py", "tests/test_feature.py", "tests/test_sibling.py")
+        git(self.repo, "commit", "-m", "fixture selected Python suites")
+        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.001")
         slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertEqual(slow_result.returncode, 0, slow_result.stdout + slow_result.stderr)
         self.assertEqual(slow_check["status"], "pass")
         self.assertEqual(marker.read_text(encoding="utf-8"), "once")
         namespace = runpy.run_path(str(SCRIPT))
-        timeout = namespace["focused_python_test_timeout"](self.repo, ["tests/test_feature.py"])
-        self.assertEqual(timeout, 600)
+        timeout = namespace["focused_python_test_timeout"](
+            self.repo, ["tests/test_feature.py", "tests/test_sibling.py"]
+        )
+        self.assertEqual(timeout, 1200)
 
         write_suite(2)
         marker.unlink()
         git(self.repo, "add", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture hung Python test")
-        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.002")
+        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.001")
         hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
         self.assertEqual(hung_check["status"], "timeout")
