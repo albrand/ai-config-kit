@@ -16,7 +16,7 @@ Never add or fill a recipient, open/edit a compose surface, or send email by any
 Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
 Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
-Use only bb's isolated browser for interactive work; never use a personal browser. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
+Use only bb's isolated browser for interactive work; never use a personal browser. Call `browser_instances` before any `browser_open`; never use `browser_open` as a standard first step. Close the owned instance before changing cookie isolation. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
 No feature flags or new off-by-default gates without an explicit ask; preserve auth, authorization, entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date.
 Remove only clean worktrees you created; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, a .keep-worktree tree, or an unreferenced detached commit. A detached review worktree must end with its command. Use git worktree remove without --force.
 Do not add AI attribution, signatures, or watermarks.
@@ -129,6 +129,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
         baseline = baseline_path.read_text(encoding="utf-8")
         browser_rules = {
             "browser-never-access-unowned",
+            "browser-enumerate-before-open",
+            "browser-no-standard-preamble",
+            "browser-close-before-isolation-change",
             "browser-lifecycle-ops-noncreating",
             "browser-close-every-slice-outcome",
         }
@@ -136,6 +139,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-never-access-unowned": (
                 "Never access or close unowned, pre-existing, user-owned, or other-thread instances",
                 "access instances when needed",
+            ),
+            "browser-enumerate-before-open": (
+                "Call `browser_instances` before any `browser_open`",
+                "Open a browser page as needed",
+            ),
+            "browser-no-standard-preamble": (
+                "never use `browser_open` as a standard first step",
+                "use `browser_open` as the standard first step",
+            ),
+            "browser-close-before-isolation-change": (
+                "Close the owned instance before changing cookie isolation",
+                "Keep the page open while changing cookie isolation",
             ),
             "browser-lifecycle-ops-noncreating": (
                 "Lookup, refresh, release, and close must never create a replacement tab.",

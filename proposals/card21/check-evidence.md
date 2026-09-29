@@ -10,8 +10,8 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (35 regexes; 32 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 35 regexes,
+matched applicable rules in the final checker (38 regexes; 32 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 38 regexes,
 including each Codex-only context-GC, email-consent, and browser-lifecycle
 obligation. Worktree subrules have separate checks and mutation fixtures for
 each safeguard. A historical marker
@@ -41,13 +41,13 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (35 regexes)
+PASS all 5 files contain all applicable rules (38 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (35 regexes)
+PASS all 5 files contain all applicable rules (38 regexes)
 ```
 
 Unit-test stdout:

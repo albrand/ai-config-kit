@@ -63,6 +63,18 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never access or close.{0,100}(?:unowned|pre-existing).{0,80}"
         r"(?:user-owned|other-thread)"
     ),
+    "browser-enumerate-before-open": re.compile(
+        r"(?is)(?:call|enumerate).{0,80}browser_instances.{0,80}before.{0,40}browser_open"
+    ),
+    "browser-no-standard-preamble": re.compile(
+        r"(?is)(?:never use `?browser_open`? as a standard first step|"
+        r"do not (?:call )?`?browser_open`? as a standard first step|"
+        r"do not open a page as a standard preamble)"
+    ),
+    "browser-close-before-isolation-change": re.compile(
+        r"(?is)(?:close (?:the )?(?:owned )?(?:instance|page).{0,80}"
+        r"before changing (?:cookie )?isolation|close it before changing isolation)"
+    ),
     "browser-lifecycle-ops-noncreating": re.compile(
         r"(?is)(?:lookup|listing).{0,40}(?:refresh|refreshing).{0,40}"
         r"(?:release|releasing).{0,40}(?:close|closing).{0,120}"
@@ -157,6 +169,9 @@ OPTIONAL_WHEN_ABSENT = {
     "context-gc-audit",
     "context-gc-managed-runner-self-check",
     "browser-never-access-unowned",
+    "browser-enumerate-before-open",
+    "browser-no-standard-preamble",
+    "browser-close-before-isolation-change",
     "browser-lifecycle-ops-noncreating",
     "browser-close-every-slice-outcome",
 }
@@ -217,6 +232,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name == "browser-never-access-unowned":
         return bool(RULES[name].search(text))
+    if name.startswith("browser-"):
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -243,6 +260,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
             if resolved == KIT_SOURCE.resolve() or (rendered and path.name == "bb-AGENTS.md"):
                 required_optional.update({
                     "browser-never-access-unowned",
+                    "browser-enumerate-before-open",
+                    "browser-no-standard-preamble",
+                    "browser-close-before-isolation-change",
                     "browser-lifecycle-ops-noncreating",
                     "browser-close-every-slice-outcome",
                 })
@@ -262,6 +282,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if rendered and path.name != "bb-AGENTS.md":
             skip_rules.update({
                 "browser-never-access-unowned",
+                "browser-enumerate-before-open",
+                "browser-no-standard-preamble",
+                "browser-close-before-isolation-change",
                 "browser-lifecycle-ops-noncreating",
                 "browser-close-every-slice-outcome",
             })
