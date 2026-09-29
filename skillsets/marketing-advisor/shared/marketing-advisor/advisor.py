@@ -150,6 +150,14 @@ def decide(a, rub, pan, w, principle_ids, threshold=None, judge=None):
             "decision_preregistered": "accept" if prereg else "revise", "failed_criteria": failed}
 
 
+def judge_cost(metas):
+    """Sum of the judge calls' own cost reports (claude -p total_cost_usd) for this run; None if any call reported none."""
+    costs = [m.get("cost_usd") for m in metas]
+    if not costs or any(not isinstance(c, (int, float)) for c in costs):
+        return None
+    return round(sum(costs), 6)
+
+
 def selftest():
     """Decision logic only, no model calls: exits non-zero if the typed rules drift."""
     ok = lambda ids, v=True: [{"id": i, "pass": v} for i in ids]
@@ -172,6 +180,9 @@ def selftest():
         ("calibrated: R7 turns accept into verify", decide(copy, {"criteria": ok(allr[:6]) + ok(["R7"], False) + ok(["R8"])}, no, 0.0, []), "decision", "verify"),
         ("calibrated: violation listed -> verify", decide(copy, {"criteria": ok(allr), "compliance_violations": [{"rule": "CDC art. 37", "excerpt": "x"}]}, no, 0.0, []), "decision", "verify"),
         ("calibrated: R6 fail -> verify", decide(copy, {"criteria": ok(allr[:5]) + ok(["R6"], False) + ok(["R7", "R8"])}, no, 0.0, []), "decision", "verify"),
+        ("cost: rubric + panel calls summed", {"c": judge_cost([{"cost_usd": 0.05}, {"cost_usd": 0.01}])}, "c", 0.06),
+        ("cost: one call", {"c": judge_cost([{"cost_usd": 0.066412}])}, "c", 0.066412),
+        ("cost: unreported call -> unknown, not partial", {"c": judge_cost([{"cost_usd": 0.05}, {"usage": {}}])}, "c", None),
     ]
     bad = [(n, d[key], want) for n, d, key, want in cases if d[key] != want]
     for n, got, want in bad:
@@ -203,12 +214,16 @@ def main():
     asset = {"id": a.id, "type": a.type, "audience": a.audience, "surface": a.surface, "context": a.context,
              "text": Path(a.text_file).read_text().strip()}
     try:
-        rub, _ = call(a.judge, rubric_prompt(asset, brand["principles"], facts))
-        pan = call(a.judge, panel_prompt(asset, facts))[0] if (a.panel or a.w > 0) else {"panel": []}
+        rub, meta = call(a.judge, rubric_prompt(asset, brand["principles"], facts))
+        metas, pan = [meta], {"panel": []}
+        if a.panel or a.w > 0:
+            pan, meta = call(a.judge, panel_prompt(asset, facts))
+            metas.append(meta)
     except Exception as e:
         print(json.dumps({"error": repr(e)[:300]})); sys.exit(1)
     out = decide(asset, rub, pan, a.w, [p["id"] for p in brand["principles"]], judge=a.judge)
     out["judge"] = a.judge
+    out["judge_cost_usd"] = judge_cost(metas)
     if a.log:
         import datetime, hashlib
         rec = {"kind": "advice", "asset_id": a.id, "date": datetime.date.today().isoformat(),

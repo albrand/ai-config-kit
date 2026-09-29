@@ -7,14 +7,30 @@ description: >
   the workflow (P0), walk it end to end and inventory EVERY defect without
   fixing anything (P1, including defects that predate your change), cluster
   them by root cause with a repro that has failed once (P2), write one plan
-  (P3), fix per cluster (P4), re-walk the whole workflow at the new SHA (P5),
-  then ship (P6). The gate denies the ship until the pipeline is complete.
+  (P3), fix per cluster in a batch (P4), close the inventory, re-walk the
+  whole workflow once at the batch head (P5), then ship (P6). The gate denies
+  protected shipping until the pipeline is complete.
 verify: 'python3 "$HOME/.agents/skills/qa-sweep/scripts/ship-gate.py" selftest'
 verify_timeout: 420
 verified: 2026-09-25
 ---
 
 # QA sweep: discover everything, cluster, plan once, fix, re-walk
+
+## Final completion claims
+
+Across repositories, a final claim that work is done, ready, working, fixed,
+tested, verified, or validated needs an evidence packet containing:
+
+- the persona;
+- the target (stack plus commit SHA, or URL plus deployment ID);
+- the user outcomes attempted;
+- a verdict for each outcome.
+
+When the workflow has not been run, say `implemented; workflow NOT RUN` and name
+what remains. The Stop nudge applies even when a repository has no `.qa/`
+configuration. Repositories without `.qa/config.json` do not receive the QA
+ship gate, and the nudge never creates `.qa/` files or denies tool calls.
 
 The unit of work is the workflow, not the defect in front of you. The failure
 this skill exists to stop: find 1 error, fix 1, deploy 1, repeat. Every phase
@@ -30,6 +46,14 @@ workflow to its outcome; `agent-browser` is replaced by the bb `browser_*`
 tools; and every inventory row records whether it predates this change.
 
 ## P0 Scope: `.qa/workflow.json`
+
+Before the first LLM review submission, attach both JSON and Markdown packets
+from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
+advisor round; keep LLM review focused on semantic gaps left by deterministic
+checks. Each defect fix must add the cheapest deterministic detector that
+would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
+line when only semantic review can catch it. Put generic rules in the kit starter
+pack and project-specific rules in `.review-rules/`.
 
 Name the persona, the entry point, the user-visible outcome, every step
 between them, and the target (URL plus the SHA being tested). A repo-level
@@ -144,12 +168,65 @@ One commit per cluster, its repro going red to green. After the fix, re-run
 the cluster's repro and the focused tests covering the change. After 3 failed
 attempts on one cluster, stop and escalate with the repro output.
 
+## Batch lifecycle: one full re-walk after the inventory closes
+
+Treat every defect found in one P1 walk as one batch. Do not run another full
+QA walk after each fix PR. Fixes can land in parallel or sequentially on a
+batch branch such as `qa/batch-<run>`; run the cluster repro and focused tests
+for each fix, then close the corresponding inventory rows. A PR whose base is
+not protected can merge while the batch inventory is open. The protected
+batch merge and production deploy stay gated.
+
+When the batch inventory has no open rows, run P5 once against the aggregate
+batch head. Use Playwright coverage for as much of the workflow as is
+automated. Each Playwright test that covers a workflow step carries this
+annotation, where the workflow name matches both `workflow.json`'s
+`workflow` and an entry in `.qa/config.json` `workflows[].name`:
+
+```ts
+testInfo.annotations.push({
+  type: "qa-step",
+  description: "invite-and-accept::accept",
+});
+```
+
+Generate `.qa/rewalk.json` from the Playwright JSON report and the batch run's
+`.qa/workflow.json`:
+
+```sh
+python3 <skill-dir>/scripts/rewalk-from-playwright.py \
+  <playwright-report.json> .qa/workflow.json \
+  --sha <batch-head-sha> --target <preview-url> \
+  --deployment-id <deployment-id> --output .qa/rewalk.json
+```
+
+Each step is `PASS` only when every annotated test passed on its first
+attempt. Failed, skipped, and flaky tests produce `FAIL`; retries do not turn
+a failed first attempt into a pass. A step with no annotated test is
+`NOT_AUTOMATED`. It still needs the visible manual walk represented by the
+existing `claim_e2e_complete` evidence packet: add `workflow_step` with the
+exact step name to the matching observed `journey.steps[]` entry and include
+that entry's normal evidence. The ship gate runs the existing E2E evidence
+checker and denies an unmapped `NOT_AUTOMATED` step without that manual
+evidence.
+
+The converter records the report path plus trace and screenshot attachment
+paths on each covered step, along with the preview target and deployment id.
+Commit the generated re-walk with the closed inventory and the batch head's
+QA artifacts. The gate accepts that QA-only evidence commit immediately on
+top of the walked batch head. Fix PRs into the batch remain free; only a merge
+to a protected branch (the default branch or `.qa/config.json`
+`protected_branches`) requires the closed inventory and one current re-walk.
+
 ## P5 Re-walk: `.qa/rewalk.json` + `.qa/evidence.json`
 
-At the new SHA, walk the ENTIRE workflow again — including steps you never
-touched. Every workflow step gets a verdict (only PASS clears the gate) and
-evidence. `rewalk.json` records the SHA; the gate rejects a re-walk whose SHA
-is not the one being shipped. Write `.qa/evidence.json` as a
+After the batch inventory closes, do this once at the aggregate batch head,
+not after every individual fix. Cover the ENTIRE workflow again — including
+steps you never touched. Every workflow step gets a verdict and evidence;
+automated steps use the Playwright converter above, while `NOT_AUTOMATED`
+steps need matching manual evidence. `rewalk.json` records the SHA; the gate
+rejects a re-walk whose SHA is not the one being shipped (except the single
+QA-only evidence commit on top). Write `.qa/evidence.json` as a
 `claim_e2e_complete` packet (verified-qa-e2e evidence contract) — the gate
 runs `qa-e2e-gate.mjs check` on it. Then record the events:
 
@@ -184,7 +261,8 @@ command.
 Free on purpose: **feature-branch pushes** (that is how previews and CI get
 built), **`gh pr create`** (that is how the preview and the PR are produced),
 **`bb fleet validate`** (review should see the work before the merge, not
-after), **preview deploys** (`vercel deploy` without a production target, and
+after), **merges into non-protected base branches** (for example, fix PRs into
+`qa/batch-<run>`), **preview deploys** (`vercel deploy` without a production target, and
 a `vercel api`/curl POST to `/vN/deployments` whose target is a preview — the
 meu-psi pilot heals seat-blocked previews through exactly that call, and
 blocking it would deadlock the pilot again), and **`vercel rollback`**

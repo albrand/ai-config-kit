@@ -42,8 +42,9 @@ after the QA ship gate.
 - Dispatches it gates: every `bb` verb that hands a thread text, derived
   from the help of every core and plugin command group (nested groups
   included): `thread spawn|create|fork|tell|message|edit-message`, `thread
-  queue create|update|send`, `thread interactions respond` and `thread
-  interactions answer --text`, `fleet group-create|task-add|advise` and
+  queue create|update|send`, `thread draft set` when given a message,
+  `thread interactions respond` and `thread interactions answer --text`,
+  `fleet group-create|task-add|advise` and
   `fleet member-add --concern`, `instructions set` (custom instructions go
   into every agent), and `automation create|update` with `--prompt` (the
   prompt an agent runs when the automation is due; `--target-thread`

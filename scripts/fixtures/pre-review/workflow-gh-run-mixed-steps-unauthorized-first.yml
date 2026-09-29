@@ -1,0 +1,14 @@
+name: inspect-run
+on: workflow_dispatch
+jobs:
+  inspect:
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unauthorized lookup
+        run: gh run view "$FIRST_RUN"
+      - name: Authorized lookup
+        run: gh run view "$SECOND_RUN"
+        env:
+          GH_TOKEN: ${{ github.token }}
