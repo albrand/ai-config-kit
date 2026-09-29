@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **34 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **35 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -61,6 +61,9 @@ present there. Rendered-path CLI weakening fixtures cover all four homes. Typed 
 require batched isolated Jev judgments recorded as `system-one`, prohibit hook
 and secret use, and prohibit relying on Jev alone for irreversible/security
 decisions; each obligation has a deletion fixture.
+The rendered-path CLI also rejects an added permission saying routine emails
+may be sent without asking, across all four proposals, while intact proposals
+pass.
 
 The real `--files` entrypoint also accepts native-shaped home paths. Intact
 native baseline fixtures pass; intact rendered homes at native paths pass;
@@ -115,7 +118,7 @@ PASS all 5 files contain all applicable rules (85 regexes)
 Unit-test stdout:
 
 ```text
-Ran 34 tests
+Ran 35 tests
 OK
 ```
 

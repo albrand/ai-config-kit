@@ -248,6 +248,42 @@ class StandingRuleCheckerTest(unittest.TestCase):
             CHECKER.missing_rules(weakened_other_message),
         )
 
+    def test_rendered_profiles_reject_email_approval_exceptions_via_files(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        with tempfile.TemporaryDirectory(prefix="card21-email-exception-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stderr)
+
+            for path, content in zip(candidates, intact):
+                path.write_text(
+                    content + "\nRoutine emails may be sent without asking.\n",
+                    encoding="utf-8",
+                )
+            result = run_checker()
+            self.assertNotEqual(0, result.returncode, result.stdout)
+            for rule in (
+                "email-compose-send",
+                "email-exact-message-approval",
+                "email-general-approval-is-insufficient",
+            ):
+                self.assertIn(rule, result.stdout + result.stderr)
+
     def test_each_email_safety_obligation_is_required(self):
         obligations = {
             "email-exact-message-approval": "approval for that exact message in this conversation",

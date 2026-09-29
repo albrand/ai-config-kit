@@ -545,6 +545,16 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
+    if name.startswith("email-"):
+        email_approval_exception = re.compile(
+            r"(?is)(?:(?:routine|standard|internal|automated|follow[- ]up|low[- ]risk)\s+)?"
+            r"(?:e-?mails?|messages?|mail).{0,100}"
+            r"(?:may|can|could|are allowed to|are permitted to).{0,100}"
+            r"(?:be sent|send|proceed|go out).{0,100}"
+            r"without\s+(?:asking|(?:user\s+)?approval|consent)"
+        )
+        if email_approval_exception.search(text):
+            return True
     contradictions = {
         "browser-never-access-unowned": re.compile(
             r"(?is)(?:allow|may|can).{0,80}(?:access|close).{0,120}"
