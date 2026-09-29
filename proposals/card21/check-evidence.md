@@ -131,8 +131,10 @@ the following line for each prohibition and adds task-specific `you may`,
 `you are explicitly permitted to`, `you are explicitly allowed to`, both
 temporary permission forms, and explicit allowed-permission sentences; all 168
 exception and permission mutations fail through `--files`.
-Each mutation is checked against its single changed rendered home so another
-copy cannot mask a regression; all four intact rendered homes pass together.
+Each mutation supplies all four rendered homes as separate `--files`
+candidates, changing the same rule in each; the checker reports each path
+independently and all four must fail. All four intact rendered homes pass
+together.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.

@@ -547,18 +547,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
             result = run_checker()
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-            for provider_index, path in enumerate(candidates):
-                for rule, (original, reversal) in clauses.items():
-                    for mutation, replacement in (("deletion", ""), ("reversal", reversal)):
-                        with self.subTest(provider=path.name, rule=rule, mutation=mutation):
-                            for candidate, content in zip(candidates, intact):
-                                candidate.write_text(content, encoding="utf-8")
-                            content = intact[provider_index]
+            for rule, (original, reversal) in clauses.items():
+                for mutation, replacement in (("deletion", ""), ("reversal", reversal)):
+                    with self.subTest(rule=rule, mutation=mutation):
+                        for candidate, content in zip(candidates, intact):
                             self.assertIn(original, content)
-                            path.write_text(content.replace(original, replacement, 1), encoding="utf-8")
-                            result = run_checker([path])
-                            self.assertNotEqual(0, result.returncode, result.stdout)
-                            self.assertIn(rule, result.stdout + result.stderr)
+                            candidate.write_text(content.replace(original, replacement, 1), encoding="utf-8")
+                        result = run_checker()
+                        output = result.stdout + result.stderr
+                        self.assertNotEqual(0, result.returncode, output)
+                        for candidate in candidates:
+                            self.assertIn(str(candidate), output)
+                            self.assertIn(rule, output)
 
     def test_rendered_homes_reject_each_bb_app_exception_and_permission(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -639,8 +639,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             result = run_checker()
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-            for provider_index, path in enumerate(candidates):
-                for rule, (
+            for rule, (
                     original,
                     task_permission,
                     permitted_to,
@@ -649,29 +648,30 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     temporary_allowed_to,
                     explicit_permission,
                 ) in clauses.items():
-                    mutations = (
-                        ("blank-line wrapped exception", original + "\n\n  unless needed to finish the task."),
-                        ("task-specific permission", task_permission),
-                        ("explicitly permitted permission", permitted_to),
-                        ("explicitly allowed permission", allowed_to),
-                        ("temporary permitted override", temporary_permitted_to),
-                        ("temporary allowed override", temporary_allowed_to),
-                        ("explicit permission", explicit_permission),
-                    )
-                    for mutation, replacement in mutations:
-                        with self.subTest(provider=path.name, rule=rule, mutation=mutation):
-                            for candidate, content in zip(candidates, intact):
-                                candidate.write_text(content, encoding="utf-8")
-                            content = intact[provider_index]
+                mutations = (
+                    ("blank-line wrapped exception", original + "\n\n  unless needed to finish the task."),
+                    ("task-specific permission", task_permission),
+                    ("explicitly permitted permission", permitted_to),
+                    ("explicitly allowed permission", allowed_to),
+                    ("temporary permitted override", temporary_permitted_to),
+                    ("temporary allowed override", temporary_allowed_to),
+                    ("explicit permission", explicit_permission),
+                )
+                for mutation, replacement in mutations:
+                    with self.subTest(rule=rule, mutation=mutation):
+                        for candidate, content in zip(candidates, intact):
                             if mutation == "blank-line wrapped exception":
                                 self.assertIn(original, content)
                                 content = content.replace(original, replacement, 1)
                             else:
                                 content += "\n" + replacement + "\n"
-                            path.write_text(content, encoding="utf-8")
-                            result = run_checker([path])
-                            self.assertNotEqual(0, result.returncode, result.stdout)
-                            self.assertIn(rule, result.stdout + result.stderr)
+                            candidate.write_text(content, encoding="utf-8")
+                        result = run_checker()
+                        output = result.stdout + result.stderr
+                        self.assertNotEqual(0, result.returncode, output)
+                        for candidate in candidates:
+                            self.assertIn(str(candidate), output)
+                            self.assertIn(rule, output)
 
     def test_rendered_provider_contexts_preserve_hermes_transport_prohibitions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
