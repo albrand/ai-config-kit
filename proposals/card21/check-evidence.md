@@ -10,10 +10,10 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (91 regexes;
-46 Claude, 55 Codex, 51 OpenCode, 50 bb, and 84 kit rules applicable). The
-rendered proposals plus kit source also passed all 91 regexes: 75 Claude, 91
-Codex, 84 OpenCode, 84 bb, and 84 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (95 regexes;
+50 Claude, 59 Codex, 55 OpenCode, 54 bb, and 88 kit rules applicable). The
+rendered proposals plus kit source also passed all 95 regexes: 79 Claude, 95
+Codex, 88 OpenCode, 88 bb, and 88 kit rules applicable. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **39 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **40 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -110,6 +110,9 @@ all 36 cases fail as required. Another standalone `--files` fixture deletes
 the node_modules symlink ban and low-disk install/build limit from each provider
 proposal and requires rejection. Both safeguards also pass against all four
 unchanged homes and the kit source.
+The standalone provider fixture also weakens one-writer-per-worktree,
+no-sibling-edits, stop-on-collision, and survivor re-read of `git diff`; all
+four mutations are rejected for each of Claude, Codex, and OpenCode.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -123,19 +126,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (91 regexes)
+PASS all 5 files contain all applicable rules (95 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (91 regexes)
+PASS all 5 files contain all applicable rules (95 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 39 tests
+Ran 40 tests
 OK
 ```
 

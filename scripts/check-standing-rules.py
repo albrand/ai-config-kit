@@ -261,6 +261,18 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never remove.{0,100}(?:your own (?:live )?bb environment|"
         r"the worktree your own bb thread runs in)"
     ),
+    "worktree-one-writer": re.compile(
+        r"(?is)one writer per PR, branch,? and worktree"
+    ),
+    "worktree-no-sibling-edits": re.compile(
+        r"(?is)(?:never a sibling.s\.|never edit a sibling.s worktree)"
+    ),
+    "worktree-collision-stop": re.compile(
+        r"(?is)Workspace collision detected.{0,100}stop editing"
+    ),
+    "worktree-collision-reread-diff": re.compile(
+        r"(?is)(?:survivor )?re-?reads? `git diff` before commit(?:ting)?"
+    ),
     "no-ai-signatures": re.compile(
         r"(?is)(?:do not|never) add AI attribution.{0,150}"
         r"(?:signature|watermark)"
@@ -508,10 +520,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "5e3661aa96e921a7a2a4bb1df53d5a9ef321a90fe9fa57675d65bc9858266218": "proposal-claude",
-    "9ef82c62269c2d73e6ee5acf2f6474765fb766b4a0ae3b31719ec081772aba44": "proposal-codex",
-    "d322bfa11c69651467f3c44b58ec4ce712beabe96a3983138f467c175dba698d": "proposal-opencode",
-    "7212ac36accbe201d4fa77127aa83267b59a8f3ae0be49f2688bbacc3f484ccf": "proposal-bb",
+    "e34940bcf67f6e418317bd134eb98abbedc57bab26fa97d1d006b4c1e24dd3c6": "proposal-claude",
+    "9dcb76dec744712220957bb0692f119421001e43e91d8a4ff8f0c9a7941c88c3": "proposal-codex",
+    "1343b68e6386ea2e0a0ac694e1527bac0075b49e396eb9ce1d571e956d68276d": "proposal-opencode",
+    "527426bae1863ee3f82e68cdfb6e92d0b42640c4ed466f01f1134ccce8e15b27": "proposal-bb",
 }
 
 
