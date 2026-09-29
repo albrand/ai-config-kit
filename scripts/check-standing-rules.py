@@ -705,7 +705,8 @@ def contradicted_rule(name: str, text: str) -> bool:
             ):
                 return True
         bypass_permission = re.compile(
-            r"(?is)(?:never|do not)\s+bypass\s+(?:(?:a|the|this|that)\s+)?safety-hook block"
+            r"(?is)(?:never|do not|must not|should not|cannot|can't)\s+bypass\s+"
+            r"(?:(?:a|the|this|that)\s+)?safety-hook block"
             r".{0,100}\b(?:unless|except)\b|"
             r"safety-hook block.{0,100}(?:may|can|could|is allowed to|is permitted to)"
             r".{0,40}bypass|"
