@@ -40,6 +40,66 @@ class StandingRuleCheckerTest(unittest.TestCase):
         )
         self.assertIn("credentials", CHECKER.missing_rules(damaged))
 
+    def test_native_home_profiles_fail_closed_through_files_entrypoint(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        cases = [
+            (
+                rendered / "CLAUDE.md",
+                (".claude", "CLAUDE.md"),
+                "an orchestration request authorizes up to 6",
+                "an orchestration request authorizes up to 5",
+                "child-thread-cap-six-with-orchestration",
+            ),
+            (
+                rendered / "codex-AGENTS.md",
+                (".codex", "AGENTS.md"),
+                "Never put prompts in argv",
+                "Prompts may be placed in argv",
+                "hermes-no-prompts-in-argv",
+            ),
+            (
+                rendered / "opencode-AGENTS.md",
+                (".config", "opencode", "AGENTS.md"),
+                "never create reverse SSH",
+                "may create reverse SSH",
+                "hermes-no-reverse-ssh",
+            ),
+            (
+                rendered / "bb-AGENTS.md",
+                (".bb", "AGENTS.md"),
+                "Never place or retain a project source on Hermes",
+                "Place or retain a project source on Hermes",
+                "hermes-no-project-source",
+            ),
+        ]
+        with tempfile.TemporaryDirectory(prefix="card21-native-profile-") as temp_dir:
+            for source, suffix, original, weakened, expected_rule in cases:
+                candidate = Path(temp_dir).joinpath(*suffix)
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                source_text = source.read_text(encoding="utf-8")
+                with self.subTest(home=suffix[-1], state="intact"):
+                    candidate.write_text(source_text, encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(0, result.returncode, result.stderr)
+                with self.subTest(home=suffix[-1], state="weakened"):
+                    self.assertIn(original, source_text)
+                    candidate.write_text(
+                        source_text.replace(original, weakened), encoding="utf-8"
+                    )
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertIn(expected_rule, result.stdout + result.stderr)
+
     def test_weakened_email_consent_exceptions_fail(self):
         weakened = INTACT.replace(
             "General task approval or approval for another message is not approval for this one.",
@@ -890,7 +950,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_deleted_rule_in_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "AGENTS.md"
+            path = Path(tmp) / ".claude" / "CLAUDE.md"
+            path.parent.mkdir(parents=True)
             path.write_text(
                 INTACT.replace(
                     "Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.\n",

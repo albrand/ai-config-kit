@@ -10,14 +10,18 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (72 regexes; 41 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 72 regexes,
-including each Codex-only context-GC, email-consent, browser-lifecycle,
-browser-input-quarantine, and Hermes transport obligation. Worktree subrules
-have separate checks and mutation fixtures for each safeguard. A historical
-marker on the matching line or directly preceding line invalidates a policy.
+matched fixed applicable-rule inventories in the final checker (72 regexes;
+32 Claude, 41 Codex, 37 OpenCode, 34 bb, and 65 kit rules applicable). The
+rendered proposals plus kit source also passed all 72 regexes: 56 Claude, 72
+Codex, 65 OpenCode, 65 bb, and 65 kit rules applicable. Candidate text cannot
+make an optional rule inapplicable; native paths select checked-in baseline
+profiles, and rendered paths select fixed proposal profiles. Codex-only
+context-GC, email-consent, browser-lifecycle, browser-input-quarantine, and
+Hermes transport obligations are covered. Worktree subrules have separate
+checks and mutation fixtures for each safeguard. A historical marker on the
+matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **30 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **31 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -44,6 +48,11 @@ standalone mutations cover `CMUX_SOCKET_CAPABILITY`/`CMUX_*`, `acp-hermes-agent
 --model`, broker SSH stdin, local terminal sockets, and the absolute ban on
 placing or retaining source on Hermes, including a mutation that retains the
 old “never ask Hermes to mount” wording.
+The real `--files` entrypoint also accepts native-shaped home paths. Intact
+native baseline fixtures pass and deleting/weakening an applicable rule fails;
+unknown paths fail closed with `no standing-rule profile`. This guards against
+the previous content-driven applicability bug.
+
 The verified-QA mutation narrows triggers to login/auth only, modeling an
 already-authenticated browser E2E, and separately changes a missing or failing
 gate into an optional gate; both mutations must fail.
@@ -90,7 +99,7 @@ PASS all 5 files contain all applicable rules (72 regexes)
 Unit-test stdout:
 
 ```text
-Ran 30 tests
+Ran 31 tests
 OK
 ```
 

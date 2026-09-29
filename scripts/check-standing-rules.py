@@ -339,6 +339,114 @@ HOME_FILES = (
 )
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
+# These are fixed baseline inventories for the four existing homes. Keep them
+# explicit: applicability must never be inferred from the candidate's contents.
+LIVE_HOME_RULES = {
+    "claude": {
+        "browser-close-every-slice-outcome", "browser-lifecycle-ops-noncreating",
+        "browser-close-before-isolation-change", "browser-no-foreground-takeover-claim",
+        "browser-input-is-mutation", "browser-no-standard-preamble",
+        "child-thread-cap-six-with-orchestration", "delegate-no-unapproved-dependencies",
+        "delegation-cross-session-cmux-off",
+    },
+    "codex": {
+        "context-gc-boundary", "context-gc-managed-runner-self-check",
+        "context-gc-fresh-opencode-sessions", "context-gc-audit",
+        "browser-close-every-slice-outcome", "delegate-no-unapproved-dependencies",
+        "hermes-broker-delegation-default-off", "browser-lifecycle-ops-noncreating",
+        "hermes-broker-concurrency-depth-one", "browser-no-dedicated-takeover-claim",
+        "hermes-no-prompts-in-argv", "browser-input-is-mutation",
+        "hermes-no-local-terminal-socket", "no-gc-user-owned-state",
+        "child-thread-cap-six-with-orchestration", "context-gc-discard-logs",
+        "hermes-broker-model-call-explicit-activation", "context-gc-resume-packet",
+    },
+    "opencode": {
+        "browser-close-every-slice-outcome", "hermes-no-reverse-ssh",
+        "hermes-no-cmux-capability-export", "browser-lifecycle-ops-noncreating",
+        "worktree-own-bb-environment", "browser-close-before-isolation-change",
+        "browser-quarantine-survives-restart", "browser-no-dedicated-takeover-claim",
+        "hermes-no-listeners", "browser-no-foreground-takeover-claim",
+        "browser-input-is-mutation", "browser-exclusive-delivery-proof",
+        "child-thread-cap-six-with-orchestration", "browser-no-standard-preamble",
+    },
+    "bb": {
+        "browser-enumerate-before-open", "browser-close-every-slice-outcome",
+        "browser-lifecycle-ops-noncreating", "worktree-own-bb-environment",
+        "browser-close-before-isolation-change", "browser-no-dedicated-takeover-claim",
+        "browser-no-foreground-takeover-claim", "child-thread-cap-six-with-orchestration",
+        "hermes-agent-no-model-override", "browser-no-standard-preamble",
+        "hermes-no-project-source",
+    },
+}
+KIT_BASELINE_RULES = {
+    "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
+    "browser-enumerate-before-open", "browser-leak-readonly-only",
+    "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
+    "hermes-no-reverse-ssh", "delegate-no-unapproved-dependencies",
+    "hermes-no-cmux-capability-export", "hermes-broker-delegation-default-off",
+    "browser-prompts-cannot-bypass-quarantine", "browser-lifecycle-ops-noncreating",
+    "child-cap-distinct-opencode-instance-cap", "browser-never-access-unowned",
+    "browser-quarantine-reenable-regression", "hermes-broker-concurrency-depth-one",
+    "delegation-approval-scale-and-bounded-fanout", "hermes-no-broad-env-forwarding",
+    "worktree-own-bb-environment", "browser-close-before-isolation-change",
+    "browser-quarantine-survives-restart", "browser-no-dedicated-takeover-claim",
+    "hermes-no-prompts-in-argv", "hermes-no-listeners",
+    "hermes-broker-limits-not-bb-children", "delegation-explicit-approval-outward-effects",
+    "browser-target-id-is-not-proof", "browser-no-foreground-takeover-claim",
+    "browser-input-is-mutation", "browser-exclusive-delivery-proof",
+    "hermes-prompts-use-stdin", "hermes-no-local-terminal-socket",
+    "verified-qa-e2e-missing-fails-closed", "child-thread-cap-six-with-orchestration",
+    "browser-no-unverified-login-claim", "hermes-agent-no-model-override",
+    "hermes-broker-model-call-explicit-activation", "verified-qa-e2e-full-trigger-set",
+    "browser-persistent-quarantine-per-input", "delegation-cross-session-cmux-off",
+    "browser-no-standard-preamble", "hermes-no-project-source",
+}
+CONTEXT_GC_RULES = {
+    "no-gc-user-owned-state", "context-gc-boundary", "context-gc-resume-packet",
+    "context-gc-discard-logs", "context-gc-fresh-opencode-sessions",
+    "context-gc-audit", "context-gc-managed-runner-self-check",
+}
+HERMES_TRANSPORT_RULES = {
+    "hermes-no-reverse-ssh", "hermes-no-listeners", "hermes-no-broad-env-forwarding",
+    "hermes-no-cmux-capability-export", "hermes-agent-no-model-override",
+    "hermes-no-project-source", "hermes-prompts-use-stdin", "hermes-no-prompts-in-argv",
+    "hermes-no-local-terminal-socket",
+}
+PROFILE_RULES = {
+    **LIVE_HOME_RULES,
+    "kit": KIT_BASELINE_RULES,
+    # Rendered proposals deliberately use the full closed inventory; this is
+    # what makes the mutation fixtures fail closed for newly required clauses.
+    "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES,
+    "proposal-codex": OPTIONAL_WHEN_ABSENT,
+    "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
+    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
+}
+
+
+def profile_for(path: Path) -> str | None:
+    """Resolve a fixed home profile from the known target path, never file text."""
+    parts = path.resolve().parts
+    if path.resolve() == KIT_SOURCE.resolve():
+        return "kit"
+    if len(parts) >= 2 and parts[-2] == "rendered-homes":
+        return {
+            "CLAUDE.md": "proposal-claude",
+            "codex-AGENTS.md": "proposal-codex",
+            "opencode-AGENTS.md": "proposal-opencode",
+            "bb-AGENTS.md": "proposal-bb",
+        }.get(path.name)
+    suffix_profiles = {
+        (".claude", "CLAUDE.md"): "claude",
+        (".codex", "AGENTS.md"): "codex",
+        (".config", "opencode", "AGENTS.md"): "opencode",
+        (".bb", "AGENTS.md"): "bb",
+    }
+    for suffix, profile in suffix_profiles.items():
+        if parts[-len(suffix):] == suffix:
+            return profile
+    return None
+
 
 def missing_rules(
     text: str,
@@ -447,145 +555,20 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if not path.is_file():
             failures.append(f"{path}: file missing")
             continue
-        resolved = path.resolve()
-        rendered = "rendered-homes" in path.parts
-        strict = resolved == KIT_SOURCE.resolve() or rendered
+        profile = profile_for(path)
+        if profile is None:
+            failures.append(f"{path}: no standing-rule profile for this path")
+            continue
         content = path.read_text(encoding="utf-8")
-        required_optional: set[str] = set()
-        if strict:
-            required_optional.update({
-                "no-pkill-pgrep-app-kill-path",
-                "worktree-own-bb-environment",
-            })
-            if resolved == KIT_SOURCE.resolve() or (rendered and path.name == "bb-AGENTS.md"):
-                required_optional.update({
-                    "browser-never-access-unowned",
-                    "browser-enumerate-before-open",
-                    "browser-no-standard-preamble",
-                    "browser-close-before-isolation-change",
-                    "browser-lifecycle-ops-noncreating",
-                    "browser-close-every-slice-outcome",
-                    "browser-input-is-mutation",
-                    "browser-exclusive-delivery-proof",
-                    "browser-target-id-is-not-proof",
-                    "browser-persistent-quarantine-per-input",
-                    "browser-leak-readonly-only",
-                    "browser-quarantine-survives-restart",
-                    "browser-quarantine-reenable-regression",
-                    "browser-prompts-cannot-bypass-quarantine",
-                    "browser-no-dedicated-takeover-claim",
-                    "browser-no-foreground-takeover-claim",
-                    "browser-no-unverified-login-claim",
-                    "hermes-no-reverse-ssh",
-                    "hermes-no-listeners",
-                    "hermes-no-broad-env-forwarding",
-                    "hermes-no-cmux-capability-export",
-                    "hermes-agent-no-model-override",
-                    "hermes-no-project-source",
-                    "hermes-prompts-use-stdin",
-                    "hermes-no-prompts-in-argv",
-                    "hermes-no-local-terminal-socket",
-                    "verified-qa-e2e-full-trigger-set",
-                    "verified-qa-e2e-missing-fails-closed",
-                    "child-thread-cap-three-without-asking",
-                    "child-thread-cap-six-with-orchestration",
-                    "child-thread-cap-host-capacity",
-                    "child-cap-distinct-opencode-instance-cap",
-                    "delegate-no-unapproved-dependencies",
-                    "hermes-broker-delegation-default-off",
-                    "hermes-broker-concurrency-depth-one",
-                    "hermes-broker-model-call-explicit-activation",
-                    "hermes-broker-limits-not-bb-children",
-                    "delegation-approval-scale-and-bounded-fanout",
-                    "delegation-cross-session-cmux-off",
-                    "delegation-explicit-approval-outward-effects",
-                })
-            if rendered and path.name != "bb-AGENTS.md":
-                required_optional.update({
-                    "browser-never-access-unowned",
-                    "browser-enumerate-before-open",
-                    "browser-no-standard-preamble",
-                    "browser-close-before-isolation-change",
-                    "browser-lifecycle-ops-noncreating",
-                    "browser-close-every-slice-outcome",
-                    "browser-input-is-mutation",
-                    "browser-exclusive-delivery-proof",
-                    "browser-persistent-quarantine-per-input",
-                    "browser-target-id-is-not-proof",
-                    "browser-leak-readonly-only",
-                    "browser-quarantine-survives-restart",
-                    "browser-quarantine-reenable-regression",
-                    "browser-prompts-cannot-bypass-quarantine",
-                    "browser-no-dedicated-takeover-claim",
-                    "browser-no-foreground-takeover-claim",
-                    "browser-no-unverified-login-claim",
-                    "verified-qa-e2e-full-trigger-set",
-                    "verified-qa-e2e-missing-fails-closed",
-                    "child-thread-cap-three-without-asking",
-                    "child-thread-cap-six-with-orchestration",
-                    "child-thread-cap-host-capacity",
-                    "child-cap-distinct-opencode-instance-cap",
-                    "delegate-no-unapproved-dependencies",
-                    "hermes-broker-delegation-default-off",
-                    "hermes-broker-concurrency-depth-one",
-                    "hermes-broker-model-call-explicit-activation",
-                    "hermes-broker-limits-not-bb-children",
-                    "delegation-approval-scale-and-bounded-fanout",
-                    "delegation-cross-session-cmux-off",
-                    "delegation-explicit-approval-outward-effects",
-                })
-            if rendered and path.name in {"codex-AGENTS.md", "opencode-AGENTS.md"}:
-                required_optional.update({
-                    "hermes-no-reverse-ssh",
-                    "hermes-no-listeners",
-                    "hermes-no-broad-env-forwarding",
-                    "hermes-no-cmux-capability-export",
-                    "hermes-agent-no-model-override",
-                    "hermes-no-project-source",
-                    "hermes-prompts-use-stdin",
-                    "hermes-no-prompts-in-argv",
-                    "hermes-no-local-terminal-socket",
-                })
-        if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
-            "~/.codex/AGENTS.md"
-        ).expanduser().resolve():
-            required_optional.update({
-                "no-gc-user-owned-state",
-                "context-gc-boundary",
-                "context-gc-resume-packet",
-                "context-gc-discard-logs",
-                "context-gc-fresh-opencode-sessions",
-                "context-gc-audit",
-                "context-gc-managed-runner-self-check",
-            })
-        skip_rules = set()
-        if rendered and path.name == "CLAUDE.md":
-            skip_rules.update({
-                "hermes-no-reverse-ssh",
-                "hermes-no-listeners",
-                "hermes-no-broad-env-forwarding",
-                "hermes-no-cmux-capability-export",
-                "hermes-agent-no-model-override",
-                "hermes-no-project-source",
-                "hermes-prompts-use-stdin",
-                "hermes-no-prompts-in-argv",
-                "hermes-no-local-terminal-socket",
-            })
+        required_optional = set(PROFILE_RULES[profile])
         missing = missing_rules(
             content,
             required_optional=required_optional,
-            skip_rules=skip_rules,
         )
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")
         else:
-            applicable = len(RULES) - sum(
-                name in OPTIONAL_WHEN_ABSENT
-                and name not in required_optional
-                and not optional_present(name, content)
-                or name in skip_rules
-                for name in RULES
-            )
+            applicable = len(RULES) - len(OPTIONAL_WHEN_ABSENT - required_optional)
             print(f"PASS {path}: {applicable} applicable standing rules")
     return not failures, failures
 
