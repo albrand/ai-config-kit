@@ -502,13 +502,25 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 })
             if rendered and path.name != "bb-AGENTS.md":
                 required_optional.update({
+                    "browser-never-access-unowned",
+                    "browser-enumerate-before-open",
+                    "browser-no-standard-preamble",
+                    "browser-close-before-isolation-change",
+                    "browser-lifecycle-ops-noncreating",
+                    "browser-close-every-slice-outcome",
                     "browser-input-is-mutation",
                     "browser-exclusive-delivery-proof",
                     "browser-persistent-quarantine-per-input",
+                    "browser-target-id-is-not-proof",
                     "browser-leak-readonly-only",
                     "browser-quarantine-survives-restart",
                     "browser-quarantine-reenable-regression",
                     "browser-prompts-cannot-bypass-quarantine",
+                    "browser-no-dedicated-takeover-claim",
+                    "browser-no-foreground-takeover-claim",
+                    "browser-no-unverified-login-claim",
+                    "verified-qa-e2e-full-trigger-set",
+                    "verified-qa-e2e-missing-fails-closed",
                     "child-thread-cap-three-without-asking",
                     "child-thread-cap-six-with-orchestration",
                     "child-thread-cap-host-capacity",
@@ -537,16 +549,6 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         skip_rules = set()
         if rendered and path.name != "bb-AGENTS.md":
             skip_rules.update({
-                "browser-never-access-unowned",
-                "browser-enumerate-before-open",
-                "browser-no-standard-preamble",
-                "browser-close-before-isolation-change",
-                "browser-lifecycle-ops-noncreating",
-                "browser-close-every-slice-outcome",
-                "browser-target-id-is-not-proof",
-                "browser-no-dedicated-takeover-claim",
-                "browser-no-foreground-takeover-claim",
-                "browser-no-unverified-login-claim",
                 "hermes-no-reverse-ssh",
                 "hermes-no-listeners",
                 "hermes-no-broad-env-forwarding",
@@ -556,8 +558,6 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-prompts-use-stdin",
                 "hermes-no-prompts-in-argv",
                 "hermes-no-local-terminal-socket",
-                "verified-qa-e2e-full-trigger-set",
-                "verified-qa-e2e-missing-fails-closed",
             })
         missing = missing_rules(
             content,

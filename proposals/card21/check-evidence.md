@@ -31,13 +31,12 @@ proposal with the rendered bb baseline, then delete or weaken page ownership,
 enumeration/lifecycle and target-ID isolation rules.
 They also reject opposite “do not close” and “do not close before cookie
 isolation” instructions, and “do not enumerate before open.”
-The provider hard-rule source independently retains browser-input mutation,
-persistent per-input quarantine, exclusive-delivery proof, read-only-only after
-leaks, quarantine across agents/restarts, regression-gated re-enablement, and
-no-prompt-bypass. A separate test copies each native proposal without the bb
-baseline, deletes/weakens each of those seven rules, and invokes
-`check-standing-rules.py --files` as a subprocess; all 21 standalone cases fail
-as required.
+The provider hard-rule source independently retains browser ownership,
+enumeration/lifecycle, input mutation/quarantine, exclusive-delivery, post-leak,
+restart, re-enable, takeover-claim, and verified-QA gate rules. A separate test
+copies each native proposal without the bb baseline, deletes/weakens all 19
+browser/QA rules, and invokes `check-standing-rules.py --files` as a subprocess;
+all 57 standalone cases fail as required.
 Hermes transport fixtures combine each rendered provider with the shared bb
 baseline and separately weaken reverse SSH, listeners, broad environment
 forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, and the

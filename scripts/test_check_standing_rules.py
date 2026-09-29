@@ -201,8 +201,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_require_verified_qa_for_authenticated_e2e(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {
             "verified-qa-e2e-full-trigger-set",
             "verified-qa-e2e-missing-fails-closed",
@@ -212,7 +210,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "QA publication, or E2E completion"
         )
         enforcement = (
-            "a missing or failing gate blocks the requested action at every reasoning effort"
+            "A missing or failing gate blocks the requested action at every reasoning effort"
         )
         providers = [
             rendered / "CLAUDE.md",
@@ -220,7 +218,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [], CHECKER.missing_rules(combined, required_optional=rules)
@@ -504,6 +502,30 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         mutations = {
+            "browser-never-access-unowned": (
+                "never access or close unowned, pre-existing, user-owned, or other-thread instances",
+                "Access instances when needed",
+            ),
+            "browser-enumerate-before-open": (
+                "Before interactive browsing, call `browser_instances`",
+                "Before interactive browsing open a page",
+            ),
+            "browser-no-standard-preamble": (
+                "never use `browser_open` as a standard first step",
+                "use `browser_open` as a standard first step",
+            ),
+            "browser-close-before-isolation-change": (
+                "Close the owned instance before changing cookie isolation",
+                "Keep it open during cookie-isolation changes",
+            ),
+            "browser-lifecycle-ops-noncreating": (
+                "listing, refresh, release, and close must never create a replacement tab",
+                "listing, refresh, release, and close may create a replacement tab",
+            ),
+            "browser-close-every-slice-outcome": (
+                "Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded",
+                "Keep this thread's instance open after its bounded browser slice ends",
+            ),
             "browser-input-is-mutation": (
                 "Browser input is a mutation.",
                 "Browser input is read-only.",
@@ -531,6 +553,30 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-prompts-cannot-bypass-quarantine": (
                 "ordinary agent prompts cannot bypass this gate",
                 "ordinary agent prompts may bypass this gate",
+            ),
+            "browser-target-id-is-not-proof": (
+                "Target IDs or a successful return do not prove isolation",
+                "Target IDs and successful returns prove isolation",
+            ),
+            "browser-no-dedicated-takeover-claim": (
+                "Never describe a shared-window takeover as dedicated",
+                "Describe a shared-window takeover as dedicated",
+            ),
+            "browser-no-foreground-takeover-claim": (
+                "Never describe a shared-window takeover as dedicated or foregrounded",
+                "Never describe a shared-window takeover as dedicated",
+            ),
+            "browser-no-unverified-login-claim": (
+                "never claim the exact login is open without adapter evidence",
+                "claim the exact login is open after viewing the shared window",
+            ),
+            "verified-qa-e2e-full-trigger-set": (
+                "For any browser E2E, authentication, seeded identity, manual login handoff, QA publication, or E2E completion, load `verified-qa-e2e` and pass its deterministic gate",
+                "For authentication only, load `verified-qa-e2e` and pass its deterministic gate",
+            ),
+            "verified-qa-e2e-missing-fails-closed": (
+                "A missing or failing gate blocks the requested action at every reasoning effort level",
+                "A missing or failing gate may be skipped at minimum effort",
             ),
         }
         with tempfile.TemporaryDirectory(prefix="card21-standalone-") as temp_dir:
@@ -573,11 +619,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
         }
         mutations = {
             "browser-never-access-unowned": (
-                "Never access or close unowned, pre-existing, user-owned, or other-thread instances",
+                "never access or close unowned, pre-existing, user-owned, or other-thread instances",
                 "access instances when needed",
             ),
             "browser-enumerate-before-open": (
-                "Call `browser_instances` before any `browser_open`",
+                "call `browser_instances` before any `browser_open`",
                 "Open a browser page as needed",
             ),
             "browser-no-standard-preamble": (
@@ -589,15 +635,15 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Keep the page open while changing cookie isolation",
             ),
             "browser-lifecycle-ops-noncreating": (
-                "Lookup, refresh, release, and close must never create a replacement tab.",
-                "Lookup, refresh, release, and close may create a replacement tab.",
+                "listing, refresh, release, and close must never create a replacement tab",
+                "listing, refresh, release, and close may create a replacement tab",
             ),
             "browser-close-every-slice-outcome": (
                 "Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.",
                 "Keep the instance until it is no longer useful.",
             ),
             "browser-target-id-is-not-proof": (
-                "target IDs or a successful return do not prove isolation",
+                "Target IDs or a successful return do not prove isolation",
                 "target IDs and successful returns prove isolation",
             ),
             "browser-no-dedicated-takeover-claim": (
@@ -617,11 +663,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "CLAUDE.md",
             rendered / "codex-AGENTS.md",
             rendered / "opencode-AGENTS.md",
-            baseline_path,
         ]
         for provider_path in provider_files:
             provider = provider_path.read_text(encoding="utf-8")
-            combined = provider if provider_path == baseline_path else provider + "\n" + baseline
+            combined = provider
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [],
@@ -630,7 +675,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             for rule, (original, weakened_clause) in mutations.items():
                 with self.subTest(provider=provider_path.name, rule=rule):
                     self.assertIn(original, combined)
-                    damaged = combined.replace(original, weakened_clause, 1)
+                    damaged = combined.replace(original, weakened_clause)
                     self.assertIn(
                         rule,
                         CHECKER.missing_rules(damaged, required_optional=browser_rules),
@@ -638,8 +683,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_negated_browser_closure_fails_in_every_rendered_context(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         browser_rules = {
             "browser-never-access-unowned",
             "browser-enumerate-before-open",
@@ -661,18 +704,17 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "codex-AGENTS.md",
             rendered / "opencode-AGENTS.md",
         ]:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name):
                 self.assertIn(original, combined)
                 missing = CHECKER.missing_rules(
-                    combined.replace(original, weakened, 1),
+                    combined.replace(original, weakened),
                     required_optional=browser_rules,
                 )
                 self.assertIn("browser-close-every-slice-outcome", missing)
 
     def test_negated_browser_isolation_and_enumeration_fail_in_every_context(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline = (rendered / "bb-AGENTS.md").read_text(encoding="utf-8")
         browser_rules = {
             "browser-never-access-unowned",
             "browser-enumerate-before-open",
@@ -683,7 +725,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         }
         mutations = {
             "browser-enumerate-before-open": (
-                "Call `browser_instances` before any `browser_open`",
+                "call `browser_instances` before any `browser_open`",
                 "Do not call `browser_instances` before any `browser_open`",
             ),
             "browser-close-before-isolation-change": (
@@ -696,11 +738,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "codex-AGENTS.md",
             rendered / "opencode-AGENTS.md",
         ]:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             for rule, (original, weakened) in mutations.items():
                 with self.subTest(provider=provider_path.name, rule=rule):
                     self.assertIn(original, combined)
-                    damaged = combined.replace(original, weakened, 1)
+                    damaged = combined.replace(original, weakened)
                     self.assertIn(
                         rule,
                         CHECKER.missing_rules(damaged, required_optional=browser_rules),
