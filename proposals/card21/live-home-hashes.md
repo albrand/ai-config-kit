@@ -15,6 +15,10 @@ hash snapshots.
 | OpenCode | `79ce2b7596ccf3b90f4e8d3eecde4e070f236c92e3e90e84af3aea67f39acae2` |
 | bb | `db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c` |
 
+All four homes report the same modification time: `2026-09-28 17:00:01`.
+The task's first home inventory was taken on 2026-09-28; the unchanged earlier
+modification time is additional evidence that no installation occurred.
+
 Claude's before-source size is `wc -c` = 45,926 bytes. Summing original-side
 lines in the refreshed unified diff also yields 45,926 bytes; the former 45,848
 estimate is superseded.

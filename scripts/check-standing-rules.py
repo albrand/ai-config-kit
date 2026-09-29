@@ -59,7 +59,10 @@ RULES: dict[str, re.Pattern[str]] = {
         r"detached-HEAD worktree must not outlive its command|"
         r"detached review worktree.{0,100}end with its command)"
     ),
-    "worktree-never-force": re.compile(r"(?is)never.{0,40}--force"),
+    "worktree-never-force": re.compile(
+        r"(?is)(?:worktree remove.{0,100}(?:never|without).{0,40}--force|"
+        r"never.{0,40}--force.{0,100}worktree remove)"
+    ),
     "worktree-not-owned": re.compile(
         r"(?is)(?:never remove a worktree you did not create|"
         r"never remove.{0,120}another agent.s/user.s worktree)"
