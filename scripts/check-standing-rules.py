@@ -281,6 +281,31 @@ RULES: dict[str, re.Pattern[str]] = {
         r"never treat their own agent.s\s+push as completion while its\s+thread is still running|"
         r"must not treat their own push as completion while its agent still runs)"
     ),
+    "active-session-input-skill-trigger": re.compile(
+        r"(?is)(?:before active-session input.{0,100}load `?native-agent-surface`?.{0,100}"
+        r"metadata-only.{0,80}session-input-guard\.py|"
+        r"before delivering input to an active\s+agent.{0,300}(?:"
+        r"metadata-only guard.{0,150}native-agent-surface|"
+        r"native-agent-surface.{0,150}metadata-only.{0,100}session-input-guard\.py))"
+    ),
+    "active-session-supersede-authority": re.compile(
+        r"(?is)(?:supersede only via `?superseding`?.{0,140}authenticated user authority.{0,180}"
+        r"exact active workspace/session/lease/epoch.{0,160}adapter-validated resume-packet reference|"
+        r"supersede\s+requires\s+authenticated user authority.{0,250}exact\s+workspace/session/lease/epoch.{0,250}"
+        r"validated\s+resume-packet attestation.{0,120}(?:`)?superseding(?:`)?\s+transition)"
+    ),
+    "active-session-untrusted-input-no-supersede": re.compile(
+        r"(?is)group,\s*dispatch,\s*terminal-injection,\s*unattributed,\s*handoff,\s*and recovery inputs\s+"
+        r"never\s+(?:silently\s+)?supersede"
+    ),
+    "active-session-attestations-control-plane-only": re.compile(
+        r"(?is)(?:(?:authority/topic/resume|authority,\s*topic-relation,\s*and resume-packet)\s+"
+        r"attestations\s+(?:must\s+)?come\s+(?:only\s+)?from adapter\s+control-plane records,\s*never prompt text|"
+        r"attestations\s+come from adapter\s+control-plane records,\s*never prompt text)"
+    ),
+    "active-session-write-owner-mismatch-blocks": re.compile(
+        r"(?is)same-workspace\s+write-owner mismatch blocks\s+delivery"
+    ),
     "no-ai-signatures": re.compile(
         r"(?is)(?:do not|never) add AI attribution.{0,150}"
         r"(?:signature|watermark)"
@@ -421,6 +446,11 @@ OPTIONAL_WHEN_ABSENT = {
     "delegation-approval-scale-and-bounded-fanout",
     "delegation-cross-session-cmux-off",
     "delegation-explicit-approval-outward-effects",
+    "active-session-input-skill-trigger",
+    "active-session-supersede-authority",
+    "active-session-untrusted-input-no-supersede",
+    "active-session-attestations-control-plane-only",
+    "active-session-write-owner-mismatch-blocks",
 }
 
 HOME_FILES = (
@@ -442,6 +472,10 @@ LIVE_HOME_RULES = {
         "browser-input-is-mutation", "browser-no-standard-preamble",
         "child-thread-cap-six-with-orchestration", "delegate-no-unapproved-dependencies",
         "delegation-cross-session-cmux-off",
+        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-untrusted-input-no-supersede",
+        "active-session-attestations-control-plane-only",
+        "active-session-write-owner-mismatch-blocks",
     },
     "codex": {
         "context-gc-boundary", "context-gc-managed-runner-self-check",
@@ -453,6 +487,10 @@ LIVE_HOME_RULES = {
         "hermes-no-local-terminal-socket", "no-gc-user-owned-state",
         "child-thread-cap-six-with-orchestration", "context-gc-discard-logs",
         "hermes-broker-model-call-explicit-activation", "context-gc-resume-packet",
+        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-untrusted-input-no-supersede",
+        "active-session-attestations-control-plane-only",
+        "active-session-write-owner-mismatch-blocks",
     },
     "opencode": {
         "browser-close-every-slice-outcome", "hermes-no-reverse-ssh",
@@ -462,6 +500,10 @@ LIVE_HOME_RULES = {
         "hermes-no-listeners", "browser-no-foreground-takeover-claim",
         "browser-input-is-mutation", "browser-exclusive-delivery-proof",
         "child-thread-cap-six-with-orchestration", "browser-no-standard-preamble",
+        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-untrusted-input-no-supersede",
+        "active-session-attestations-control-plane-only",
+        "active-session-write-owner-mismatch-blocks",
     },
     "bb": {
         "credentials-never-paste", "credentials-never-handle",
@@ -498,6 +540,10 @@ KIT_BASELINE_RULES = {
     "hermes-broker-model-call-explicit-activation", "verified-qa-e2e-full-trigger-set",
     "browser-persistent-quarantine-per-input", "delegation-cross-session-cmux-off",
     "browser-no-standard-preamble", "hermes-no-project-source",
+    "active-session-input-skill-trigger", "active-session-supersede-authority",
+    "active-session-untrusted-input-no-supersede",
+    "active-session-attestations-control-plane-only",
+    "active-session-write-owner-mismatch-blocks",
 }
 CONTEXT_GC_RULES = {
     "no-gc-user-owned-state", "context-gc-boundary", "context-gc-resume-packet",
@@ -528,10 +574,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "9b602ad5f87e10983f056866b69cc4bd0f4d5a51ddaf25a8d2a1bf398b920e80": "proposal-claude",
-    "2382f6b277f182477c2581b3bfb45c603028fd9cbefe39f43c3b4b699fd3ab31": "proposal-codex",
-    "dd86f7523dffe97edb13f8c1ca0bedd25be17a1e35ed66172bc7c48c7169674a": "proposal-opencode",
-    "527426bae1863ee3f82e68cdfb6e92d0b42640c4ed466f01f1134ccce8e15b27": "proposal-bb",
+    "d3f83f4332f76e24cca690a6617ffab4d32f56502f45408ddfaafecf673a4059": "proposal-claude",
+    "a6c0da8e1d141bb12248d1e2d7d5a2a1b60365a3061c8d321b0e0d8f088227d8": "proposal-codex",
+    "bd713cbef32380e47ce3af2802e17bebea0ace4b50c0bfcae8a4fd6decccde31": "proposal-opencode",
+    "8fc8034fd9d6a4c96819cce744a69a2aa498209e8f0364337e58e2cbbd0efa04": "proposal-bb",
 }
 
 
@@ -711,6 +757,8 @@ def optional_present(name: str, text: str) -> bool:
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
+        return bool(RULES[name].search(text))
+    if name.startswith("active-session-"):
         return bool(RULES[name].search(text))
     return True
 

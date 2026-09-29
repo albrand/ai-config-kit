@@ -72,6 +72,7 @@ moved out of always-on context is named explicitly.
 | `Browser Surface Isolation` | Hand-written copy | `hard-rules.md`; workflow → `isolated-browser` and `verified-qa-e2e` |
 | `cmux + Hermes Control Plane` | Hand-written OpenCode transport policy | `overlays/opencode.md`; transport detail → approved Hermes broker instructions |
 | `Native Agent Surfaces` | Hand-written adapter policy | `overlays/opencode.md`; lifecycle and lease details → native-agent-surface skill |
+| Active-session input safeguards (within `Native Agent Surfaces`) | Hand-written adapter safety policy | `GLOBAL_AGENTS.md` compact hard-rule pointer; provider hard-rules retain exact authority/ownership prohibitions; procedure → `native-agent-surface` and `scripts/session-input-guard.py` |
 | `Test Ownership And Re-Review Scope` | Hand-written review policy | `GLOBAL_AGENTS.md` → Testing and reporting; review procedure → `meaningful-tests` / PR-review skill |
 | `global-email-guard` marker block / `Global email guard` | Kit rule copied into home | `hard-rules.md` |
 | `worktree-lifecycle` marker block | Kit rule copied into home | `hard-rules.md`; detail → `shared-host-capacity` |
@@ -146,6 +147,7 @@ the named owner shown above.
 | Token-efficient orchestration | token-efficient-orchestration marker in each provider | token-efficient-orchestration marker |
 | Typed decisions | typed-decisions marker in each provider | typed-decisions marker |
 | Hermes transport / review boundary | Codex: Independent Hermes Control Plane; OpenCode: cmux + Hermes Control Plane | Global Hermes review transport |
+| Active-session input authorization and write ownership | Claude/Codex/OpenCode native-agent-surface policy; loaded from `native-agent-surface` skill and its guard | No active-session clause in bb baseline; standalone providers preserve the contract and skill trigger |
 
 The renderer is `scripts/render-standing-homes.py`; it writes proposals only by
 default. Its `--install` mode was not run. `scripts/check-standing-rules.py`
