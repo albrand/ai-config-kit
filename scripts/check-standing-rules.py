@@ -685,6 +685,18 @@ def contradicted_rule(name: str, text: str) -> bool:
         if advisory_defect.search(text):
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
+        exemption_word = re.compile(r"(?i)\b(?:exempt|exemption|exception|except|unless)\b")
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if not re.search(r"(?i)(?:safety-hook block|PreToolUse hook)", line):
+                continue
+            policy = line
+            for continuation in lines[index + 1 :]:
+                if not continuation.strip() or re.match(r"^\s*[-*]\s", continuation):
+                    break
+                policy += " " + continuation.strip()
+            if exemption_word.search(policy):
+                return True
         for match in re.finditer(
             r"(?i)\bbypass(?:ing)?\s+(?:(?:a|the|this|that)\s+)?"
             r"safety-hook blocks?\b",
