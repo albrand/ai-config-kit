@@ -704,6 +704,7 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"bypass\s+(?:a\s+)?safety-hook block|"
             r"for\s+(?:recovery|an?\s+emergency).{0,80}"
             r"bypass\s+(?:a\s+)?safety-hook block|"
+            r"for this task.{0,80}bypass\s+(?:a\s+)?safety-hook block|"
             r"(?:except|unless)\b.{0,80}(?:never|do not)\s+bypass\s+"
             r"(?:a\s+)?safety-hook block|"
             r"(?:may|can|could|is allowed to|is permitted to).{0,40}bypass"
