@@ -1180,6 +1180,8 @@ def selftest():
         ("claude: tell without serves", claude_bash('bb thread tell thr_abc "please also refactor the sparkline"'), thread, 2),
         ("claude: draft set without serves", claude_bash('bb thread draft set thr_abc "revise the prompt"'), thread, 2),
         ("claude: draft set serving open P1", claude_bash('bb thread draft set thr_abc "serves: P1\nrevise the prompt"'), thread, 0),
+        ("claude: draft set end-of-options message without serves", claude_bash('bb thread draft set thr_abc -- "--revise the prompt"'), thread, 2),
+        ("claude: draft set end-of-options message serving open P1", claude_bash('bb thread draft set thr_abc -- "serves: P1\n--revise the prompt"'), thread, 0),
         ("claude: draft set --message-file with serves", claude_bash(f"bb thread draft set --message-file {brief} thr_abc"), thread, 0),
         ("claude: \"$BB_CLI\" thread message without serves", claude_bash('"$BB_CLI" thread message thr_abc "hi"'), thread, 2),
         ("claude: /abs/path/bb thread create without serves", claude_bash("/usr/local/bin/bb thread create --prompt x"), thread, 2),

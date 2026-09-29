@@ -583,7 +583,10 @@ def _draft_set_has_positional_message(words_):
     """The draft CLI has <threadId> [message]; only a supplied message dispatches."""
     positional = []
     skip_value = False
-    for word in words_:
+    for index, word in enumerate(words_):
+        if word == "--":
+            positional.extend(words_[index + 1:])
+            break
         if skip_value:
             skip_value = False
         elif word in ("--file", "--image"):
