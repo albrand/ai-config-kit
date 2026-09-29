@@ -45,18 +45,18 @@ already-authenticated browser E2E, and separately changes a missing or failing
 gate into an optional gate; both mutations must fail.
 Takeover mutations also reject calling a shared-window page dedicated or
 foregrounded and claiming the exact login is open without adapter evidence.
-Child-cap mutations separately weaken the three-child no-ask limit, the six-child
-orchestration limit, the host-capacity bound, and its distinction from the
-10-instance OpenCode session cap.
-Dependency mutation weakens delegate dependency approval while preserving the
-other coordinator/delegate boundaries; the checker requires a new master
-decision before adding a dependency.
-Broker-lane mutations independently remove the default-off state, concurrency/
-depth 1, explicit bounded activation, or separation from ordinary bb child
-threads.
-Delegation authorization mutations retain the “ordinary delegation authorized
-by default” sentence while deleting the explicit outward-effect approval,
-large/unbounded fan-out approval, or cross-session cmux default-off boundary.
+Standalone provider-context mutations separately weaken the three-child no-ask
+limit, the six-child orchestration limit, the host-capacity bound, and its
+distinction from the 10-instance OpenCode session cap. Dependency mutation
+weakens delegate dependency approval; the checker requires a new master
+decision before adding a dependency. Broker-lane mutations independently remove
+the default-off state, concurrency/depth 1, explicit bounded activation, or
+separation from ordinary bb child threads. Delegation authorization mutations
+retain the “ordinary delegation authorized by default” sentence while deleting
+the explicit outward-effect approval, large/unbounded fan-out approval, or
+cross-session cmux default-off boundary. Each test reads one rendered native
+provider file alone, without the bb baseline, and requires the appropriate
+regex to fail after each mutation.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.

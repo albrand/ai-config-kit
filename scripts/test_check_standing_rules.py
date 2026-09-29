@@ -246,8 +246,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_preserve_child_authorization_caps(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {
             "child-thread-cap-three-without-asking",
             "child-thread-cap-six-with-orchestration",
@@ -278,7 +276,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [], CHECKER.missing_rules(combined, required_optional=rules)
@@ -294,8 +292,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_require_master_decision_for_new_dependencies(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {"delegate-no-unapproved-dependencies"}
         original = "Delegates may not add dependencies without a new master decision."
         weakened = "Delegates may add dependencies as long as they report them."
@@ -305,7 +301,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [], CHECKER.missing_rules(combined, required_optional=rules)
@@ -320,8 +316,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_keep_broker_delegation_opt_in(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {
             "hermes-broker-delegation-default-off",
             "hermes-broker-concurrency-depth-one",
@@ -334,12 +328,12 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Hermes/cmux broker delegation defaults on",
             ),
             "hermes-broker-concurrency-depth-one": (
-                "concurrency/depth 1",
-                "concurrency/depth 10",
+                "concurrency/depth default 1",
+                "concurrency/depth default 10",
             ),
             "hermes-broker-model-call-explicit-activation": (
-                "model calls require explicit bounded activation",
-                "model calls may run without bounded activation",
+                "Model calls require explicit bounded activation",
+                "Model calls may run without bounded activation",
             ),
             "hermes-broker-limits-not-bb-children": (
                 "These broker limits do not restrict bb child threads",
@@ -352,7 +346,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [], CHECKER.missing_rules(combined, required_optional=rules)
@@ -368,19 +362,26 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_keep_delegation_authorization_boundaries(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {
             "delegation-approval-scale-and-bounded-fanout",
             "delegation-cross-session-cmux-off",
             "delegation-explicit-approval-outward-effects",
+            "child-thread-cap-three-without-asking",
+            "child-thread-cap-six-with-orchestration",
+            "child-thread-cap-host-capacity",
+            "child-cap-distinct-opencode-instance-cap",
+            "delegate-no-unapproved-dependencies",
+            "hermes-broker-delegation-default-off",
+            "hermes-broker-concurrency-depth-one",
+            "hermes-broker-model-call-explicit-activation",
+            "hermes-broker-limits-not-bb-children",
         }
         ordinary_authorization = "Ordinary delegation is authorized by default"
         outward = (
             "Require explicit approval before outward or hard-to-undo effects: board mutations, bulk imports, cloud changes, secret access, CI/repo-policy changes, destructive edits, PR/check automation, or shared-remote pushes."
         )
         scale = (
-            "require explicit approval for more than 3 concurrent delegates, broad parallel/swarm work, or fan-out without a named stop condition"
+            "Require explicit approval for more than 3 concurrent delegates, broad parallel/swarm work, or fan-out without a named stop condition"
         )
         cmux = "Cross-session cmux delegation stays off by default."
         providers = [
@@ -389,7 +390,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             self.assertIn(ordinary_authorization, combined)
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(

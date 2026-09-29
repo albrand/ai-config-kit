@@ -543,18 +543,6 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-no-local-terminal-socket",
                 "verified-qa-e2e-full-trigger-set",
                 "verified-qa-e2e-missing-fails-closed",
-                "child-thread-cap-three-without-asking",
-                "child-thread-cap-six-with-orchestration",
-                "child-thread-cap-host-capacity",
-                "child-cap-distinct-opencode-instance-cap",
-                "delegate-no-unapproved-dependencies",
-                "hermes-broker-delegation-default-off",
-                "hermes-broker-concurrency-depth-one",
-                "hermes-broker-model-call-explicit-activation",
-                "hermes-broker-limits-not-bb-children",
-                "delegation-approval-scale-and-bounded-fanout",
-                "delegation-cross-session-cmux-off",
-                "delegation-explicit-approval-outward-effects",
             })
         missing = missing_rules(
             content,

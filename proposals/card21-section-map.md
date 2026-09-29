@@ -53,7 +53,7 @@ multiple topics on a row share the stated origin, not a generated source.
 |---|---|---|
 | Delivery-first; diagnosis, batch fixes, focused validation, finish-the-job | `GLOBAL_AGENTS.md` Delivery first / Testing and reporting | `meaningful-tests`, `finish-the-job`, `pallium-ship-workflow` |
 | Core principles, plan/scope, board/regression inventory, scope continuity | Analyze, plan, and scope / scope marker | `scope-advisor`, `board-access-via-mcp`, `direct-linear` |
-| Cost tiers, Spark, OpenCode, routing/circuit, delegation authorization caps, outward-effect approvals, dependency approval, trusted repo context | Cost, models, and agents; Codex adapter | `adaptive-model-orchestrator`, `OPENCODE_DELEGATION.md`, `delegating-to-glm` |
+| Cost tiers, Spark, OpenCode, routing/circuit, delegation authorization caps, outward-effect approvals, dependency approval, trusted repo context | `GLOBAL_AGENTS.md` plus the standalone provider boundary in `proposals/card21/hard-rules.md`; Codex adapter | `adaptive-model-orchestrator`, `OPENCODE_DELEGATION.md`, `delegating-to-glm` |
 | Directive challenge, decisions, native-agent surfaces | Directive challenge and decisions | `typed-decisions`, `NATIVE_AGENT_SURFACES.md` |
 | Security-first defaults | Security and hard prohibitions | `SECURITY_AND_PENTEST.md`, `QUALITY_GATES.md`, `adversarial-security-sweep` |
 | Email, credential, public exposure, app, personal browser, feature flags, worktree, AI signatures | Full compact hard-rule block in every proposed provider home; bb baseline carries the same rules | Detailed procedures remain in `isolated-browser`, `verified-qa-e2e`, `shared-host-capacity`, and `meaningful-tests` where applicable |
@@ -79,9 +79,13 @@ Its `--install` mode is intentionally not run in this task. It backs up each
 live home before replacement. The only existing sync (`typed-decisions-sync.py`)
 now emits the same compact typed block used by those proposals.
 
-After compaction, each provider file repeats only the short hard-rule block and
+After compaction, each provider file repeats the short hard-rule block and
 typed-decisions block required by existing homes; general process, delivery,
-testing, and token sections live once in the bb-injected baseline. Thus the
+testing, token, and bb-specific transport/browser procedures live in the
+bb-injected baseline. The hard-rule source also carries standalone delegation
+authorization boundaries (scale/fan-out, outward effects, child caps, broker
+activation, dependency approval), since native provider contexts do not load the
+bb baseline outside bb. Tests check each provider proposal by itself. Thus the
 identical `delivery-first` and `token-efficient-orchestration` blocks no longer
-repeat in Claude/Codex/OpenCode files, while the named hard prohibitions remain
-present in every proposal.
+repeat in Claude/Codex/OpenCode files, while named hard prohibitions remain in
+every proposal.

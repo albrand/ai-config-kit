@@ -12,13 +12,13 @@ prefix made it start `---`; the corrected reconstruction skips only headers.
 
 | File/context | Before bytes | Proposed after bytes | Before tokens approx. | After tokens approx. | Reduction |
 |---|---:|---:|---:|---:|---:|
-| Claude home | 45,926 | 3,480 | 11,482 | 870 | 92.4% |
-| Codex home | 52,922 | 5,034 | 13,231 | 1,259 | 90.5% |
-| OpenCode home | 41,853 | 4,577 | 10,463 | 1,144 | 89.1% |
+| Claude home | 45,926 | 4,378 | 11,482 | 1,095 | 90.5% |
+| Codex home | 52,922 | 5,932 | 13,231 | 1,483 | 88.8% |
+| OpenCode home | 41,853 | 5,475 | 10,463 | 1,369 | 86.9% |
 | bb baseline | 27,268 | 19,738 | 6,817 | 4,934 | 27.6% |
 | Kit `GLOBAL_AGENTS.md` | 42,565 | 18,740 | 10,641 | 4,685 | 56.0% |
-| **Claude + bb context** | **73,194** | **23,218** | **18,299** | **5,804** | **68.3%** |
-| **Codex + bb context** | **80,190** | **24,772** | **20,048** | **6,193** | **69.1%** |
+| **Claude + bb context** | **73,194** | **24,116** | **18,299** | **6,029** | **67.1%** |
+| **Codex + bb context** | **80,190** | **25,670** | **20,048** | **6,418** | **68.0%** |
 
 Both requested agent contexts exceed the 40% reduction target. Live homes remain
 unchanged pending the user's review.

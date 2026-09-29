@@ -11,6 +11,11 @@
 - Hermes reviews every PR. Any named defect blocks merge until fixed and cleared on the same topic.
 - Never claim tested/verified/validated/works/ready without persona, target (URL or stack plus commit/deployment ID), user-outcome goals, and a verdict per goal; otherwise report **NOT RUN**. PASS requires the persona to complete the full workflow; otherwise FAIL. BLOCKED means the goal could not be attempted and names why. Never treat an observation as a verdict; fix/escalate failed goals. Detail: `meaningful-tests`.
 - Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config; load `SECURITY_AND_PENTEST.md` and apply the `QUALITY_GATES.md` Security Gate. Active testing must be authorized and defensive; use `adversarial-security-sweep` for high-stakes review.
+- Ordinary delegation is authorized by default. Require explicit approval for more than 3 concurrent delegates, broad parallel/swarm work, or fan-out without a named stop condition. Cross-session cmux delegation stays off by default.
+- Require explicit approval before outward or hard-to-undo effects: board mutations, bulk imports, cloud changes, secret access, CI/repo-policy changes, destructive edits, PR/check automation, or shared-remote pushes.
+- Use up to 3 concurrent child threads without asking; an orchestration request authorizes up to 6, subject to host capacity. This is separate from OpenCode's 10 concurrent instances per session cap.
+- Hermes/cmux broker delegation defaults off; concurrency/depth default 1. Model calls require explicit bounded activation. These broker limits do not restrict bb child threads.
+- Delegates may not add dependencies without a new master decision.
 
 <!-- typed-decisions:begin -->
 ## Typed decisions
