@@ -554,15 +554,15 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
 
 
 def discover_unittest_case_count(repo: Path, path: str) -> int | None:
-    """Load a unittest module without invoking its main runner or executing cases."""
+    """Load a unittest module without running its main-guard setup or test cases."""
     probe = (
         "import runpy, sys, types, unittest\n"
         "path = sys.argv[1]\n"
-        "unittest.main = lambda *args, **kwargs: None\n"
-        "namespace = runpy.run_path(path, run_name='__main__')\n"
-        "module = types.ModuleType('__main__')\n"
+        "module_name = '__pre_review_discovery__'\n"
+        "namespace = runpy.run_path(path, run_name=module_name)\n"
+        "module = types.ModuleType(module_name)\n"
         "module.__dict__.update(namespace)\n"
-        "sys.modules['__main__'] = module\n"
+        "sys.modules[module_name] = module\n"
         "suite = unittest.defaultTestLoader.loadTestsFromModule(module)\n"
         "print('__PRE_REVIEW_TEST_COUNT__=' + str(suite.countTestCases()))\n"
     )

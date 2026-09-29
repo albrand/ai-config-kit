@@ -500,6 +500,33 @@ class PreReviewTests(unittest.TestCase):
             commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
         self.assertEqual(commands, [("focused-python-tests", [sys.executable, "./tests/test_sample.py"], None)])
 
+    def test_unittest_discovery_does_not_repeat_main_guard_setup(self) -> None:
+        marker = self.base / "main-guard-setup-ran"
+        test_file = self.repo / "tests" / "test_sample.py"
+        test_file.parent.mkdir()
+        test_file.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            "class ExampleTest(unittest.TestCase):\n"
+            "    def test_result(self):\n"
+            "        self.assertTrue(True)\n"
+            "if __name__ == '__main__':\n"
+            f"    marker = Path({str(marker)!r})\n"
+            "    if marker.exists():\n"
+            "        raise SystemExit('main-guard setup ran more than once')\n"
+            "    marker.write_text('once', encoding='utf-8')\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        git(self.repo, "add", "tests/test_sample.py")
+        git(self.repo, "commit", "-m", "fixture non-idempotent unittest setup")
+
+        result, packet = self.run_pre_review()
+        focused = next(item for item in packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(focused["status"], "pass")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+
     def test_multiple_standalone_unittest_scripts_all_run_and_failures_propagate(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
         markers = [self.base / "first-ran", self.base / "second-ran"]
