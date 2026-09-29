@@ -14,8 +14,10 @@ matched fixed applicable-rule inventories in the final checker (72 regexes;
 32 Claude, 41 Codex, 37 OpenCode, 34 bb, and 65 kit rules applicable). The
 rendered proposals plus kit source also passed all 72 regexes: 56 Claude, 72
 Codex, 65 OpenCode, 65 bb, and 65 kit rules applicable. Candidate text cannot
-make an optional rule inapplicable; native paths select checked-in baseline
-profiles, and rendered paths select fixed proposal profiles. Codex-only
+make an optional rule inapplicable: native paths select a profile only when
+the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
+any edited or unknown native-path content fails closed. Rendered paths select
+fixed proposal profiles. Codex-only
 context-GC, email-consent, browser-lifecycle, browser-input-quarantine, and
 Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
@@ -49,9 +51,11 @@ standalone mutations cover `CMUX_SOCKET_CAPABILITY`/`CMUX_*`, `acp-hermes-agent
 placing or retaining source on Hermes, including a mutation that retains the
 old “never ask Hermes to mount” wording.
 The real `--files` entrypoint also accepts native-shaped home paths. Intact
-native baseline fixtures pass and deleting/weakening an applicable rule fails;
-unknown paths fail closed with `no standing-rule profile`. This guards against
-the previous content-driven applicability bug.
+native baseline fixtures pass; intact rendered homes at native paths pass;
+deleting/weakening a required rule in an installed artifact fails because its
+fingerprint is no longer recognized. Unknown paths and content fail closed.
+This guards against the previous content-driven applicability bug, including
+deleting Codex's browser E2E/QA-gate rule at `~/.codex/AGENTS.md`.
 
 The verified-QA mutation narrows triggers to login/auth only, modeling an
 already-authenticated browser E2E, and separately changes a missing or failing

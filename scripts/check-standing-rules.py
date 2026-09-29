@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -339,8 +340,10 @@ HOME_FILES = (
 )
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
-# These are fixed baseline inventories for the four existing homes. Keep them
-# explicit: applicability must never be inferred from the candidate's contents.
+# These inventories are selected by exact content fingerprints at native paths.
+# The four pre-compression snapshots retain their legacy applicability; the
+# exact rendered install artifacts receive the complete proposal inventories.
+# Any edited or unknown candidate fails closed before optional-rule handling.
 LIVE_HOME_RULES = {
     "claude": {
         "browser-close-every-slice-outcome", "browser-lifecycle-ops-noncreating",
@@ -423,9 +426,22 @@ PROFILE_RULES = {
     "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
 }
 
+LIVE_HOME_SHA256 = {
+    "e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd": "claude",
+    "2f7433b7928b17aacbe3988519788300760e8239c840121db5cf3b1f089d871b": "codex",
+    "79ce2b7596ccf3b90f4e8d3eecde4e070f236c92e3e90e84af3aea67f39acae2": "opencode",
+    "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
+}
+INSTALLED_HOME_SHA256 = {
+    "d803401a54b03f620e8c04c5bd688cc74247631fbe230e578be797f43fc65ec3": "proposal-claude",
+    "58d708ddc4e62bc6885c204748d794e669ad47ac61113f98ca53aab9423bb709": "proposal-codex",
+    "cfb83e980c13972973ed39bb706f46a4d34847ca8b08eb1511ba315c3434a581": "proposal-opencode",
+    "a120143aa82cb667a3aff5a49e882e92e37035b3848f55805da12563fa5ea761": "proposal-bb",
+}
 
-def profile_for(path: Path) -> str | None:
-    """Resolve a fixed home profile from the known target path, never file text."""
+
+def profile_for(path: Path, content: str) -> str | None:
+    """Resolve a fixed profile by target path and exact known-home fingerprint."""
     parts = path.resolve().parts
     if path.resolve() == KIT_SOURCE.resolve():
         return "kit"
@@ -442,9 +458,18 @@ def profile_for(path: Path) -> str | None:
         (".config", "opencode", "AGENTS.md"): "opencode",
         (".bb", "AGENTS.md"): "bb",
     }
+    home_kind = None
     for suffix, profile in suffix_profiles.items():
         if parts[-len(suffix):] == suffix:
-            return profile
+            home_kind = profile
+            break
+    if home_kind is None:
+        return None
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    known_profile = LIVE_HOME_SHA256.get(digest) or INSTALLED_HOME_SHA256.get(digest)
+    expected_kind = known_profile.removeprefix("proposal-") if known_profile else None
+    if expected_kind == home_kind:
+        return known_profile
     return None
 
 
@@ -555,11 +580,13 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if not path.is_file():
             failures.append(f"{path}: file missing")
             continue
-        profile = profile_for(path)
-        if profile is None:
-            failures.append(f"{path}: no standing-rule profile for this path")
-            continue
         content = path.read_text(encoding="utf-8")
+        profile = profile_for(path, content)
+        if profile is None:
+            failures.append(
+                f"{path}: no fixed profile for this path and exact known-home content"
+            )
+            continue
         required_optional = set(PROFILE_RULES[profile])
         missing = missing_rules(
             content,

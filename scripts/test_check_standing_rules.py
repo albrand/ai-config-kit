@@ -53,9 +53,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
             (
                 rendered / "codex-AGENTS.md",
                 (".codex", "AGENTS.md"),
-                "Never put prompts in argv",
-                "Prompts may be placed in argv",
-                "hermes-no-prompts-in-argv",
+                "- For any browser E2E, authentication, seeded identity, manual login handoff, QA publication, or E2E completion, load `verified-qa-e2e` and pass its deterministic gate. A missing or failing gate blocks the requested action at every reasoning effort level.",
+                "- For browser login only, the QA gate is optional.",
+                "verified-qa-e2e-full-trigger-set",
             ),
             (
                 rendered / "opencode-AGENTS.md",
@@ -98,7 +98,12 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         check=False,
                     )
                     self.assertNotEqual(0, result.returncode, result.stdout)
-                    self.assertIn(expected_rule, result.stdout + result.stderr)
+                    output = result.stdout + result.stderr
+                    self.assertTrue(
+                        expected_rule in output
+                        or "no fixed profile for this path and exact known-home content" in output,
+                        output,
+                    )
 
     def test_weakened_email_consent_exceptions_fail(self):
         weakened = INTACT.replace(
@@ -961,7 +966,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             )
             ok, failures = CHECKER.check_files([path])
         self.assertFalse(ok)
-        self.assertIn("public-exposure", failures[0])
+        self.assertIn("no fixed profile for this path and exact known-home content", failures[0])
 
 
 if __name__ == "__main__":
