@@ -147,6 +147,30 @@ class InstallPreflightTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "push", "origin", "HEAD:main"], check=True, capture_output=True)
             RENDERER.assert_install_sources_in_origin_main(repo)
 
+    def test_fetch_refusal_does_not_echo_remote_credentials(self) -> None:
+        fetch_args = ["git", "fetch", "origin", "main"]
+        result = subprocess.CompletedProcess(
+            fetch_args,
+            128,
+            stdout="could not reach https://user:secret@example.invalid/repo.git",
+            stderr="fatal: unable to access 'https://user:secret@example.invalid/repo.git': denied",
+        )
+
+        with patch.object(RENDERER.subprocess, "run", return_value=result) as run:
+            with self.assertRaisesRegex(ValueError, "git fetch origin/main failed with exit code 128") as raised:
+                RENDERER.assert_install_sources_in_origin_main(Path("/tmp/not-a-repo"))
+
+        self.assertEqual(
+            [
+                "git", "-C", "/tmp/not-a-repo", "fetch", "--no-tags", "origin",
+                "main:refs/remotes/origin/main",
+            ],
+            run.call_args.args[0],
+        )
+        self.assertNotIn("shell", run.call_args.kwargs)
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertNotIn("example.invalid", str(raised.exception))
+
     def test_check_and_render_modes_do_not_require_sources_on_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

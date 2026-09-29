@@ -55,8 +55,7 @@ def assert_install_sources_in_origin_main(repo_root: Path = ROOT) -> None:
         check=False,
     )
     if fetch.returncode != 0:
-        detail = fetch.stderr.strip() or fetch.stdout.strip() or f"exit {fetch.returncode}"
-        raise ValueError(f"could not refresh origin/main before install: {detail}")
+        raise ValueError(f"git fetch origin/main failed with exit code {fetch.returncode}")
 
     tracked = subprocess.run(
         [

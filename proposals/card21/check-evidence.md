@@ -160,17 +160,19 @@ mode remain usable before merge.
 Focused output at the repair candidate:
 
 ```text
-Ran 7 tests
+Ran 8 tests
 OK
 ```
 
-The seven installer cases include changed-target refusal, unique-backup
+The eight installer cases include changed-target refusal, unique-backup
 preservation, duplicate-manifest rejection, ordinary rollback, concurrent-edit
 rollback protection, unmerged-versus-fetched-main source gating, and
-pre-merge `--check`/render behavior. Three focused standing-rule checker tests
-also passed (`Ran 3 tests`, `OK`). Live-home fingerprints matched the recorded
-values, and both legacy-home/kit and rendered-home/kit checker commands passed
-all 118 regexes. No live home was written.
+pre-merge `--check`/render behavior. The fetch-failure regression confirms
+remote stderr/stdout is not reflected in the refusal. Three focused
+standing-rule checker tests also passed (`Ran 3 tests`, `OK`). Live-home
+fingerprints matched the recorded values, and both legacy-home/kit and
+rendered-home/kit checker commands passed all 118 regexes. No live home was
+written.
 
 Baseline checker stdout:
 
