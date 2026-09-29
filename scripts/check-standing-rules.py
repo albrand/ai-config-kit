@@ -413,6 +413,34 @@ RULES: dict[str, re.Pattern[str]] = {
     "context-gc-managed-runner-self-check": re.compile(
         r"(?is)do\s+not\s+depend\s+on\s+a\s+managed\s+runner\s+unless\s+its\s+installed\s+implementation\s+passes\s+a\s+live\s+self-check"
     ),
+    "board-gate-all-repositories-and-workflows": re.compile(
+        r"(?is)(?:applies? to|gate applies to) every repository and every"
+        r".{0,100}(?:implementation|PR review|quality[- ]gate|readiness|release)"
+        r".{0,80}(?:skill/agent workflow|skill/agent|workflow)"
+    ),
+    "board-access-before-work-and-blocker": re.compile(
+        r"(?is)(?:before (?:starting|work|implementation).{0,160}require access to the authoritative ticket board|"
+        r"before (?:implementation|PR review|quality[- ]gate|readiness|release).{0,220}"
+        r"(?:ask imperatively for access|require (?:Jira|board) access).{0,120}authoritative ticket board)"
+        r".{0,320}(?:board regression gate blocked|missing board access.{0,80}Blocked / NOT READY)"
+    ),
+    "board-inventory-fields": re.compile(
+        r"(?is)key.{0,30}title.{0,30}type.{0,30}status.{0,60}sprint/release"
+        r".{0,60}component/area.{0,60}acceptance\s+criteria.{0,100}linked PR/release"
+        r".{0,80}QA/Done evidence"
+    ),
+    "board-adjacent-detail-read": re.compile(
+        r"(?is)(?:metadata first|start with metadata).{0,300}current"
+        r".{0,200}adjacent.{0,200}(?:in detail|detail)"
+    ),
+    "board-incomplete-inventory-and-traceability-block": re.compile(
+        r"(?is)incomplete (?:ticket )?inventory.{0,100}missing PR[- ]to[- ]ticket\s+traceability"
+        r".{0,120}(?:is\s+)?(?:\*\*)?Blocked / NOT READY"
+    ),
+    "board-plausible-regression-blocks": re.compile(
+        r"(?is)(?:plausible regression.{0,140}blocker.{0,40}disproved|"
+        r"plausible regression.{0,160}(?:a )?\*\*?Blocker\*\*? until disproven)"
+    ),
 }
 OPTIONAL_WHEN_ABSENT = {
     "public-exposure-current-conversation-service",
@@ -474,6 +502,12 @@ OPTIONAL_WHEN_ABSENT = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
+    "board-gate-all-repositories-and-workflows",
+    "board-access-before-work-and-blocker",
+    "board-inventory-fields",
+    "board-adjacent-detail-read",
+    "board-incomplete-inventory-and-traceability-block",
+    "board-plausible-regression-blocks",
 }
 
 HOME_FILES = (
@@ -514,6 +548,12 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "board-gate-all-repositories-and-workflows",
+        "board-access-before-work-and-blocker",
+        "board-inventory-fields",
+        "board-adjacent-detail-read",
+        "board-incomplete-inventory-and-traceability-block",
+        "board-plausible-regression-blocks",
     },
     "opencode": {
         "browser-close-every-slice-outcome", "hermes-no-reverse-ssh",
@@ -570,6 +610,8 @@ KIT_BASELINE_RULES = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
+    "board-gate-all-repositories-and-workflows",
+    "board-access-before-work-and-blocker",
 }
 CONTEXT_GC_RULES = {
     "no-gc-user-owned-state", "context-gc-boundary", "context-gc-resume-packet",
@@ -582,12 +624,20 @@ HERMES_TRANSPORT_RULES = {
     "hermes-no-project-source", "hermes-prompts-use-stdin", "hermes-no-prompts-in-argv",
     "hermes-no-local-terminal-socket",
 }
+BOARD_RULES = {
+    "board-gate-all-repositories-and-workflows",
+    "board-access-before-work-and-blocker",
+    "board-inventory-fields",
+    "board-adjacent-detail-read",
+    "board-incomplete-inventory-and-traceability-block",
+    "board-plausible-regression-blocks",
+}
 PROFILE_RULES = {
     **LIVE_HOME_RULES,
     "kit": KIT_BASELINE_RULES,
     # Rendered proposals deliberately use the full closed inventory; this is
     # what makes the mutation fixtures fail closed for newly required clauses.
-    "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES,
+    "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES - BOARD_RULES,
     "proposal-codex": OPTIONAL_WHEN_ABSENT,
     "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
     "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
@@ -601,9 +651,9 @@ LIVE_HOME_SHA256 = {
 }
 INSTALLED_HOME_SHA256 = {
     "83108ab1c496983ba94eca18bce14db8cfd46ec90b476e37e8f0325f76b45c01": "proposal-claude",
-    "30bf13a8eedc8f4092809814119db080a19e02311487588d8639bcc6bd0652e9": "proposal-codex",
-    "4e1a8a966101676f65ec122253286cd874ddadae77f5640bf0129e9cad078f14": "proposal-opencode",
-    "5d504e7dd7a63680853060f17973bfa82a47ee81088bd1204a882782823d7ea9": "proposal-bb",
+    "1b6675c50e7fa0e56cf568ca22ee1ed3fcfc8b1ffe9cf144e816ab1c4d91f317": "proposal-codex",
+    "cdfc20616b88931a85a0e262c6f763bf3ca94ed2d91c21005b5c14ec981e7570": "proposal-opencode",
+    "b072def1ff92c0458f1587beefff264f1b7c2d2e0be1c6ca0d3dad51687fd764": "proposal-bb",
 }
 
 
@@ -913,6 +963,8 @@ def historical_clause(text: str, position: int) -> bool:
 
 
 def optional_present(name: str, text: str) -> bool:
+    if name.startswith("board-"):
+        return bool(RULES[name].search(text))
     if name == "no-pkill-pgrep-app-kill-path":
         return bool(RULES[name].search(text))
     if name.startswith("credentials-never-"):

@@ -48,7 +48,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
         self.assertEqual(missing, [])
-        self.assertEqual(count, 42)
+        self.assertEqual(count, 45)
 
         baseline_rules = [
             name for name, pattern in CHECKER.RULES.items()
@@ -142,6 +142,60 @@ class StandingRuleCheckerTest(unittest.TestCase):
         for rule, weakened in mutations.items():
             with self.subTest(rule=rule):
                 self.assertIn(rule, CHECKER.missing_rules(INTACT.replace(clause, weakened)))
+
+    def test_codex_board_gate_and_inventory_mutations_fail(self):
+        overlay = SCRIPT.parent.parent / "proposals/card21/overlays/codex.md"
+        policy = overlay.read_text(encoding="utf-8")
+        rules = {
+            "board-gate-all-repositories-and-workflows",
+            "board-access-before-work-and-blocker",
+            "board-inventory-fields",
+            "board-adjacent-detail-read",
+            "board-incomplete-inventory-and-traceability-block",
+            "board-plausible-regression-blocks",
+        }
+        skip = set(CHECKER.RULES) - rules
+        self.assertEqual(
+            [], CHECKER.missing_rules(policy, required_optional=rules, skip_rules=skip)
+        )
+
+        mutations = {
+            "board-gate-all-repositories-and-workflows": (
+                "This gate applies to every repository and every implementation, PR review,\n"
+                "quality-gate, readiness, release, and skill/agent workflow.",
+                "This gate applies to configured-board, ticket-backed readiness workflows.",
+            ),
+            "board-access-before-work-and-blocker": (
+                "Before starting,",
+                "When a board is configured,",
+            ),
+            "board-inventory-fields": (
+                "sprint/release",
+                "milestone",
+            ),
+            "board-adjacent-detail-read": (
+                "every adjacent,",
+                "only current,",
+            ),
+            "board-incomplete-inventory-and-traceability-block": (
+                "incomplete inventory",
+                "incomplete notes",
+            ),
+            "board-plausible-regression-blocks": (
+                "plausible regression",
+                "unverified concern",
+            ),
+        }
+        for rule, (original, weakened) in mutations.items():
+            with self.subTest(rule=rule):
+                self.assertIn(original, policy)
+                damaged = policy.replace(original, weakened, 1)
+                self.assertIn(
+                    rule,
+                    CHECKER.missing_rules(
+                        damaged, required_optional=rules, skip_rules=skip
+                    ),
+                )
 
     def test_rendered_profiles_require_all_three_credential_bans(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

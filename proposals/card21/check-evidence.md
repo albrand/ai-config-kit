@@ -215,3 +215,36 @@ PASS all 5 files contain all applicable rules (109 regexes)
 
 Live homes were not modified. The renderer remains in proposal mode; its
 `--install` option was not run.
+
+## Coordinator-directed board-rule repair
+
+The compact Codex rule and shared kit baseline retain the universal trigger,
+mandatory authoritative-board access and blocker, full inventory fields, the
+metadata-first adjacent/completed/QA/Done/released/impacted detail read, and
+regression/inventory/traceability blockers. The OpenCode compact rule retains
+the same semantics. The board-access skill is only a procedure pointer.
+
+`test_codex_board_gate_and_inventory_mutations_fail` passes intact policy and
+rejects six mutations: narrowing the workflow trigger, making board access
+conditional, deleting inventory fields, removing adjacent detail reads, making
+missing inventory/traceability non-blocking, and weakening the regression
+blocker. The focused repair tests pass: **3 tests, OK** (23.272s), covering
+archived baseline deletion, fixed native-home fingerprints, and all board
+mutations.
+
+Latest unchanged-home and baseline-preservation command output:
+
+```text
+PASS /Users/alexandrebrandizzi/.claude/CLAUDE.md: 64 applicable standing rules
+PASS /Users/alexandrebrandizzi/.codex/AGENTS.md: 79 applicable standing rules
+PASS /Users/alexandrebrandizzi/.config/opencode/AGENTS.md: 69 applicable standing rules
+PASS /Users/alexandrebrandizzi/.bb/AGENTS.md: 63 applicable standing rules
+PASS GLOBAL_AGENTS.md: 104 applicable standing rules
+PASS GLOBAL_AGENTS.md: retained all 45 rules matched in proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md
+PASS all 5 files contain all applicable rules (115 regexes)
+```
+
+The rendered-proposal command also passed: Claude 93, Codex 115, OpenCode 108,
+bb 108, and kit 104 applicable rules; all 45 archived baseline rules retained.
+The exact-head pre-review packet and its full test result are recorded with the
+final pushed revision evidence.
