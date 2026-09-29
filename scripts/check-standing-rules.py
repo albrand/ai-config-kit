@@ -88,6 +88,33 @@ RULES: dict[str, re.Pattern[str]] = {
         r"close no-longer-needed instances.{0,100}slice is done.{0,60}blocked.{0,60}"
         r"abandoned.{0,60}superseded|close\s+(?:the\s+)?thread-owned\s+instance\s+afterward)"
     ),
+    "browser-input-is-mutation": re.compile(r"(?is)browser input is a mutation"),
+    "browser-exclusive-delivery-proof": re.compile(
+        r"(?is)require adapter control-plane proof of exclusive delivery to the owned page"
+        r".{0,100}zero terminal/OS input side effects"
+    ),
+    "browser-target-id-is-not-proof": re.compile(
+        r"(?is)(?:target IDs|worktree/page/profile IDs|IDs).{0,80}"
+        r"successful return do not prove isolation"
+    ),
+    "browser-persistent-quarantine-per-input": re.compile(
+        r"(?is)before every.{0,500}check persistent adapter quarantine"
+    ),
+    "browser-leak-readonly-only": re.compile(
+        r"(?is)on any non-target (?:input )?leak, preserve sessions and (?:allow|permit)"
+        r" read-only browser operations only"
+    ),
+    "browser-quarantine-survives-restart": re.compile(
+        r"(?is)new agent.{0,80}resumed session.{0,80}restart.{0,80}"
+        r"runtime-ID change.{0,80}(?:never|does not) clear(?:s)? quarantine"
+    ),
+    "browser-quarantine-reenable-regression": re.compile(
+        r"(?is)re-enable only after a fixed or changed build identity passes a regression"
+        r".{0,100}no non-target PTY/UI input"
+    ),
+    "browser-prompts-cannot-bypass-quarantine": re.compile(
+        r"(?is)ordinary agent prompts cannot bypass this gate"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -174,6 +201,14 @@ OPTIONAL_WHEN_ABSENT = {
     "browser-close-before-isolation-change",
     "browser-lifecycle-ops-noncreating",
     "browser-close-every-slice-outcome",
+    "browser-input-is-mutation",
+    "browser-exclusive-delivery-proof",
+    "browser-target-id-is-not-proof",
+    "browser-persistent-quarantine-per-input",
+    "browser-leak-readonly-only",
+    "browser-quarantine-survives-restart",
+    "browser-quarantine-reenable-regression",
+    "browser-prompts-cannot-bypass-quarantine",
 }
 
 HOME_FILES = (
@@ -300,6 +335,14 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "browser-close-before-isolation-change",
                     "browser-lifecycle-ops-noncreating",
                     "browser-close-every-slice-outcome",
+                    "browser-input-is-mutation",
+                    "browser-exclusive-delivery-proof",
+                    "browser-target-id-is-not-proof",
+                    "browser-persistent-quarantine-per-input",
+                    "browser-leak-readonly-only",
+                    "browser-quarantine-survives-restart",
+                    "browser-quarantine-reenable-regression",
+                    "browser-prompts-cannot-bypass-quarantine",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -322,6 +365,14 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "browser-close-before-isolation-change",
                 "browser-lifecycle-ops-noncreating",
                 "browser-close-every-slice-outcome",
+                "browser-input-is-mutation",
+                "browser-exclusive-delivery-proof",
+                "browser-target-id-is-not-proof",
+                "browser-persistent-quarantine-per-input",
+                "browser-leak-readonly-only",
+                "browser-quarantine-survives-restart",
+                "browser-quarantine-reenable-regression",
+                "browser-prompts-cannot-bypass-quarantine",
             })
         missing = missing_rules(
             content,

@@ -134,6 +134,14 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-close-before-isolation-change",
             "browser-lifecycle-ops-noncreating",
             "browser-close-every-slice-outcome",
+            "browser-input-is-mutation",
+            "browser-exclusive-delivery-proof",
+            "browser-target-id-is-not-proof",
+            "browser-persistent-quarantine-per-input",
+            "browser-leak-readonly-only",
+            "browser-quarantine-survives-restart",
+            "browser-quarantine-reenable-regression",
+            "browser-prompts-cannot-bypass-quarantine",
         }
         mutations = {
             "browser-never-access-unowned": (
@@ -159,6 +167,38 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-close-every-slice-outcome": (
                 "Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.",
                 "Keep the instance until it is no longer useful.",
+            ),
+            "browser-input-is-mutation": (
+                "Browser input is a mutation.",
+                "Browser input is read-only.",
+            ),
+            "browser-exclusive-delivery-proof": (
+                "require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects",
+                "send input to the owned page if its identifiers look correct",
+            ),
+            "browser-target-id-is-not-proof": (
+                "target IDs or a successful return do not prove isolation",
+                "target IDs and successful returns prove isolation",
+            ),
+            "browser-persistent-quarantine-per-input": (
+                "check persistent adapter quarantine",
+                "check quarantine once at session start",
+            ),
+            "browser-leak-readonly-only": (
+                "On any non-target input leak, preserve sessions and allow read-only browser operations only.",
+                "After a non-target input leak, continue browser writes after warning.",
+            ),
+            "browser-quarantine-survives-restart": (
+                "A new agent, resumed session, restart, or runtime-ID change never clears quarantine.",
+                "A new agent or restart clears quarantine.",
+            ),
+            "browser-quarantine-reenable-regression": (
+                "Re-enable only after a fixed or changed build identity passes a regression proving no non-target PTY/UI input",
+                "Re-enable after an ordinary check",
+            ),
+            "browser-prompts-cannot-bypass-quarantine": (
+                "ordinary agent prompts cannot bypass this gate",
+                "ordinary agent prompts may bypass this gate",
             ),
         }
         provider_files = [
