@@ -17,7 +17,7 @@ browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
 marker on the matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **28 tests, OK**. Fixtures cover
+`python3 scripts/test_check_standing_rules.py`: **29 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -62,6 +62,10 @@ the explicit outward-effect approval, large/unbounded fan-out approval, or
 cross-session cmux default-off boundary. Each test reads one rendered native
 provider file alone, without the bb baseline, and requires the appropriate
 regex to fail after each mutation.
+The real `--files` entrypoint now also requires every delegation, child-cap,
+dependency, and broker boundary in standalone provider proposals. A subprocess
+fixture runs all 12 mutations against each of Claude, Codex, and OpenCode;
+all 36 cases fail as required.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -87,7 +91,7 @@ PASS all 5 files contain all applicable rules (72 regexes)
 Unit-test stdout:
 
 ```text
-Ran 28 tests
+Ran 29 tests
 OK
 ```
 

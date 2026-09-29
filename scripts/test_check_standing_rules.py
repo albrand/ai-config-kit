@@ -417,6 +417,85 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         CHECKER.missing_rules(damaged, required_optional=rules),
                     )
 
+    def test_standalone_provider_checker_rejects_delegation_boundary_regressions(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        mutations = {
+            "delegation-approval-scale-and-bounded-fanout": (
+                "Require explicit approval for more than 3 concurrent delegates, broad parallel/swarm work, or fan-out without a named stop condition",
+                "Delegates may fan out without a named stop condition",
+            ),
+            "delegation-cross-session-cmux-off": (
+                "Cross-session cmux delegation stays off by default",
+                "Cross-session cmux delegation is allowed by default",
+            ),
+            "delegation-explicit-approval-outward-effects": (
+                "Require explicit approval before outward or hard-to-undo effects: board mutations, bulk imports, cloud changes, secret access, CI/repo-policy changes, destructive edits, PR/check automation, or shared-remote pushes",
+                "Ordinary delegation approval covers outward effects",
+            ),
+            "child-thread-cap-three-without-asking": (
+                "Use up to 3 concurrent child threads without asking",
+                "Use up to 3 concurrent child threads after asking",
+            ),
+            "child-thread-cap-six-with-orchestration": (
+                "an orchestration request authorizes up to 6",
+                "any request authorizes up to 6",
+            ),
+            "child-thread-cap-host-capacity": (
+                "up to 6, subject to host capacity",
+                "up to 6 regardless of host capacity",
+            ),
+            "child-cap-distinct-opencode-instance-cap": (
+                "This is separate from OpenCode's 10 concurrent instances per session cap.",
+                "This is the same as OpenCode's 10 concurrent instances per session cap.",
+            ),
+            "delegate-no-unapproved-dependencies": (
+                "Delegates may not add dependencies without a new master decision.",
+                "Delegates may add dependencies as long as they report them.",
+            ),
+            "hermes-broker-delegation-default-off": (
+                "Hermes/cmux broker delegation defaults off",
+                "Hermes/cmux broker delegation defaults on",
+            ),
+            "hermes-broker-concurrency-depth-one": (
+                "concurrency/depth default 1",
+                "concurrency/depth default 10",
+            ),
+            "hermes-broker-model-call-explicit-activation": (
+                "Model calls require explicit bounded activation",
+                "Model calls may run without bounded activation",
+            ),
+            "hermes-broker-limits-not-bb-children": (
+                "These broker limits do not restrict bb child threads",
+                "These broker limits also restrict bb child threads",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-delegation-") as temp_dir:
+            standalone_dir = Path(temp_dir) / "rendered-homes"
+            standalone_dir.mkdir()
+            candidate = standalone_dir / "CLAUDE.md"
+            for provider_path in providers:
+                original_text = provider_path.read_text(encoding="utf-8")
+                for rule, (original, weakened) in mutations.items():
+                    with self.subTest(provider=provider_path.name, rule=rule):
+                        self.assertIn(original, original_text)
+                        candidate.write_text(
+                            original_text.replace(original, weakened),
+                            encoding="utf-8",
+                        )
+                        result = subprocess.run(
+                            [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
+
     def test_standalone_provider_checker_rejects_browser_input_safeguard_regressions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         providers = [
