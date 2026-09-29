@@ -101,7 +101,7 @@ def main() -> int:
         write_atomic(path, content)
         print(f"RENDERED {path} {len(content.encode('utf-8'))} bytes")
         if args.diff_dir:
-            before = TARGETS[key].read_text(encoding="utf-8").splitlines(keepends=True)
+            before = TARGETS[key].read_bytes().decode("utf-8").splitlines(keepends=True)
             after = content.splitlines(keepends=True)
             diff = difflib.unified_diff(
                 before,

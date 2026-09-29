@@ -39,9 +39,9 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
     "worktree-removal": re.compile(
-        r"(?is)(?:never remove.{0,180}(?:own|your).{0,100}"
-        r"(?:environment|worktree)|delete your own worktree|"
-        r"never remove a worktree you did not create)"
+        r"(?is)(?=.*(?:delete your own worktree|never remove.{0,150}own.{0,100}"
+        r"(?:environment|worktree)|never remove a worktree you did not create))"
+        r"(?=.*\.keep-worktree)(?=.*unreferenced detached)"
     ),
     "no-ai-signatures": re.compile(
         r"(?is)(?:do not|never) add AI attribution.{0,150}"
@@ -56,6 +56,7 @@ RULES: dict[str, re.Pattern[str]] = {
     ),
     "security-first": re.compile(r"(?is)security-first defaults"),
 }
+OPTIONAL_WHEN_ABSENT = {"no-pkill-pgrep-app-kill-path"}
 
 HOME_FILES = (
     Path("~/.claude/CLAUDE.md").expanduser(),
@@ -67,7 +68,13 @@ KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 
 def missing_rules(text: str) -> list[str]:
-    return [name for name, pattern in RULES.items() if not pattern.search(text)]
+    missing: list[str] = []
+    for name, pattern in RULES.items():
+        if name in OPTIONAL_WHEN_ABSENT and not re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", text):
+            continue
+        if not pattern.search(text):
+            missing.append(name)
+    return missing
 
 
 def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
@@ -80,7 +87,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")
         else:
-            print(f"PASS {path}: {len(RULES)} standing rules")
+            applicable = len(RULES)
+            if not re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", path.read_text(encoding="utf-8")):
+                applicable -= len(OPTIONAL_WHEN_ABSENT)
+            print(f"PASS {path}: {applicable} applicable standing rules")
     return not failures, failures
 
 
@@ -96,7 +106,7 @@ def main() -> int:
     for failure in failures:
         print(f"FAIL {failure}", file=sys.stderr)
     if ok:
-        print(f"PASS all {len(paths)} files contain all {len(RULES)} required rules")
+        print(f"PASS all {len(paths)} files contain all applicable rules ({len(RULES)} regexes)")
         return 0
     print(f"FAIL {len(failures)} of {len(paths)} files", file=sys.stderr)
     return 1

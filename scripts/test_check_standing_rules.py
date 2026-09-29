@@ -18,7 +18,7 @@ Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
 Use only bb's isolated browser for interactive work; never use a personal browser.
 No feature flags or new off-by-default gates without an explicit ask; preserve auth, authorization, entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date.
-Remove only clean worktrees you created; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, .keep-worktree, or an unreferenced detached commit. A detached review worktree must end with its command.
+Remove only clean worktrees you created; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, a .keep-worktree tree, or an unreferenced detached commit. A detached review worktree must end with its command.
 Do not add AI attribution, signatures, or watermarks.
 Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
@@ -35,6 +35,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "Never type, paste, or handle credentials.\n", ""
         )
         self.assertIn("credentials", CHECKER.missing_rules(damaged))
+
+    def test_deleted_keep_worktree_protection_fails(self):
+        damaged = INTACT.replace("a .keep-worktree tree, ", "")
+        self.assertIn("worktree-removal", CHECKER.missing_rules(damaged))
 
     def test_deleted_rule_in_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
