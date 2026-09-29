@@ -14,6 +14,30 @@ all 12 patterns in each of 5 files.
 `python3 scripts/test_check_standing_rules.py`: **3 tests, OK**. The fixtures
 cover an intact document, a deleted rule, and a deleted rule in a file.
 
-The exact checker output is retained in the task transcript. Live homes were
-not modified. The renderer remains in proposal mode; its `--install` option was
-not run.
+Baseline checker stdout:
+
+```text
+PASS all 5 files contain all 11 standing rules
+```
+
+Final checker stdout (live homes + kit source):
+
+```text
+PASS all 5 files contain all 12 required rules
+```
+
+Rendered-home checker stdout:
+
+```text
+PASS all 5 files contain all 12 required rules
+```
+
+Unit-test stdout:
+
+```text
+Ran 3 tests
+OK
+```
+
+Live homes were not modified. The renderer remains in proposal mode; its
+`--install` option was not run.
