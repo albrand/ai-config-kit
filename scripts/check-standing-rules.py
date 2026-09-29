@@ -692,7 +692,14 @@ def contradicted_rule(name: str, text: str) -> bool:
                 continue
             policy = line
             for continuation in lines[index + 1 :]:
-                if not continuation.strip() or re.match(r"^\s*[-*]\s", continuation):
+                if not continuation.strip():
+                    break
+                if re.match(r"^\s*[-*]\s", continuation):
+                    if (
+                        exemption_word.search(continuation)
+                        and re.search(r"(?i)\b(?:this|that|the) prohibition\b", continuation)
+                    ):
+                        return True
                     break
                 policy += " " + continuation.strip()
             if exemption_word.search(policy):
