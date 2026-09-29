@@ -275,8 +275,9 @@ approximations and line counts. Full-context home diffs are
 and `bb.diff`.
 
 The installer remains unrun; no global home has been installed. Exact-head
-pre-review, push, Hermes, and PR evidence will be appended after the new
-candidate is committed and pushed.
+pre-review, Hermes verdict, and draft-PR URL are reported in the coordinator
+handoff for the reviewed SHA. Merge and installation remain pending board
+inventory and coordinator decision.
 
 The checker’s proposal-home SHA allow-list was updated with the four current
 rendered artifacts. The focused intact-fixture and native-home entrypoint tests
