@@ -57,7 +57,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 
 ## Worktrees, host, and processes
 
-- Work only in the assigned/dedicated worktree; one writer per branch. On collision, stop and reread the diff. Remove only clean worktrees you created; never remove your own bb environment, another agent's/user's worktree, a dirty tree, a `.keep-worktree` tree, or an unreferenced detached commit. A detached-HEAD worktree must not outlive its command. Commit/push before finishing and run `worktree-gc` dry-run. Load `shared-host-capacity`.
+- Work only in the assigned/dedicated worktree; one writer per branch. On collision, stop and reread the diff. Remove only clean worktrees you created; never remove your own bb environment, another agent's/user's worktree, a dirty tree, a `.keep-worktree` tree, or an unreferenced detached commit. A detached-HEAD worktree must not outlive its command. Commit/push before finishing; never use `--force`. Run `worktree-gc` dry-run. Load `shared-host-capacity`.
 - Clone Node dependencies with `wt-deps`; never symlink `node_modules`. Below 20 GB free, do not install/build. Validate focused, use native toolchains, and stop every task-owned process tree before closeout.
 - Automations must be single-flight per target and must not treat their own push as completion while its agent still runs. For expensive/release/migration operations, use `execution-ownership`.
 - Do not kill, replace, or restart the bb app. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.

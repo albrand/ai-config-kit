@@ -39,11 +39,34 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
     "worktree-removal": re.compile(
-        r"(?is)(?=.*(?:delete your own worktree|never remove.{0,150}own.{0,100}"
-        r"(?:environment|worktree)|never remove a worktree you did not create))"
-        r"(?=.*(?:never remove.{0,120}dirty tree,\s*(?:a\s*)?`?\.keep-worktree|"
-        r"never one that is dirty,.{0,160}carries `\.keep-worktree`))"
-        r"(?=.*\.keep-worktree)(?=.*unreferenced detached)"
+        r"(?is)(?:remove only clean worktrees you created|"
+        r"never remove a worktree you did not create)"
+    ),
+    "worktree-dirty-protection": re.compile(
+        r"(?is)(?:remove only clean worktrees you created|"
+        r"never one that is dirty|never remove.{0,180}dirty tree)"
+    ),
+    "worktree-keep-protection": re.compile(
+        r"(?is)(?:never remove.{0,120}dirty tree,\s*(?:a\s*)?`?\.keep-worktree|"
+        r"never one that is dirty,.{0,160}carries `\.keep-worktree`)"
+    ),
+    "worktree-unreferenced-detached": re.compile(
+        r"(?is)(?:never remove.{0,180}unreferenced detached commit|"
+        r"refuses to touch.{0,120}unreferenced detached (?:HEAD|commit)s?)"
+    ),
+    "worktree-detached-lifetime": re.compile(
+        r"(?is)(?:never create a detached-HEAD worktree.{0,140}outlives? its command|"
+        r"detached-HEAD worktree must not outlive its command|"
+        r"detached review worktree.{0,100}end with its command)"
+    ),
+    "worktree-never-force": re.compile(r"(?is)never.{0,40}--force"),
+    "worktree-not-owned": re.compile(
+        r"(?is)(?:never remove a worktree you did not create|"
+        r"never remove.{0,120}another agent.s/user.s worktree)"
+    ),
+    "worktree-own-bb-environment": re.compile(
+        r"(?is)never remove.{0,100}(?:your own (?:live )?bb environment|"
+        r"the worktree your own bb thread runs in)"
     ),
     "no-ai-signatures": re.compile(
         r"(?is)(?:do not|never) add AI attribution.{0,150}"
@@ -58,7 +81,10 @@ RULES: dict[str, re.Pattern[str]] = {
     ),
     "security-first": re.compile(r"(?is)security-first defaults"),
 }
-OPTIONAL_WHEN_ABSENT = {"no-pkill-pgrep-app-kill-path"}
+OPTIONAL_WHEN_ABSENT = {
+    "no-pkill-pgrep-app-kill-path",
+    "worktree-own-bb-environment",
+}
 
 HOME_FILES = (
     Path("~/.claude/CLAUDE.md").expanduser(),
@@ -69,14 +95,26 @@ HOME_FILES = (
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 
-def missing_rules(text: str) -> list[str]:
+def missing_rules(text: str, require_optional: bool = False) -> list[str]:
     missing: list[str] = []
     for name, pattern in RULES.items():
-        if name in OPTIONAL_WHEN_ABSENT and not re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", text):
+        if (
+            name in OPTIONAL_WHEN_ABSENT
+            and not require_optional
+            and not optional_present(name, text)
+        ):
             continue
         if not pattern.search(text):
             missing.append(name)
     return missing
+
+
+def optional_present(name: str, text: str) -> bool:
+    if name == "no-pkill-pgrep-app-kill-path":
+        return bool(re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", text))
+    if name == "worktree-own-bb-environment":
+        return bool(RULES[name].search(text))
+    return True
 
 
 def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
@@ -85,13 +123,16 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if not path.is_file():
             failures.append(f"{path}: file missing")
             continue
-        missing = missing_rules(path.read_text(encoding="utf-8"))
+        strict = path.resolve() == KIT_SOURCE.resolve() or "rendered-homes" in path.parts
+        content = path.read_text(encoding="utf-8")
+        missing = missing_rules(content, require_optional=strict)
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")
         else:
-            applicable = len(RULES)
-            if not re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", path.read_text(encoding="utf-8")):
-                applicable -= len(OPTIONAL_WHEN_ABSENT)
+            applicable = len(RULES) - sum(
+                name in OPTIONAL_WHEN_ABSENT and not optional_present(name, content)
+                for name in RULES
+            )
             print(f"PASS {path}: {applicable} applicable standing rules")
     return not failures, failures
 
