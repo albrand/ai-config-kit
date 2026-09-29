@@ -61,6 +61,9 @@ present there. Rendered-path CLI weakening fixtures cover all four homes. Typed 
 require batched isolated Jev judgments recorded as `system-one`, prohibit hook
 and secret use, and prohibit relying on Jev alone for irreversible/security
 decisions; each obligation has a deletion fixture.
+The credential fixture also retains all three prohibition phrases while adding
+an exception for login; the contradiction veto rejects it at the rendered
+`--files` entrypoint for every provider.
 The rendered-path CLI also rejects an added permission saying routine emails
 may be sent without asking, across all four proposals, while intact proposals
 pass.

@@ -545,6 +545,14 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
+    if name.startswith("credentials-never-"):
+        credential_exception = re.compile(
+            r"(?is)never.{0,100}\b(?:type|paste|handle)\b.{0,100}credentials.{0,80}"
+            r"(?:unless|except when|except if|when).{0,100}"
+            r"(?:the user asks|user requested|user asks|login|log in)"
+        )
+        if credential_exception.search(text):
+            return True
     if name.startswith("email-"):
         email_approval_exception = re.compile(
             r"(?is)(?:(?:routine|standard|internal|automated|follow[- ]up|low[- ]risk)\s+)?"

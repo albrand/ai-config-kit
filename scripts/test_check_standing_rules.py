@@ -102,6 +102,25 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     self.assertNotEqual(0, result.returncode, result.stdout)
                     self.assertIn(rule, result.stdout + result.stderr)
 
+            for path, content in zip(candidates, intact):
+                self.assertIn("Never type, paste, or handle credentials", content)
+                path.write_text(
+                    content.replace(
+                        "Never type, paste, or handle credentials",
+                        "Never type, paste, or handle credentials unless the user asks you to log in",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+            result = run_checker()
+            self.assertNotEqual(0, result.returncode, result.stdout)
+            for rule in (
+                "credentials-never-type",
+                "credentials-never-paste",
+                "credentials-never-handle",
+            ):
+                self.assertIn(rule, result.stdout + result.stderr)
+
     def test_native_home_profiles_fail_closed_through_files_entrypoint(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         cases = [
