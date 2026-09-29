@@ -10,6 +10,7 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -32,6 +33,67 @@ NAMES = {
     "bb": "bb-AGENTS.md",
 }
 HASH_NAMES = {"claude": "Claude", "codex": "Codex", "opencode": "OpenCode", "bb": "bb"}
+INSTALL_SOURCE_PATHS = (
+    "GLOBAL_AGENTS.md",
+    "proposals/card21/hard-rules.md",
+    "proposals/card21/overlays/claude.md",
+    "proposals/card21/overlays/codex.md",
+    "proposals/card21/overlays/opencode.md",
+    "proposals/card21/overlays/bb.md",
+    "proposals/card21/live-home-hashes.md",
+    "scripts/typed-decisions-sync.py",
+    "scripts/render-standing-homes.py",
+)
+
+
+def assert_install_sources_in_origin_main(repo_root: Path = ROOT) -> None:
+    """Require every install input and this installer to match fetched origin/main."""
+    fetch = subprocess.run(
+        ["git", "-C", str(repo_root), "fetch", "--no-tags", "origin", "main:refs/remotes/origin/main"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch.returncode != 0:
+        detail = fetch.stderr.strip() or fetch.stdout.strip() or f"exit {fetch.returncode}"
+        raise ValueError(f"could not refresh origin/main before install: {detail}")
+
+    tracked = subprocess.run(
+        [
+            "git", "-C", str(repo_root), "ls-tree", "-r", "--name-only",
+            "origin/main", "--", *INSTALL_SOURCE_PATHS,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        detail = tracked.stderr.strip() or tracked.stdout.strip() or f"exit {tracked.returncode}"
+        raise ValueError(f"could not inspect origin/main install sources: {detail}")
+    tracked_paths = set(tracked.stdout.splitlines())
+    if tracked_paths != set(INSTALL_SOURCE_PATHS):
+        missing = sorted(set(INSTALL_SOURCE_PATHS) - tracked_paths)
+        raise ValueError(f"origin/main does not contain every install source: {missing}")
+
+    for source in INSTALL_SOURCE_PATHS:
+        path = repo_root / source
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"install source is not a regular non-symlink file: {path}")
+
+    diff = subprocess.run(
+        [
+            "git", "-C", str(repo_root), "diff", "--quiet", "--no-ext-diff",
+            "--no-textconv", "origin/main", "--", *INSTALL_SOURCE_PATHS,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if diff.returncode == 1:
+        raise ValueError("install sources differ from fetched origin/main")
+    if diff.returncode != 0:
+        detail = diff.stderr.strip() or diff.stdout.strip() or f"exit {diff.returncode}"
+        raise ValueError(f"could not compare install sources with origin/main: {detail}")
 
 
 def rendered(name: str) -> str:
@@ -110,6 +172,7 @@ def install_homes(
     reserved: list[tuple[str, int]] = []
     staged: dict[str, Path] = {}
     replaced: list[str] = []
+    installed_hashes = {key: _digest(outputs[key].encode("utf-8")) for key in targets}
     try:
         # Reserve every backup exclusively before writing any backup or home.
         for key, backup in backup_paths.items():
@@ -154,12 +217,26 @@ def install_homes(
             target = targets[key]
             restore_path = None
             try:
+                if not target.is_file() or target.is_symlink():
+                    rollback_errors.append(
+                        f"{target}: rollback conflict; target is not a regular non-symlink file"
+                    )
+                    continue
+                if _digest(target.read_bytes()) != installed_hashes[key]:
+                    rollback_errors.append(
+                        f"{target}: rollback conflict; target changed after this install replaced it"
+                    )
+                    continue
                 with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as tmp:
                     tmp.write(before[key])
                     tmp.flush()
                     os.fsync(tmp.fileno())
                     restore_path = Path(tmp.name)
                 shutil.copystat(backup_paths[key], restore_path, follow_symlinks=False)
+                if not target.is_file() or target.is_symlink():
+                    raise RuntimeError("rollback conflict; target is not a regular non-symlink file")
+                if _digest(target.read_bytes()) != installed_hashes[key]:
+                    raise RuntimeError("rollback conflict; target changed after this install replaced it")
                 os.replace(restore_path, target)
             except Exception as rollback_error:
                 rollback_errors.append(f"{target}: {rollback_error}")
@@ -204,6 +281,7 @@ def main() -> int:
 
     if args.install:
         try:
+            assert_install_sources_in_origin_main()
             backups = install_homes(TARGETS, outputs, load_expected_hashes())
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"REFUSE install: {exc}", file=sys.stderr)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -85,6 +87,89 @@ class InstallPreflightTests(unittest.TestCase):
             backups = list(root.rglob("*.bak"))
             self.assertEqual(4, len(backups))
             self.assertEqual(sorted(originals.values()), sorted(path.read_bytes() for path in backups))
+
+    def test_rollback_preserves_concurrent_edit_and_reports_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            concurrent_edit = b"newer edit from another writer\n"
+            real_replace = RENDERER.os.replace
+            failed = False
+
+            def fail_after_concurrent_edit(source, destination):
+                nonlocal failed
+                if Path(destination) == targets["codex"] and not failed:
+                    failed = True
+                    targets["claude"].write_bytes(concurrent_edit)
+                    raise OSError("injected second-home replace failure")
+                return real_replace(source, destination)
+
+            with patch.object(RENDERER.os, "replace", side_effect=fail_after_concurrent_edit):
+                with self.assertRaisesRegex(RuntimeError, "rollback conflict.*target changed"):
+                    RENDERER.install_homes(targets, outputs, hashes, stamp="concurrent")
+
+            self.assertEqual(concurrent_edit, targets["claude"].read_bytes())
+            self.assertEqual(originals["codex"], targets["codex"].read_bytes())
+            backups = list(root.rglob("*.bak"))
+            self.assertEqual(4, len(backups))
+            self.assertIn(originals["claude"], [path.read_bytes() for path in backups])
+
+    def make_install_source_repo(self, root: Path) -> Path:
+        repo = root / "repo"
+        remote = root / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+        subprocess.run(["git", "init", "--initial-branch=main", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Card 21 test"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "card21-test@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
+        for source in RENDERER.INSTALL_SOURCE_PATHS:
+            path = repo / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"initial source: {source}\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", *RENDERER.INSTALL_SOURCE_PATHS], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "Initial main install sources"], check=True)
+        subprocess.run(["git", "-C", str(repo), "push", "-qu", "origin", "main"], check=True)
+        return repo
+
+    def test_install_source_guard_rejects_unmerged_and_accepts_fetched_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.make_install_source_repo(Path(directory))
+            changed = repo / "GLOBAL_AGENTS.md"
+            changed.write_text("candidate source not yet on main\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feat/card21"], check=True)
+            subprocess.run(["git", "-C", str(repo), "add", "GLOBAL_AGENTS.md"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "Candidate instructions"], check=True)
+
+            with self.assertRaisesRegex(ValueError, "differ from fetched origin/main"):
+                RENDERER.assert_install_sources_in_origin_main(repo)
+
+            subprocess.run(["git", "-C", str(repo), "push", "origin", "HEAD:main"], check=True, capture_output=True)
+            RENDERER.assert_install_sources_in_origin_main(repo)
+
+    def test_check_and_render_modes_do_not_require_sources_on_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = {key: root / key / "AGENTS.md" for key in RENDERER.TARGETS}
+            outputs = {key: RENDERER.rendered(key) for key in targets}
+            for key, target in targets.items():
+                target.parent.mkdir()
+                target.write_text(outputs[key], encoding="utf-8")
+            output_dir = root / "rendered"
+
+            with (
+                patch.object(RENDERER, "TARGETS", targets),
+                patch.object(RENDERER, "assert_install_sources_in_origin_main", side_effect=AssertionError("main gate called")),
+                patch.object(sys, "argv", [str(SCRIPT), "--check"]),
+            ):
+                self.assertEqual(0, RENDERER.main())
+
+            with (
+                patch.object(RENDERER, "assert_install_sources_in_origin_main", side_effect=AssertionError("main gate called")),
+                patch.object(sys, "argv", [str(SCRIPT), "--output-dir", str(output_dir)]),
+            ):
+                self.assertEqual(0, RENDERER.main())
+            self.assertEqual(set(RENDERER.NAMES.values()), {path.name for path in output_dir.iterdir()})
 
     def test_fingerprint_manifest_rejects_duplicate_home_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -142,6 +142,36 @@ Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
 
+## Coordinator re-review repairs (2026-09-29)
+
+Rollback now compares each replaced home with the exact rendered bytes from
+this invocation and requires a regular non-symlink target immediately before
+restoration. If a concurrent edit is present, rollback preserves it and the
+backups, then surfaces the conflict. The injected concurrent-edit regression
+and the ordinary second-home replace-failure rollback case both pass.
+
+Install mode now fetches `origin/main` and requires the tracked files that
+produce the homes, the live-home fingerprint manifest, and the renderer itself
+to exist there and match the worktree. An unmerged source is refused; the
+regression then advances local `origin/main` and confirms the main-matched
+sources are accepted. This guard is install-only: `--check` and render-only
+mode remain usable before merge.
+
+Focused output at the repair candidate:
+
+```text
+Ran 7 tests
+OK
+```
+
+The seven installer cases include changed-target refusal, unique-backup
+preservation, duplicate-manifest rejection, ordinary rollback, concurrent-edit
+rollback protection, unmerged-versus-fetched-main source gating, and
+pre-merge `--check`/render behavior. Three focused standing-rule checker tests
+also passed (`Ran 3 tests`, `OK`). Live-home fingerprints matched the recorded
+values, and both legacy-home/kit and rendered-home/kit checker commands passed
+all 118 regexes. No live home was written.
+
 Baseline checker stdout:
 
 ```text
