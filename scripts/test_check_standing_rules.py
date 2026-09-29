@@ -318,6 +318,54 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     CHECKER.missing_rules(damaged, required_optional=rules),
                 )
 
+    def test_rendered_provider_contexts_keep_broker_delegation_opt_in(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        rules = {
+            "hermes-broker-delegation-default-off",
+            "hermes-broker-concurrency-depth-one",
+            "hermes-broker-model-call-explicit-activation",
+            "hermes-broker-limits-not-bb-children",
+        }
+        mutations = {
+            "hermes-broker-delegation-default-off": (
+                "Hermes/cmux broker delegation defaults off",
+                "Hermes/cmux broker delegation defaults on",
+            ),
+            "hermes-broker-concurrency-depth-one": (
+                "concurrency/depth 1",
+                "concurrency/depth 10",
+            ),
+            "hermes-broker-model-call-explicit-activation": (
+                "model calls require explicit bounded activation",
+                "model calls may run without bounded activation",
+            ),
+            "hermes-broker-limits-not-bb-children": (
+                "These broker limits do not restrict bb child threads",
+                "These broker limits also restrict bb child threads",
+            ),
+        }
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        for provider_path in providers:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [], CHECKER.missing_rules(combined, required_optional=rules)
+                )
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(provider=provider_path.name, rule=rule):
+                    self.assertIn(original, combined)
+                    damaged = combined.replace(original, weakened)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(damaged, required_optional=rules),
+                    )
+
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         baseline_path = rendered / "bb-AGENTS.md"

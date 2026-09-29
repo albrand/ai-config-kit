@@ -68,6 +68,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Do not kill, replace, or restart the bb app. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.
 - Never place or retain a project source on Hermes (srv1677963). Send review context only as the bounded claim, scope, and staged evidence via `bb fleet validate`; never ask Hermes to mount a project source.
 - Use only the approved broker to send bounded Hermes prompts via SSH stdin. Never put prompts in argv or require a local terminal socket; never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
+- Hermes/cmux broker delegation defaults off with concurrency/depth 1; model calls require explicit bounded activation. These broker limits do not restrict bb child threads or in-session subagents.
 
 ## Testing and reporting
 

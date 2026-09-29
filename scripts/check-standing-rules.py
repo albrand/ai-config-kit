@@ -177,6 +177,19 @@ RULES: dict[str, re.Pattern[str]] = {
         r"delegates? never.{0,200}add dependencies.{0,100}without a new master decision|"
         r"no architecture changes, new deps,.{0,180}without a new master decision)"
     ),
+    "hermes-broker-delegation-default-off": re.compile(
+        r"(?is)(?:Hermes/cmux broker delegation|Broker(?: \(Hermes/cmux\))? lane delegation) defaults off"
+    ),
+    "hermes-broker-concurrency-depth-one": re.compile(
+        r"(?is)broker.{0,30}delegation defaults off.{0,80}concurrency/depth (?:default )?1(?!\d)"
+    ),
+    "hermes-broker-model-call-explicit-activation": re.compile(
+        r"(?is)model calls require explicit bounded activation"
+    ),
+    "hermes-broker-limits-not-bb-children": re.compile(
+        r"(?is)(?:these broker limits do not restrict|this does not limit)"
+        r" bb child threads"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -290,6 +303,10 @@ OPTIONAL_WHEN_ABSENT = {
     "child-thread-cap-host-capacity",
     "child-cap-distinct-opencode-instance-cap",
     "delegate-no-unapproved-dependencies",
+    "hermes-broker-delegation-default-off",
+    "hermes-broker-concurrency-depth-one",
+    "hermes-broker-model-call-explicit-activation",
+    "hermes-broker-limits-not-bb-children",
 }
 
 HOME_FILES = (
@@ -451,6 +468,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "child-thread-cap-host-capacity",
                     "child-cap-distinct-opencode-instance-cap",
                     "delegate-no-unapproved-dependencies",
+                    "hermes-broker-delegation-default-off",
+                    "hermes-broker-concurrency-depth-one",
+                    "hermes-broker-model-call-explicit-activation",
+                    "hermes-broker-limits-not-bb-children",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -500,6 +521,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "child-thread-cap-host-capacity",
                 "child-cap-distinct-opencode-instance-cap",
                 "delegate-no-unapproved-dependencies",
+                "hermes-broker-delegation-default-off",
+                "hermes-broker-concurrency-depth-one",
+                "hermes-broker-model-call-explicit-activation",
+                "hermes-broker-limits-not-bb-children",
             })
         missing = missing_rules(
             content,
