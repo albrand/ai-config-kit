@@ -702,37 +702,38 @@ def contradicted_rule(name: str, text: str) -> bool:
         )
         if email_approval_exception.search(text):
             return True
+    app_actions = {
+        "bb-app-never-quit": ("quit", "quitting", r"(?:the\s+)?running\s+bb\s+app"),
+        "bb-app-never-kill": ("kill", "killing", r"(?:the\s+)?running\s+bb\s+app"),
+        "bb-app-never-replace": ("replace", "replacing", r"(?:the\s+)?running\s+bb\s+app"),
+        "bb-app-bundle-never-move": ("move", "moving", r"`?/Applications/bb\.app`?"),
+        "bb-app-bundle-never-delete": ("delete", "deleting", r"`?/Applications/bb\.app`?"),
+        "bb-app-bundle-never-overwrite": ("overwrite", "overwriting", r"`?/Applications/bb\.app`?"),
+    }
+    if name in app_actions:
+        action, gerund, target = app_actions[name]
+        never_action = re.compile(rf"\bnever\s+{action}\b", re.IGNORECASE)
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if not never_action.search(line):
+                continue
+            policy = line
+            for continuation in lines[index + 1:]:
+                if not continuation.strip() or re.match(r"^\s*[-*]\s", continuation):
+                    break
+                policy += " " + continuation.strip()
+                if len(policy) > len(line) + 240:
+                    break
+            if re.search(r"\b(?:unless|except)\b", policy, re.IGNORECASE):
+                return True
+        permission_patterns = (
+            rf"\b(?:you\s+)?(?:may|can)\s+{action}\b.{{0,100}}{target}",
+            rf"\b(?:you\s+are\s+)?(?:explicitly\s+)?permitted\s+to\s+{action}\b.{{0,100}}{target}",
+            rf"\b{gerund}\s+{target}.{{0,80}}\b(?:allowed|permitted)\b",
+        )
+        if any(re.search(pattern, text, re.IGNORECASE | re.DOTALL) for pattern in permission_patterns):
+            return True
     contradictions = {
-        "bb-app-never-quit": re.compile(
-            r"(?is)(?:never quit(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+quit.{0,100}running bb app\b|"
-            r"quitting the running bb app.{0,80}\b(?:allowed|permitted)\b)"
-        ),
-        "bb-app-never-kill": re.compile(
-            r"(?is)(?:never kill(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+kill.{0,100}running bb app\b|"
-            r"killing the running bb app.{0,80}\b(?:allowed|permitted)\b)"
-        ),
-        "bb-app-never-replace": re.compile(
-            r"(?is)(?:never replace(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+replace.{0,100}running bb app\b|"
-            r"replacing the running bb app.{0,80}\b(?:allowed|permitted)\b)"
-        ),
-        "bb-app-bundle-never-move": re.compile(
-            r"(?is)(?:never move(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+move.{0,100}/Applications/bb\.app\b|"
-            r"moving `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
-        ),
-        "bb-app-bundle-never-delete": re.compile(
-            r"(?is)(?:never delete(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+delete.{0,100}/Applications/bb\.app\b|"
-            r"deleting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
-        ),
-        "bb-app-bundle-never-overwrite": re.compile(
-            r"(?is)(?:never overwrite(?:(?!\n\s*[-*]\s).){0,160}\b(?:unless|except)\b|"
-            r"\b(?:you\s+)?(?:may|can)\s+overwrite.{0,100}/Applications/bb\.app\b|"
-            r"overwriting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
-        ),
         "browser-never-access-unowned": re.compile(
             r"(?is)(?:allow|may|can).{0,80}(?:access|close).{0,120}"
             r"(?:unowned|pre-existing|user-owned|other-thread)"

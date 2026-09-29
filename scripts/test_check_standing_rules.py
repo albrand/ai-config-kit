@@ -566,31 +566,37 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "bb-app-never-quit": (
                 "Never quit the running bb app.",
                 "For this task, you may quit the running bb app.",
+                "For this task, you are explicitly permitted to quit the running bb app.",
                 "Quitting the running bb app is allowed.",
             ),
             "bb-app-never-kill": (
                 "Never kill the running bb app.",
                 "For this task, you may kill the running bb app.",
+                "For this task, you are explicitly permitted to kill the running bb app.",
                 "Killing the running bb app is allowed.",
             ),
             "bb-app-never-replace": (
                 "Never replace the running bb app.",
                 "For this task, you may replace the running bb app.",
+                "For this task, you are explicitly permitted to replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",
                 "For this task, you may move `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-delete": (
                 "Never delete `/Applications/bb.app`.",
                 "For this task, you may delete `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to delete `/Applications/bb.app`.",
                 "Deleting `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-overwrite": (
                 "Never overwrite `/Applications/bb.app`.",
                 "For this task, you may overwrite `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to overwrite `/Applications/bb.app`.",
                 "Overwriting `/Applications/bb.app` is allowed.",
             ),
         }
@@ -614,10 +620,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
             for provider_index, path in enumerate(candidates):
-                for rule, (original, task_permission, explicit_permission) in clauses.items():
+                for rule, (original, task_permission, permitted_to, explicit_permission) in clauses.items():
                     mutations = (
                         ("wrapped exception", original + "\n  unless needed to finish the task."),
                         ("task-specific permission", task_permission),
+                        ("explicitly permitted permission", permitted_to),
                         ("explicit permission", explicit_permission),
                     )
                     for mutation, replacement in mutations:
