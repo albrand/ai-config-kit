@@ -533,9 +533,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             candidates = [candidate_dir / name for name in names]
             intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
 
-            def run_checker() -> subprocess.CompletedProcess[str]:
+            def run_checker(paths: list[Path] | None = None) -> subprocess.CompletedProcess[str]:
+                selected = paths or candidates
                 return subprocess.run(
-                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in selected)],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -555,7 +556,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                             content = intact[provider_index]
                             self.assertIn(original, content)
                             path.write_text(content.replace(original, replacement, 1), encoding="utf-8")
-                            result = run_checker()
+                            result = run_checker([path])
                             self.assertNotEqual(0, result.returncode, result.stdout)
                             self.assertIn(rule, result.stdout + result.stderr)
 
@@ -624,9 +625,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             candidates = [candidate_dir / name for name in names]
             intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
 
-            def run_checker() -> subprocess.CompletedProcess[str]:
+            def run_checker(paths: list[Path] | None = None) -> subprocess.CompletedProcess[str]:
+                selected = paths or candidates
                 return subprocess.run(
-                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in selected)],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -667,7 +669,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                             else:
                                 content += "\n" + replacement + "\n"
                             path.write_text(content, encoding="utf-8")
-                            result = run_checker()
+                            result = run_checker([path])
                             self.assertNotEqual(0, result.returncode, result.stdout)
                             self.assertIn(rule, result.stdout + result.stderr)
 
