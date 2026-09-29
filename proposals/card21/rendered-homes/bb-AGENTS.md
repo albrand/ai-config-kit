@@ -109,7 +109,7 @@ Assert on target state, not process claims. Delegates return measured evidence. 
 <!-- typed-decisions:begin -->
 ## Typed decisions
 
-Declare answer space; ask one atomic question at a time against identical state; compute the verdict. High confidence acts, medium verifies, low/out-of-space escalates; confidence needs measured checks, isolated agreement, or resolved history. Record each gated decision with a findable `--ref` and resolve it. Jev is advisory: never replace required checks, run in blocking hooks, or send it secrets/personal data. Detail: `typed-decisions`.
+Declare answer space; ask one atomic question at a time against identical state; compute the verdict. High confidence acts, medium verifies, low/out-of-space escalates; confidence needs measured checks, isolated agreement, or resolved history. Record each gated decision with a findable `--ref` and resolve it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->
 
 ## bb adapter

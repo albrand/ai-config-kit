@@ -25,6 +25,7 @@ Do not add AI attribution, signatures, or watermarks.
 Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
 Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and apply the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
+Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls.
 Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
 For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 """
@@ -38,7 +39,68 @@ class StandingRuleCheckerTest(unittest.TestCase):
         damaged = INTACT.replace(
             "Never type, paste, or handle credentials.\n", ""
         )
-        self.assertIn("credentials", CHECKER.missing_rules(damaged))
+        self.assertIn("credentials-never-type", CHECKER.missing_rules(damaged))
+
+    def test_jev_system_one_obligations_are_mandatory(self):
+        clause = (
+            "Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) "
+            "in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook "
+            "or with secrets/personal data, or alone for irreversible/security calls."
+        )
+        mutations = {
+            "typed-decisions-jev-system-one": clause.replace("in batches", "when convenient"),
+            "typed-decisions-jev-no-hooks-or-secrets": clause.replace("in a blocking hook", "in any hook"),
+            "typed-decisions-jev-never-sole-control": clause.replace(
+                ", or alone for irreversible/security calls", ""
+            ),
+        }
+        for rule, weakened in mutations.items():
+            with self.subTest(rule=rule):
+                self.assertIn(rule, CHECKER.missing_rules(INTACT.replace(clause, weakened)))
+
+    def test_rendered_profiles_require_all_three_credential_bans(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        mutations = {
+            "credentials-never-type": (
+                "Never type, paste, or handle credentials",
+                "Typing credentials is allowed; never paste or handle credentials",
+            ),
+            "credentials-never-paste": (
+                "Never type, paste, or handle credentials",
+                "Never type credentials; pasting is allowed; never handle credentials",
+            ),
+            "credentials-never-handle": (
+                "Never type, paste, or handle credentials",
+                "Never type or paste credentials; handling them is allowed",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-credentials-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stderr)
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(rule=rule):
+                    for path, content in zip(candidates, intact):
+                        self.assertIn(original, content)
+                        path.write_text(content.replace(original, weakened, 1), encoding="utf-8")
+                    result = run_checker()
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertIn(rule, result.stdout + result.stderr)
 
     def test_native_home_profiles_fail_closed_through_files_entrypoint(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -208,9 +270,17 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "never use pkill or pgrep -f.",
                 "use pkill or pgrep -f.",
             ),
-            "credentials": (
+            "credentials-never-type": (
                 "Never type, paste, or handle credentials.",
-                "Type credentials if the user asks.",
+                "Never paste or handle credentials.",
+            ),
+            "credentials-never-paste": (
+                "Never type, paste, or handle credentials.",
+                "Never type or handle credentials.",
+            ),
+            "credentials-never-handle": (
+                "Never type, paste, or handle credentials.",
+                "Never type or paste credentials.",
             ),
             "public-exposure": (
                 "Never publicly expose a service or run bb connect expose without explicit approval.",

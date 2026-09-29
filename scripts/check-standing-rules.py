@@ -44,9 +44,9 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never\s+use\s+(?:`?pkill`?\s+or\s+`?pgrep\s+-f`?|"
         r"`?pgrep\s+-f`?\s+or\s+`?pkill`?)"
     ),
-    "credentials": re.compile(
-        r"(?is)never\s+(?:type|paste|handle).{0,80}credentials"
-    ),
+    "credentials-never-type": re.compile(r"(?is)never.{0,35}\btype\b.{0,50}credentials"),
+    "credentials-never-paste": re.compile(r"(?is)never.{0,35}\bpaste\b.{0,50}credentials"),
+    "credentials-never-handle": re.compile(r"(?is)never.{0,35}\bhandle\b.{0,50}credentials"),
     "public-exposure": re.compile(
         r"(?is)(?:(?:never|do not).{0,45}(?:publicly\s+expose|expose(?:\s+a)?\s+service|"
         r"run\s+`?bb connect expose`?).{0,140}(?:unless|without).{0,60}(?:explicit|user asks)|"
@@ -287,6 +287,17 @@ RULES: dict[str, re.Pattern[str]] = {
     "security-strongest-exploit-path": re.compile(
         r"(?is)exploit[- ]validation.{0,70}severity.{0,70}fix[- ]design.{0,70}strongest reasoning path"
     ),
+    "typed-decisions-jev-system-one": re.compile(
+        r"(?is)run semantic atomic judgments on Jev.{0,120}(?:in batches|batched).{0,80}"
+        r"isolated.{0,80}recorded as `?system-one`?"
+    ),
+    "typed-decisions-jev-never-sole-control": re.compile(
+        r"(?is)(?:alone never enough for an irreversible\s+or security call|"
+        r"never use Jev.{0,100}alone for irreversible/security calls)"
+    ),
+    "typed-decisions-jev-no-hooks-or-secrets": re.compile(
+        r"(?is)never (?:use Jev )?in a blocking hook.{0,100}(?:never )?with secrets"
+    ),
     "no-gc-user-owned-state": re.compile(
         r"(?is)never garbage-collect repositories,\s*journals,\s*user-owned sessions,\s*or active sessions"
     ),
@@ -310,6 +321,8 @@ RULES: dict[str, re.Pattern[str]] = {
     ),
 }
 OPTIONAL_WHEN_ABSENT = {
+    "credentials-never-paste",
+    "credentials-never-handle",
     "no-pkill-pgrep-app-kill-path",
     "worktree-own-bb-environment",
     "no-gc-user-owned-state",
@@ -402,6 +415,7 @@ LIVE_HOME_RULES = {
         "child-thread-cap-six-with-orchestration", "browser-no-standard-preamble",
     },
     "bb": {
+        "credentials-never-paste", "credentials-never-handle",
         "browser-enumerate-before-open", "browser-close-every-slice-outcome",
         "browser-lifecycle-ops-noncreating", "worktree-own-bb-environment",
         "browser-close-before-isolation-change", "browser-no-dedicated-takeover-claim",
@@ -411,6 +425,7 @@ LIVE_HOME_RULES = {
     },
 }
 KIT_BASELINE_RULES = {
+    "credentials-never-paste", "credentials-never-handle",
     "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
     "browser-enumerate-before-open", "browser-leak-readonly-only",
     "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
@@ -462,10 +477,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "f227426b763a96bf471b64e2097a9db161266b13dfcf6b7f10b43753d6619be2": "proposal-claude",
-    "81de14ddb628ed392afc9982fdea109eac9ee91acd3f28e25abc61498f2c31ca": "proposal-codex",
-    "0e5691222e267aecd39eea4bd5acccc6e53d5be34e3d5c8c3d2b00d445536230": "proposal-opencode",
-    "8200dbfb887d50bfa07e9b0926a530d6f87611d36a26f714f92f4c4a30fea5b0": "proposal-bb",
+    "6d7f6e847b11b43a9c1bcf2ec7fd3a3200f657d66c9d295119099f3284f54f8e": "proposal-claude",
+    "99b8729bc8f28e5c9974e0152a18817ed4674a442b89027b34f527a759b9a8d8": "proposal-codex",
+    "bce235ccaedce062891d6471063676ff17da6c57df33d3a8d1535cd49c1a5d60": "proposal-opencode",
+    "c1b20e504a9b63211da862a3262232020f7e7295cdcaac76d1e8c2f03fa4012c": "proposal-bb",
 }
 
 
@@ -579,6 +594,8 @@ def historical_clause(text: str, position: int) -> bool:
 
 def optional_present(name: str, text: str) -> bool:
     if name == "no-pkill-pgrep-app-kill-path":
+        return bool(RULES[name].search(text))
+    if name.startswith("credentials-never-"):
         return bool(RULES[name].search(text))
     if name == "worktree-own-bb-environment":
         return bool(RULES[name].search(text))
