@@ -135,6 +135,13 @@ RULES: dict[str, re.Pattern[str]] = {
         r".{0,180}never ask Hermes to mount a project source|"
         r"Hermes.{0,40}will never hold a project source)"
     ),
+    "hermes-prompts-use-stdin": re.compile(
+        r"(?is)use only the approved broker to send bounded (?:Hermes )?prompts via SSH stdin"
+    ),
+    "hermes-no-prompts-in-argv": re.compile(r"(?is)never put prompts in argv"),
+    "hermes-no-local-terminal-socket": re.compile(
+        r"(?is)never put prompts in argv(?:,| or) require a local terminal socket"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -235,6 +242,9 @@ OPTIONAL_WHEN_ABSENT = {
     "hermes-no-cmux-capability-export",
     "hermes-agent-no-model-override",
     "hermes-no-project-source",
+    "hermes-prompts-use-stdin",
+    "hermes-no-prompts-in-argv",
+    "hermes-no-local-terminal-socket",
 }
 
 HOME_FILES = (
@@ -377,6 +387,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "hermes-no-cmux-capability-export",
                     "hermes-agent-no-model-override",
                     "hermes-no-project-source",
+                    "hermes-prompts-use-stdin",
+                    "hermes-no-prompts-in-argv",
+                    "hermes-no-local-terminal-socket",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -413,6 +426,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-no-cmux-capability-export",
                 "hermes-agent-no-model-override",
                 "hermes-no-project-source",
+                "hermes-prompts-use-stdin",
+                "hermes-no-prompts-in-argv",
+                "hermes-no-local-terminal-socket",
             })
         missing = missing_rules(
             content,

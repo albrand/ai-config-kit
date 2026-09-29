@@ -135,6 +135,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "hermes-no-cmux-capability-export",
             "hermes-agent-no-model-override",
             "hermes-no-project-source",
+            "hermes-prompts-use-stdin",
+            "hermes-no-prompts-in-argv",
+            "hermes-no-local-terminal-socket",
         }
         mutations = {
             "hermes-no-reverse-ssh": (
@@ -160,6 +163,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "hermes-no-project-source": (
                 "Never place or retain a project source on Hermes (srv1677963).",
                 "Project source may be stored on Hermes (srv1677963).",
+            ),
+            "hermes-prompts-use-stdin": (
+                "Use only the approved broker to send bounded Hermes prompts via SSH stdin",
+                "Send prompts using any available route",
+            ),
+            "hermes-no-prompts-in-argv": (
+                "Never put prompts in argv",
+                "Prompts may be placed in argv",
+            ),
+            "hermes-no-local-terminal-socket": (
+                "Never put prompts in argv or require a local terminal socket",
+                "Never put prompts in argv; a terminal socket may be required",
             ),
         }
         providers = [

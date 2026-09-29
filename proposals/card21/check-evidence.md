@@ -10,8 +10,8 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (52 regexes; 33 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 52 regexes,
+matched applicable rules in the final checker (55 regexes; 35 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 55 regexes,
 including each Codex-only context-GC, email-consent, browser-lifecycle,
 browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
@@ -36,9 +36,10 @@ cookie isolation” instructions, and “do not enumerate before open.”
 Hermes transport fixtures combine each rendered provider with the shared bb
 baseline and separately weaken reverse SSH, listeners, broad environment
 forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, and the
-`acp-hermes-agent --model` override prohibition. A separate mutation weakens the
-absolute ban on placing or retaining project source on Hermes while preserving
-the old “never ask Hermes to mount” wording; the checker must still reject it.
+`acp-hermes-agent --model` override prohibition. Tests also require broker SSH
+stdin, reject prompts in argv and local terminal socket requirements, and weaken
+the absolute ban on placing or retaining project source on Hermes while
+preserving the old “never ask Hermes to mount” wording; the checker still rejects it.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -52,13 +53,13 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (52 regexes)
+PASS all 5 files contain all applicable rules (55 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (52 regexes)
+PASS all 5 files contain all applicable rules (55 regexes)
 ```
 
 Unit-test stdout:

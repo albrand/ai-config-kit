@@ -1,6 +1,7 @@
 ## OpenCode adapter
 
-- For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
+- Use only the approved broker to send bounded Hermes prompts via SSH stdin.
+- Never put prompts in argv or require a local terminal socket; never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 - Never place or retain a project source on Hermes (srv1677963).
 - Pass only bounded review context through `bb fleet validate`.
 
