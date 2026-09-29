@@ -573,6 +573,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily quit the running bb app.",
                 "For this task, you are permitted to explicitly quit the running bb app.",
                 "For this task, you are allowed to explicitly quit the running bb app.",
+                "For this task, you may now temporarily quit the running bb app.",
                 "Quitting the running bb app is allowed.",
             ),
             "bb-app-never-kill": (
@@ -584,6 +585,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily kill the running bb app.",
                 "For this task, you are permitted to explicitly kill the running bb app.",
                 "For this task, you are allowed to explicitly kill the running bb app.",
+                "For this task, you may now temporarily kill the running bb app.",
                 "Killing the running bb app is allowed.",
             ),
             "bb-app-never-replace": (
@@ -595,6 +597,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily replace the running bb app.",
                 "For this task, you are permitted to explicitly replace the running bb app.",
                 "For this task, you are allowed to explicitly replace the running bb app.",
+                "For this task, you may now temporarily replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
@@ -606,6 +609,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily move `/Applications/bb.app`.",
                 "For this task, you are permitted to explicitly move `/Applications/bb.app`.",
                 "For this task, you are allowed to explicitly move `/Applications/bb.app`.",
+                "For this task, you may now temporarily move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-delete": (
@@ -617,6 +621,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily delete `/Applications/bb.app`.",
                 "For this task, you are permitted to explicitly delete `/Applications/bb.app`.",
                 "For this task, you are allowed to explicitly delete `/Applications/bb.app`.",
+                "For this task, you may now temporarily delete `/Applications/bb.app`.",
                 "Deleting `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-overwrite": (
@@ -628,6 +633,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to temporarily overwrite `/Applications/bb.app`.",
                 "For this task, you are permitted to explicitly overwrite `/Applications/bb.app`.",
                 "For this task, you are allowed to explicitly overwrite `/Applications/bb.app`.",
+                "For this task, you may now temporarily overwrite `/Applications/bb.app`.",
                 "Overwriting `/Applications/bb.app` is allowed.",
             ),
         }
@@ -660,6 +666,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     temporary_allowed_to,
                     adverb_permitted_to,
                     adverb_allowed_to,
+                    intervening_adverbs,
                     explicit_permission,
                 ) in clauses.items():
                 mutations = (
@@ -671,6 +678,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         ("temporary allowed override", temporary_allowed_to),
                         ("adverb permitted override", adverb_permitted_to),
                         ("adverb allowed override", adverb_allowed_to),
+                        ("multiple intervening adverbs", intervening_adverbs),
                     ("explicit permission", explicit_permission),
                 )
                 for mutation, replacement in mutations:

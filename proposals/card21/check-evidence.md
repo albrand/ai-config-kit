@@ -129,8 +129,8 @@ move, delete, and overwrite prohibitions in all four rendered homes; all 48
 `--files` mutations are rejected. A second fixture wraps a task exception onto
 the following line for each prohibition and adds task-specific `you may`,
 `you are explicitly permitted to`, `you are explicitly allowed to`, temporary
-and intervening-adverb permission forms, and explicit allowed-permission
-sentences; all 216
+and intervening-adverb permission forms, including multiword modifiers, and
+explicit allowed-permission sentences; all 240
 exception and permission mutations fail through `--files`.
 Each mutation supplies all four rendered homes as separate `--files`
 candidates, changing the same rule in each; the checker reports each path
