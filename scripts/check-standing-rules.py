@@ -603,7 +603,7 @@ INSTALLED_HOME_SHA256 = {
     "83108ab1c496983ba94eca18bce14db8cfd46ec90b476e37e8f0325f76b45c01": "proposal-claude",
     "30bf13a8eedc8f4092809814119db080a19e02311487588d8639bcc6bd0652e9": "proposal-codex",
     "4e1a8a966101676f65ec122253286cd874ddadae77f5640bf0129e9cad078f14": "proposal-opencode",
-    "e0109c60919f4ebe6f5596efa31d9a26a8788acf8382834e3ba5ecbf1e600feb": "proposal-bb",
+    "5d504e7dd7a63680853060f17973bfa82a47ee81088bd1204a882782823d7ea9": "proposal-bb",
 }
 
 
