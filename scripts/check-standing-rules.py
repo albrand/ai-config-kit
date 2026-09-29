@@ -687,8 +687,9 @@ def contradicted_rule(name: str, text: str) -> bool:
     if name == "safety-hook-block-cannot-be-bypassed":
         direct_app_action = re.compile(
             r"(?im)(?:^|[.!?]\s+)(?:[-*]\s*)?(?:for this task,\s*)?"
-            r"(?:please\s+)?(?:temporarily\s+)?(?:quit|kill|replace)\s+"
-            r"(?:the\s+)?running\s+bb\s+app\b"
+            r"(?:please\s+)?(?:(?:forcibly|forcefully|temporarily|immediately|now|directly)\s+){0,3}"
+            r"(?:(?:quit|kill|replace)\s+(?:the\s+)?running\s+bb\s+app|"
+            r"(?:move|delete|overwrite)\s+`?/Applications/bb\.app`?)\b"
         )
         if direct_app_action.search(text):
             return True

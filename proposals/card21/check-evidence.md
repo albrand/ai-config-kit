@@ -170,16 +170,18 @@ OK
 Safety-hook block policy has a dedicated regex and contradiction veto. Through
 the real `--files` entrypoint, each of four intact rendered homes passes;
 deletion, direct bypass permission, an `unless necessary` exception, and
-task-specific `explicitly permitted/allowed to bypass` clauses, a direct
-task-specific `kill the running bb app` command, both
+task-specific `explicitly permitted/allowed to bypass` clauses, direct
+task-specific commands for quit, kill (including “forcibly kill”), replace,
+move, delete, and overwrite of the running app/bundle, both
 `never`/`do not` exception forms, passive permission, and conditional action
 forms, condition-first bypass forms, and exception-before-prohibition variants
-all fail for each home (156 mutations). The checker also passes all four
+all fail for each home (180 mutations). The checker also passes all four
 unchanged live-home files and the kit source.
 
-After adding the direct-command regression, the complete test module passed
-again (45 tests). The focused direct-command case passes all four intact homes
-and rejects the appended command through `--files` for each rendered home.
+After generalizing direct-command detection across all six app/bundle actions,
+the complete test module passed again (45 tests). The focused case passes all
+four intact homes and rejects each appended command through `--files` for every
+rendered home.
 
 Live homes were not modified. The renderer remains in proposal mode; its
 `--install` option was not run.
