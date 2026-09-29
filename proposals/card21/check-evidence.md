@@ -17,7 +17,7 @@ browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
 marker on the matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **22 tests, OK**. Fixtures cover
+`python3 scripts/test_check_standing_rules.py`: **28 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -28,15 +28,16 @@ different-message consent, and delete each mail-safety obligation in turn.
 Mutation cases weaken each remaining hard prohibition and require the checker
 to reject the change. Browser tests combine every actual rendered provider
 proposal with the rendered bb baseline, then delete or weaken page ownership,
-enumeration/lifecycle, target-ID isolation, post-leak read-only mode, quarantine
-surviving restarts, regression-gated re-enablement, and no-prompt-bypass rules.
+enumeration/lifecycle and target-ID isolation rules.
 They also reject opposite “do not close” and “do not close before cookie
 isolation” instructions, and “do not enumerate before open.”
 The provider hard-rule source independently retains browser-input mutation,
-persistent per-input quarantine, and exclusive-delivery proof. A separate test
-copies each native proposal without the bb baseline, deletes/weakens each of
-those three rules, and invokes `check-standing-rules.py --files` as a subprocess;
-all nine standalone cases fail as required.
+persistent per-input quarantine, exclusive-delivery proof, read-only-only after
+leaks, quarantine across agents/restarts, regression-gated re-enablement, and
+no-prompt-bypass. A separate test copies each native proposal without the bb
+baseline, deletes/weakens each of those seven rules, and invokes
+`check-standing-rules.py --files` as a subprocess; all 21 standalone cases fail
+as required.
 Hermes transport fixtures combine each rendered provider with the shared bb
 baseline and separately weaken reverse SSH, listeners, broad environment
 forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, and the
@@ -86,7 +87,7 @@ PASS all 5 files contain all applicable rules (72 regexes)
 Unit-test stdout:
 
 ```text
-Ran 27 tests
+Ran 28 tests
 OK
 ```
 

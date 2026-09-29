@@ -437,6 +437,22 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects",
                 "deliver inputs based on the owned page's identifier",
             ),
+            "browser-leak-readonly-only": (
+                "On any non-target input leak, preserve sessions and allow read-only browser operations only",
+                "On any non-target input leak, preserve sessions and continue browser writes",
+            ),
+            "browser-quarantine-survives-restart": (
+                "A new agent, resumed session, restart, or runtime-ID change never clears quarantine",
+                "A new agent, resumed session, restart, or runtime-ID change clears quarantine",
+            ),
+            "browser-quarantine-reenable-regression": (
+                "Re-enable only after a fixed or changed build identity passes a regression proving no non-target PTY/UI input",
+                "Re-enable after an ordinary check",
+            ),
+            "browser-prompts-cannot-bypass-quarantine": (
+                "ordinary agent prompts cannot bypass this gate",
+                "ordinary agent prompts may bypass this gate",
+            ),
         }
         with tempfile.TemporaryDirectory(prefix="card21-standalone-") as temp_dir:
             standalone_dir = Path(temp_dir) / "rendered-homes"
@@ -472,10 +488,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-lifecycle-ops-noncreating",
             "browser-close-every-slice-outcome",
             "browser-target-id-is-not-proof",
-            "browser-leak-readonly-only",
-            "browser-quarantine-survives-restart",
-            "browser-quarantine-reenable-regression",
-            "browser-prompts-cannot-bypass-quarantine",
             "browser-no-dedicated-takeover-claim",
             "browser-no-foreground-takeover-claim",
             "browser-no-unverified-login-claim",
@@ -508,22 +520,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-target-id-is-not-proof": (
                 "target IDs or a successful return do not prove isolation",
                 "target IDs and successful returns prove isolation",
-            ),
-            "browser-leak-readonly-only": (
-                "On any non-target input leak, preserve sessions and allow read-only browser operations only.",
-                "After a non-target input leak, continue browser writes after warning.",
-            ),
-            "browser-quarantine-survives-restart": (
-                "A new agent, resumed session, restart, or runtime-ID change never clears quarantine.",
-                "A new agent or restart clears quarantine.",
-            ),
-            "browser-quarantine-reenable-regression": (
-                "Re-enable only after a fixed or changed build identity passes a regression proving no non-target PTY/UI input",
-                "Re-enable after an ordinary check",
-            ),
-            "browser-prompts-cannot-bypass-quarantine": (
-                "ordinary agent prompts cannot bypass this gate",
-                "ordinary agent prompts may bypass this gate",
             ),
             "browser-no-dedicated-takeover-claim": (
                 "Never describe a shared-window takeover as dedicated",

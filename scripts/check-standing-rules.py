@@ -505,6 +505,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "browser-input-is-mutation",
                     "browser-exclusive-delivery-proof",
                     "browser-persistent-quarantine-per-input",
+                    "browser-leak-readonly-only",
+                    "browser-quarantine-survives-restart",
+                    "browser-quarantine-reenable-regression",
+                    "browser-prompts-cannot-bypass-quarantine",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -528,10 +532,6 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "browser-lifecycle-ops-noncreating",
                 "browser-close-every-slice-outcome",
                 "browser-target-id-is-not-proof",
-                "browser-leak-readonly-only",
-                "browser-quarantine-survives-restart",
-                "browser-quarantine-reenable-regression",
-                "browser-prompts-cannot-bypass-quarantine",
                 "browser-no-dedicated-takeover-claim",
                 "browser-no-foreground-takeover-claim",
                 "browser-no-unverified-login-claim",

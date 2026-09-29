@@ -57,7 +57,7 @@ multiple topics on a row share the stated origin, not a generated source.
 | Directive challenge, decisions, native-agent surfaces | Directive challenge and decisions | `typed-decisions`, `NATIVE_AGENT_SURFACES.md` |
 | Security-first defaults | Security and hard prohibitions | `SECURITY_AND_PENTEST.md`, `QUALITY_GATES.md`, `adversarial-security-sweep` |
 | Email, credential, public exposure, app, personal browser, feature flags, worktree, AI signatures | Full compact hard-rule block in every proposed provider home; bb baseline carries the same rules | Detailed procedures remain in `isolated-browser`, `verified-qa-e2e`, `shared-host-capacity`, and `meaningful-tests` where applicable |
-| Browser pages, login, takeover, and input quarantine | Provider hard-rule source retains isolated browser use plus the rule that each input is a mutation requiring persistent per-input quarantine and adapter proof of exclusive delivery with zero terminal/OS input side effects. The bb adapter adds enumerate-before-open, page ownership/lifecycle, leak quarantine, restart/re-enable gates, prompt restrictions, and takeover evidence rules. Browser E2E, authentication, seeded identity, login handoff, QA publication, and E2E completion all require `verified-qa-e2e`; a missing/failing gate blocks the action. | `isolated-browser`, `verified-qa-e2e` and its deterministic gate; adapter enforcement/regression detail stays in the browser-isolation skill |
+| Browser pages, login, takeover, and input quarantine | Provider hard-rule source retains isolated browser use, input-as-mutation, per-input quarantine, exclusive-delivery proof, read-only-only after leaks, quarantine across sessions/restarts, regression-gated re-enablement, and no prompt bypass. The bb adapter adds enumerate-before-open, page ownership/lifecycle, target-ID isolation, and takeover evidence rules. Browser E2E, authentication, seeded identity, login handoff, QA publication, and E2E completion all require `verified-qa-e2e`; a missing/failing gate blocks the action. | `isolated-browser`, `verified-qa-e2e` and its deterministic gate; adapter enforcement/regression detail stays in the browser-isolation skill |
 | Hermes/cmux transport | Global Hermes/cmux section requires broker lanes to default off at concurrency/depth 1 with explicit activation, keeps those limits separate from bb child threads, requires bounded prompts through approved broker SSH stdin, prohibits argv prompts, local terminal sockets, reverse SSH, listeners, broad environment forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, `acp-hermes-agent --model`, and placing/retaining project source on Hermes. Review context goes only through bounded `bb fleet validate` evidence. | `CMUX_HERMES_ORCHESTRATION.md`; covered by per-prohibition checker mutations |
 | Testing claims, workflow verdicts, reporting, evidence, re-review, QA posts | Testing and reporting | `meaningful-tests`, `TEST_OWNERSHIP.md`, `QUALITY_CONVERGENCE.md`, `verified-qa-e2e`, `high-signal-pr-review` |
 | Token efficiency, mutation ledger, retry cost model | Token-efficient orchestration | `TOKEN_EFFICIENT_ORCHESTRATION.md` |
@@ -81,11 +81,12 @@ now emits the same compact typed block used by those proposals.
 
 After compaction, each provider file repeats the short hard-rule block and
 typed-decisions block required by existing homes; general process, delivery,
-testing, token, and bb-specific transport/browser procedures live in the
-bb-injected baseline. The hard-rule source also carries standalone delegation
-authorization boundaries (scale/fan-out, outward effects, child caps, broker
-activation, dependency approval), since native provider contexts do not load the
-bb baseline outside bb. Tests check each provider proposal by itself. Thus the
+testing, token, and detailed bb-specific transport/browser lifecycle procedures
+live in the bb-injected baseline. The hard-rule source also carries standalone
+delegation authorization boundaries (scale/fan-out, outward effects, child
+caps, broker activation, dependency approval) and the browser input quarantine
+contract, since native provider contexts do not load the bb baseline outside bb.
+Tests check each provider proposal by itself. Thus the
 identical `delivery-first` and `token-efficient-orchestration` blocks no longer
 repeat in Claude/Codex/OpenCode files, while named hard prohibitions remain in
 every proposal.
