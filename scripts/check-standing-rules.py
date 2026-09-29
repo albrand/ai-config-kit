@@ -719,16 +719,18 @@ def contradicted_rule(name: str, text: str) -> bool:
                 continue
             policy = line
             for continuation in lines[index + 1:]:
-                if not continuation.strip() or re.match(r"^\s*[-*]\s", continuation):
+                if re.match(r"^\s*[-*]\s", continuation):
                     break
+                if not continuation.strip():
+                    continue
                 policy += " " + continuation.strip()
                 if len(policy) > len(line) + 240:
                     break
             if re.search(r"\b(?:unless|except)\b", policy, re.IGNORECASE):
                 return True
         permission_patterns = (
-            rf"\b(?:you\s+)?(?:may|can)\s+{action}\b.{{0,100}}{target}",
-            rf"\b(?:you\s+are\s+)?(?:explicitly\s+)?(?:permitted|allowed)\s+to\s+{action}\b.{{0,100}}{target}",
+            rf"\b(?:you\s+)?(?:may|can)\s+(?:temporarily\s+)?{action}\b.{{0,100}}{target}",
+            rf"\b(?:you\s+are\s+)?(?:explicitly\s+)?(?:permitted|allowed)\s+to\s+(?:temporarily\s+)?{action}\b.{{0,100}}{target}",
             rf"\b{gerund}\s+{target}.{{0,80}}\b(?:allowed|permitted)\b",
         )
         if any(re.search(pattern, text, re.IGNORECASE | re.DOTALL) for pattern in permission_patterns):

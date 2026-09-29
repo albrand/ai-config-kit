@@ -568,6 +568,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may quit the running bb app.",
                 "For this task, you are explicitly permitted to quit the running bb app.",
                 "For this task, you are explicitly allowed to quit the running bb app.",
+                "For this task, you are explicitly permitted to temporarily quit the running bb app.",
+                "For this task, you are explicitly allowed to temporarily quit the running bb app.",
                 "Quitting the running bb app is allowed.",
             ),
             "bb-app-never-kill": (
@@ -575,6 +577,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may kill the running bb app.",
                 "For this task, you are explicitly permitted to kill the running bb app.",
                 "For this task, you are explicitly allowed to kill the running bb app.",
+                "For this task, you are explicitly permitted to temporarily kill the running bb app.",
+                "For this task, you are explicitly allowed to temporarily kill the running bb app.",
                 "Killing the running bb app is allowed.",
             ),
             "bb-app-never-replace": (
@@ -582,6 +586,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may replace the running bb app.",
                 "For this task, you are explicitly permitted to replace the running bb app.",
                 "For this task, you are explicitly allowed to replace the running bb app.",
+                "For this task, you are explicitly permitted to temporarily replace the running bb app.",
+                "For this task, you are explicitly allowed to temporarily replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
@@ -589,6 +595,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may move `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to move `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to move `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to temporarily move `/Applications/bb.app`.",
+                "For this task, you are explicitly allowed to temporarily move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-delete": (
@@ -596,6 +604,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may delete `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to delete `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to delete `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to temporarily delete `/Applications/bb.app`.",
+                "For this task, you are explicitly allowed to temporarily delete `/Applications/bb.app`.",
                 "Deleting `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-overwrite": (
@@ -603,6 +613,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you may overwrite `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to overwrite `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to overwrite `/Applications/bb.app`.",
+                "For this task, you are explicitly permitted to temporarily overwrite `/Applications/bb.app`.",
+                "For this task, you are explicitly allowed to temporarily overwrite `/Applications/bb.app`.",
                 "Overwriting `/Applications/bb.app` is allowed.",
             ),
         }
@@ -626,12 +638,22 @@ class StandingRuleCheckerTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
             for provider_index, path in enumerate(candidates):
-                for rule, (original, task_permission, permitted_to, allowed_to, explicit_permission) in clauses.items():
+                for rule, (
+                    original,
+                    task_permission,
+                    permitted_to,
+                    allowed_to,
+                    temporary_permitted_to,
+                    temporary_allowed_to,
+                    explicit_permission,
+                ) in clauses.items():
                     mutations = (
-                        ("wrapped exception", original + "\n  unless needed to finish the task."),
+                        ("blank-line wrapped exception", original + "\n\n  unless needed to finish the task."),
                         ("task-specific permission", task_permission),
                         ("explicitly permitted permission", permitted_to),
                         ("explicitly allowed permission", allowed_to),
+                        ("temporary permitted override", temporary_permitted_to),
+                        ("temporary allowed override", temporary_allowed_to),
                         ("explicit permission", explicit_permission),
                     )
                     for mutation, replacement in mutations:
@@ -639,7 +661,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                             for candidate, content in zip(candidates, intact):
                                 candidate.write_text(content, encoding="utf-8")
                             content = intact[provider_index]
-                            if mutation == "wrapped exception":
+                            if mutation == "blank-line wrapped exception":
                                 self.assertIn(original, content)
                                 content = content.replace(original, replacement, 1)
                             else:
