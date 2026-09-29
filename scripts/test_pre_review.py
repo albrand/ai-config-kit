@@ -545,6 +545,53 @@ class PreReviewTests(unittest.TestCase):
                 for marker in markers:
                     self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
 
+    def test_focused_python_timeout_scales_to_suite_and_bounds_hung_suite(self) -> None:
+        source_file = self.repo / "src" / "feature.py"
+        source_file.parent.mkdir()
+        source_file.write_text("VALUE = 1\n", encoding="utf-8")
+        test_file = self.repo / "tests" / "test_feature.py"
+        test_file.parent.mkdir()
+
+        def write_suite(sleep_seconds: float) -> None:
+            cases = [
+                "    def test_case_{:03d}(self):\n        {}\n".format(
+                    index,
+                    f"time.sleep({sleep_seconds})" if index == 0 else "self.assertTrue(True)",
+                )
+                for index in range(100)
+            ]
+            test_file.write_text(
+                "import time\n"
+                "import unittest\n"
+                "class FeatureTests(unittest.TestCase):\n"
+                + "".join(cases)
+                + "if __name__ == '__main__':\n    unittest.main()\n",
+                encoding="utf-8",
+            )
+
+        write_suite(0.4)
+        git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
+        git(self.repo, "commit", "-m", "fixture selected Python suite")
+
+        # --timeout-scale makes one 10-second case slice 20 ms and the derived
+        # 10-minute suite ceiling 1.2 seconds. The selected suite takes longer
+        # than one case slice, but remains inside its aggregate budget.
+        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
+        slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertEqual(slow_result.returncode, 0, slow_result.stdout + slow_result.stderr)
+        self.assertEqual(slow_check["status"], "pass")
+        namespace = runpy.run_path(str(SCRIPT))
+        timeout = namespace["focused_python_test_timeout"](self.repo, ["tests/test_feature.py"])
+        self.assertEqual(timeout, 600)
+
+        write_suite(2)
+        git(self.repo, "add", "tests/test_feature.py")
+        git(self.repo, "commit", "-m", "fixture hung Python test")
+        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.002")
+        hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
+        self.assertEqual(hung_check["status"], "timeout")
+
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
         with patch.object(namespace["subprocess"], "run", side_effect=subprocess.TimeoutExpired(["slow-check"], 1, output=b"still running")):

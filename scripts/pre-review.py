@@ -23,6 +23,9 @@ from typing import Any
 PACKET_BUDGET = 64 * 1024
 OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
+DEFAULT_CHECK_TIMEOUT_SECONDS = 120
+FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS = 10
+MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS = 600
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
@@ -337,7 +340,7 @@ def binary_path(repo: Path, name: str) -> str | None:
     return shutil.which(name)
 
 
-def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 120,
+def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
                    timeout_scale: float = 1.0, skip_reason: str | None = None,
                    output_dir: Path | None = None,
                    unavailable_reason: str | None = None) -> dict[str, Any]:
@@ -547,6 +550,26 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
         else:
             commands.append(("focused-typescript-tests", [], "no configured focused TypeScript test runner"))
     return commands
+
+
+def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
+    """Budget up to ten seconds per discovered test case, capped at ten minutes."""
+    case_count = 0
+    for path in tests:
+        try:
+            tree = ast.parse((repo / path).read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        case_count += sum(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test")
+            for node in ast.walk(tree)
+        )
+    case_count = max(case_count, len(tests), 1)
+    return min(
+        MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS,
+        max(DEFAULT_CHECK_TIMEOUT_SECONDS, case_count * FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS),
+    )
 
 
 def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
@@ -1691,7 +1714,7 @@ def main(argv: list[str] | None = None) -> int:
     target_error = setup_error if execution_mode == "unverified" or (execution_mode == "detached-worktree" and not worktree) else None
     dependency_error = setup_error if worktree else None
 
-    def run_check(name: str, argv: list[str], *, timeout: float = 120,
+    def run_check(name: str, argv: list[str], *, timeout: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
                   skip_reason: str | None = None, requires_hydration: bool = False) -> dict[str, Any]:
         return record_command(name, argv, repo, timeout=timeout, timeout_scale=args.timeout_scale,
                               skip_reason=skip_reason, output_dir=output_dir,
@@ -1800,10 +1823,14 @@ def main(argv: list[str] | None = None) -> int:
             commands.append(run_check("semgrep", [], skip_reason="semgrep not installed"))
 
     tests = related_test_paths(repo, paths)
-    commands.extend(run_check(name, argv, skip_reason=reason,
-                              requires_hydration=name in {"focused-playwright-tests", "focused-typescript-tests",
-                                                          "focused-node-tests"})
-                    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests))
+    python_tests = [path for path in tests if path.endswith(".py")]
+    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests):
+        timeout = (focused_python_test_timeout(repo, python_tests)
+                   if name == "focused-python-tests" else DEFAULT_CHECK_TIMEOUT_SECONDS)
+        commands.append(run_check(name, argv, timeout=timeout, skip_reason=reason,
+                                  requires_hydration=name in {"focused-playwright-tests",
+                                                              "focused-typescript-tests",
+                                                              "focused-node-tests"}))
 
     # Keep rule IDs stable and avoid reporting the same finding from both the
     # built-in safety net and Semgrep.
