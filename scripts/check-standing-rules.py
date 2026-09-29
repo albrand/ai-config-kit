@@ -115,6 +115,16 @@ RULES: dict[str, re.Pattern[str]] = {
     "browser-prompts-cannot-bypass-quarantine": re.compile(
         r"(?is)ordinary agent prompts cannot bypass this gate"
     ),
+    "browser-no-dedicated-takeover-claim": re.compile(
+        r"(?is)never (?:describe a shared-window takeover as|call (?:it|a shared-window takeover) a) dedicated"
+    ),
+    "browser-no-foreground-takeover-claim": re.compile(
+        r"(?is)(?:never.{0,100}foregrounded|(?:does not|cannot) prove.{0,80}"
+        r"(?:the )?target tab is foregrounded)"
+    ),
+    "browser-no-unverified-login-claim": re.compile(
+        r"(?is)never.{0,100}claim the exact login is open without adapter evidence"
+    ),
     "hermes-no-reverse-ssh": re.compile(r"(?is)never (?:create )?reverse SSH"),
     "hermes-no-listeners": re.compile(
         r"(?is)never (?:create )?reverse SSH(?: or|,) listeners"
@@ -244,6 +254,9 @@ OPTIONAL_WHEN_ABSENT = {
     "browser-quarantine-survives-restart",
     "browser-quarantine-reenable-regression",
     "browser-prompts-cannot-bypass-quarantine",
+    "browser-no-dedicated-takeover-claim",
+    "browser-no-foreground-takeover-claim",
+    "browser-no-unverified-login-claim",
     "hermes-no-reverse-ssh",
     "hermes-no-listeners",
     "hermes-no-broad-env-forwarding",
@@ -393,6 +406,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "browser-quarantine-survives-restart",
                     "browser-quarantine-reenable-regression",
                     "browser-prompts-cannot-bypass-quarantine",
+                    "browser-no-dedicated-takeover-claim",
+                    "browser-no-foreground-takeover-claim",
+                    "browser-no-unverified-login-claim",
                     "hermes-no-reverse-ssh",
                     "hermes-no-listeners",
                     "hermes-no-broad-env-forwarding",
@@ -434,6 +450,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "browser-quarantine-survives-restart",
                 "browser-quarantine-reenable-regression",
                 "browser-prompts-cannot-bypass-quarantine",
+                "browser-no-dedicated-takeover-claim",
+                "browser-no-foreground-takeover-claim",
+                "browser-no-unverified-login-claim",
                 "hermes-no-reverse-ssh",
                 "hermes-no-listeners",
                 "hermes-no-broad-env-forwarding",

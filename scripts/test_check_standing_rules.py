@@ -263,6 +263,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-quarantine-survives-restart",
             "browser-quarantine-reenable-regression",
             "browser-prompts-cannot-bypass-quarantine",
+            "browser-no-dedicated-takeover-claim",
+            "browser-no-foreground-takeover-claim",
+            "browser-no-unverified-login-claim",
         }
         mutations = {
             "browser-never-access-unowned": (
@@ -320,6 +323,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-prompts-cannot-bypass-quarantine": (
                 "ordinary agent prompts cannot bypass this gate",
                 "ordinary agent prompts may bypass this gate",
+            ),
+            "browser-no-dedicated-takeover-claim": (
+                "Never describe a shared-window takeover as dedicated",
+                "A shared-window takeover may be described as dedicated",
+            ),
+            "browser-no-foreground-takeover-claim": (
+                "Never describe a shared-window takeover as dedicated or foregrounded",
+                "A shared-window takeover may be described as foregrounded",
+            ),
+            "browser-no-unverified-login-claim": (
+                "claim the exact login is open without adapter evidence",
+                "claim the exact login is open after observing the shared window",
             ),
         }
         provider_files = [

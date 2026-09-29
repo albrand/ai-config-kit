@@ -10,8 +10,8 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (57 regexes; 35 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 57 regexes,
+matched applicable rules in the final checker (60 regexes; 36 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 60 regexes,
 including each Codex-only context-GC, email-consent, browser-lifecycle,
 browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
@@ -43,6 +43,8 @@ preserving the old “never ask Hermes to mount” wording; the checker still re
 The verified-QA mutation narrows triggers to login/auth only, modeling an
 already-authenticated browser E2E, and separately changes a missing or failing
 gate into an optional gate; both mutations must fail.
+Takeover mutations also reject calling a shared-window page dedicated or
+foregrounded and claiming the exact login is open without adapter evidence.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -56,13 +58,13 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (57 regexes)
+PASS all 5 files contain all applicable rules (60 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (57 regexes)
+PASS all 5 files contain all applicable rules (60 regexes)
 ```
 
 Unit-test stdout:
