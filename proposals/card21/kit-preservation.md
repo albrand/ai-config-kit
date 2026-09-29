@@ -1,7 +1,7 @@
 # Kit baseline rule preservation
 
 The actual pre-compression kit source is archived at
-`baseline/GLOBAL_AGENTS.md`; it is the `GLOBAL_AGENTS.md` blob at the initial
+`baseline/GLOBAL_AGENTS.card21-baseline.md`; it is the `GLOBAL_AGENTS.md` blob at the initial
 Card 21 worktree commit `b6775918a3f749bc643c76094aee8cedac5dbb11`.
 
 - Baseline: 42,565 bytes, SHA-256
