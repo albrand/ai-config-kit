@@ -187,23 +187,9 @@ TARGETS = {
 }
 
 GLOBAL_BLOCK = """<!-- typed-decisions:begin -->
-**Typed decisions (always-on)** — most agent steps are decisions (route, triage,
-in scope, risky, severity, pass/fail, done, escalate), not writing. For each:
-declare the answer space before asking (yes/no, pick-one, or a level whose
-levels are written out); an answer outside it is a failed decision, never one to
-interpret. Ask one atomic question at a time, judge each in isolation against
-the same state, and compose the verdict with explicit logic. Gate action on
-confidence — high acts, medium verifies, low escalates — and take confidence
-only from agreement across isolated judgments, a measurable check, or a recorded
-outcome history, never from a model's self-report. Typed is not correct: high
-confidence still gets the checks irreversible, security and release work
-require. Record each gated decision in the decision ledger with a findable
-`--ref`, and resolve it (held or overturned) when the truth arrives, even when
-the decision was another agent's. Run semantic atomic judgments on Jev,
-the System One decision model (`typed-decisions` section 10, `jev.py`):
-batched, isolated, recorded as `system-one`. Never in a blocking hook, never
-with secrets or personal data, and alone never enough for an irreversible
-or security call. Full detail: the `typed-decisions` skill.
+## Typed decisions
+
+Declare the answer space first; ask one atomic question at a time against identical state; compute the verdict. High confidence acts, medium verifies, low/out-of-space escalates. Confidence needs measured checks, isolated agreement, or resolved history, never self-report. Record each gated decision with a findable `--ref` and resolve it. Jev is advisory: never replace required checks, run in blocking hooks, or send secrets/personal data. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.
