@@ -40,6 +40,24 @@ RULES: dict[str, re.Pattern[str]] = {
     "bb-app-process": re.compile(
         r"(?is)never\s+(?:quit|kill|replace).{0,120}bb.{0,100}app"
     ),
+    "bb-app-never-quit": re.compile(
+        r"(?is)(?:never quit.{0,60}running bb app|quitting it.{0,80}ends everyone's running work)"
+    ),
+    "bb-app-never-kill": re.compile(
+        r"(?is)(?:never quit,\s*kill.{0,40}running bb app|never kill the running bb app|killing it.{0,80}ends everyone's running work)"
+    ),
+    "bb-app-never-replace": re.compile(
+        r"(?is)(?:never quit,\s*kill or replace.{0,40}running bb app|never quit,\s*kill, or replace.{0,40}running bb app|never replace the running bb app|replacing it.{0,80}ends everyone's running work)"
+    ),
+    "bb-app-bundle-never-move": re.compile(
+        r"(?is)(?:never move `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+    ),
+    "bb-app-bundle-never-delete": re.compile(
+        r"(?is)(?:never delete `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+    ),
+    "bb-app-bundle-never-overwrite": re.compile(
+        r"(?is)(?:never overwrite `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+    ),
     "dependencies-no-node-modules-symlink": re.compile(
         r"(?is)never symlink\s+`?node_modules`?"
     ),
@@ -574,10 +592,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "d3f83f4332f76e24cca690a6617ffab4d32f56502f45408ddfaafecf673a4059": "proposal-claude",
-    "a6c0da8e1d141bb12248d1e2d7d5a2a1b60365a3061c8d321b0e0d8f088227d8": "proposal-codex",
-    "bd713cbef32380e47ce3af2802e17bebea0ace4b50c0bfcae8a4fd6decccde31": "proposal-opencode",
-    "8fc8034fd9d6a4c96819cce744a69a2aa498209e8f0364337e58e2cbbd0efa04": "proposal-bb",
+    "92543e003d920338fe8a84aad5b470c185ab7f530990fb509f4bfcec62c57cdd": "proposal-claude",
+    "f34219c5db0e7b40d47935e2180c1b37859c4e15a8ec3de56a141d001f757d04": "proposal-codex",
+    "45d0ce5e1cd895537eefaae29a1447eb2b60216247e39ac218915c7bae2538c2": "proposal-opencode",
+    "eef9ff9213a3d625e7446f4e849ef38041c0113214b265d3fb2e138fac78ea82": "proposal-bb",
 }
 
 

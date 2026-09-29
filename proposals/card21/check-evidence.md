@@ -10,10 +10,10 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (102 regexes;
-57 Claude, 66 Codex, 62 OpenCode, 56 bb, and 95 kit rules applicable). The
-rendered proposals plus kit source also passed all 102 regexes: 86 Claude, 102
-Codex, 95 OpenCode, 95 bb, and 95 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (108 regexes;
+63 Claude, 72 Codex, 68 OpenCode, 62 bb, and 101 kit rules applicable). The
+rendered proposals plus kit source also passed all 108 regexes: 92 Claude, 108
+Codex, 101 OpenCode, 101 bb, and 101 kit rules applicable. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **42 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **43 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -103,6 +103,10 @@ the explicit outward-effect approval, large/unbounded fan-out approval, or
 cross-session cmux default-off boundary. Each test reads one rendered native
 provider file alone, without the bb baseline, and requires the appropriate
 regex to fail after each mutation.
+The real `--files` entrypoint checks quit, kill, replace, move, delete, and
+overwrite protections for the running bb app and `/Applications/bb.app` as six
+separate rules. Intact rendered files pass; deletion and reversal mutations for
+each rule across Claude, Codex, OpenCode, and bb fail (48 CLI cases).
 The real `--files` entrypoint now also requires every delegation, child-cap,
 dependency, and broker boundary in standalone provider proposals. A subprocess
 fixture runs all 12 mutations against each of Claude, Codex, and OpenCode;
@@ -120,6 +124,9 @@ The active-session fixture separately deletes and reverses the skill trigger,
 adapter-only attestations, authenticated exact-lease supersede chain, forbidden
 supersede input classes, and write-owner mismatch block in each provider; all
 30 `--files` mutations are rejected.
+The app/bundle fixture separately deletes and reverses the quit, kill, replace,
+move, delete, and overwrite prohibitions in all four rendered homes; all 48
+`--files` mutations are rejected.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -133,19 +140,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (102 regexes)
+PASS all 5 files contain all applicable rules (108 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (102 regexes)
+PASS all 5 files contain all applicable rules (108 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 42 tests
+Ran 43 tests
 OK
 ```
 

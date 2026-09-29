@@ -135,6 +135,7 @@ the named owner shown above.
 |---|---|---|
 | Delivery-first and scope continuity | Claude: delivery marker and Operating framework; Codex: delivery marker and Default Process; OpenCode: delivery marker and Core operating principles | delivery marker; ai-config-kit scope continuity |
 | Email/compose/send prohibition | Claude: Always-on behaviors; Codex/OpenCode: No Email Without Explicit Approval / Global email guard | Global email guard (OpenCode has copied email marker) |
+| Never quit/kill/replace the running bb app or move/delete/overwrite its installed bundle | Claude: Always-on behaviors; Codex: delivery-first hard prohibitions; OpenCode: delivery-first hard prohibitions | Global finish-the-job guard |
 | Isolated browser and login handling | Claude: Always-on behaviors; Codex: Browser Surface Isolation; OpenCode: Browser Surface Isolation | Global bb browser-login handoff guard; browser-surface-isolation marker |
 | Worktree ownership and removal | Claude: Always-on behaviors; Codex: Worktree Lifecycle; OpenCode: worktree-lifecycle marker | Global worktree lifecycle guard |
 | Shared-host limits, dependency handling, low-disk stop | Claude: Always-on behaviors; Codex: Worktree Lifecycle; OpenCode: worktree-lifecycle marker | Global worktree lifecycle guard |

@@ -5,4 +5,4 @@
 - Hermes defects block merges. Hermes runs independently; use `bb fleet validate` with bounded evidence. Fix transport faults instead of asking Hermes to mount a project source.
 - Never place or retain a project source on Hermes (srv1677963).
 - Never pass a `--model` override to `acp-hermes-agent`.
-- Before child work, route with `bb fleet route` and use exactly its provider/model/reasoning. Keep one writer per worktree; stop on collisions. Never quit or replace the running bb app.
+- Before child work, route with `bb fleet route` and use exactly its provider/model/reasoning. Keep one writer per worktree; stop on collisions.

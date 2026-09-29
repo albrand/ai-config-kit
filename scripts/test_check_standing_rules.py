@@ -15,7 +15,7 @@ SPEC.loader.exec_module(CHECKER)
 
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
-Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
+Never quit the running bb app. Never kill the running bb app. Never replace the running bb app. Never move `/Applications/bb.app`. Never delete `/Applications/bb.app`. Never overwrite `/Applications/bb.app`. Never use pkill or pgrep -f.
 Never symlink `node_modules`; below 20 GB free, start no installs or builds.
 One writer per PR, branch, and worktree. Never edit a sibling's worktree. On "Workspace collision detected", stop editing; survivor rereads `git diff` before committing.
 Automations single-flight per target; never treat their own agent's push as completion while its thread is still running.
@@ -435,12 +435,12 @@ class StandingRuleCheckerTest(unittest.TestCase):
     def test_weakened_hard_prohibitions_fail(self):
         mutations = {
             "bb-app-process": (
-                "Never quit, kill, or replace the running bb app;",
+                "Never quit the running bb app. Never kill the running bb app. Never replace the running bb app.",
                 "Quit the bb app when convenient;",
             ),
             "no-pkill-pgrep-app-kill-path": (
-                "never use pkill or pgrep -f.",
-                "use pkill or pgrep -f.",
+                "Never use pkill or pgrep -f.",
+                "Use pkill or pgrep -f.",
             ),
             "credentials-never-type": (
                 "Never type, paste, or handle credentials.",
@@ -497,6 +497,67 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         required_optional=set(CHECKER.OPTIONAL_WHEN_ABSENT),
                     ),
                 )
+
+    def test_rendered_homes_reject_each_bb_app_and_bundle_reversal(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        clauses = {
+            "bb-app-never-quit": (
+                "Never quit the running bb app.",
+                "Quitting the running bb app is allowed.",
+            ),
+            "bb-app-never-kill": (
+                "Never kill the running bb app.",
+                "Killing the running bb app is allowed.",
+            ),
+            "bb-app-never-replace": (
+                "Never replace the running bb app.",
+                "Replacing the running bb app is allowed.",
+            ),
+            "bb-app-bundle-never-move": (
+                "Never move `/Applications/bb.app`.",
+                "Moving `/Applications/bb.app` is allowed.",
+            ),
+            "bb-app-bundle-never-delete": (
+                "Never delete `/Applications/bb.app`.",
+                "Deleting `/Applications/bb.app` is allowed.",
+            ),
+            "bb-app-bundle-never-overwrite": (
+                "Never overwrite `/Applications/bb.app`.",
+                "Overwriting `/Applications/bb.app` is allowed.",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-bb-app-guard-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            for provider_index, path in enumerate(candidates):
+                for rule, (original, reversal) in clauses.items():
+                    for mutation, replacement in (("deletion", ""), ("reversal", reversal)):
+                        with self.subTest(provider=path.name, rule=rule, mutation=mutation):
+                            for candidate, content in zip(candidates, intact):
+                                candidate.write_text(content, encoding="utf-8")
+                            content = intact[provider_index]
+                            self.assertIn(original, content)
+                            path.write_text(content.replace(original, replacement, 1), encoding="utf-8")
+                            result = run_checker()
+                            self.assertNotEqual(0, result.returncode, result.stdout)
+                            self.assertIn(rule, result.stdout + result.stderr)
 
     def test_rendered_provider_contexts_preserve_hermes_transport_prohibitions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
