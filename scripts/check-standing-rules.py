@@ -686,13 +686,14 @@ def contradicted_rule(name: str, text: str) -> bool:
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
         recovery_exemption = re.compile(
-            r"(?is)\b(?:recovery|emergency|urgent|disaster recovery)"
+            r"(?is)\b(?:recovery|emergency|urgent|disaster[- ]recovery)"
             r"[\w -]{0,80}"
-            r"\b(?:exempt|excluded|not subject to)\b.{0,60}"
+            r"\b(?:exempt|excluded|not subject to|outside (?:the )?scope(?: of)?|"
+            r"out of scope|not covered by)\b.{0,60}"
             r"\b(?:this|that|the)\s+(?:rule|prohibition|policy|requirement|ban)\b"
             r"|\b(?:this|that|the)\s+(?:rule|prohibition|policy)\b.{0,80}"
             r"(?:does not apply|doesn't apply|is waived).{0,80}"
-            r"\b(?:recovery|emergency|urgent|disaster recovery)\b"
+            r"\b(?:recovery|emergency|urgent|disaster[- ]recovery)\b"
         )
         if recovery_exemption.search(text):
             return True
