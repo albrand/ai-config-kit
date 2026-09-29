@@ -685,6 +685,23 @@ def contradicted_rule(name: str, text: str) -> bool:
         if advisory_defect.search(text):
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
+        for match in re.finditer(
+            r"(?i)\bbypass(?:ing)?\s+(?:a\s+)?safety-hook block\b", text
+        ):
+            clause_start = max(
+                text.rfind("\n", 0, match.start()),
+                text.rfind(".", 0, match.start()),
+                text.rfind("!", 0, match.start()),
+                text.rfind("?", 0, match.start()),
+                text.rfind(";", 0, match.start()),
+            )
+            prefix = text[clause_start + 1 : match.start()]
+            if not re.search(
+                r"(?i)\b(?:never|do not|must not|should not|cannot|can't)"
+                r"(?:\s+\w+){0,2}\s*$",
+                prefix,
+            ):
+                return True
         bypass_permission = re.compile(
             r"(?is)(?:never|do not)\s+bypass\s+(?:a\s+)?safety-hook block"
             r".{0,100}\b(?:unless|except)\b|"
