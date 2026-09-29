@@ -40,6 +40,12 @@ RULES: dict[str, re.Pattern[str]] = {
     "bb-app-process": re.compile(
         r"(?is)never\s+(?:quit|kill|replace).{0,120}bb.{0,100}app"
     ),
+    "dependencies-no-node-modules-symlink": re.compile(
+        r"(?is)never symlink\s+`?node_modules`?"
+    ),
+    "disk-no-install-build-below-20gb": re.compile(
+        r"(?is)below 20 GB free.{0,80}(?:do not install/build|start no(?: new)? installs? or builds?)"
+    ),
     "no-pkill-pgrep-app-kill-path": re.compile(
         r"(?is)never\s+use\s+(?:`?pkill`?\s+or\s+`?pgrep\s+-f`?|"
         r"`?pgrep\s+-f`?\s+or\s+`?pkill`?)"
@@ -502,9 +508,9 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "9192a23f56ca92b5349f4593d190c61db3147e6441cde2b27e1ee258292900c4": "proposal-claude",
-    "ce66f430ce3557a9f42023388408a9ad64a4477f3551c128cdcc7dcac65a9fd9": "proposal-codex",
-    "0e3aa78745d47ea809d37b4ca917e8d1523641b9afaafe0734340ff7f1e85adf": "proposal-opencode",
+    "5e3661aa96e921a7a2a4bb1df53d5a9ef321a90fe9fa57675d65bc9858266218": "proposal-claude",
+    "9ef82c62269c2d73e6ee5acf2f6474765fb766b4a0ae3b31719ec081772aba44": "proposal-codex",
+    "d322bfa11c69651467f3c44b58ec4ce712beabe96a3983138f467c175dba698d": "proposal-opencode",
     "7212ac36accbe201d4fa77127aa83267b59a8f3ae0be49f2688bbacc3f484ccf": "proposal-bb",
 }
 

@@ -16,6 +16,7 @@ SPEC.loader.exec_module(CHECKER)
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
 Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
+Never symlink `node_modules`; below 20 GB free, start no installs or builds.
 Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
 Use only bb's isolated browser for interactive work; never use a personal browser. Call `browser_instances` before any `browser_open`; never use `browser_open` as a standard first step. Close the owned instance before changing cookie isolation. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
@@ -725,6 +726,47 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     "delegate-no-unapproved-dependencies",
                     CHECKER.missing_rules(damaged, required_optional=rules),
                 )
+
+    def test_standalone_provider_homes_require_dependency_and_disk_safeguards(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md"]
+        clauses = {
+            "dependencies-no-node-modules-symlink": (
+                "Never symlink `node_modules`;",
+            ),
+            "disk-no-install-build-below-20gb": (
+                "below 20 GB free, start no installs or builds.",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-host-safeguards-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            for rule, (clause,) in clauses.items():
+                for path, content in zip(candidates, intact):
+                    with self.subTest(provider=path.name, rule=rule):
+                        self.assertIn(clause, content)
+                        path.write_text(content.replace(clause, "", 1), encoding="utf-8")
+                        result = run_checker()
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
+                for path, content in zip(candidates, intact):
+                    path.write_text(content, encoding="utf-8")
 
     def test_rendered_provider_contexts_keep_broker_delegation_opt_in(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
