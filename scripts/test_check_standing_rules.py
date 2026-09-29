@@ -16,6 +16,7 @@ SPEC.loader.exec_module(CHECKER)
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
 Never quit the running bb app. Never kill the running bb app. Never replace the running bb app. Never move `/Applications/bb.app`. Never delete `/Applications/bb.app`. Never overwrite `/Applications/bb.app`. Never use pkill or pgrep -f.
+Never bypass a safety-hook block; it is the rule working, not a defect to route around.
 Never symlink `node_modules`; below 20 GB free, start no installs or builds.
 One writer per PR, branch, and worktree. Never edit a sibling's worktree. On "Workspace collision detected", stop editing; survivor rereads `git diff` before committing.
 Automations single-flight per target; never treat their own agent's push as completion while its thread is still running.
@@ -442,6 +443,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Never use pkill or pgrep -f.",
                 "Use pkill or pgrep -f.",
             ),
+            "safety-hook-block-cannot-be-bypassed": (
+                "Never bypass a safety-hook block; it is the rule working, not a defect to route around.",
+                "A safety-hook block may be bypassed to finish the task.",
+            ),
             "credentials-never-type": (
                 "Never type, paste, or handle credentials.",
                 "Never paste or handle credentials.",
@@ -497,6 +502,35 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         required_optional=set(CHECKER.OPTIONAL_WHEN_ABSENT),
                     ),
                 )
+
+    def test_safety_hook_rule_cli_rejects_deletion_and_reversal_in_every_home(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        original = "Never bypass a safety-hook block; it is the rule working, not a defect to route around."
+        paths = [rendered / name for name in names]
+        intact = subprocess.run(
+            [sys.executable, str(SCRIPT), "--files", *map(str, paths)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(intact.returncode, 0, intact.stdout + intact.stderr)
+        for name in names:
+            for mutation in (
+                "Safety-hook blocks may be bypassed to finish the task.",
+                original + " A safety-hook block may be bypassed to finish the task.",
+            ):
+                with self.subTest(home=name, mutation=mutation):
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        candidate = Path(temp_dir) / "rendered-homes" / name
+                        candidate.parent.mkdir()
+                        source = (rendered / name).read_text(encoding="utf-8")
+                        self.assertIn(original, source)
+                        candidate.write_text(source.replace(original, mutation), encoding="utf-8")
+                        result = subprocess.run(
+                            [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                            capture_output=True, text=True, check=False,
+                        )
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("safety-hook-block-cannot-be-bypassed", result.stderr)
 
     def test_rendered_homes_reject_each_bb_app_and_bundle_reversal(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

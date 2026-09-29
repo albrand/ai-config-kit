@@ -12,6 +12,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Fix known in-scope defects now. Never leave a check you can run or work you are authorized to do as a suggestion. Ask only at a material, user-owned breakpoint.
 - Hermes reviews every PR before merge. A named defect blocks: fix it and rerun the same topic until it is no longer named. Evidence/method objections without a defect do not block.
 - Never weaken hard prohibitions to ship. For their full workflow, load `meaningful-tests`, `finish-the-job`, and `pallium-ship-workflow` when applicable.
+- Never bypass a safety-hook block; it is the rule working, not a defect to route around.
 <!-- delivery-first:end -->
 
 ## Analyze, plan, and scope

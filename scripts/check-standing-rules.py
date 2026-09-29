@@ -68,6 +68,11 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never\s+use\s+(?:`?pkill`?\s+or\s+`?pgrep\s+-f`?|"
         r"`?pgrep\s+-f`?\s+or\s+`?pkill`?)"
     ),
+    "safety-hook-block-cannot-be-bypassed": re.compile(
+        r"(?is)(?:never|do not)\s+bypass\s+(?:a\s+)?safety-hook block"
+        r".{0,100}(?:rule working|not a defect|not a reason)|"
+        r"PreToolUse hook enforces this.{0,160}rule working.{0,100}defect to route around"
+    ),
     "credentials-never-type": re.compile(r"(?is)never.{0,35}\btype\b.{0,50}credentials"),
     "credentials-never-paste": re.compile(r"(?is)never.{0,35}\bpaste\b.{0,50}credentials"),
     "credentials-never-handle": re.compile(r"(?is)never.{0,35}\bhandle\b.{0,50}credentials"),
@@ -525,6 +530,7 @@ LIVE_HOME_RULES = {
     },
     "bb": {
         "credentials-never-paste", "credentials-never-handle",
+        "safety-hook-block-cannot-be-bypassed",
         "browser-enumerate-before-open", "browser-close-every-slice-outcome",
         "browser-lifecycle-ops-noncreating", "worktree-own-bb-environment",
         "browser-close-before-isolation-change", "browser-no-dedicated-takeover-claim",
@@ -535,6 +541,7 @@ LIVE_HOME_RULES = {
 }
 KIT_BASELINE_RULES = {
     "public-exposure-current-conversation-service", "public-share-close-task-end",
+    "safety-hook-block-cannot-be-bypassed",
     "public-share-closeout-audit",
     "credentials-never-paste", "credentials-never-handle",
     "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
@@ -592,10 +599,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "a9e41cdc5282fbbaaad77ab94f993bdfcec756a96dc4e7cf97b0f699248754b0": "proposal-claude",
-    "a71af211551f41b9b517cc63ab1613320102c97e5d1e84096e583d5e544aebeb": "proposal-codex",
-    "5bf7e6814ee7bad0b231f1797fe554b6d8f98891357b398ce296be15545be1e2": "proposal-opencode",
-    "fa49ad169ce7352e45edcedc052ef51bacd466ad1b18845b001b74db643142bd": "proposal-bb",
+    "83108ab1c496983ba94eca18bce14db8cfd46ec90b476e37e8f0325f76b45c01": "proposal-claude",
+    "30bf13a8eedc8f4092809814119db080a19e02311487588d8639bcc6bd0652e9": "proposal-codex",
+    "4e1a8a966101676f65ec122253286cd874ddadae77f5640bf0129e9cad078f14": "proposal-opencode",
+    "e0109c60919f4ebe6f5596efa31d9a26a8788acf8382834e3ba5ecbf1e600feb": "proposal-bb",
 }
 
 
@@ -676,6 +683,15 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"named defects? (?:are )?(?:advisory|non-blocking|nonblocking)"
         )
         if advisory_defect.search(text):
+            return True
+    if name == "safety-hook-block-cannot-be-bypassed":
+        bypass_permission = re.compile(
+            r"(?is)safety-hook block.{0,100}(?:may|can|could|is allowed to|is permitted to)"
+            r".{0,40}bypass|"
+            r"(?:may|can|could|is allowed to|is permitted to).{0,40}bypass"
+            r".{0,100}safety-hook block"
+        )
+        if bypass_permission.search(text):
             return True
     if name == "public-exposure" or name.startswith("public-exposure-"):
         stale_consent = re.compile(

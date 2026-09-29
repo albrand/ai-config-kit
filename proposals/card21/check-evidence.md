@@ -10,10 +10,12 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (108 regexes;
-63 Claude, 72 Codex, 68 OpenCode, 62 bb, and 101 kit rules applicable). The
-rendered proposals plus kit source also passed all 108 regexes: 92 Claude, 108
-Codex, 101 OpenCode, 101 bb, and 101 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (109 regexes;
+64 Claude, 73 Codex, 69 OpenCode, 63 bb, and 102 kit rules applicable). The
+rendered proposals plus kit source also passed all 109 regexes: 93 Claude, 109
+Codex, 102 OpenCode, 102 bb, and 102 kit rules applicable. Safety-hook
+non-bypass is required in every profile, including unchanged native-home
+fingerprints and standalone provider proposals. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +25,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **44 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **45 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -146,24 +148,30 @@ Baseline checker stdout:
 PASS all 5 files contain all applicable rules (20 regexes)
 ```
 
-Final checker stdout (live homes + kit source):
+Final checker stdout (live homes + kit source; current head):
 
 ```text
-PASS all 5 files contain all applicable rules (108 regexes)
+PASS all 5 files contain all applicable rules (109 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (108 regexes)
+PASS all 5 files contain all applicable rules (109 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 44 tests
+Ran 45 tests
 OK
 ```
+
+Safety-hook block policy has a dedicated regex and contradiction veto. Through
+the real `--files` entrypoint, each of four intact rendered homes passes;
+deleting the prohibition and retaining it alongside explicit bypass permission
+both fail for all four homes (8 mutations). The checker also passes all four
+unchanged live-home files and the kit source.
 
 Live homes were not modified. The renderer remains in proposal mode; its
 `--install` option was not run.

@@ -16,6 +16,7 @@
 - Never delete `/Applications/bb.app`.
 - Never overwrite `/Applications/bb.app`.
 - Never use `pkill` or `pgrep -f`; a safety-hook block is final, not a reason to route around it.
+- Never bypass a safety-hook block; it is the rule working, not a defect to route around.
 - Never type, paste, or handle credentials. The user performs login.
 - Never publicly expose a service or run `bb connect expose` unless the user explicitly asks in this conversation to expose that named service/port. Any authorized share is temporary and task-scoped: close it when the task ends, then run `bb connect shares` before closeout.
 - Use only bb's isolated browser for interactive work. Never control a personal/default browser.
