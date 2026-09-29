@@ -1,6 +1,6 @@
 ## Hard prohibitions (repeat in every provider home)
 
-- Never add/fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation; general task approval is not email approval. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched. If safe verification requires sending, stop and report blocked.
+- Never add/fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched. If safe verification requires sending, stop and report blocked.
 - Never quit, kill, or replace the running bb app, or move/delete/overwrite its installed bundle. Never use `pkill` or `pgrep -f`; a safety-hook block is final, not a reason to route around it.
 - Never type, paste, or handle credentials. The user performs login.
 - Never publicly expose a service or run `bb connect expose` unless the user explicitly asks in this conversation. Authorized shares are temporary: close them when the task ends and check `bb connect shares` before closeout.

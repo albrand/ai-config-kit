@@ -10,21 +10,24 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (26 regexes; 25 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 26 regexes,
-including each Codex-only context-GC obligation. Worktree subrules have
+matched applicable rules in the final checker (32 regexes; 30 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 32 regexes,
+including each Codex-only context-GC and email-consent obligation. Worktree subrules have
 separate checks and mutation fixtures for each safeguard. A historical marker
 on the matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **15 tests, OK**. Fixtures cover
+`python3 scripts/test_check_standing_rules.py`: **18 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
 entire worktree-policy historical relabeling, adjacent-line historical notes,
 and own-environment protection. Historical notes separated from the policy by
-a blank line do not invalidate it. Codex-scoped deletion fixtures cover each
-context-GC obligation and the ban on garbage-collecting repositories, journals,
-user-owned sessions, or active sessions.
+a blank line do not invalidate it. Email fixtures reject general-task and
+different-message consent, and delete each mail-safety obligation in turn.
+Mutation cases weaken each remaining hard prohibition and require the checker
+to reject the change.
+Codex-scoped deletion fixtures cover each context-GC obligation and the ban on
+garbage-collecting repositories, journals, user-owned sessions, or active sessions.
 
 Baseline checker stdout:
 
@@ -35,19 +38,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (26 regexes)
+PASS all 5 files contain all applicable rules (32 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (26 regexes)
+PASS all 5 files contain all applicable rules (32 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 15 tests
+Ran 18 tests
 OK
 ```
 

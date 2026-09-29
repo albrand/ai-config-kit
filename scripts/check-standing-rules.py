@@ -14,26 +14,50 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never\s+(?:add|fill|populate).{0,160}recipient.{0,160}"
         r"(?:compose|send).{0,100}(?:send|message|email)"
     ),
+    "email-exact-message-approval": re.compile(
+        r"(?is)(?:approval for that (?:exact|specific) message.{0,80}in\s+(?:the\s+)?(?:current|this)\s+conversation|"
+        r"user approving.{0,30}(?:that|the) message.{0,40}in\s+the\s+current\s+conversation)"
+    ),
+    "email-general-approval-is-insufficient": re.compile(
+        r"(?is)(?:general (?:task )?(?:approval|authorization).{0,80}"
+        r"(?:is\s+not|does\s+not\s+count\s+as|isn.t).{0,60}(?:email approval|approval for this one)|"
+        r"general instruction to proceed.{0,160}NOT\s+approval to email)"
+    ),
+    "email-other-message-approval-is-insufficient": re.compile(
+        r"(?is)(?:approval for another message.{0,80}not approval for this one|"
+        r"(?:neither|nor).{0,80}approval.{0,80}(?:different|another) message)"
+    ),
+    "email-safe-path-verification": re.compile(
+        r"(?is)(?:inspect(?:ing)?\s+(?:the\s+)?constructed (?:path|URL|payload|template|handler)|"
+        r"constructed (?:URL|payload|template|handler).{0,120}disposable account).{0,180}"
+        r"(?:disposable account|never (?:use|fire|send).{0,80}live (?:mail )?client)"
+    ),
+    "email-open-compose-left-alone": re.compile(
+        r"(?is)(?:disclose and leave.{0,80}open.{0,80}compose.{0,80}(?:untouched|alone)|"
+        r"if a compose surface.{0,120}already (?:been )?open(?:ed)?.{0,100}(?:disclose|say so plainly).{0,80}leave it alone)"
+    ),
     "bb-app-process": re.compile(
         r"(?is)never\s+(?:quit|kill|replace).{0,120}bb.{0,100}app"
     ),
     "no-pkill-pgrep-app-kill-path": re.compile(
-        r"(?is)never.{0,160}bb.{0,100}app.{0,320}(?:pkill|pgrep\s+-f)"
+        r"(?is)never\s+use\s+(?:`?pkill`?\s+or\s+`?pgrep\s+-f`?|"
+        r"`?pgrep\s+-f`?\s+or\s+`?pkill`?)"
     ),
     "credentials": re.compile(
         r"(?is)never\s+(?:type|paste|handle).{0,80}credentials"
     ),
     "public-exposure": re.compile(
-        r"(?is)(?:never|do not).{0,100}(?:public exposure|bb connect expose)"
-        r"|hard prohibitions.{0,120}public exposure"
+        r"(?is)(?:(?:never|do not).{0,45}(?:publicly\s+expose|expose(?:\s+a)?\s+service|"
+        r"run\s+`?bb connect expose`?).{0,140}(?:unless|without).{0,60}(?:explicit|user asks)|"
+        r"hard prohibitions.{0,120}public exposure)"
     ),
     "isolated-browser": re.compile(
-        r"(?is)(?:never control the user.s personal browser|"
-        r"never use personal/external browsers|"
-        r"only permitted interactive browser surface|"
-        r"use only bb.s isolated browser|"
-        r"isolated browser tools.{0,160}personal browser|"
-        r"personal browser.{0,240}isolated bb profile)"
+        r"(?is)(?:(?:only )?permitted interactive browser surface|"
+        r"use only bb.s isolated browser)"
+    ),
+    "no-personal-browser-control": re.compile(
+        r"(?is)(?:never control.{0,80}personal(?:/default)? browser|"
+        r"never use (?:a |the user.s )?personal(?:/default)? browser)"
     ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
@@ -165,7 +189,7 @@ def historical_clause(text: str, position: int) -> bool:
 
 def optional_present(name: str, text: str) -> bool:
     if name == "no-pkill-pgrep-app-kill-path":
-        return bool(re.search(r"(?i)\bpkill\b|\bpgrep\s+-f\b", text))
+        return bool(RULES[name].search(text))
     if name == "worktree-own-bb-environment":
         return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":

@@ -12,7 +12,7 @@ CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
 INTACT = """
-Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
+Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
 Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
 Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
@@ -36,6 +36,92 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "Never type, paste, or handle credentials.\n", ""
         )
         self.assertIn("credentials", CHECKER.missing_rules(damaged))
+
+    def test_weakened_email_consent_exceptions_fail(self):
+        weakened = INTACT.replace(
+            "General task approval or approval for another message is not approval for this one.",
+            "General task approval is approval for this message.",
+        )
+        missing = CHECKER.missing_rules(weakened)
+        self.assertIn("email-general-approval-is-insufficient", missing)
+        weakened_other_message = INTACT.replace(
+            "General task approval or approval for another message is not approval for this one.",
+            "General task approval is not approval for this one.",
+        )
+        self.assertIn(
+            "email-other-message-approval-is-insufficient",
+            CHECKER.missing_rules(weakened_other_message),
+        )
+
+    def test_each_email_safety_obligation_is_required(self):
+        obligations = {
+            "email-exact-message-approval": "approval for that exact message in this conversation",
+            "email-general-approval-is-insufficient": "General task approval or approval for another message is not approval for this one.",
+            "email-other-message-approval-is-insufficient": "approval for another message is not approval for this one",
+            "email-safe-path-verification": "inspecting the constructed path or using a user-designated disposable account, never the user's live client",
+            "email-open-compose-left-alone": "disclose and leave any open compose surface untouched",
+        }
+        for rule, clause in obligations.items():
+            with self.subTest(rule=rule):
+                self.assertIn(rule, CHECKER.missing_rules(INTACT.replace(clause, "")))
+
+    def test_weakened_hard_prohibitions_fail(self):
+        mutations = {
+            "bb-app-process": (
+                "Never quit, kill, or replace the running bb app;",
+                "Quit the bb app when convenient;",
+            ),
+            "no-pkill-pgrep-app-kill-path": (
+                "never use pkill or pgrep -f.",
+                "use pkill or pgrep -f.",
+            ),
+            "credentials": (
+                "Never type, paste, or handle credentials.",
+                "Type credentials if the user asks.",
+            ),
+            "public-exposure": (
+                "Never publicly expose a service or run bb connect expose without explicit approval.",
+                "Public exposure is acceptable when useful.",
+            ),
+            "isolated-browser": (
+                "Use only bb's isolated browser for interactive work;",
+                "Use any browser for interactive work;",
+            ),
+            "no-personal-browser-control": (
+                "never use a personal browser.",
+                "a personal browser is permitted.",
+            ),
+            "no-new-feature-flags": (
+                "No feature flags or new off-by-default gates without an explicit ask;",
+                "Add off-by-default feature flags as needed;",
+            ),
+            "no-ai-signatures": (
+                "Do not add AI attribution, signatures, or watermarks.",
+                "Add AI signatures by default.",
+            ),
+            "hermes-defects-block": (
+                "Hermes names a defect in a PR: fix it; defects block merge.",
+                "Hermes findings are advisory and do not block merge.",
+            ),
+            "testing-claim": (
+                "Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN.",
+                "A source inspection is enough to claim tested.",
+            ),
+            "security-first": (
+                "Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config.",
+                "Security checks are optional.",
+            ),
+        }
+        for rule, (original, weakened_clause) in mutations.items():
+            with self.subTest(rule=rule):
+                self.assertIn(original, INTACT)
+                self.assertIn(
+                    rule,
+                    CHECKER.missing_rules(
+                        INTACT.replace(original, weakened_clause),
+                        required_optional=set(CHECKER.OPTIONAL_WHEN_ABSENT),
+                    ),
+                )
 
     def test_deleted_keep_worktree_protection_fails(self):
         damaged = INTACT.replace(

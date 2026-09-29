@@ -67,6 +67,11 @@ def main() -> int:
     mode.add_argument("--install", action="store_true", help="back up and replace all four live homes")
     parser.add_argument("--output-dir", type=Path, default=OUT)
     parser.add_argument("--diff-dir", type=Path, help="write unified home-to-proposal diffs")
+    parser.add_argument(
+        "--full-context-diffs",
+        action="store_true",
+        help="include every unchanged line so the before side is fully reconstructable",
+    )
     args = parser.parse_args()
 
     outputs = {key: rendered(key) for key in TARGETS}
@@ -108,6 +113,7 @@ def main() -> int:
                 after,
                 fromfile=f"before/{TARGETS[key].name}",
                 tofile=f"after/{NAMES[key]}",
+                n=max(len(before), len(after)) if args.full_context_diffs else 3,
             )
             diff_path = args.diff_dir / f"{key}.diff"
             write_atomic(diff_path, "".join(diff))

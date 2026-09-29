@@ -19,7 +19,12 @@ All four homes report the same modification time: `2026-09-28 17:00:01`.
 The task's first home inventory was taken on 2026-09-28; the unchanged earlier
 modification time is additional evidence that no installation occurred.
 
-Claude's before-source size is `wc -c` = 45,926 bytes. Concatenating the
-original-side lines in the refreshed unified diff yields the same byte count
-and SHA-256 as the source: `e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd`.
-The former 45,848 estimate is superseded by this byte-for-byte match.
+The four full-context diffs were generated with
+`scripts/render-standing-homes.py --full-context-diffs`. Reconstructing the old
+side after skipping the two file-header lines matches each live source byte for
+byte, including Claude at 45,926 bytes and SHA-256
+`e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd`. Hermes's
+earlier 45,848-byte result came from a parser that discarded any diff line
+starting `---`; that also dropped Claude's original `--topic ...` source line
+after the diff added its own leading `-`. The corrected extraction skips only
+the two headers; all four old-side hashes now match their homes.

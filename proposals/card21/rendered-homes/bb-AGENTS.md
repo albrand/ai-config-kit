@@ -79,7 +79,7 @@ Preserve the complete request and accepted revisions across calls, delegation, a
 <!-- ai-config-kit-scope:end -->
 
 <!-- email-prohibition:begin -->
-**No email without explicit approval for that exact message in this conversation. Never add/fill a recipient, open/edit a compose surface, or send by any route. Test by inspecting the constructed path or using a user-designated disposable account; never use the user's live mail client. Leave an already-open compose surface untouched.**
+**No email without explicit approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Never add/fill a recipient, open/edit a compose surface, or send by any route. Test by inspecting the constructed path or using a user-designated disposable account; never use the user's live mail client. Disclose and leave an already-open compose surface untouched.**
 <!-- email-prohibition:end -->
 
 <!-- testing-claims:begin -->
