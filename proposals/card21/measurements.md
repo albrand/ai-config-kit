@@ -2,6 +2,11 @@
 
 After sizes are rendered proposals, not installed homes. Approximate tokens use
 bytes / 4. Home and kit before sizes were measured before editing on 2026-09-28.
+The kit baseline is the exact `GLOBAL_AGENTS.md` blob at the initial Card 21
+worktree commit `b6775918a3f749bc643c76094aee8cedac5dbb11` (42,565 bytes,
+SHA-256 `e1adb62a75f5732501d66366d91e8ac00e84d5253156628be752d065878bb465`);
+the archived source and preservation comparison are in `baseline/` and
+`kit-preservation.md`.
 The provider context includes the bb baseline appended to every provider-backed
 thread; `bb guide agent-configuration` confirmed Codex also reads its native
 global file. Before sizes come from direct `wc -c` of the unchanged home files.
