@@ -260,7 +260,11 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?:signature|watermark)"
     ),
     "hermes-defects-block": re.compile(
-        r"(?is)Hermes.{0,180}(?:defect|bug).{0,120}(?:block|merge)"
+        r"(?is)(?:Hermes names a defect in a PR: fix it; defects block merge|"
+        r"any named defect blocks merge until fixed and cleared on the same topic|"
+        r"a named defect blocks: fix it and rerun the same topic until it is no longer named|"
+        r"a PR never merges while Hermes names a defect in it:\s*fix\s+it, then re-run on the same `--topic`"
+        r" until that defect is no longer named)"
     ),
     "testing-claim": re.compile(
         r"(?is)persona.{0,180}target.{0,220}(?:goals|user outcomes).{0,200}"
@@ -559,6 +563,15 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
+    if name == "hermes-defects-block":
+        advisory_defect = re.compile(
+            r"(?is)(?:any|each|a) named defect.{0,100}"
+            r"(?:does not|doesn't|need not|may not|is advisory|is non-blocking|is nonblocking)"
+            r".{0,80}(?:block|merge)|"
+            r"named defects? (?:are )?(?:advisory|non-blocking|nonblocking)"
+        )
+        if advisory_defect.search(text):
+            return True
     if name == "public-exposure" or name.startswith("public-exposure-"):
         stale_consent = re.compile(
             r"(?is)(?:user )?explicitly asks in (?:a|any|the) "

@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **36 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **37 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -71,6 +71,9 @@ Public exposure separately requires a current-conversation request naming the
 service/port, closing the temporary share at task end, and checking
 `bb connect shares` before closeout. Rendered-path mutations for stale consent
 and either deleted cleanup obligation fail across all four homes.
+Hermes defect-blocking checks reject both an explicit “does not block” reversal
+and an “advisory” exception through rendered `--files` paths for all providers
+and the shared bb baseline.
 
 The real `--files` entrypoint also accepts native-shaped home paths. Intact
 native baseline fixtures pass; intact rendered homes at native paths pass;
@@ -125,7 +128,7 @@ PASS all 5 files contain all applicable rules (88 regexes)
 Unit-test stdout:
 
 ```text
-Ran 36 tests
+Ran 37 tests
 OK
 ```
 
