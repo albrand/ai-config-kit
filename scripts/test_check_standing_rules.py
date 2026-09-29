@@ -128,8 +128,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_rendered_provider_contexts_preserve_hermes_transport_prohibitions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
-        baseline_path = rendered / "bb-AGENTS.md"
-        baseline = baseline_path.read_text(encoding="utf-8")
         rules = {
             "hermes-no-reverse-ssh",
             "hermes-no-listeners",
@@ -163,7 +161,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Pass a `--model` override to `acp-hermes-agent` when useful.",
             ),
             "hermes-no-project-source": (
-                "Never place or retain a project source on Hermes (srv1677963).",
+                "Never place or retain a project source on Hermes",
                 "Project source may be stored on Hermes (srv1677963).",
             ),
             "hermes-prompts-use-stdin": (
@@ -180,12 +178,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
             ),
         }
         providers = [
-            rendered / "CLAUDE.md",
             rendered / "codex-AGENTS.md",
             rendered / "opencode-AGENTS.md",
         ]
         for provider_path in providers:
-            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            combined = provider_path.read_text(encoding="utf-8")
             with self.subTest(provider=provider_path.name, mutation="intact"):
                 self.assertEqual(
                     [], CHECKER.missing_rules(combined, required_optional=rules)
@@ -198,6 +195,52 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         rule,
                         CHECKER.missing_rules(damaged, required_optional=rules),
                     )
+
+    def test_standalone_provider_checker_rejects_codex_hermes_transport_regressions(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        providers = [
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        mutations = {
+            "hermes-no-prompts-in-argv": (
+                "Never put prompts in argv",
+                "Prompts may be placed in argv",
+            ),
+            "hermes-no-reverse-ssh": (
+                "never create reverse SSH",
+                "may create reverse SSH",
+            ),
+            "hermes-no-listeners": (
+                "never create reverse SSH or listeners",
+                "never create reverse SSH; listeners may be created",
+            ),
+            "hermes-no-broad-env-forwarding": (
+                "forward broad environment values",
+                "forward broad environment values when useful",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-hermes-transport-") as temp_dir:
+            standalone_dir = Path(temp_dir) / "rendered-homes"
+            standalone_dir.mkdir()
+            candidate = standalone_dir / "codex-AGENTS.md"
+            for provider_path in providers:
+                original_text = provider_path.read_text(encoding="utf-8")
+                for rule, (original, weakened) in mutations.items():
+                    with self.subTest(provider=provider_path.name, rule=rule):
+                        self.assertIn(original, original_text)
+                        candidate.write_text(
+                            original_text.replace(original, weakened),
+                            encoding="utf-8",
+                        )
+                        result = subprocess.run(
+                            [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
 
     def test_rendered_provider_contexts_require_verified_qa_for_authenticated_e2e(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

@@ -17,7 +17,7 @@ browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
 marker on the matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **29 tests, OK**. Fixtures cover
+`python3 scripts/test_check_standing_rules.py`: **30 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -37,13 +37,13 @@ restart, re-enable, takeover-claim, and verified-QA gate rules. A separate test
 copies each native proposal without the bb baseline, deletes/weakens all 19
 browser/QA rules, and invokes `check-standing-rules.py --files` as a subprocess;
 all 57 standalone cases fail as required.
-Hermes transport fixtures combine each rendered provider with the shared bb
-baseline and separately weaken reverse SSH, listeners, broad environment
-forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, and the
-`acp-hermes-agent --model` override prohibition. Tests also require broker SSH
-stdin, reject prompts in argv and local terminal socket requirements, and weaken
-the absolute ban on placing or retaining project source on Hermes while
-preserving the old “never ask Hermes to mount” wording; the checker still rejects it.
+Hermes transport fixtures check Codex and OpenCode proposals alone. The actual
+`--files` entrypoint rejects deletion/weakening of argv-prompt, reverse-SSH,
+listener, and broad-environment prohibitions in both contexts (8 cases). Other
+standalone mutations cover `CMUX_SOCKET_CAPABILITY`/`CMUX_*`, `acp-hermes-agent
+--model`, broker SSH stdin, local terminal sockets, and the absolute ban on
+placing or retaining source on Hermes, including a mutation that retains the
+old “never ask Hermes to mount” wording.
 The verified-QA mutation narrows triggers to login/auth only, modeling an
 already-authenticated browser E2E, and separately changes a missing or failing
 gate into an optional gate; both mutations must fail.
@@ -90,7 +90,7 @@ PASS all 5 files contain all applicable rules (72 regexes)
 Unit-test stdout:
 
 ```text
-Ran 29 tests
+Ran 30 tests
 OK
 ```
 

@@ -534,6 +534,18 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "delegation-cross-session-cmux-off",
                     "delegation-explicit-approval-outward-effects",
                 })
+            if rendered and path.name in {"codex-AGENTS.md", "opencode-AGENTS.md"}:
+                required_optional.update({
+                    "hermes-no-reverse-ssh",
+                    "hermes-no-listeners",
+                    "hermes-no-broad-env-forwarding",
+                    "hermes-no-cmux-capability-export",
+                    "hermes-agent-no-model-override",
+                    "hermes-no-project-source",
+                    "hermes-prompts-use-stdin",
+                    "hermes-no-prompts-in-argv",
+                    "hermes-no-local-terminal-socket",
+                })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
         ).expanduser().resolve():
@@ -547,7 +559,7 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "context-gc-managed-runner-self-check",
             })
         skip_rules = set()
-        if rendered and path.name != "bb-AGENTS.md":
+        if rendered and path.name == "CLAUDE.md":
             skip_rules.update({
                 "hermes-no-reverse-ssh",
                 "hermes-no-listeners",
