@@ -64,11 +64,13 @@ multiple topics on a row share the stated origin, not a generated source.
 | Hermes transport, child routing, browser login handoff | bb adapter | `CMUX_HERMES_ORCHESTRATION.md`, verified bb commands |
 
 Some project/provider policies have no shared global counterpart and remain in
-the relevant overlay: Codex board/OpenCode/Replit routing and the ban on
-garbage-collecting repositories, journals, user-owned or active sessions;
-OpenCode executor and session lease; bb provider-neutral login, Hermes, and
-child routing. Claude has no additional provider-specific policy in its current
-home.
+the relevant overlay: Codex board/OpenCode/Replit routing and the full
+context-GC contract (execution-boundary cleanup, compact resume packets, log
+and transcript disposal, fresh sessions per plan step, storage/process audit,
+managed-runner self-check, and protected repositories/journals/user-owned or
+active sessions); OpenCode executor and session lease; bb provider-neutral
+login, Hermes, and child routing. Claude has no additional provider-specific
+policy in its current home.
 
 The renderer `scripts/render-standing-homes.py` combines these checked-in
 sources and writes reviewable proposals under `proposals/card21/rendered-homes`.

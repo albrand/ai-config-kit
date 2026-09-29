@@ -86,11 +86,35 @@ RULES: dict[str, re.Pattern[str]] = {
     "no-gc-user-owned-state": re.compile(
         r"(?is)never garbage-collect repositories,\s*journals,\s*user-owned sessions,\s*or active sessions"
     ),
+    "context-gc-boundary": re.compile(
+        r"(?is)context GC.{0,100}execution boundaries"
+    ),
+    "context-gc-resume-packet": re.compile(
+        r"(?is)retain\s+only\s+a\s+compact\s+resume\s+packet"
+    ),
+    "context-gc-discard-logs": re.compile(
+        r"(?is)discard\s+raw\s+tool\s+logs\s+and\s+completed-agent\s+transcripts"
+    ),
+    "context-gc-fresh-opencode-sessions": re.compile(
+        r"(?is)use\s+fresh\s+opencode\s+sessions\s+for\s+new\s+plan\s+steps"
+    ),
+    "context-gc-audit": re.compile(
+        r"(?is)run\s+the\s+available\s+GC\s+audit\s+across\s+storage/process\s+state"
+    ),
+    "context-gc-managed-runner-self-check": re.compile(
+        r"(?is)do\s+not\s+depend\s+on\s+a\s+managed\s+runner\s+unless\s+its\s+installed\s+implementation\s+passes\s+a\s+live\s+self-check"
+    ),
 }
 OPTIONAL_WHEN_ABSENT = {
     "no-pkill-pgrep-app-kill-path",
     "worktree-own-bb-environment",
     "no-gc-user-owned-state",
+    "context-gc-boundary",
+    "context-gc-resume-packet",
+    "context-gc-discard-logs",
+    "context-gc-fresh-opencode-sessions",
+    "context-gc-audit",
+    "context-gc-managed-runner-self-check",
 }
 
 HOME_FILES = (
@@ -123,11 +147,20 @@ def missing_rules(
 
 
 def historical_clause(text: str, position: int) -> bool:
-    start = text.rfind("\n", 0, position) + 1
-    end = text.find("\n", position)
-    if end < 0:
-        end = len(text)
-    return bool(re.search(r"(?i)historical note|no longer binding", text[start:end]))
+    lines = text.splitlines()
+    offset = 0
+    line_index = 0
+    for index, line in enumerate(lines):
+        next_offset = offset + len(line) + 1
+        if offset <= position < next_offset:
+            line_index = index
+            break
+        offset = next_offset
+    candidates = [lines[line_index]]
+    previous = line_index - 1
+    if previous >= 0 and lines[previous].strip():
+        candidates.append(lines[previous])
+    return bool(re.search(r"(?i)historical note|no longer binding", "\n".join(candidates)))
 
 
 def optional_present(name: str, text: str) -> bool:
@@ -136,6 +169,8 @@ def optional_present(name: str, text: str) -> bool:
     if name == "worktree-own-bb-environment":
         return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
+        return bool(RULES[name].search(text))
+    if name.startswith("context-gc-"):
         return bool(RULES[name].search(text))
     return True
 
@@ -159,7 +194,15 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
         ).expanduser().resolve():
-            required_optional.add("no-gc-user-owned-state")
+            required_optional.update({
+                "no-gc-user-owned-state",
+                "context-gc-boundary",
+                "context-gc-resume-packet",
+                "context-gc-discard-logs",
+                "context-gc-fresh-opencode-sessions",
+                "context-gc-audit",
+                "context-gc-managed-runner-self-check",
+            })
         missing = missing_rules(content, required_optional=required_optional)
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")

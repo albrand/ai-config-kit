@@ -95,6 +95,38 @@ class StandingRuleCheckerTest(unittest.TestCase):
         missing = CHECKER.missing_rules(damaged, require_optional=True)
         self.assertTrue(any(name.startswith("worktree-") for name in missing))
 
+    def test_historical_note_on_adjacent_line_invalidates_policy(self):
+        start = INTACT.index("Remove only clean worktrees you created;")
+        damaged = INTACT[:start] + "Historical note (no longer binding):\n" + INTACT[start:]
+        missing = CHECKER.missing_rules(damaged, require_optional=True)
+        self.assertIn("worktree-removal", missing)
+        self.assertIn("worktree-dirty-protection", missing)
+
+    def test_historical_note_separated_by_blank_line_does_not_apply(self):
+        start = INTACT.index("Remove only clean worktrees you created;")
+        damaged = INTACT[:start] + "Historical note (no longer binding):\n\n" + INTACT[start:]
+        self.assertNotIn(
+            "worktree-removal",
+            CHECKER.missing_rules(damaged, require_optional=True),
+        )
+
+    def test_each_codex_context_gc_obligation_is_required(self):
+        obligations = {
+            "context-gc-boundary": "Context GC is mandatory at execution boundaries",
+            "context-gc-resume-packet": "retain only a compact resume packet",
+            "context-gc-discard-logs": "discard raw tool logs and completed-agent transcripts",
+            "context-gc-fresh-opencode-sessions": "use fresh OpenCode sessions for new plan steps",
+            "context-gc-audit": "run the available GC audit across storage/process state",
+            "context-gc-managed-runner-self-check": "Do not depend on a managed runner unless its installed implementation passes a live self-check",
+            "no-gc-user-owned-state": "Never garbage-collect repositories, journals, user-owned sessions, or active sessions.",
+        }
+        policy = "\n".join(obligations.values())
+        for rule, clause in obligations.items():
+            with self.subTest(rule=rule):
+                damaged = policy.replace(clause, "Historical note: " + clause, 1)
+                missing = CHECKER.missing_rules(damaged, required_optional=set(obligations))
+                self.assertIn(rule, missing)
+
     def test_gc_prohibition_deletion_fails_in_codex_scope(self):
         damaged = INTACT.replace(
             "Never garbage-collect repositories, journals, user-owned sessions, or active sessions.",
