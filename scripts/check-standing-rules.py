@@ -689,7 +689,7 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"(?im)(?:^|[.!?]\s+)(?:[-*]\s*)?(?:for this task[:,]\s*)?"
             r"(?:please\s+)?(?:(?:you\s+)?must\s+)?"
             r"(?!(?:not|never|no|unless|except)\b)"
-            r"(?:(?!(?:not|never|no|unless|except)\b)[\w'()-]+[,;:&:]?\s+)*"
+            r"(?:(?!(?:not|never|no|unless|except)\b)[\w'()–—-]+[,;:&:]?\s+)*"
             r"(?:(?:quit|kill|replace)\s+(?:the\s+)?running\s+bb\s+app|"
             r"(?:move|delete|overwrite)\s+`?/Applications/bb\.app`?)\b"
         )
