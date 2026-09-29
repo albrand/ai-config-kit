@@ -273,6 +273,14 @@ RULES: dict[str, re.Pattern[str]] = {
     "worktree-collision-reread-diff": re.compile(
         r"(?is)(?:survivor )?re-?reads? `git diff` before commit(?:ting)?"
     ),
+    "automation-single-flight-per-target": re.compile(
+        r"(?is)automations? (?:(?:are|must be) )?single-flight per target"
+    ),
+    "agent-push-is-not-completion": re.compile(
+        r"(?is)(?:never treat an agent.s push as completion while its thread is still running|"
+        r"never treat their own agent.s\s+push as completion while its\s+thread is still running|"
+        r"must not treat their own push as completion while its agent still runs)"
+    ),
     "no-ai-signatures": re.compile(
         r"(?is)(?:do not|never) add AI attribution.{0,150}"
         r"(?:signature|watermark)"
@@ -520,9 +528,9 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "e34940bcf67f6e418317bd134eb98abbedc57bab26fa97d1d006b4c1e24dd3c6": "proposal-claude",
-    "9dcb76dec744712220957bb0692f119421001e43e91d8a4ff8f0c9a7941c88c3": "proposal-codex",
-    "1343b68e6386ea2e0a0ac694e1527bac0075b49e396eb9ce1d571e956d68276d": "proposal-opencode",
+    "9b602ad5f87e10983f056866b69cc4bd0f4d5a51ddaf25a8d2a1bf398b920e80": "proposal-claude",
+    "2382f6b277f182477c2581b3bfb45c603028fd9cbefe39f43c3b4b699fd3ab31": "proposal-codex",
+    "dd86f7523dffe97edb13f8c1ca0bedd25be17a1e35ed66172bc7c48c7169674a": "proposal-opencode",
     "527426bae1863ee3f82e68cdfb6e92d0b42640c4ed466f01f1134ccce8e15b27": "proposal-bb",
 }
 

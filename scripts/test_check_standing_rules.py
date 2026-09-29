@@ -18,6 +18,7 @@ Never add or fill a recipient, open/edit a compose surface, or send email by any
 Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
 Never symlink `node_modules`; below 20 GB free, start no installs or builds.
 One writer per PR, branch, and worktree. Never edit a sibling's worktree. On "Workspace collision detected", stop editing; survivor rereads `git diff` before committing.
+Automations single-flight per target; never treat their own agent's push as completion while its thread is still running.
 Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
 Use only bb's isolated browser for interactive work; never use a personal browser. Call `browser_instances` before any `browser_open`; never use `browser_open` as a standard first step. Close the owned instance before changing cookie isolation. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
@@ -817,6 +818,58 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     result = run_checker()
                     self.assertNotEqual(0, result.returncode, result.stdout)
                     self.assertIn(rule, result.stdout + result.stderr)
+
+    def test_standalone_provider_homes_preserve_automation_single_flight(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md"]
+        clauses = {
+            "automation-single-flight-per-target": (
+                "Automations are single-flight per target.",
+                "Automations may run concurrently for one target.",
+            ),
+            "agent-push-is-not-completion": (
+                "Never treat an agent's push as completion while its thread is still running.",
+                "Treat an agent's push as completion while its thread is still running.",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-automation-single-flight-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            for provider_index, path in enumerate(candidates):
+                for rule, (original, reversal) in clauses.items():
+                    with self.subTest(provider=path.name, rule=rule, mutation="deletion"):
+                        for candidate, content in zip(candidates, intact):
+                            candidate.write_text(content, encoding="utf-8")
+                        content = intact[provider_index]
+                        self.assertIn(original, content)
+                        path.write_text(content.replace(original, "", 1), encoding="utf-8")
+                        result = run_checker()
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
+                    with self.subTest(provider=path.name, rule=rule, mutation="reversal"):
+                        for candidate, content in zip(candidates, intact):
+                            candidate.write_text(content, encoding="utf-8")
+                        content = intact[provider_index]
+                        path.write_text(content.replace(original, reversal, 1), encoding="utf-8")
+                        result = run_checker()
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
 
     def test_rendered_provider_contexts_keep_broker_delegation_opt_in(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

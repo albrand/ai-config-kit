@@ -137,6 +137,7 @@ the named owner shown above.
 | Isolated browser and login handling | Claude: Always-on behaviors; Codex: Browser Surface Isolation; OpenCode: Browser Surface Isolation | Global bb browser-login handoff guard; browser-surface-isolation marker |
 | Worktree ownership and removal | Claude: Always-on behaviors; Codex: Worktree Lifecycle; OpenCode: worktree-lifecycle marker | Global worktree lifecycle guard |
 | Shared-host limits, dependency handling, low-disk stop | Claude: Always-on behaviors; Codex: Worktree Lifecycle; OpenCode: worktree-lifecycle marker | Global worktree lifecycle guard |
+| Automation single-flight and push-is-not-completion | Claude: Always-on behaviors; Codex: Worktree Lifecycle; OpenCode: worktree-lifecycle marker | Global worktree lifecycle guard |
 | Testing claims and workflow verdicts | Claude: Always-on behaviors; Codex/OpenCode: Global testing-claim guard | Global testing-claim guard |
 | Finish-the-job follow-through | Claude: Always-on behaviors; Codex/OpenCode: Global finish-the-job guard | Global finish-the-job guard |
 | Feature-flag prohibition | Claude: Always-on behaviors; Codex: No Feature Flags Without An Explicit Ask; OpenCode: feature-flag-guard marker | Global feature-flag guard |
