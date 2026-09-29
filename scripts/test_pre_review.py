@@ -500,6 +500,51 @@ class PreReviewTests(unittest.TestCase):
             commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
         self.assertEqual(commands, [("focused-python-tests", [sys.executable, "./tests/test_sample.py"], None)])
 
+    def test_multiple_standalone_unittest_scripts_all_run_and_failures_propagate(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        markers = [self.base / "first-ran", self.base / "second-ran"]
+        test_paths = [self.repo / "tests" / "test_first.py", self.repo / "tests" / "test_second.py"]
+        test_paths[0].parent.mkdir()
+
+        def write_test(path: Path, marker: Path, fails: bool) -> None:
+            path.write_text(
+                "import unittest\n"
+                f"with open({str(marker)!r}, 'a', encoding='utf-8') as marker_file:\n"
+                "    marker_file.write('ran\\n')\n"
+                "class ExampleTest(unittest.TestCase):\n"
+                "    def test_result(self):\n"
+                f"        self.assertTrue({not fails!r})\n"
+                "if __name__ == '__main__':\n"
+                "    unittest.main()\n",
+                encoding="utf-8",
+            )
+
+        def run_tests(failing_index: int | None) -> subprocess.CompletedProcess[str]:
+            for marker in markers:
+                marker.unlink(missing_ok=True)
+            for index, (path, marker) in enumerate(zip(test_paths, markers)):
+                write_test(path, marker, index == failing_index)
+            with patch.object(shutil, "which", return_value="/pyenv/shims/pytest"):
+                commands = namespace["focused_test_commands"](
+                    self.repo, ["tests/test_first.py", "tests/test_second.py"], self.output
+                )
+            self.assertEqual(len(commands), 1)
+            return subprocess.run(
+                commands[0][1], cwd=self.repo, text=True, capture_output=True, check=False
+            )
+
+        passed = run_tests(failing_index=None)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        for marker in markers:
+            self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
+
+        for failing_index in (0, 1):
+            with self.subTest(failing_index=failing_index):
+                failed = run_tests(failing_index=failing_index)
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                for marker in markers:
+                    self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
+
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
         with patch.object(namespace["subprocess"], "run", side_effect=subprocess.TimeoutExpired(["slow-check"], 1, output=b"still running")):

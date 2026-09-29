@@ -498,7 +498,19 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
         )
         pytest = binary_path(repo, "pytest")
         if standalone_unittest:
-            commands.append(("focused-python-tests", [sys.executable, *absolute_python], None))
+            if len(absolute_python) == 1:
+                command = [sys.executable, *absolute_python]
+            else:
+                runner = (
+                    "import subprocess, sys\n"
+                    "failed = False\n"
+                    "for path in sys.argv[1:]:\n"
+                    "    result = subprocess.run([sys.executable, path])\n"
+                    "    failed = failed or result.returncode != 0\n"
+                    "raise SystemExit(1 if failed else 0)\n"
+                )
+                command = [sys.executable, "-c", runner, *absolute_python]
+            commands.append(("focused-python-tests", command, None))
         elif pytest:
             commands.append(("focused-python-tests", [pytest, *absolute_python], None))
         else:
