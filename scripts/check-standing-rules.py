@@ -213,15 +213,34 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
-    if name == "browser-close-every-slice-outcome":
-        return bool(
-            re.search(
-                r"(?is)(?:do\s+not|never|must\s+not|should\s+not|don.t)\s+"
-                r"close.{0,180}bounded browser slice",
-                text,
-            )
-        )
-    return False
+    contradictions = {
+        "browser-never-access-unowned": re.compile(
+            r"(?is)(?:allow|may|can).{0,80}(?:access|close).{0,120}"
+            r"(?:unowned|pre-existing|user-owned|other-thread)"
+        ),
+        "browser-enumerate-before-open": re.compile(
+            r"(?is)do\s+not\s+(?:call|enumerate).{0,80}browser_instances.{0,80}"
+            r"before.{0,40}browser_open"
+        ),
+        "browser-no-standard-preamble": re.compile(
+            r"(?is)(?:use|call).{0,30}`?browser_open`?.{0,40}as (?:the )?standard first step"
+        ),
+        "browser-close-before-isolation-change": re.compile(
+            r"(?is)(?:do\s+not|never|must\s+not|should\s+not|don.t)\s+close"
+            r".{0,100}(?:owned )?(?:instance|page).{0,100}before changing (?:cookie )?isolation"
+        ),
+        "browser-lifecycle-ops-noncreating": re.compile(
+            r"(?is)(?:lookup|refresh|release|close).{0,100}"
+            r"(?:may|can|are allowed to|are permitted to).{0,60}"
+            r"create a replacement (?:tab|page)"
+        ),
+        "browser-close-every-slice-outcome": re.compile(
+            r"(?is)(?:do\s+not|never|must\s+not|should\s+not|don.t)\s+"
+            r"close.{0,180}bounded browser slice"
+        ),
+    }
+    pattern = contradictions.get(name)
+    return bool(pattern and pattern.search(text))
 
 
 def historical_clause(text: str, position: int) -> bool:

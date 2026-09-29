@@ -218,6 +218,42 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 )
                 self.assertIn("browser-close-every-slice-outcome", missing)
 
+    def test_negated_browser_isolation_and_enumeration_fail_in_every_context(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline = (rendered / "bb-AGENTS.md").read_text(encoding="utf-8")
+        browser_rules = {
+            "browser-never-access-unowned",
+            "browser-enumerate-before-open",
+            "browser-no-standard-preamble",
+            "browser-close-before-isolation-change",
+            "browser-lifecycle-ops-noncreating",
+            "browser-close-every-slice-outcome",
+        }
+        mutations = {
+            "browser-enumerate-before-open": (
+                "Call `browser_instances` before any `browser_open`",
+                "Do not call `browser_instances` before any `browser_open`",
+            ),
+            "browser-close-before-isolation-change": (
+                "Close the owned instance before changing cookie isolation",
+                "Do not close the owned instance before changing cookie isolation",
+            ),
+        }
+        for provider_path in [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(provider=provider_path.name, rule=rule):
+                    self.assertIn(original, combined)
+                    damaged = combined.replace(original, weakened, 1)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(damaged, required_optional=browser_rules),
+                    )
+
     def test_deleted_keep_worktree_protection_fails(self):
         damaged = INTACT.replace(
             "a .keep-worktree tree, or an unreferenced detached commit",
