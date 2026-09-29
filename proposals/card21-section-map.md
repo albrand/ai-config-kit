@@ -53,7 +53,7 @@ multiple topics on a row share the stated origin, not a generated source.
 |---|---|---|
 | Delivery-first; diagnosis, batch fixes, focused validation, finish-the-job | `GLOBAL_AGENTS.md` Delivery first / Testing and reporting | `meaningful-tests`, `finish-the-job`, `pallium-ship-workflow` |
 | Core principles, plan/scope, board/regression inventory, scope continuity | Analyze, plan, and scope / scope marker | `scope-advisor`, `board-access-via-mcp`, `direct-linear` |
-| Cost tiers, Spark, OpenCode, routing/circuit, delegation, trusted repo context | Cost, models, and agents; Codex adapter | `adaptive-model-orchestrator`, `OPENCODE_DELEGATION.md`, `delegating-to-glm` |
+| Cost tiers, Spark, OpenCode, routing/circuit, delegation, child authorization caps, trusted repo context | Cost, models, and agents; Codex adapter | `adaptive-model-orchestrator`, `OPENCODE_DELEGATION.md`, `delegating-to-glm` |
 | Directive challenge, decisions, native-agent surfaces | Directive challenge and decisions | `typed-decisions`, `NATIVE_AGENT_SURFACES.md` |
 | Security-first defaults | Security and hard prohibitions | `SECURITY_AND_PENTEST.md`, `QUALITY_GATES.md`, `adversarial-security-sweep` |
 | Email, credential, public exposure, app, personal browser, feature flags, worktree, AI signatures | Full compact hard-rule block in every proposed provider home; bb baseline carries the same rules | Detailed procedures remain in `isolated-browser`, `verified-qa-e2e`, `shared-host-capacity`, and `meaningful-tests` where applicable |

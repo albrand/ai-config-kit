@@ -160,6 +160,18 @@ RULES: dict[str, re.Pattern[str]] = {
     "verified-qa-e2e-missing-fails-closed": re.compile(
         r"(?is)a missing or failing gate blocks the requested action at every reasoning effort"
     ),
+    "child-thread-cap-three-without-asking": re.compile(
+        r"(?is)up to 3 concurrent (?:child )?(?:threads|children) without asking"
+    ),
+    "child-thread-cap-six-with-orchestration": re.compile(
+        r"(?is)an orchestration request (?:authorizes|approves) up to 6"
+    ),
+    "child-thread-cap-host-capacity": re.compile(
+        r"(?is)up to 6.{0,80}(?:subject to host capacity|host capacity permitting)"
+    ),
+    "child-cap-distinct-opencode-instance-cap": re.compile(
+        r"(?is)this is separate from OpenCode's 10 concurrent instances per session cap"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -268,6 +280,10 @@ OPTIONAL_WHEN_ABSENT = {
     "hermes-no-local-terminal-socket",
     "verified-qa-e2e-full-trigger-set",
     "verified-qa-e2e-missing-fails-closed",
+    "child-thread-cap-three-without-asking",
+    "child-thread-cap-six-with-orchestration",
+    "child-thread-cap-host-capacity",
+    "child-cap-distinct-opencode-instance-cap",
 }
 
 HOME_FILES = (
@@ -367,6 +383,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name.startswith("verified-qa-e2e-"):
         return bool(RULES[name].search(text))
+    if name.startswith("child-thread-cap-") or name == "child-cap-distinct-opencode-instance-cap":
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -420,6 +438,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "hermes-no-local-terminal-socket",
                     "verified-qa-e2e-full-trigger-set",
                     "verified-qa-e2e-missing-fails-closed",
+                    "child-thread-cap-three-without-asking",
+                    "child-thread-cap-six-with-orchestration",
+                    "child-thread-cap-host-capacity",
+                    "child-cap-distinct-opencode-instance-cap",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -464,6 +486,10 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-no-local-terminal-socket",
                 "verified-qa-e2e-full-trigger-set",
                 "verified-qa-e2e-missing-fails-closed",
+                "child-thread-cap-three-without-asking",
+                "child-thread-cap-six-with-orchestration",
+                "child-thread-cap-host-capacity",
+                "child-cap-distinct-opencode-instance-cap",
             })
         missing = missing_rules(
             content,

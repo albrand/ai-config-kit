@@ -244,6 +244,54 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     CHECKER.missing_rules(missing_gate, required_optional=rules),
                 )
 
+    def test_rendered_provider_contexts_preserve_child_authorization_caps(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        rules = {
+            "child-thread-cap-three-without-asking",
+            "child-thread-cap-six-with-orchestration",
+            "child-thread-cap-host-capacity",
+            "child-cap-distinct-opencode-instance-cap",
+        }
+        mutations = {
+            "child-thread-cap-three-without-asking": (
+                "up to 3 concurrent child threads without asking",
+                "up to 3 concurrent child threads after approval",
+            ),
+            "child-thread-cap-six-with-orchestration": (
+                "an orchestration request authorizes up to 6",
+                "any request authorizes up to 6",
+            ),
+            "child-thread-cap-host-capacity": (
+                "up to 6, subject to host capacity",
+                "up to 6 regardless of host capacity",
+            ),
+            "child-cap-distinct-opencode-instance-cap": (
+                "This is separate from OpenCode's 10 concurrent instances per session cap.",
+                "This is the same as OpenCode's 10 concurrent instances per session cap.",
+            ),
+        }
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        for provider_path in providers:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [], CHECKER.missing_rules(combined, required_optional=rules)
+                )
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(provider=provider_path.name, rule=rule):
+                    self.assertIn(original, combined)
+                    damaged = combined.replace(original, weakened)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(damaged, required_optional=rules),
+                    )
+
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         baseline_path = rendered / "bb-AGENTS.md"
