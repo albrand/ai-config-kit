@@ -685,16 +685,29 @@ def contradicted_rule(name: str, text: str) -> bool:
         if advisory_defect.search(text):
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
-        direct_app_action = re.compile(
-            r"(?im)(?:^|[.!?]\s+)(?:[-*]\s*)?(?:for this task[:,]\s*)?"
-            r"(?:please\s+)?(?:(?:you\s+)?must\s+)?"
-            r"(?!(?:not|never|no|unless|except)\b)"
-            r"(?:(?!(?:not|never|no|unless|except)\b)[\w'()–—-]+[,;:&:]?\s+)*"
-            r"(?:(?:quit|kill|replace)\b[\s\S]{0,120}?\b(?:the\s+)?running\s+bb\s+app|"
-            r"(?:move|delete|overwrite)\b[\s\S]{0,120}?`?/Applications/bb\.app`?)\b"
-        )
-        if direct_app_action.search(text):
-            return True
+        forbidden_prefix_words = {"not", "never", "no", "unless", "except"}
+        app_command_targets = {
+            r"(?:quit|kill|replace)": re.compile(
+                r"\b(?:the\s+)?running\s+bb\s+app\b", re.IGNORECASE
+            ),
+            r"(?:move|delete|overwrite)": re.compile(
+                r"`?/Applications/bb\.app`?\b", re.IGNORECASE
+            ),
+        }
+        sentence_breaks = ".!?;"
+        for action, target in app_command_targets.items():
+            for match in re.finditer(rf"\b{action}\b", text, re.IGNORECASE):
+                clause_start = max(
+                    (text.rfind(mark, 0, match.start()) for mark in sentence_breaks),
+                    default=-1,
+                )
+                prefix_words = set(
+                    re.findall(r"[a-z]+", text[clause_start + 1 : match.start()].lower())
+                )
+                if prefix_words & forbidden_prefix_words:
+                    continue
+                if target.search(text[match.end() : match.end() + 500]):
+                    return True
         recovery_exemption = re.compile(
             r"(?is)\b(?:recovery|emergency|urgent|disaster[- ]recovery)"
             r"[\w -]{0,80}"
