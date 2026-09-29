@@ -571,6 +571,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to quit the running bb app.",
                 "For this task, you are explicitly permitted to temporarily quit the running bb app.",
                 "For this task, you are explicitly allowed to temporarily quit the running bb app.",
+                "For this task, you are permitted to explicitly quit the running bb app.",
+                "For this task, you are allowed to explicitly quit the running bb app.",
                 "Quitting the running bb app is allowed.",
             ),
             "bb-app-never-kill": (
@@ -580,6 +582,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to kill the running bb app.",
                 "For this task, you are explicitly permitted to temporarily kill the running bb app.",
                 "For this task, you are explicitly allowed to temporarily kill the running bb app.",
+                "For this task, you are permitted to explicitly kill the running bb app.",
+                "For this task, you are allowed to explicitly kill the running bb app.",
                 "Killing the running bb app is allowed.",
             ),
             "bb-app-never-replace": (
@@ -589,6 +593,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to replace the running bb app.",
                 "For this task, you are explicitly permitted to temporarily replace the running bb app.",
                 "For this task, you are explicitly allowed to temporarily replace the running bb app.",
+                "For this task, you are permitted to explicitly replace the running bb app.",
+                "For this task, you are allowed to explicitly replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
@@ -598,6 +604,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to move `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to temporarily move `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to temporarily move `/Applications/bb.app`.",
+                "For this task, you are permitted to explicitly move `/Applications/bb.app`.",
+                "For this task, you are allowed to explicitly move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-delete": (
@@ -607,6 +615,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to delete `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to temporarily delete `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to temporarily delete `/Applications/bb.app`.",
+                "For this task, you are permitted to explicitly delete `/Applications/bb.app`.",
+                "For this task, you are allowed to explicitly delete `/Applications/bb.app`.",
                 "Deleting `/Applications/bb.app` is allowed.",
             ),
             "bb-app-bundle-never-overwrite": (
@@ -616,6 +626,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are explicitly allowed to overwrite `/Applications/bb.app`.",
                 "For this task, you are explicitly permitted to temporarily overwrite `/Applications/bb.app`.",
                 "For this task, you are explicitly allowed to temporarily overwrite `/Applications/bb.app`.",
+                "For this task, you are permitted to explicitly overwrite `/Applications/bb.app`.",
+                "For this task, you are allowed to explicitly overwrite `/Applications/bb.app`.",
                 "Overwriting `/Applications/bb.app` is allowed.",
             ),
         }
@@ -646,6 +658,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     allowed_to,
                     temporary_permitted_to,
                     temporary_allowed_to,
+                    adverb_permitted_to,
+                    adverb_allowed_to,
                     explicit_permission,
                 ) in clauses.items():
                 mutations = (
@@ -653,8 +667,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     ("task-specific permission", task_permission),
                     ("explicitly permitted permission", permitted_to),
                     ("explicitly allowed permission", allowed_to),
-                    ("temporary permitted override", temporary_permitted_to),
-                    ("temporary allowed override", temporary_allowed_to),
+                        ("temporary permitted override", temporary_permitted_to),
+                        ("temporary allowed override", temporary_allowed_to),
+                        ("adverb permitted override", adverb_permitted_to),
+                        ("adverb allowed override", adverb_allowed_to),
                     ("explicit permission", explicit_permission),
                 )
                 for mutation, replacement in mutations:
