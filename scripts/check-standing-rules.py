@@ -688,7 +688,7 @@ def contradicted_rule(name: str, text: str) -> bool:
         direct_app_action = re.compile(
             r"(?im)(?:^|[.!?]\s+)(?:[-*]\s*)?(?:for this task,\s*)?"
             r"(?:please\s+)?(?:(?:you\s+)?must\s+)?"
-            r"(?:(?:forcibly|forcefully|temporarily|immediately|now|directly)\s+){0,3}"
+            r"(?:(?:also|forcibly|forcefully|temporarily|immediately|now|directly)\s+){0,3}"
             r"(?:(?:quit|kill|replace)\s+(?:the\s+)?running\s+bb\s+app|"
             r"(?:move|delete|overwrite)\s+`?/Applications/bb\.app`?)\b"
         )
