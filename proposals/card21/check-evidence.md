@@ -179,9 +179,10 @@ colon-delimited task prefixes, parenthetical/punctuated command modifiers,
 and en/em dash delimited modifiers,
 `never`/`do not` exception forms, passive permission, and conditional action
 forms, condition-first bypass forms, and exception-before-prohibition variants
-all fail for each home (468 direct contradiction assertions). The actual
+all fail for each home (492 direct contradiction assertions). The actual
 `--files` entrypoint rejects direct commands, bold-formatted app/bundle targets,
-and “Do not wait, [action]” for all six actions in all four rendered homes. The checker also passes all four
+bare “bb app” targets, and “Do not wait, [action]” for all six actions in all
+four rendered homes. The checker also passes all four
 unchanged live-home files and the kit source. Markdown “must not [action]”
 controls pass for all six actions in all four rendered homes.
 
@@ -190,7 +191,7 @@ and their “you must,” “you must also,” “you must first,” colon-prefi
 parenthetical/punctuated, and dash-delimited modifier forms, including e.g.
 abbreviations, line breaks, and parenthetical modifiers between each action and
 target; six Markdown-negated controls per rendered home still pass. The complete
-test module passed again (46 tests, 117.005s).
+test module passed again (46 tests, 153.096s).
 The focused case passes all four intact homes and rejects each appended command
 through `--files` for every rendered home.
 

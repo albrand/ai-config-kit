@@ -695,10 +695,11 @@ def contradicted_rule(name: str, text: str) -> bool:
         )
         app_command_targets = {
             r"(?:quit|kill|replace)": re.compile(
-                r"\b(?:the\s+)?running\s+bb\s+app\b", re.IGNORECASE
+                r"\b(?:(?:the\s+)?running\s+|the\s+)?bb\s+app\b", re.IGNORECASE
             ),
             r"(?:move|delete|overwrite)": re.compile(
-                r"`?/Applications/bb\.app`?\b", re.IGNORECASE
+                r"(?:`?/Applications/bb\.app`?\b|\b(?:the\s+)?bb\s+app\b)",
+                re.IGNORECASE,
             ),
         }
         sentence_breaks = ".!?;"
