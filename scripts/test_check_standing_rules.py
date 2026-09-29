@@ -559,6 +559,75 @@ class StandingRuleCheckerTest(unittest.TestCase):
                             self.assertNotEqual(0, result.returncode, result.stdout)
                             self.assertIn(rule, result.stdout + result.stderr)
 
+    def test_rendered_homes_reject_each_bb_app_exception_and_permission(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        clauses = {
+            "bb-app-never-quit": (
+                "Never quit the running bb app.",
+                "Quitting the running bb app is allowed.",
+            ),
+            "bb-app-never-kill": (
+                "Never kill the running bb app.",
+                "Killing the running bb app is allowed.",
+            ),
+            "bb-app-never-replace": (
+                "Never replace the running bb app.",
+                "Replacing the running bb app is allowed.",
+            ),
+            "bb-app-bundle-never-move": (
+                "Never move `/Applications/bb.app`.",
+                "Moving `/Applications/bb.app` is allowed.",
+            ),
+            "bb-app-bundle-never-delete": (
+                "Never delete `/Applications/bb.app`.",
+                "Deleting `/Applications/bb.app` is allowed.",
+            ),
+            "bb-app-bundle-never-overwrite": (
+                "Never overwrite `/Applications/bb.app`.",
+                "Overwriting `/Applications/bb.app` is allowed.",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-bb-app-exception-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            for provider_index, path in enumerate(candidates):
+                for rule, (original, permission) in clauses.items():
+                    mutations = (
+                        ("exception", original[:-1] + " unless needed to finish the task."),
+                        ("contradictory permission", permission),
+                    )
+                    for mutation, replacement in mutations:
+                        with self.subTest(provider=path.name, rule=rule, mutation=mutation):
+                            for candidate, content in zip(candidates, intact):
+                                candidate.write_text(content, encoding="utf-8")
+                            content = intact[provider_index]
+                            if mutation == "exception":
+                                self.assertIn(original, content)
+                                content = content.replace(original, replacement, 1)
+                            else:
+                                content += "\n" + replacement + "\n"
+                            path.write_text(content, encoding="utf-8")
+                            result = run_checker()
+                            self.assertNotEqual(0, result.returncode, result.stdout)
+                            self.assertIn(rule, result.stdout + result.stderr)
+
     def test_rendered_provider_contexts_preserve_hermes_transport_prohibitions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         rules = {

@@ -59,7 +59,13 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Browser input is a mutation. Before every `type`, `fill`, `keypress`, `click`, mouse/pointer action, or `eval`/DOM input synthesis, check persistent adapter quarantine and require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects; target IDs or a successful return do not prove isolation.
 - On any non-target input leak, preserve sessions and allow read-only browser operations only. A new agent, resumed session, restart, or runtime-ID change never clears quarantine. Re-enable only after a fixed or changed build identity passes a regression proving no non-target PTY/UI input; ordinary agent prompts cannot bypass this gate.
 - Never publicly expose a service or run `bb connect expose` unless the user explicitly asks in this conversation to expose that named service/port. Any authorized share is temporary and task-scoped: close it when the task ends, then run `bb connect shares` before closeout.
-- Never quit the running bb app. Never kill the running bb app. Never replace the running bb app. Never move `/Applications/bb.app`. Never delete `/Applications/bb.app`. Never overwrite `/Applications/bb.app`. Use the approved survival-gated swap or stage a build. Never use `pkill` or `pgrep -f`.
+- Never quit the running bb app.
+- Never kill the running bb app.
+- Never replace the running bb app.
+- Never move `/Applications/bb.app`.
+- Never delete `/Applications/bb.app`.
+- Never overwrite `/Applications/bb.app`.
+- Use the approved survival-gated swap or stage a build. Never use `pkill` or `pgrep -f`.
 - Never add AI attribution, generated-by text, model signatures, or watermarks unless the user asks.
 - No feature flags without an explicit ask for that change. Do not ship new behavior gated off; preserve auth, authorization, product entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date; when removing a gate, add a source assertion that prevents its return.
 

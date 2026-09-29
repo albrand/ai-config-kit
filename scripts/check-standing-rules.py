@@ -592,10 +592,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "92543e003d920338fe8a84aad5b470c185ab7f530990fb509f4bfcec62c57cdd": "proposal-claude",
-    "f34219c5db0e7b40d47935e2180c1b37859c4e15a8ec3de56a141d001f757d04": "proposal-codex",
-    "45d0ce5e1cd895537eefaae29a1447eb2b60216247e39ac218915c7bae2538c2": "proposal-opencode",
-    "eef9ff9213a3d625e7446f4e849ef38041c0113214b265d3fb2e138fac78ea82": "proposal-bb",
+    "a9e41cdc5282fbbaaad77ab94f993bdfcec756a96dc4e7cf97b0f699248754b0": "proposal-claude",
+    "a71af211551f41b9b517cc63ab1613320102c97e5d1e84096e583d5e544aebeb": "proposal-codex",
+    "5bf7e6814ee7bad0b231f1797fe554b6d8f98891357b398ce296be15545be1e2": "proposal-opencode",
+    "fa49ad169ce7352e45edcedc052ef51bacd466ad1b18845b001b74db643142bd": "proposal-bb",
 }
 
 
@@ -703,6 +703,30 @@ def contradicted_rule(name: str, text: str) -> bool:
         if email_approval_exception.search(text):
             return True
     contradictions = {
+        "bb-app-never-quit": re.compile(
+            r"(?is)(?:never quit[^\n]{0,150}\b(?:unless|except)\b|"
+            r"quitting the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
+        "bb-app-never-kill": re.compile(
+            r"(?is)(?:never kill[^\n]{0,150}\b(?:unless|except)\b|"
+            r"killing the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
+        "bb-app-never-replace": re.compile(
+            r"(?is)(?:never replace[^\n]{0,150}\b(?:unless|except)\b|"
+            r"replacing the running bb app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
+        "bb-app-bundle-never-move": re.compile(
+            r"(?is)(?:never move[^\n]{0,150}\b(?:unless|except)\b|"
+            r"moving `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
+        "bb-app-bundle-never-delete": re.compile(
+            r"(?is)(?:never delete[^\n]{0,150}\b(?:unless|except)\b|"
+            r"deleting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
+        "bb-app-bundle-never-overwrite": re.compile(
+            r"(?is)(?:never overwrite[^\n]{0,150}\b(?:unless|except)\b|"
+            r"overwriting `?/Applications/bb\.app[^\n]{0,80}\b(?:allowed|permitted)\b)"
+        ),
         "browser-never-access-unowned": re.compile(
             r"(?is)(?:allow|may|can).{0,80}(?:access|close).{0,120}"
             r"(?:unowned|pre-existing|user-owned|other-thread)"

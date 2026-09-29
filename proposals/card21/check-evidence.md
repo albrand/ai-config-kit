@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **43 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **44 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -124,9 +124,11 @@ The active-session fixture separately deletes and reverses the skill trigger,
 adapter-only attestations, authenticated exact-lease supersede chain, forbidden
 supersede input classes, and write-owner mismatch block in each provider; all
 30 `--files` mutations are rejected.
-The app/bundle fixture separately deletes and reverses the quit, kill, replace,
+The app/bundle fixtures separately delete and reverse the quit, kill, replace,
 move, delete, and overwrite prohibitions in all four rendered homes; all 48
-`--files` mutations are rejected.
+`--files` mutations are rejected. A second fixture adds a task exception to
+each prohibition and appends a contradictory permission for each action; all
+48 exception/permission mutations fail through `--files`.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -152,7 +154,7 @@ PASS all 5 files contain all applicable rules (108 regexes)
 Unit-test stdout:
 
 ```text
-Ran 43 tests
+Ran 44 tests
 OK
 ```
 
