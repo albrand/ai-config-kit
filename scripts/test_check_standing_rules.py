@@ -1,6 +1,8 @@
 """Focused fixtures for check-standing-rules.py."""
 
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -415,6 +417,49 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         CHECKER.missing_rules(damaged, required_optional=rules),
                     )
 
+    def test_standalone_provider_checker_rejects_browser_input_safeguard_regressions(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        mutations = {
+            "browser-input-is-mutation": (
+                "Browser input is a mutation.",
+                "Browser input is read-only.",
+            ),
+            "browser-persistent-quarantine-per-input": (
+                "Before every input, check persistent adapter quarantine",
+                "Before input, consult an optional adapter quarantine",
+            ),
+            "browser-exclusive-delivery-proof": (
+                "require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects",
+                "deliver inputs based on the owned page's identifier",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-standalone-") as temp_dir:
+            standalone_dir = Path(temp_dir) / "rendered-homes"
+            standalone_dir.mkdir()
+            candidate = standalone_dir / "CLAUDE.md"
+            for provider_path in providers:
+                original_text = provider_path.read_text(encoding="utf-8")
+                for rule, (original, weakened) in mutations.items():
+                    with self.subTest(provider=provider_path.name, rule=rule):
+                        self.assertIn(original, original_text)
+                        candidate.write_text(
+                            original_text.replace(original, weakened),
+                            encoding="utf-8",
+                        )
+                        result = subprocess.run(
+                            [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertNotEqual(0, result.returncode, result.stdout)
+                        self.assertIn(rule, result.stdout + result.stderr)
+
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         baseline_path = rendered / "bb-AGENTS.md"
@@ -426,10 +471,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "browser-close-before-isolation-change",
             "browser-lifecycle-ops-noncreating",
             "browser-close-every-slice-outcome",
-            "browser-input-is-mutation",
-            "browser-exclusive-delivery-proof",
             "browser-target-id-is-not-proof",
-            "browser-persistent-quarantine-per-input",
             "browser-leak-readonly-only",
             "browser-quarantine-survives-restart",
             "browser-quarantine-reenable-regression",
@@ -463,21 +505,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.",
                 "Keep the instance until it is no longer useful.",
             ),
-            "browser-input-is-mutation": (
-                "Browser input is a mutation.",
-                "Browser input is read-only.",
-            ),
-            "browser-exclusive-delivery-proof": (
-                "require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects",
-                "send input to the owned page if its identifiers look correct",
-            ),
             "browser-target-id-is-not-proof": (
                 "target IDs or a successful return do not prove isolation",
                 "target IDs and successful returns prove isolation",
-            ),
-            "browser-persistent-quarantine-per-input": (
-                "check persistent adapter quarantine",
-                "check quarantine once at session start",
             ),
             "browser-leak-readonly-only": (
                 "On any non-target input leak, preserve sessions and allow read-only browser operations only.",

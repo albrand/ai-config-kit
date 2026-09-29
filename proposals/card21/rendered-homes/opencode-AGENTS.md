@@ -5,6 +5,7 @@
 - Never type, paste, or handle credentials. The user performs login.
 - Never publicly expose a service or run `bb connect expose` unless the user explicitly asks in this conversation. Authorized shares are temporary: close them when the task ends and check `bb connect shares` before closeout.
 - Use only bb's isolated browser for interactive work. Never control a personal/default browser.
+- Browser input is a mutation. Before every input, check persistent adapter quarantine; require adapter control-plane proof of exclusive delivery to the owned page with zero terminal/OS input side effects.
 - No feature flags or new off-by-default gates without an explicit ask for that change; preserve auth/authorization, product entitlements, environment config, and existing flags. A requested flag needs a removal ticket and default-on date; removing a gate needs a regression assertion.
 - Remove only clean worktrees you created when work ends; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, `.keep-worktree`, or an unreferenced detached commit. A detached review worktree must end with its command; commit/push before finishing. Use `git worktree remove` without `--force`.
 - Never add AI attribution, generated-by text, model signatures, or watermarks unless the user asks.

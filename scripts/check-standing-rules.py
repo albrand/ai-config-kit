@@ -500,6 +500,12 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "delegation-cross-session-cmux-off",
                     "delegation-explicit-approval-outward-effects",
                 })
+            if rendered and path.name != "bb-AGENTS.md":
+                required_optional.update({
+                    "browser-input-is-mutation",
+                    "browser-exclusive-delivery-proof",
+                    "browser-persistent-quarantine-per-input",
+                })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
         ).expanduser().resolve():
@@ -521,10 +527,7 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "browser-close-before-isolation-change",
                 "browser-lifecycle-ops-noncreating",
                 "browser-close-every-slice-outcome",
-                "browser-input-is-mutation",
-                "browser-exclusive-delivery-proof",
                 "browser-target-id-is-not-proof",
-                "browser-persistent-quarantine-per-input",
                 "browser-leak-readonly-only",
                 "browser-quarantine-survives-restart",
                 "browser-quarantine-reenable-regression",

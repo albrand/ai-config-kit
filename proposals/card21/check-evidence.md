@@ -27,12 +27,16 @@ a blank line do not invalidate it. Email fixtures reject general-task and
 different-message consent, and delete each mail-safety obligation in turn.
 Mutation cases weaken each remaining hard prohibition and require the checker
 to reject the change. Browser tests combine every actual rendered provider
-proposal with the rendered bb baseline, then delete or weaken each page lifecycle
-and input-quarantine safeguard: exclusive delivery proof, IDs not proving
-isolation, per-input persistent quarantine, read-only-only after a leak,
-quarantine surviving restart, regression-gated re-enablement, and no prompt
-bypass. They also reject opposite “do not close” and “do not close before
-cookie isolation” instructions, and “do not enumerate before open.”
+proposal with the rendered bb baseline, then delete or weaken page ownership,
+enumeration/lifecycle, target-ID isolation, post-leak read-only mode, quarantine
+surviving restarts, regression-gated re-enablement, and no-prompt-bypass rules.
+They also reject opposite “do not close” and “do not close before cookie
+isolation” instructions, and “do not enumerate before open.”
+The provider hard-rule source independently retains browser-input mutation,
+persistent per-input quarantine, and exclusive-delivery proof. A separate test
+copies each native proposal without the bb baseline, deletes/weakens each of
+those three rules, and invokes `check-standing-rules.py --files` as a subprocess;
+all nine standalone cases fail as required.
 Hermes transport fixtures combine each rendered provider with the shared bb
 baseline and separately weaken reverse SSH, listeners, broad environment
 forwarding, `CMUX_SOCKET_CAPABILITY`/`CMUX_*` export, and the
