@@ -694,6 +694,9 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"|\b(?:this|that|the)\s+(?:rule|prohibition|policy)\b.{0,80}"
             r"(?:does not apply|doesn't apply|is waived).{0,80}"
             r"\b(?:recovery|emergency|urgent|disaster[- ]recovery)\b"
+            r"|\b(?:this|that|the)\s+(?:rule|prohibition|policy)\s+applies only"
+            r".{0,80}\b(?:outside|excluding|other than)\b.{0,40}"
+            r"\b(?:recovery|emergency|urgent|disaster[- ]recovery)\b"
         )
         if recovery_exemption.search(text):
             return True
