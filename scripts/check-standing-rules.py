@@ -685,7 +685,14 @@ def contradicted_rule(name: str, text: str) -> bool:
         if advisory_defect.search(text):
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
-        forbidden_prefix_words = {"not", "never", "no", "unless", "except"}
+        direct_negation = re.compile(
+            r"(?i)\b(?:not|never)(?:\s+(?:ever|at\s+all|under\s+any\s+circumstances))*\s*$"
+        )
+        negated_action_list = re.compile(
+            r"(?i)\b(?:not|never)\s+(?:quit|kill|replace|move|delete|overwrite)"
+            r"(?:\s*(?:,|and|or)\s*(?:quit|kill|replace|move|delete|overwrite))*"
+            r"\s*(?:,|and|or)?\s*$"
+        )
         app_command_targets = {
             r"(?:quit|kill|replace)": re.compile(
                 r"\b(?:the\s+)?running\s+bb\s+app\b", re.IGNORECASE
@@ -701,10 +708,9 @@ def contradicted_rule(name: str, text: str) -> bool:
                     (text.rfind(mark, 0, match.start()) for mark in sentence_breaks),
                     default=-1,
                 )
-                prefix_words = set(
-                    re.findall(r"[a-z]+", text[clause_start + 1 : match.start()].lower())
-                )
-                if prefix_words & forbidden_prefix_words:
+                prefix = text[clause_start + 1 : match.start()]
+                plain_prefix = re.sub(r"[*_`]+", "", prefix)
+                if direct_negation.search(plain_prefix) or negated_action_list.search(plain_prefix):
                     continue
                 if target.search(text[match.end() : match.end() + 500]):
                     return True
