@@ -17,6 +17,11 @@ done
 # 2. agent-hooks wrappers
 cp "$STAGE/hooks/qa-ship-gate-hook.sh" "$HOME/.agent-hooks/qa-ship-gate-hook.sh"
 cp "$STAGE/hooks/qa-stop-hook.sh" "$HOME/.agent-hooks/qa-stop-hook.sh"
+cp "$STAGE/hooks/codex-hook-trust.py" "$HOME/.agent-hooks/codex-hook-trust.py"
+mkdir -p "$HOME/.config/opencode/plugin"
+cp "$STAGE/hooks/plugin/opencode-qa-evidence.js" "$HOME/.config/opencode/plugin/qa-evidence-gate.js"
+mkdir -p "$HOME/.config/opencode/lib"
+cp "$STAGE/hooks/lib/qa-evidence-policy.mjs" "$HOME/.config/opencode/lib/qa-evidence-policy.mjs"
 # 3. coordinator pretool adapter (backup first)
 [ -f "$HOME/.agent-hooks/coordinator-hook-pretool.sh" ] && cp "$HOME/.agent-hooks/coordinator-hook-pretool.sh" "$BK/"
 cp "$STAGE/hooks/coordinator-hook-pretool.sh" "$HOME/.agent-hooks/coordinator-hook-pretool.sh"
@@ -25,5 +30,11 @@ chmod +x "$HOME/.agent-hooks/qa-ship-gate-hook.sh" "$HOME/.agent-hooks/qa-stop-h
 # 4. host timeout on the chain entry (a timed-out PreToolUse hook lets the
 #    command run); hook-timeouts.py backs up both configs before writing
 python3 "$STAGE/hooks/hook-timeouts.py" apply
+# Updating hooks.json changes Codex's persisted trust fingerprints. Re-trust
+# only after every hook/config mutation has completed, or Codex silently skips
+# the coordinator hook that contains the opted-in ship gate.
+if [ -f "$HOME/.codex/hooks.json" ]; then
+  TRUST="$HOME/.agent-hooks/codex-hook-trust.py"
+  python3 "$TRUST" --trust
+fi
 echo "installed hooks; backup: $BK"
-

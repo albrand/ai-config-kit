@@ -27,16 +27,17 @@ owner still approves what ships.
 ```bash
 python3 ~/.agents/skills/marketing-advisor/advisor.py \
   --text-file hero.txt --type copy --audience patient --surface "landing hero" \
-  --brand {{MARKETING_ADVISOR_BRANDS}}/<brand>.json \
-  --id <stable-asset-id> --log {{MARKETING_ADVISOR_BRANDS}}/<brand>-outcomes.jsonl
+  --brand ~/.config/agent-library/marketing-advisor/brands/<brand>.json \
+  --id <stable-asset-id> --log ~/.config/agent-library/marketing-advisor/brands/<brand>-outcomes.jsonl
 ```
 
 - The defaults are the calibrated configuration in `spec.json` → `calibrated`: judge `opus` (Claude Opus via `claude -p`, tools off), `w = 0`, and one model call per asset (about $0.06).
 - `--panel` adds the persona panel's reasons, one more call. It carries zero weight; see the calibration below.
 - `--judge sonnet|haiku|gpt|gemini` and `--w` exist for experiments. The output then says `"calibrated": false`.
+- `judge_cost_usd` is the sum of this run's judge calls' own cost reports (`claude -p` `total_cost_usd`: one call, or two with `--panel`); `null` when a judge reports no cost (the cursor-agent judges).
 - The exit code is 0 on accept, 3 on verify or revise, and 1 on error.
 - A brand profile holds `principles` (the owner's recorded reasons, each with the feedback `events` it came from) and a `facts_file`, the only allowed source of product facts.
-- Profiles live outside this repo in `{{MARKETING_ADVISOR_BRANDS}}`, because they hold an owner's verbatim feedback and unpublished copy. `brands/example.json` shows the shape. A profile with no principles runs the generic rubric only, which is uncalibrated.
+- Profiles live outside this repo in `~/.config/agent-library/marketing-advisor/brands`, because they hold an owner's verbatim feedback and unpublished copy. `brands/example.json` shows the shape. A profile with no principles runs the generic rubric only, which is uncalibrated.
 
 ## What it judges
 
@@ -62,7 +63,7 @@ The rubric is in `spec.json`. Each criterion is typed pass, fail or `na`; `na` i
 
 ## Output (typed; `schema.json`)
 
-`{asset_id, judge, criteria[{id, pass, evidence}], founder_principles[{id, pass}], compliance{pass, violations[{rule, excerpt}]}, panel[{persona, would_click, would_sign_up, reason}], scores{rubric, panel, combined, w, threshold, ranking}, decision, calibrated, decision_preregistered, failed_criteria[]}`
+`{asset_id, judge, judge_cost_usd, criteria[{id, pass, evidence}], founder_principles[{id, pass}], compliance{pass, violations[{rule, excerpt}]}, panel[{persona, would_click, would_sign_up, reason}], scores{rubric, panel, combined, w, threshold, ranking}, decision, calibrated, decision_preregistered, failed_criteria[]}`
 
 The decision is computed in code, never by the model:
 
@@ -110,7 +111,7 @@ Other findings:
   - 5 of 6 accepted copy labels are implicit;
   - the chosen judge shares a model family with the writer of most items (self-preference risk).
 - **Threshold sensitivity:** calibration scored against fewer principles per item than production runs, so production is stricter by up to one criterion. The rubric's two example phrases were made generic after calibration.
-- The raw runs, per-configuration table and labelled set are in the brand directory: `{{MARKETING_ADVISOR_BRANDS}}/<brand>-calibration.md`.
+- The raw runs, per-configuration table and labelled set are in the brand directory: `~/.config/agent-library/marketing-advisor/brands/<brand>-calibration.md`.
 
 ## Keep it honest: re-score against real outcomes
 
@@ -130,7 +131,7 @@ the same JSONL ledger `--log` writes to, joined on `asset_id`:
 Run it weekly, and whenever outcomes land:
 
 ```bash
-python3 ~/.agents/skills/marketing-advisor/rescore.py {{MARKETING_ADVISOR_BRANDS}}/<brand>-outcomes.jsonl \
+python3 ~/.agents/skills/marketing-advisor/rescore.py ~/.config/agent-library/marketing-advisor/brands/<brand>-outcomes.jsonl \
   --calibrated-kappa 0.63 --since 2026-09-24
 ```
 

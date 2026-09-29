@@ -16,6 +16,9 @@ Counterpart review and orchestration are advisory the same way.
 
 - One ticket, one PR. Never split a fix into several PRs unless the parts ship
   independently; each split multiplies reviews, screenshots and rebases.
+- Defects found by one QA walk ship as one batch: run focused tests for each
+  fix, close that batch's inventory, then do one full workflow re-walk at the
+  batch head. Do not re-walk after each fix PR.
 - Precision comes from reading the failing path and reproducing it before
   editing, and exercising the fix after, not from more review rounds. After a
   fix, re-run only the tests that cover it; the full suite runs once, on the
@@ -31,6 +34,7 @@ Counterpart review and orchestration are advisory the same way.
 - When a process rule and shipping conflict, ship and say which rule you set
   aside. The hard prohibitions (email, the bb app, credentials, public exposure,
   personal browser, dead feature flags, worktree removal) never yield.
+- Before LLM review, run `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py`, attach its JSON/Markdown packet, and add a reusable check for each defect.
 <!-- delivery-first:end -->
 
 ## Core Operating Principles

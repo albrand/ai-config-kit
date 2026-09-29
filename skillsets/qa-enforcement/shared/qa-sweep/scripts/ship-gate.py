@@ -61,6 +61,7 @@ HOME = os.path.expanduser("~")
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     HOME, ".local", "state", "agent-quality", "events.jsonl")
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
+REWALK_CONVERTER = os.path.join(SKILL_DIR, "rewalk-from-playwright.py")
 # realpath: a symlinked skill dir makes the gate script no-op (its main() guard
 # compares import.meta.url to argv[1]), so always run the resolved file.
 # Candidates: the flattened skill-home sibling, the kit's agent-runtime copy,
@@ -153,6 +154,7 @@ GITHUB_GRAPHQL_WRITE_RE = re.compile(
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
+_SELFTEST_LOOKUP_BUDGET_S = None
 _LOOKUP_DEADLINE = None
 # The whole PreToolUse decision must land before the host's hook timeout: a
 # timed-out hook lets the command run (verified 2026-09-25: a live probe on
@@ -174,6 +176,7 @@ HOOK_HOST_TIMEOUT_S = 15.0
 HOOK_HARD_S = 10.0
 HOOK_BUDGET_S = HOOK_HARD_S - 1.0
 _HOOK_DEADLINE = None
+PR_VIEW_CACHE = {}
 # None until _hook() knows whether the command targets an opted-in repo. At
 # the hard deadline, unknown counts as opted in: a deadline that fires before
 # the opt-in check (a chain that spent its budget before this process
@@ -593,12 +596,38 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv=False):
     if not isinstance(steps, list) or not steps:
         fails.append(rel + ": steps must be a non-empty list")
     else:
+        manual_steps = set()
+        evidence_rel = qa + "/evidence.json"
+        if rd["exists"](evidence_rel):
+            try:
+                packet = json.loads(rd["read"](evidence_rel))
+                journey_steps = ((packet.get("journey") or {}).get("steps")
+                                 if isinstance(packet, dict) else None)
+                if isinstance(journey_steps, list):
+                    manual_steps = {
+                        item.get("workflow_step") for item in journey_steps
+                        if isinstance(item, dict) and item.get("observed") is True
+                        and isinstance(item.get("workflow_step"), str)
+                        and isinstance(item.get("evidence"), str) and item["evidence"].strip()
+                    }
+            except Exception:
+                manual_steps = set()
+        accepted = 0
         for st in steps:
-            if not isinstance(st, dict) or not st.get("step"):
+            if (not isinstance(st, dict) or not isinstance(st.get("step"), str)
+                    or not st["step"].strip()):
                 fails.append(rel + ": every step needs a step name")
                 continue
-            if st.get("verdict") != "PASS":
-                fails.append(f"{rel} step '{st['step']}': verdict {st.get('verdict')!r} (only PASS clears the gate)")
+            verdict = st.get("verdict")
+            if verdict == "NOT_AUTOMATED":
+                if st["step"] in manual_steps:
+                    accepted += 1
+                else:
+                    fails.append(f"{rel} step '{st['step']}': NOT_AUTOMATED; matching manual workflow_step evidence is required")
+            elif verdict == "PASS":
+                accepted += 1
+            else:
+                fails.append(f"{rel} step '{st['step']}': verdict {verdict!r} (only PASS or manually evidenced NOT_AUTOMATED clears the gate)")
             if not st.get("evidence"):
                 fails.append(f"{rel} step '{st['step']}': evidence missing")
         if isinstance(wf, dict) and isinstance(wf.get("steps"), list):
@@ -607,7 +636,7 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv=False):
                 if name not in walked:
                     fails.append(rel + f": workflow step '{name}' has no verdict")
         stats["rewalk_steps"] = len(steps)
-        stats["rewalk_failed"] = sum(1 for st in steps if isinstance(st, dict) and st.get("verdict") != "PASS")
+        stats["rewalk_failed"] = len(steps) - accepted
     return doc
 
 
@@ -1520,12 +1549,13 @@ def deployment_commit(root, ref, team, cwd):
         return None, ("deployment %r: no deployment id or URL to resolve its source commit from"
                       % (ref or ""))
     now = time.monotonic()
+    lookup_budget = max(LOOKUP_BUDGET_S, _SELFTEST_LOOKUP_BUDGET_S or LOOKUP_BUDGET_S)
     if _LOOKUP_DEADLINE is None:
-        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+        _LOOKUP_DEADLINE = now + lookup_budget
     left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)  # leave time to check the commit
     if left < 0.3:
         return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
-                      "ship one deployment per command" % (host, LOOKUP_BUDGET_S))
+                      "ship one deployment per command" % (host, lookup_budget))
     path = "/v13/deployments/%s%s" % (host, ("?" + team) if team else "")
     env = dict(os.environ, VERCEL_TELEMETRY_DISABLED="1", NO_COLOR="1")
     try:
@@ -1740,6 +1770,9 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
         return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
     if head == "gh" and len(seg) > 2:
         if seg[1] == "pr" and seg[2] in ("merge", "ready"):
+            base = pr_base_branch(root, seg)
+            if base is not None and normalize_ref(base) not in protected_refs(root, cfg):
+                return None, [], set()
             return "merge", [], set()
         if seg[1] == "release" and seg[2] == "create":
             c = release_commit(root, seg[3:])
@@ -1861,21 +1894,59 @@ def pr_merge_args(command):
     return None
 
 
+def pr_selector(args):
+    """PR selector from `gh pr merge|ready`, ignoring option values."""
+    value_flags = {"-R", "--repo", "--match-head-commit"}
+    skip_value = False
+    for token in args[3:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if token in value_flags:
+            skip_value = True
+        elif token == "--":
+            break
+        elif token.startswith("-"):
+            continue
+        else:
+            return token
+    return None
+
+
+def pr_view(root, args):
+    """Return (base branch, head SHA) from one bounded `gh pr view` lookup."""
+    if os.environ.get("QA_GATE_NO_GH"):
+        return None, None
+    selector = pr_selector(args)
+    key = (root, selector)
+    if key in PR_VIEW_CACHE:
+        return PR_VIEW_CACHE[key]
+    cmd = (["gh", "pr", "view"] + ([selector] if selector else [])
+           + ["--json", "baseRefName,headRefOid", "-q", "[.baseRefName, .headRefOid] | @tsv"])
+    result_info = (None, None)
+    try:
+        result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
+        if result.returncode == 0:
+            values = result.stdout.rstrip("\r\n").split("\t", 1)
+            if len(values) == 2:
+                branch, sha = values
+                if branch and not any(ch.isspace() for ch in branch):
+                    result_info = (branch, sha if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None)
+    except Exception:
+        pass
+    PR_VIEW_CACHE[key] = result_info
+    return result_info
+
+
+def pr_base_branch(root, args):
+    """Base branch; an unresolved destination remains gated fail-closed."""
+    return pr_view(root, args)[0]
+
+
 def pr_head_sha(root, args):
     """PR head sha for `gh pr merge [n]`: `gh pr view [n] --json headRefOid`.
     None on any failure (caller falls back to the local HEAD)."""
-    if os.environ.get("QA_GATE_NO_GH"):
-        return None
-    num = next((a for a in (args[3:] if len(args) > 3 else []) if a.isdigit()), None)
-    cmd = ["gh", "pr", "view"] + ([num] if num else []) + ["--json", "headRefOid", "-q", ".headRefOid"]
-    try:
-        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
-        sha = p.stdout.strip()
-        if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
-            return sha
-    except Exception:
-        pass
-    return None
+    return pr_view(root, args)[1]
 
 
 def _hard_deadline(signum, frame):
@@ -1915,6 +1986,7 @@ def hook(raw=None):
 def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     global _LAST_INPUT, _HOOK_OPTED
+    PR_VIEW_CACHE.clear()
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -2193,6 +2265,9 @@ def main():
     cmd = argv[0] if argv else "check"
     rest = parse_args(argv[1:])
     if cmd == "hook":
+        if rest.get("selftest-fixture"):
+            global _SELFTEST_LOOKUP_BUDGET_S
+            _SELFTEST_LOOKUP_BUDGET_S = 30.0
         return hook()  # hook() stashes raw input for the crash fail-closed path
     if cmd == "stop":
         return stop()
@@ -2647,32 +2722,109 @@ def selftest(v4_gate=None, v4_templates=None):
     p = hookrun(r3, "git --no-pager push origin main")
     expect(p.returncode == 2, "v2: flag-before-subcommand push DENIED")
 
-    # merges: freshness against the PR head SHA (fake gh on PATH)
+    # Card 16 batch lifecycle: fix PRs merge freely into a non-protected batch
+    # branch; only the batch merge to a protected branch needs closed inventory
+    # and one rewalk at the batch head.
+    binp = os.path.join(tmp, "bin")
+    os.makedirs(binp, exist_ok=True)
+    base_file, head_file = os.path.join(tmp, "pr-base"), os.path.join(tmp, "pr-head")
+    fake = os.path.join(binp, "gh")
+    open(fake, "w").write("#!/bin/sh\ncase \"$*\" in *baseRefName,headRefOid*) printf '%%s\\t%%s\\n' \"$(tr -d '\\n' < %s)\" \"$(tr -d '\\n' < %s)\";; *) exit 1;; esac\n"
+                           % (base_file, head_file))
+    os.chmod(fake, 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = binp + os.pathsep + old_path
+
+    open_head = sh("git rev-parse HEAD", cwd=r3).stdout.strip()
+    open(base_file, "w").write("qa/batch-card16\n")
+    open(head_file, "w").write(open_head + "\n")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0,
+           "card16: merge into non-protected batch base with open inventory ALLOWED")
+    open(base_file, "w").write("main\n")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: merge into default protected base with open inventory DENIED")
+    open(base_file, "w").write("dev\n")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: merge into configured protected dev base with open inventory DENIED")
+
+    # Close the batch inventory and automate the one whole-workflow rewalk.
     lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
     lines[1]["status"] = "closed"
     with open(os.path.join(qa3, "inventory.jsonl"), "w") as fh:
         fh.write("\n".join(json.dumps(l) for l in lines) + "\n")
-    doc = json.load(open(os.path.join(qa3, "clusters.json")))
-    doc["mapping"]["R2"] = "CL-1"
-    json.dump(doc, open(os.path.join(qa3, "clusters.json"), "w"))
-    binp = os.path.join(tmp, "bin")
-    os.makedirs(binp, exist_ok=True)
-    prhead = "f" * 40
-    fake = os.path.join(binp, "gh")
-    open(fake, "w").write("#!/bin/sh\ncase \"$*\" in *--json*) echo %s;; *) exit 1;; esac\n" % prhead)
-    os.chmod(fake, 0o755)
-    old_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = binp + os.pathsep + old_path
-    doc = json.load(open(os.path.join(qa3, "rewalk.json")))
-    doc["sha"] = sha3  # local HEAD, not the PR head: stale for the merge
-    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
+    clusters_doc = json.load(open(os.path.join(qa3, "clusters.json")))
+    clusters_doc["mapping"]["R2"] = "CL-1"
+    json.dump(clusters_doc, open(os.path.join(qa3, "clusters.json"), "w"))
+    open(os.path.join(qa3, "plan.md"), "w").write("# p\n- CL-1\n")
+    report_path = os.path.join(qa3, "playwright-report.json")
+    workflow_path = os.path.join(qa3, "workflow.json")
+
+    def playwright_report(status, annotation=True):
+        annotations = ([{"type": "qa-step", "description": "w1::s1"}] if annotation else [])
+        result = {"retry": 0, "status": status, "attachments": [
+            {"name": "trace", "contentType": "application/zip", "path": "artifacts/trace.zip"},
+            {"name": "screenshot", "contentType": "image/png", "path": "artifacts/screenshot.png"}]}
+        return {"suites": [{"title": "batch", "specs": [{"title": "s1", "tests": [
+            {"title": "s1 behavior", "annotations": annotations, "expectedStatus": "passed",
+             "status": "expected" if status == "passed" else "unexpected", "results": [result]}]}]}]}
+
+    def generate_rewalk(status, annotation, sha):
+        with open(report_path, "w") as fh:
+            json.dump(playwright_report(status, annotation), fh)
+        return subprocess.run(["python3", REWALK_CONVERTER, report_path, workflow_path,
+                               "--sha", sha, "--target", "https://preview.test",
+                               "--deployment-id", "dpl_card16", "--output", os.path.join(qa3, "rewalk.json")],
+                              cwd=r3, capture_output=True, text=True)
+
+    generated = generate_rewalk("passed", True, open_head)
+    pass_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
+    pass_evidence = pass_doc["steps"][0]["evidence"]
+    expect(generated.returncode == 0 and pass_doc["steps"][0]["verdict"] == "PASS"
+           and report_path in pass_evidence and "artifacts/trace.zip" in pass_evidence
+           and "artifacts/screenshot.png" in pass_evidence,
+           "card16: Playwright first-attempt pass records report and attachments")
+    pass_head = commit_qa(r3)
+    open(head_file, "w").write(pass_head + "\n")
     p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "shipped sha" in p.stderr, "v2: gh pr merge --admin with stale walk DENIED")
-    doc["sha"] = prhead
-    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
-    commit_qa(r3)
+    expect(p.returncode == 0,
+           "card16: protected default-base merge with closed inventory and fresh rewalk ALLOWED [%s]"
+           % p.stderr.strip()[:140])
+
+    failing = generate_rewalk("failed", True, pass_head)
+    fail_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
+    fail_head = commit_qa(r3)
+    open(head_file, "w").write(fail_head + "\n")
     p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 0, "v2: gh pr merge with fresh walk at PR head ALLOWED [%s]" % p.stderr.strip()[:140])
+    expect(failing.returncode == 0 and fail_doc["steps"][0]["verdict"] == "FAIL"
+           and p.returncode == 2 and "verdict 'FAIL'" in p.stderr,
+           "card16: failing annotated Playwright test emits FAIL and protected merge is DENIED")
+
+    unmapped = generate_rewalk("passed", False, fail_head)
+    no_auto = json.load(open(os.path.join(qa3, "rewalk.json")))
+    no_auto_head = commit_qa(r3)
+    open(head_file, "w").write(no_auto_head + "\n")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(unmapped.returncode == 0 and no_auto["steps"][0]["verdict"] == "NOT_AUTOMATED"
+           and p.returncode == 2 and "matching manual workflow_step evidence is required" in p.stderr,
+           "card16: unmapped step emits NOT_AUTOMATED and denies without manual evidence")
+
+    # Existing E2E packets clear the manual-only path only when they name the
+    # exact workflow step and provide the observed step evidence.
+    evidence_doc = json.load(open(os.path.join(qa3, "evidence.json")))
+    evidence_doc["journey"]["steps"][0]["workflow_step"] = "s1"
+    json.dump(evidence_doc, open(os.path.join(qa3, "evidence.json"), "w"))
+    manual_rewalk = json.load(open(os.path.join(qa3, "rewalk.json")))
+    manual_rewalk["sha"] = no_auto_head
+    json.dump(manual_rewalk, open(os.path.join(qa3, "rewalk.json"), "w"))
+    manual_head = commit_qa(r3)
+    open(head_file, "w").write(manual_head + "\n")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0,
+           "card16: NOT_AUTOMATED clears with matching verified manual workflow evidence [%s]"
+           % p.stderr.strip()[:140])
     os.environ["PATH"] = old_path
 
     # non-opted-in repo: everything allowed, ships included
@@ -3019,11 +3171,17 @@ def selftest(v4_gate=None, v4_templates=None):
     # checked only HEAD and so allowed them; allow cases run with HEAD on the
     # unwalked feat, where v4 denied them. Every one of them flips between
     # 77b8d56 and v5, except the controls marked "control".
-    def hook5(root, command, env=None):
+    def hook5(root, command, env=None, fixture_timeout=True):
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
-        return subprocess.run(["python3", V4GATE, "hook"], cwd=root, input=payload, capture_output=True,
-                              text=True, env=dict(os.environ, QA_GATE_NO_GH="1", **(env or {})))
+        child_env = dict(os.environ, QA_GATE_NO_GH="1", **(env or {}))
+        child_env.pop("QA_GATE_SELFTEST", None)
+        child_env.pop("QA_GATE_SELFTEST_LOOKUP_BUDGET_S", None)
+        args = ["python3", V4GATE, "hook"]
+        if fixture_timeout:
+            args.append("--selftest-fixture")
+        return subprocess.run(args, cwd=root, input=payload, capture_output=True,
+                              text=True, env=child_env)
 
     def deny5(root, command, name, why, env=None):
         p = hook5(root, command, env)
@@ -3079,7 +3237,13 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
     deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
-    deny5(r9, "vercel promote dpl_slow", "lookup past the hook budget", "timed out")
+    expect(LOOKUP_BUDGET_S == 3.2, "v5: production provenance lookup budget remains 3.2 s")
+    p = hook5(r9, "vercel promote dpl_slow",
+              env={"QA_GATE_SELFTEST": "1", "QA_GATE_SELFTEST_LOOKUP_BUDGET_S": "30"},
+              fixture_timeout=False)
+    expect(p.returncode == 2 and "timed out after 3.2 s" in p.stderr,
+           "v5 DENY  production lookup budget times out the slow fake at 3.2 s [%s]"
+           % " ".join(p.stderr.split())[-110:])
     deny5(r9, "vercel promote dpl_foreign", "source commit not in this clone", "not in this clone")
     deny5(r9, "vercel promote dpl_nogit", "deployment without git metadata", "no git provenance")
     deny5(r9, "vercel promote dpl_dirty", "deployment built from a dirty tree", "uncommitted changes")

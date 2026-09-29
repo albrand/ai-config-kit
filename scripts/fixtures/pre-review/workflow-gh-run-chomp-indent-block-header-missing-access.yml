@@ -1,0 +1,10 @@
+name: inspect-run
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |-2
+          gh run view "$RUN_ID"

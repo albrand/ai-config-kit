@@ -10,6 +10,14 @@ For GitHub pull requests, treat "review" as analyze and post the review by defau
 Do not split analysis from posting unless the user explicitly asks for draft/no-post mode,
 the target is not a postable PR, or posting is blocked.
 
+Before the first LLM review submission, attach both JSON and Markdown packets
+from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
+advisor round; focus the LLM review on semantic gaps left by deterministic
+checks. Each defect fix must add the cheapest deterministic detector that
+would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
+line when only semantic review can catch it. Put generic rules in the kit starter
+pack and project-specific rules in `.review-rules/`.
+
 ## Workflow
 
 1. Read and obey `references/pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
