@@ -63,6 +63,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Clone Node dependencies with `wt-deps`; never symlink `node_modules`. Below 20 GB free, do not install/build. Validate focused, use native toolchains, and stop every task-owned process tree before closeout.
 - Automations must be single-flight per target and must not treat their own push as completion while its agent still runs. For expensive/release/migration operations, use `execution-ownership`.
 - Do not kill, replace, or restart the bb app. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.
+- For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 
 ## Testing and reporting
 
@@ -109,4 +110,5 @@ Declare answer space; ask one atomic question at a time against identical state;
 - bb appends this data-dir file to every provider-backed thread. Keep it provider-neutral; workspace-specific rules belong in the workspace `.bb/AGENTS.md`.
 - Before login handoff, use `verified-qa-e2e` and its deterministic `manual_login` gate. Enumerate instances, reuse the thread-owned one (or create exactly one), disclose shared-window tab count/title before takeover, never type credentials, then release and verify auth on that same instance. Close only duplicates owned by this thread.
 - Hermes defects block merges. Hermes runs independently; use `bb fleet validate` with bounded evidence. Fix transport faults instead of asking Hermes to mount a project source.
+- Never pass a `--model` override to `acp-hermes-agent`.
 - Before child work, route with `bb fleet route` and use exactly its provider/model/reasoning. Keep one writer per worktree; stop on collisions. Never quit or replace the running bb app.

@@ -115,6 +115,21 @@ RULES: dict[str, re.Pattern[str]] = {
     "browser-prompts-cannot-bypass-quarantine": re.compile(
         r"(?is)ordinary agent prompts cannot bypass this gate"
     ),
+    "hermes-no-reverse-ssh": re.compile(r"(?is)never (?:create )?reverse SSH"),
+    "hermes-no-listeners": re.compile(
+        r"(?is)never (?:create )?reverse SSH(?: or|,) listeners"
+    ),
+    "hermes-no-broad-env-forwarding": re.compile(
+        r"(?is)never.{0,100}reverse SSH.{0,100}"
+        r"(?:broad environment forwarding|forward broad environment values)"
+        r"(?:, or export|[.;])"
+    ),
+    "hermes-no-cmux-capability-export": re.compile(
+        r"(?is)never.{0,120}export `CMUX_SOCKET_CAPABILITY`/`CMUX_\*` values"
+    ),
+    "hermes-agent-no-model-override": re.compile(
+        r"(?is)(?:never|do not) pass a `--model` override to `acp-hermes-agent`"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -209,6 +224,11 @@ OPTIONAL_WHEN_ABSENT = {
     "browser-quarantine-survives-restart",
     "browser-quarantine-reenable-regression",
     "browser-prompts-cannot-bypass-quarantine",
+    "hermes-no-reverse-ssh",
+    "hermes-no-listeners",
+    "hermes-no-broad-env-forwarding",
+    "hermes-no-cmux-capability-export",
+    "hermes-agent-no-model-override",
 }
 
 HOME_FILES = (
@@ -304,6 +324,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name.startswith("browser-"):
         return bool(RULES[name].search(text))
+    if name.startswith("hermes-"):
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -343,6 +365,11 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "browser-quarantine-survives-restart",
                     "browser-quarantine-reenable-regression",
                     "browser-prompts-cannot-bypass-quarantine",
+                    "hermes-no-reverse-ssh",
+                    "hermes-no-listeners",
+                    "hermes-no-broad-env-forwarding",
+                    "hermes-no-cmux-capability-export",
+                    "hermes-agent-no-model-override",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -373,6 +400,11 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "browser-quarantine-survives-restart",
                 "browser-quarantine-reenable-regression",
                 "browser-prompts-cannot-bypass-quarantine",
+                "hermes-no-reverse-ssh",
+                "hermes-no-listeners",
+                "hermes-no-broad-env-forwarding",
+                "hermes-no-cmux-capability-export",
+                "hermes-agent-no-model-override",
             })
         missing = missing_rules(
             content,

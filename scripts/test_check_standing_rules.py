@@ -24,6 +24,7 @@ Hermes names a defect in a PR: fix it; defects block merge.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
 Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config.
 Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
+For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 """
 
 
@@ -122,6 +123,59 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         required_optional=set(CHECKER.OPTIONAL_WHEN_ABSENT),
                     ),
                 )
+
+    def test_rendered_provider_contexts_preserve_hermes_transport_prohibitions(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        rules = {
+            "hermes-no-reverse-ssh",
+            "hermes-no-listeners",
+            "hermes-no-broad-env-forwarding",
+            "hermes-no-cmux-capability-export",
+            "hermes-agent-no-model-override",
+        }
+        mutations = {
+            "hermes-no-reverse-ssh": (
+                "never create reverse SSH",
+                "may create reverse SSH",
+            ),
+            "hermes-no-listeners": (
+                "never create reverse SSH or listeners",
+                "never create reverse SSH; listeners may be created",
+            ),
+            "hermes-no-broad-env-forwarding": (
+                "forward broad environment values",
+                "forward broad environment values when useful",
+            ),
+            "hermes-no-cmux-capability-export": (
+                "export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values",
+                "export CMUX capability values",
+            ),
+            "hermes-agent-no-model-override": (
+                "Never pass a `--model` override to `acp-hermes-agent`.",
+                "Pass a `--model` override to `acp-hermes-agent` when useful.",
+            ),
+        }
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        for provider_path in providers:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [], CHECKER.missing_rules(combined, required_optional=rules)
+                )
+            for rule, (original, weakened) in mutations.items():
+                with self.subTest(provider=provider_path.name, rule=rule):
+                    self.assertIn(original, combined)
+                    damaged = combined.replace(original, weakened)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(damaged, required_optional=rules),
+                    )
 
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"

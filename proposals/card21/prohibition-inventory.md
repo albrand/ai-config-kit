@@ -1,0 +1,30 @@
+# Card 21 old-to-new prohibition inventory
+
+This inventory maps prohibitions present in a live home before compaction to
+their rendered destination. Shared rules now live in the injected bb baseline
+and are repeated in each rendered provider's required hard-rule adapter where
+the source homes previously repeated them. Provider-specific prohibitions stay
+in the shared baseline when omission would otherwise lose coverage.
+
+| Prohibition / obligation | Old home(s) | Proposed destination | Regression check |
+|---|---|---|---|
+| Exact-message email approval; no recipient/compose/send without approval; safe path verification; disclose and leave open compose surfaces untouched | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `email-*` rules and consent mutation fixtures |
+| Never quit/kill/replace bb app or alter installed bundle; `pkill`/`pgrep -f` prohibition | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `bb-app-process`, `no-pkill-pgrep-app-kill-path` |
+| Never type/paste/handle credentials | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `credentials` |
+| No public service exposure or `bb connect expose` without current explicit request; close scoped shares | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `public-exposure` |
+| Personal browser prohibited; bb isolated browser only; instance ownership, lifecycle, login, and input quarantine | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` browser rules in the injected baseline and rendered providers | `isolated-browser`, `browser-*`; rendered-context deletion/weakening fixtures |
+| No new feature flags without explicit ask; preserve existing auth, entitlements, config and flags; removal plan/assertion | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `no-new-feature-flags` and flag mutation fixture |
+| Worktree ownership/removal, own live bb environment protection, detached commit/command lifetime, no `--force` | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` worktree rules and rendered provider hard-rules | `worktree-*` and per-safeguard mutation fixtures |
+| No AI attribution, generated-by text, signatures, or watermarks | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` hard prohibitions and rendered provider hard-rules | `no-ai-signatures` |
+| Hermes-named defects block merge until fixed and cleared on same topic | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` delivery/review rules and rendered provider hard-rules | `hermes-defects-block` |
+| Testing claim needs persona, target, user-outcome goals and per-goal verdict; otherwise NOT RUN; PASS requires completed workflow | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` testing/reporting and rendered provider hard-rules | `testing-claim` and claim mutation fixture |
+| Security-first defaults, authorization for active testing, defensive-only work, high-stakes sweep | Claude, Codex, OpenCode, bb | `GLOBAL_AGENTS.md` security rules and rendered provider hard-rules | `security-first` |
+| Codex context garbage-collection boundaries, resume packet, log/session cleanup and protected user/repository state | Codex | Codex provider overlay | `context-gc-*` and per-obligation mutation fixtures |
+| Browser input is mutation; prove exclusive delivery; target IDs/success are not proof; persistent quarantine; read-only after leak; quarantine survives restart; regression-gated re-enable; prompt cannot bypass | Claude and OpenCode had explicit browser-input isolation rules; baseline browser lifecycle rules existed in provider homes | `GLOBAL_AGENTS.md` shared browser baseline, inherited by every provider | `browser-input-*` and combined rendered-context mutation fixtures |
+| Never create reverse SSH/listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` | OpenCode | `GLOBAL_AGENTS.md` remote Hermes/cmux transport rule; inherited by every provider | `hermes-no-reverse-ssh`, `hermes-no-listeners`, `hermes-no-broad-env-forwarding`, `hermes-no-cmux-capability-export` |
+| Never pass a `--model` override to `acp-hermes-agent` | bb | `GLOBAL_AGENTS.md` remote Hermes/cmux transport rule and bb adapter | `hermes-agent-no-model-override` |
+
+All proposal rows are source-backed by the pre-edit home snapshots represented
+by the old sides of `claude.diff`, `codex.diff`, `opencode.diff`, and `bb.diff`.
+`check-evidence.md` records test commands/results; `live-home-hashes.md` records
+the unchanged live-home digests. No live-home renderer install was run.
