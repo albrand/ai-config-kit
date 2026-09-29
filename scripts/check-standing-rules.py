@@ -52,6 +52,15 @@ RULES: dict[str, re.Pattern[str]] = {
         r"run\s+`?bb connect expose`?).{0,140}(?:unless|without).{0,60}(?:explicit|user asks)|"
         r"hard prohibitions.{0,120}public exposure)"
     ),
+    "public-exposure-current-conversation-service": re.compile(
+        r"(?is)(?:user )?explicitly asks in this conversation to expose that named service/port"
+    ),
+    "public-share-close-task-end": re.compile(
+        r"(?is)authorized share is temporary and task-scoped.{0,80}close it when the task ends"
+    ),
+    "public-share-closeout-audit": re.compile(
+        r"(?is)run `bb connect shares` before closeout"
+    ),
     "isolated-browser": re.compile(
         r"(?is)(?:(?:only )?permitted interactive browser surface|"
         r"use only bb.s isolated browser)"
@@ -321,6 +330,9 @@ RULES: dict[str, re.Pattern[str]] = {
     ),
 }
 OPTIONAL_WHEN_ABSENT = {
+    "public-exposure-current-conversation-service",
+    "public-share-close-task-end",
+    "public-share-closeout-audit",
     "credentials-never-paste",
     "credentials-never-handle",
     "no-pkill-pgrep-app-kill-path",
@@ -425,6 +437,8 @@ LIVE_HOME_RULES = {
     },
 }
 KIT_BASELINE_RULES = {
+    "public-exposure-current-conversation-service", "public-share-close-task-end",
+    "public-share-closeout-audit",
     "credentials-never-paste", "credentials-never-handle",
     "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
     "browser-enumerate-before-open", "browser-leak-readonly-only",
@@ -477,10 +491,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "6d7f6e847b11b43a9c1bcf2ec7fd3a3200f657d66c9d295119099f3284f54f8e": "proposal-claude",
-    "99b8729bc8f28e5c9974e0152a18817ed4674a442b89027b34f527a759b9a8d8": "proposal-codex",
-    "bce235ccaedce062891d6471063676ff17da6c57df33d3a8d1535cd49c1a5d60": "proposal-opencode",
-    "c1b20e504a9b63211da862a3262232020f7e7295cdcaac76d1e8c2f03fa4012c": "proposal-bb",
+    "9192a23f56ca92b5349f4593d190c61db3147e6441cde2b27e1ee258292900c4": "proposal-claude",
+    "ce66f430ce3557a9f42023388408a9ad64a4477f3551c128cdcc7dcac65a9fd9": "proposal-codex",
+    "0e3aa78745d47ea809d37b4ca917e8d1523641b9afaafe0734340ff7f1e85adf": "proposal-opencode",
+    "7212ac36accbe201d4fa77127aa83267b59a8f3ae0be49f2688bbacc3f484ccf": "proposal-bb",
 }
 
 
@@ -545,6 +559,13 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
+    if name == "public-exposure" or name.startswith("public-exposure-"):
+        stale_consent = re.compile(
+            r"(?is)(?:user )?explicitly asks in (?:a|any|the) "
+            r"(?:previous|past|earlier|different) conversation"
+        )
+        if stale_consent.search(text):
+            return True
     if name.startswith("credentials-never-"):
         credential_exception = re.compile(
             r"(?is)never.{0,100}\b(?:type|paste|handle)\b.{0,100}credentials.{0,80}"
@@ -614,6 +635,8 @@ def optional_present(name: str, text: str) -> bool:
     if name == "no-pkill-pgrep-app-kill-path":
         return bool(RULES[name].search(text))
     if name.startswith("credentials-never-"):
+        return bool(RULES[name].search(text))
+    if name.startswith("public-exposure-") or name.startswith("public-share-"):
         return bool(RULES[name].search(text))
     if name == "worktree-own-bb-environment":
         return bool(RULES[name].search(text))

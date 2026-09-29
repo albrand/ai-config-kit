@@ -10,10 +10,10 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (85 regexes;
-43 Claude, 52 Codex, 48 OpenCode, 47 bb, and 78 kit rules applicable). The
-rendered proposals plus kit source also passed all 85 regexes: 69 Claude, 85
-Codex, 78 OpenCode, 78 bb, and 78 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (88 regexes;
+43 Claude, 52 Codex, 48 OpenCode, 47 bb, and 81 kit rules applicable). The
+rendered proposals plus kit source also passed all 88 regexes: 72 Claude, 88
+Codex, 81 OpenCode, 81 bb, and 81 kit rules applicable. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **35 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **36 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -67,6 +67,10 @@ an exception for login; the contradiction veto rejects it at the rendered
 The rendered-path CLI also rejects an added permission saying routine emails
 may be sent without asking, across all four proposals, while intact proposals
 pass.
+Public exposure separately requires a current-conversation request naming the
+service/port, closing the temporary share at task end, and checking
+`bb connect shares` before closeout. Rendered-path mutations for stale consent
+and either deleted cleanup obligation fail across all four homes.
 
 The real `--files` entrypoint also accepts native-shaped home paths. Intact
 native baseline fixtures pass; intact rendered homes at native paths pass;
@@ -109,19 +113,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (85 regexes)
+PASS all 5 files contain all applicable rules (88 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (85 regexes)
+PASS all 5 files contain all applicable rules (88 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 35 tests
+Ran 36 tests
 OK
 ```
 

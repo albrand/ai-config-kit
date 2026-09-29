@@ -303,6 +303,50 @@ class StandingRuleCheckerTest(unittest.TestCase):
             ):
                 self.assertIn(rule, result.stdout + result.stderr)
 
+    def test_rendered_profiles_require_current_service_consent_and_share_cleanup(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        cases = {
+            "public-exposure-current-conversation-service": (
+                "in this conversation to expose that named service/port",
+                "in any previous conversation to expose that named service/port",
+            ),
+            "public-share-close-task-end": (
+                "close it when the task ends",
+                "retain it after the task ends",
+            ),
+            "public-share-closeout-audit": (
+                "run `bb connect shares` before closeout",
+                "skip the `bb connect shares` check at closeout",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="card21-public-exposure-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stderr)
+            for rule, (original, weakened) in cases.items():
+                with self.subTest(rule=rule):
+                    for path, content in zip(candidates, intact):
+                        self.assertIn(original, content)
+                        path.write_text(content.replace(original, weakened, 1), encoding="utf-8")
+                    result = run_checker()
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertIn(rule, result.stdout + result.stderr)
+
     def test_each_email_safety_obligation_is_required(self):
         obligations = {
             "email-exact-message-approval": "approval for that exact message in this conversation",
