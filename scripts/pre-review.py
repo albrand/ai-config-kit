@@ -507,17 +507,23 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
                 command = [sys.executable, *absolute_python]
             else:
                 runner = (
-                    "import subprocess, sys\n"
+                    "import os, signal, subprocess, sys\n"
                     "timeout = float(sys.argv[1])\n"
                     "failed = False\n"
                     "for path in sys.argv[2:]:\n"
+                    "    process = subprocess.Popen([sys.executable, path], start_new_session=True)\n"
                     "    try:\n"
-                    "        result = subprocess.run([sys.executable, path], timeout=timeout)\n"
+                    "        result = process.wait(timeout=timeout)\n"
                     "    except subprocess.TimeoutExpired:\n"
+                    "        try:\n"
+                    "            os.killpg(process.pid, signal.SIGKILL)\n"
+                    "        except ProcessLookupError:\n"
+                    "            pass\n"
+                    "        process.wait()\n"
                     "        print(f'{path} timed out after {timeout:g} seconds', file=sys.stderr)\n"
                     "        failed = True\n"
                     "        continue\n"
-                    "    failed = failed or result.returncode != 0\n"
+                    "    failed = failed or result != 0\n"
                     "raise SystemExit(1 if failed else 0)\n"
                 )
                 command = [sys.executable, "-c", runner,

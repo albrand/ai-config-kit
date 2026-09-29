@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -580,6 +581,7 @@ class PreReviewTests(unittest.TestCase):
         test_file.parent.mkdir()
         marker = self.base / "main-guard-suite-setup-ran"
         sibling_marker = self.base / "sibling-script-ran"
+        child_pid_file = self.base / "hung-child.pid"
         sibling_test = self.repo / "tests" / "test_sibling.py"
         sibling_test.write_text(
             "import time\n"
@@ -598,12 +600,16 @@ class PreReviewTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        def write_suite(sleep_seconds: float) -> None:
+        def write_suite(sleep_seconds: float, spawn_hanging_child: bool = False) -> None:
             test_file.write_text(
+                "import subprocess\n"
+                "import sys\n"
                 "import time\n"
                 "from pathlib import Path\n"
                 "import unittest\n"
                 f"SLEEP_SECONDS = {sleep_seconds!r}\n"
+                f"SPAWN_HANGING_CHILD = {spawn_hanging_child!r}\n"
+                f"CHILD_PID_FILE = Path({str(child_pid_file)!r})\n"
                 "class OrdinaryFeatureTests(unittest.TestCase):\n"
                 "    def test_ordinary_case(self):\n"
                 "        self.assertTrue(True)\n"
@@ -617,6 +623,9 @@ class PreReviewTests(unittest.TestCase):
                 "    for index in range(30):\n"
                 "        def generated_test(self, index=index):\n"
                 "            if index == 0:\n"
+                "                if SPAWN_HANGING_CHILD:\n"
+                "                    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                "                    CHILD_PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
                 "                time.sleep(SLEEP_SECONDS)\n"
                 "            self.assertTrue(True)\n"
                 "        setattr(GeneratedFeatureTests, f'test_case_{index:02d}', generated_test)\n"
@@ -630,13 +639,13 @@ class PreReviewTests(unittest.TestCase):
 
         # The main guard creates 30 cases plus one ordinary case, while the
         # second standalone file adds another 600-second slice. At this scale,
-        # each file gets 1.2 seconds; both take about 800 ms, so the combined
-        # run exceeds one slice but fits the 2.88-second aggregate budget.
+        # each file gets 1.8 seconds; both take about 800 ms, so the combined
+        # run exceeds one slice but fits the 4.32-second aggregate budget.
         marker.unlink(missing_ok=True)
         sibling_marker.unlink(missing_ok=True)
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py", "tests/test_sibling.py")
         git(self.repo, "commit", "-m", "fixture selected Python suites")
-        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
+        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.003")
         slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertEqual(slow_result.returncode, 0, json.dumps(slow_check, indent=2) + slow_result.stdout + slow_result.stderr)
         self.assertEqual(slow_check["status"], "pass", json.dumps(slow_check, indent=2))
@@ -648,19 +657,34 @@ class PreReviewTests(unittest.TestCase):
         )
         self.assertEqual(timeout, 1440)
 
-        write_suite(3)
+        write_suite(3, spawn_hanging_child=True)
         marker.unlink()
         sibling_marker.unlink()
+        child_pid_file.unlink(missing_ok=True)
         git(self.repo, "add", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture hung Python test")
-        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.002")
+        capture_started = time.monotonic()
+        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.003")
+        capture_elapsed = time.monotonic() - capture_started
         hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
         self.assertEqual(hung_check["status"], "fail")
         self.assertEqual(hung_check["exit_code"], 1)
-        self.assertIn("timed out after 1.2 seconds", hung_check["output_tail"])
+        self.assertIn("timed out after 1.8 seconds", hung_check["output_tail"])
+        self.assertLess(hung_check["duration_ms"], 4320)
+        self.assertLess(capture_elapsed, 6)
         self.assertEqual(marker.read_text(encoding="utf-8"), "once")
         self.assertEqual(sibling_marker.read_text(encoding="utf-8"), "once")
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        child_stopped = False
+        for _ in range(50):
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                child_stopped = True
+                break
+            time.sleep(0.02)
+        self.assertTrue(child_stopped, f"timed-out descendant {child_pid} is still running")
 
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
