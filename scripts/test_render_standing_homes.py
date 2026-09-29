@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -285,6 +286,136 @@ class InstallPreflightTests(unittest.TestCase):
             backups = list(root.rglob("*.bak"))
             self.assertEqual(4, len(backups))
             self.assertIn(originals["claude"], [backup.read_bytes() for backup in backups])
+
+    def test_open_descriptor_edit_is_retained_and_reported_as_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            descriptor_edit = b"edit written through pre-rename descriptor\n"
+            real_replace = RENDERER.os.replace
+            real_rename = RENDERER.os.rename
+            real_link = RENDERER.os.link
+            descriptor = None
+            failed = False
+            edited = False
+
+            def fail_second_replace(source, destination):
+                nonlocal failed
+                if Path(destination) == targets["codex"] and not failed:
+                    failed = True
+                    raise OSError("injected second-home replace failure")
+                return real_replace(source, destination)
+
+            def open_before_atomic_capture(source, destination):
+                nonlocal descriptor
+                if Path(source) == targets["claude"] and failed and descriptor is None:
+                    descriptor = os.open(source, os.O_RDWR)
+                return real_rename(source, destination)
+
+            def edit_before_restore_link(source, destination, **kwargs):
+                nonlocal descriptor, edited
+                if Path(destination) == targets["claude"] and descriptor is not None:
+                    open_fd = descriptor
+                    os.lseek(open_fd, 0, os.SEEK_SET)
+                    os.write(open_fd, descriptor_edit)
+                    os.ftruncate(open_fd, len(descriptor_edit))
+                    edited = True
+                    try:
+                        return real_link(source, destination, **kwargs)
+                    finally:
+                        os.close(open_fd)
+                        descriptor = None
+                return real_link(source, destination, **kwargs)
+
+            stderr = io.StringIO()
+            try:
+                with (
+                    patch.object(RENDERER, "TARGETS", targets),
+                    patch.object(
+                        RENDERER,
+                        "install_from_sources",
+                        side_effect=lambda: RENDERER.install_homes(targets, outputs, hashes, stamp="open-fd"),
+                    ),
+                    patch.object(RENDERER.os, "replace", side_effect=fail_second_replace),
+                    patch.object(RENDERER.os, "rename", side_effect=open_before_atomic_capture),
+                    patch.object(RENDERER.os, "link", side_effect=edit_before_restore_link),
+                    patch.object(sys, "argv", [str(SCRIPT), "--install"]),
+                    redirect_stderr(stderr),
+                ):
+                    exit_code = RENDERER.main()
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+
+            self.assertTrue(edited, "descriptor edit did not run at the restore-link boundary")
+            self.assertEqual(2, exit_code)
+            self.assertIn("rollback conflict", stderr.getvalue())
+            self.assertIn("captured inode retained at", stderr.getvalue())
+            self.assertEqual(originals["claude"], targets["claude"].read_bytes())
+            self.assertEqual(originals["codex"], targets["codex"].read_bytes())
+            backups = list(root.rglob("*.bak"))
+            self.assertEqual(4, len(backups))
+            self.assertIn(originals["claude"], [backup.read_bytes() for backup in backups])
+            captured = list(root.rglob("captured"))
+            self.assertEqual(1, len(captured))
+            self.assertEqual(descriptor_edit, captured[0].read_bytes())
+
+    def test_rollback_directory_failure_isolated_and_staged_files_are_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            real_replace = RENDERER.os.replace
+            real_mkdtemp = RENDERER.tempfile.mkdtemp
+            real_named_temporary_file = RENDERER.tempfile.NamedTemporaryFile
+            failed = False
+            rollback_dirs = []
+            staged_paths = []
+
+            def fail_third_replace(source, destination):
+                nonlocal failed
+                if Path(destination) == targets["opencode"] and not failed:
+                    failed = True
+                    raise OSError("injected third-home replace failure")
+                return real_replace(source, destination)
+
+            def fail_first_recovery_dir(*args, **kwargs):
+                rollback_dirs.append(Path(kwargs["dir"]))
+                if len(rollback_dirs) == 1:
+                    raise OSError("injected recovery directory ENOSPC")
+                return real_mkdtemp(*args, **kwargs)
+
+            def track_temporary_file(*args, **kwargs):
+                tmp = real_named_temporary_file(*args, **kwargs)
+                staged_paths.append(Path(tmp.name))
+                return tmp
+
+            stderr = io.StringIO()
+            with (
+                patch.object(RENDERER, "TARGETS", targets),
+                patch.object(
+                    RENDERER,
+                    "install_from_sources",
+                    side_effect=lambda: RENDERER.install_homes(targets, outputs, hashes, stamp="rollback-enospc"),
+                ),
+                patch.object(RENDERER.os, "replace", side_effect=fail_third_replace),
+                patch.object(RENDERER.tempfile, "mkdtemp", side_effect=fail_first_recovery_dir),
+                patch.object(RENDERER.tempfile, "NamedTemporaryFile", side_effect=track_temporary_file),
+                patch.object(sys, "argv", [str(SCRIPT), "--install"]),
+                redirect_stderr(stderr),
+            ):
+                exit_code = RENDERER.main()
+
+            self.assertEqual(2, exit_code)
+            self.assertIn("injected recovery directory ENOSPC", stderr.getvalue())
+            self.assertEqual([targets["codex"].parent, targets["claude"].parent], rollback_dirs)
+            self.assertEqual(originals["claude"], targets["claude"].read_bytes())
+            self.assertEqual(outputs["codex"].encode(), targets["codex"].read_bytes())
+            self.assertEqual(originals["opencode"], targets["opencode"].read_bytes())
+            self.assertEqual(originals["bb"], targets["bb"].read_bytes())
+            self.assertTrue(staged_paths)
+            self.assertTrue(all(not path.exists() for path in staged_paths))
 
     def make_install_source_repo(self, root: Path) -> Path:
         repo = root / "repo"

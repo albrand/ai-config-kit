@@ -184,12 +184,14 @@ def _rollback_home(
     installed_hash: str,
     backup: Path,
 ) -> str | None:
-    """Restore one home without replacing a path another writer created."""
-    recovery_dir = Path(tempfile.mkdtemp(prefix=".card21-rollback-", dir=target.parent))
-    captured = recovery_dir / "captured"
+    """Restore without overwriting a new path; retain captured inodes for open writers."""
+    recovery_dir = None
+    captured = None
     restore_path = None
     target_moved = False
     try:
+        recovery_dir = Path(tempfile.mkdtemp(prefix=".card21-rollback-", dir=target.parent))
+        captured = recovery_dir / "captured"
         # Rename atomically captures the destination's current contents. Unlike
         # a hash-then-replace sequence, this leaves no gap in which a new edit
         # can be silently overwritten.
@@ -206,12 +208,13 @@ def _rollback_home(
             except OSError as exc:
                 return (
                     f"rollback conflict; captured target is not a regular file and "
-                    f"could not be restored ({exc}); recovery artifacts preserved at {recovery_dir}"
+                    f"could not be restored ({exc}); recovery artifact preserved at {captured}"
                 )
             target_moved = False
-            captured.unlink()
-            recovery_dir.rmdir()
-            return "rollback conflict; target was not a regular file at atomic capture"
+            return (
+                "rollback conflict; target was not a regular file at atomic capture; "
+                f"captured inode retained at {captured}"
+            )
 
         if _digest(captured.read_bytes()) != installed_hash:
             try:
@@ -219,12 +222,13 @@ def _rollback_home(
             except FileExistsError:
                 return (
                     "rollback conflict; target changed before atomic capture and a new target appeared; "
-                    f"recovery artifacts preserved at {recovery_dir}"
+                    f"captured inode retained at {captured}"
                 )
             target_moved = False
-            captured.unlink()
-            recovery_dir.rmdir()
-            return "rollback conflict; target changed after this install replaced it"
+            return (
+                "rollback conflict; target changed after this install replaced it; "
+                f"captured inode retained at {captured}"
+            )
 
         with tempfile.NamedTemporaryFile("wb", dir=recovery_dir, delete=False) as tmp:
             tmp.write(original)
@@ -239,19 +243,24 @@ def _rollback_home(
         except FileExistsError:
             return (
                 "rollback conflict; a concurrent writer recreated the target; "
-                f"recovery artifacts preserved at {recovery_dir}"
+                f"captured and restore artifacts preserved at {recovery_dir}"
             )
         target_moved = False
-        captured.unlink()
+        if _digest(captured.read_bytes()) != installed_hash:
+            return (
+                "rollback conflict; an open writer changed the captured inode during restore; "
+                f"captured inode retained at {captured}"
+            )
         restore_path.unlink()
-        recovery_dir.rmdir()
+        # Keep captured until every descriptor opened before rename is closed.
         return None
     except Exception as exc:
-        if target_moved or any(recovery_dir.iterdir()):
+        if recovery_dir is not None and (target_moved or any(recovery_dir.iterdir())):
             return f"rollback failed ({exc}); recovery artifacts preserved at {recovery_dir}"
-        if restore_path is not None:
+        if restore_path is not None and restore_path.exists():
             restore_path.unlink(missing_ok=True)
-        recovery_dir.rmdir()
+        if recovery_dir is not None:
+            recovery_dir.rmdir()
         return f"rollback failed ({exc})"
 
 
@@ -331,16 +340,22 @@ def _install_homes(
         rollback_errors = []
         for key in reversed(replaced):
             target = targets[key]
-            rollback_error = _rollback_home(
-                target,
-                before[key],
-                installed_hashes[key],
-                backup_paths[key],
-            )
+            try:
+                rollback_error = _rollback_home(
+                    target,
+                    before[key],
+                    installed_hashes[key],
+                    backup_paths[key],
+                )
+            except Exception as rollback_exception:
+                rollback_error = f"rollback failed ({rollback_exception})"
             if rollback_error:
                 rollback_errors.append(f"{target}: {rollback_error}")
         for path in staged.values():
-            path.unlink(missing_ok=True)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                rollback_errors.append(f"staged file cleanup failed for {path}: {cleanup_error}")
         if rollback_errors:
             raise RuntimeError(
                 f"install failed ({install_error}); rollback failed: {'; '.join(rollback_errors)}"
