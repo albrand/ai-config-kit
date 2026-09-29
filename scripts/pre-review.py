@@ -597,7 +597,7 @@ def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
             return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
         if "unittest.main(" in source:
             discovered = discover_unittest_case_count(repo, path)
-            if discovered is None:
+            if discovered is None or discovered == 0:
                 return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
             case_count += discovered
             continue

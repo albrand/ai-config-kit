@@ -578,23 +578,28 @@ class PreReviewTests(unittest.TestCase):
         source_file.write_text("VALUE = 1\n", encoding="utf-8")
         test_file = self.repo / "tests" / "test_feature.py"
         test_file.parent.mkdir()
+        marker = self.base / "main-guard-suite-setup-ran"
 
         def write_suite(sleep_seconds: float) -> None:
             test_file.write_text(
                 "import time\n"
+                "from pathlib import Path\n"
                 "import unittest\n"
                 f"SLEEP_SECONDS = {sleep_seconds!r}\n"
-                "class GeneratedFeatureTests(unittest.TestCase):\n"
-                "    pass\n"
-                "for index in range(31):\n"
-                "    def generated_test(self, index=index):\n"
-                "        if index == 0:\n"
-                "            time.sleep(SLEEP_SECONDS)\n"
-                "        self.assertTrue(True)\n"
-                "    setattr(GeneratedFeatureTests, f'test_case_{index:02d}', generated_test)\n"
-                "def load_tests(loader, standard_tests, pattern):\n"
-                "    return loader.loadTestsFromTestCase(GeneratedFeatureTests)\n"
-                + "if __name__ == '__main__':\n    unittest.main()\n",
+                "if __name__ == '__main__':\n"
+                f"    marker = Path({str(marker)!r})\n"
+                "    if marker.exists():\n"
+                "        raise SystemExit('main-guard setup ran more than once')\n"
+                "    marker.write_text('once', encoding='utf-8')\n"
+                "    class GeneratedFeatureTests(unittest.TestCase):\n"
+                "        pass\n"
+                "    for index in range(31):\n"
+                "        def generated_test(self, index=index):\n"
+                "            if index == 0:\n"
+                "                time.sleep(SLEEP_SECONDS)\n"
+                "            self.assertTrue(True)\n"
+                "        setattr(GeneratedFeatureTests, f'test_case_{index:02d}', generated_test)\n"
+                "    unittest.main()\n",
                 encoding="utf-8",
             )
 
@@ -602,24 +607,28 @@ class PreReviewTests(unittest.TestCase):
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture selected Python suite")
 
-        # This suite creates 31 cases at import time. --timeout-scale makes one
-        # 10-second case slice 20 ms and the aggregate budget 620 ms. Its slow
-        # case exceeds one slice but remains inside that discovered-case budget.
+        # The main guard creates 31 cases, so safe discovery cannot count them
+        # without repeating setup. --timeout-scale makes the conservative
+        # ten-minute fallback 1.2 seconds while one case slice is 20 ms.
+        marker.unlink(missing_ok=True)
         slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
         slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertEqual(slow_result.returncode, 0, slow_result.stdout + slow_result.stderr)
         self.assertEqual(slow_check["status"], "pass")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
         namespace = runpy.run_path(str(SCRIPT))
         timeout = namespace["focused_python_test_timeout"](self.repo, ["tests/test_feature.py"])
-        self.assertEqual(timeout, 310)
+        self.assertEqual(timeout, 600)
 
         write_suite(2)
+        marker.unlink()
         git(self.repo, "add", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture hung Python test")
         hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.002")
         hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
         self.assertEqual(hung_check["status"], "timeout")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
 
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
