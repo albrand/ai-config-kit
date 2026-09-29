@@ -41,6 +41,8 @@ RULES: dict[str, re.Pattern[str]] = {
     "worktree-removal": re.compile(
         r"(?is)(?=.*(?:delete your own worktree|never remove.{0,150}own.{0,100}"
         r"(?:environment|worktree)|never remove a worktree you did not create))"
+        r"(?=.*(?:never remove.{0,120}dirty tree,\s*(?:a\s*)?`?\.keep-worktree|"
+        r"never one that is dirty,.{0,160}carries `\.keep-worktree`))"
         r"(?=.*\.keep-worktree)(?=.*unreferenced detached)"
     ),
     "no-ai-signatures": re.compile(

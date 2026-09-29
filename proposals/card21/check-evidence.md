@@ -12,9 +12,9 @@ homes and the compact `GLOBAL_AGENTS.md`. Result: **PASS** — all 5 files match
 all 12 hard-rule patterns. The rendered proposals plus kit source also passed
 all 12 patterns in each of 5 files.
 
-`python3 scripts/test_check_standing_rules.py`: **4 tests, OK**. The fixtures
-cover an intact document, a deleted rule, deletion in a file, and deletion of
-`.keep-worktree` protection while the other worktree rules remain.
+`python3 scripts/test_check_standing_rules.py`: **5 tests, OK**. Fixtures cover
+an intact document, a deleted rule, deletion in a file, and separate deletions
+of dirty-tree and `.keep-worktree` protections while other worktree text remains.
 
 Baseline checker stdout:
 
@@ -37,7 +37,7 @@ PASS all 5 files contain all applicable rules (12 regexes)
 Unit-test stdout:
 
 ```text
-Ran 4 tests
+Ran 5 tests
 OK
 ```
 

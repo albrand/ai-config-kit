@@ -37,7 +37,14 @@ class StandingRuleCheckerTest(unittest.TestCase):
         self.assertIn("credentials", CHECKER.missing_rules(damaged))
 
     def test_deleted_keep_worktree_protection_fails(self):
-        damaged = INTACT.replace("a .keep-worktree tree, ", "")
+        damaged = INTACT.replace(
+            "a .keep-worktree tree, or an unreferenced detached commit",
+            "or an unreferenced detached commit",
+        ) + "\nHistorical marker: .keep-worktree.\n"
+        self.assertIn("worktree-removal", CHECKER.missing_rules(damaged))
+
+    def test_deleted_dirty_tree_protection_fails(self):
+        damaged = INTACT.replace("a dirty tree, a .keep-worktree tree", "a .keep-worktree tree")
         self.assertIn("worktree-removal", CHECKER.missing_rules(damaged))
 
     def test_deleted_rule_in_file_fails(self):
