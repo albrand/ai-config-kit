@@ -553,18 +553,20 @@ class PreReviewTests(unittest.TestCase):
         test_file.parent.mkdir()
 
         def write_suite(sleep_seconds: float) -> None:
-            cases = [
-                "    def test_case_{:03d}(self):\n        {}\n".format(
-                    index,
-                    f"time.sleep({sleep_seconds})" if index == 0 else "self.assertTrue(True)",
-                )
-                for index in range(100)
-            ]
             test_file.write_text(
                 "import time\n"
                 "import unittest\n"
-                "class FeatureTests(unittest.TestCase):\n"
-                + "".join(cases)
+                f"SLEEP_SECONDS = {sleep_seconds!r}\n"
+                "class GeneratedFeatureTests(unittest.TestCase):\n"
+                "    pass\n"
+                "for index in range(31):\n"
+                "    def generated_test(self, index=index):\n"
+                "        if index == 0:\n"
+                "            time.sleep(SLEEP_SECONDS)\n"
+                "        self.assertTrue(True)\n"
+                "    setattr(GeneratedFeatureTests, f'test_case_{index:02d}', generated_test)\n"
+                "def load_tests(loader, standard_tests, pattern):\n"
+                "    return loader.loadTestsFromTestCase(GeneratedFeatureTests)\n"
                 + "if __name__ == '__main__':\n    unittest.main()\n",
                 encoding="utf-8",
             )
@@ -573,16 +575,16 @@ class PreReviewTests(unittest.TestCase):
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture selected Python suite")
 
-        # --timeout-scale makes one 10-second case slice 20 ms and the derived
-        # 10-minute suite ceiling 1.2 seconds. The selected suite takes longer
-        # than one case slice, but remains inside its aggregate budget.
+        # This suite creates 31 cases at import time. --timeout-scale makes one
+        # 10-second case slice 20 ms and the aggregate budget 620 ms. Its slow
+        # case exceeds one slice but remains inside that discovered-case budget.
         slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
         slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertEqual(slow_result.returncode, 0, slow_result.stdout + slow_result.stderr)
         self.assertEqual(slow_check["status"], "pass")
         namespace = runpy.run_path(str(SCRIPT))
         timeout = namespace["focused_python_test_timeout"](self.repo, ["tests/test_feature.py"])
-        self.assertEqual(timeout, 600)
+        self.assertEqual(timeout, 310)
 
         write_suite(2)
         git(self.repo, "add", "tests/test_feature.py")

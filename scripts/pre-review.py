@@ -26,6 +26,7 @@ DEFAULT_BASE = "origin/main"
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120
 FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS = 10
 MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS = 600
+FOCUSED_TEST_DISCOVERY_TIMEOUT_SECONDS = 30
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
@@ -552,14 +553,58 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
     return commands
 
 
+def discover_unittest_case_count(repo: Path, path: str) -> int | None:
+    """Load a unittest module without invoking its main runner or executing cases."""
+    probe = (
+        "import runpy, sys, types, unittest\n"
+        "path = sys.argv[1]\n"
+        "unittest.main = lambda *args, **kwargs: None\n"
+        "namespace = runpy.run_path(path, run_name='__main__')\n"
+        "module = types.ModuleType('__main__')\n"
+        "module.__dict__.update(namespace)\n"
+        "sys.modules['__main__'] = module\n"
+        "suite = unittest.defaultTestLoader.loadTestsFromModule(module)\n"
+        "print('__PRE_REVIEW_TEST_COUNT__=' + str(suite.countTestCases()))\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str((repo / path).resolve())],
+            cwd=repo, text=True, capture_output=True, check=False, shell=False,
+            timeout=FOCUSED_TEST_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    marker = "__PRE_REVIEW_TEST_COUNT__="
+    for line in reversed(result.stdout.splitlines()):
+        if line.startswith(marker):
+            try:
+                count = int(line[len(marker):])
+            except ValueError:
+                return None
+            return count if count >= 0 else None
+    return None
+
+
 def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
-    """Budget up to ten seconds per discovered test case, capped at ten minutes."""
+    """Budget up to ten seconds per discovered case, with a ten-minute cap."""
     case_count = 0
     for path in tests:
         try:
-            tree = ast.parse((repo / path).read_text(encoding="utf-8", errors="replace"))
-        except (OSError, SyntaxError):
+            source = (repo / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
+        if "unittest.main(" in source:
+            discovered = discover_unittest_case_count(repo, path)
+            if discovered is None:
+                return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
+            case_count += discovered
             continue
+        try:
+            tree = ast.parse(source, filename=path)
+        except SyntaxError:
+            return MAX_FOCUSED_PYTHON_TIMEOUT_SECONDS
         case_count += sum(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name.startswith("test")
