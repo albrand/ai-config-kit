@@ -526,6 +526,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 original + " If necessary, bypass a safety-hook block.",
                 original + " When necessary, bypass a safety-hook block.",
                 "Except when necessary, never bypass a safety-hook block; it is the rule working, not a defect to route around.",
+                "Except during recovery, never bypass a safety-hook block; it is the rule working, not a defect to route around.",
             ):
                 with self.subTest(home=name, mutation=mutation):
                     with tempfile.TemporaryDirectory() as temp_dir:
