@@ -728,7 +728,7 @@ def contradicted_rule(name: str, text: str) -> bool:
                 return True
         permission_patterns = (
             rf"\b(?:you\s+)?(?:may|can)\s+{action}\b.{{0,100}}{target}",
-            rf"\b(?:you\s+are\s+)?(?:explicitly\s+)?permitted\s+to\s+{action}\b.{{0,100}}{target}",
+            rf"\b(?:you\s+are\s+)?(?:explicitly\s+)?(?:permitted|allowed)\s+to\s+{action}\b.{{0,100}}{target}",
             rf"\b{gerund}\s+{target}.{{0,80}}\b(?:allowed|permitted)\b",
         )
         if any(re.search(pattern, text, re.IGNORECASE | re.DOTALL) for pattern in permission_patterns):

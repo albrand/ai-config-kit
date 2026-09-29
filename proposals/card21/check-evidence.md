@@ -128,8 +128,9 @@ The app/bundle fixtures separately delete and reverse the quit, kill, replace,
 move, delete, and overwrite prohibitions in all four rendered homes; all 48
 `--files` mutations are rejected. A second fixture wraps a task exception onto
 the following line for each prohibition and adds task-specific `you may`,
-`you are explicitly permitted to`, and explicit allowed-permission sentences;
-all 96 exception and permission mutations fail through `--files`.
+`you are explicitly permitted to`, `you are explicitly allowed to`, and
+explicit allowed-permission sentences; all 120 exception and permission
+mutations fail through `--files`.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
