@@ -690,8 +690,8 @@ def contradicted_rule(name: str, text: str) -> bool:
             r"(?:please\s+)?(?:(?:you\s+)?must\s+)?"
             r"(?!(?:not|never|no|unless|except)\b)"
             r"(?:(?!(?:not|never|no|unless|except)\b)[\w'()–—-]+[,;:&:]?\s+)*"
-            r"(?:(?:quit|kill|replace)\b[^.!?\n]{0,100}?\b(?:the\s+)?running\s+bb\s+app|"
-            r"(?:move|delete|overwrite)\b[^.!?\n]{0,100}?`?/Applications/bb\.app`?)\b"
+            r"(?:(?:quit|kill|replace)\b[\s\S]{0,120}?\b(?:the\s+)?running\s+bb\s+app|"
+            r"(?:move|delete|overwrite)\b[\s\S]{0,120}?`?/Applications/bb\.app`?)\b"
         )
         if direct_app_action.search(text):
             return True

@@ -179,14 +179,14 @@ colon-delimited task prefixes, parenthetical/punctuated command modifiers,
 and en/em dash delimited modifiers,
 `never`/`do not` exception forms, passive permission, and conditional action
 forms, condition-first bypass forms, and exception-before-prohibition variants
-all fail for each home (336 mutations). The checker also passes all four
+all fail for each home (384 mutations). The checker also passes all four
 unchanged live-home files and the kit source.
 
 After generalizing direct-command detection across all six app/bundle actions
 and their “you must,” “you must also,” “you must first,” colon-prefixed,
-parenthetical/punctuated, and dash-delimited modifier forms, including
-parenthetical modifiers between each action and target, the complete test
-module passed again (45 tests).
+parenthetical/punctuated, and dash-delimited modifier forms, including e.g.
+abbreviations, line breaks, and parenthetical modifiers between each action and
+target, the complete test module passed again (45 tests).
 The focused case passes all four intact homes and rejects each appended command
 through `--files` for every rendered home.
 
