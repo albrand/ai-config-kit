@@ -10,10 +10,10 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched fixed applicable-rule inventories in the final checker (88 regexes;
-43 Claude, 52 Codex, 48 OpenCode, 47 bb, and 81 kit rules applicable). The
-rendered proposals plus kit source also passed all 88 regexes: 72 Claude, 88
-Codex, 81 OpenCode, 81 bb, and 81 kit rules applicable. Candidate text cannot
+matched fixed applicable-rule inventories in the final checker (89 regexes;
+44 Claude, 53 Codex, 49 OpenCode, 48 bb, and 82 kit rules applicable). The
+rendered proposals plus kit source also passed all 89 regexes: 73 Claude, 89
+Codex, 82 OpenCode, 82 bb, and 82 kit rules applicable. Candidate text cannot
 make an optional rule inapplicable: native paths select a profile only when
 the candidate exactly matches a checked-in legacy or rendered-home SHA-256;
 any edited or unknown native-path content fails closed. Rendered paths select
@@ -23,7 +23,7 @@ Hermes transport obligations are covered. Worktree subrules have separate
 checks and mutation fixtures for each safeguard. A historical marker on the
 matching line or directly preceding line invalidates a policy.
 
-`python3 -m unittest scripts/test_check_standing_rules.py`: **37 tests, OK**. Fixtures cover
+`python3 -m unittest scripts/test_check_standing_rules.py`: **38 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -66,7 +66,11 @@ an exception for login; the contradiction veto rejects it at the rendered
 `--files` entrypoint for every provider.
 The rendered-path CLI also rejects an added permission saying routine emails
 may be sent without asking, across all four proposals, while intact proposals
-pass.
+pass. Full-workflow testing is checked separately from the persona/target/goals/
+verdict reporting rule. The rendered `--files` fixture passes intact Claude,
+Codex, OpenCode, and bb proposals, then replaces each full-workflow PASS
+requirement with “focused unit tests; the full workflow is optional”; all four
+mutated proposals fail for `testing-pass-full-workflow`.
 Public exposure separately requires a current-conversation request naming the
 service/port, closing the temporary share at task end, and checking
 `bb connect shares` before closeout. Rendered-path mutations for stale consent
@@ -116,19 +120,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (88 regexes)
+PASS all 5 files contain all applicable rules (89 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (88 regexes)
+PASS all 5 files contain all applicable rules (89 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 37 tests
+Ran 38 tests
 OK
 ```
 

@@ -270,6 +270,13 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)persona.{0,180}target.{0,220}(?:goals|user outcomes).{0,200}"
         r"verdict.{0,220}NOT RUN"
     ),
+    "testing-pass-full-workflow": re.compile(
+        r"(?is)(?:PASS (?:requires the persona to complete|means the persona completed)"
+        r" the full workflow.{0,50}(?:otherwise FAIL|anything else is FAIL)|"
+        r"PASS means the\s+persona.{0,100}completed the goal"
+        r"(?=.*unit of test is the workflow)"
+        r"(?=.*entire.{0,30}workflow completes end to end))"
+    ),
     "security-first": re.compile(r"(?is)security-first defaults"),
     "security-first-scope": re.compile(
         r"(?is)security-first defaults.{0,350}auth.{0,70}access\s+control.{0,70}secrets.{0,70}crypto.{0,90}"
@@ -563,6 +570,14 @@ def missing_rules(
 
 
 def contradicted_rule(name: str, text: str) -> bool:
+    if name == "testing-pass-full-workflow":
+        partial_pass = re.compile(
+            r"(?is)PASS.{0,100}(?:only|just).{0,50}(?:focused |unit )?tests?"
+            r".{0,120}(?:full workflow is optional|workflow.{0,30}optional)|"
+            r"(?:full workflow|end-to-end workflow).{0,50}(?:optional|not required)"
+        )
+        if partial_pass.search(text):
+            return True
     if name == "hermes-defects-block":
         advisory_defect = re.compile(
             r"(?is)(?:any|each|a) named defect.{0,100}"

@@ -347,6 +347,43 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     self.assertNotEqual(0, result.returncode, result.stdout)
                     self.assertIn(rule, result.stdout + result.stderr)
 
+    def test_rendered_profiles_reject_focused_test_pass_without_full_workflow(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
+        provider_clause = (
+            "PASS requires the persona to complete the full workflow; otherwise FAIL."
+        )
+        baseline_clause = (
+            "PASS means the persona completed the full workflow; anything else is FAIL."
+        )
+        weakened = "PASS requires only focused unit tests; the full workflow is optional."
+        with tempfile.TemporaryDirectory(prefix="card21-testing-workflow-") as temp_dir:
+            candidate_dir = Path(temp_dir) / "rendered-homes"
+            candidate_dir.mkdir()
+            candidates = [candidate_dir / name for name in names]
+            intact = [(rendered / name).read_text(encoding="utf-8") for name in names]
+
+            def run_checker() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--files", *(str(path) for path in candidates)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            for path, content in zip(candidates, intact):
+                path.write_text(content, encoding="utf-8")
+            result = run_checker()
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            for path, content in zip(candidates, intact):
+                original = baseline_clause if path.name == "bb-AGENTS.md" else provider_clause
+                self.assertIn(original, content)
+                path.write_text(content.replace(original, weakened, 1), encoding="utf-8")
+            result = run_checker()
+            self.assertNotEqual(0, result.returncode, result.stdout)
+            self.assertIn("testing-pass-full-workflow", result.stdout + result.stderr)
+
     def test_rendered_profiles_reject_advisory_hermes_defect_exceptions(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
