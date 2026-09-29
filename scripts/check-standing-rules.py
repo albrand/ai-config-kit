@@ -686,7 +686,8 @@ def contradicted_rule(name: str, text: str) -> bool:
             return True
     if name == "safety-hook-block-cannot-be-bypassed":
         bypass_permission = re.compile(
-            r"(?is)safety-hook block.{0,100}(?:may|can|could|is allowed to|is permitted to)"
+            r"(?is)never\s+bypass\s+(?:a\s+)?safety-hook block.{0,100}\b(?:unless|except)\b|"
+            r"safety-hook block.{0,100}(?:may|can|could|is allowed to|is permitted to)"
             r".{0,40}bypass|"
             r"(?:may|can|could|is allowed to|is permitted to).{0,40}bypass"
             r".{0,100}safety-hook block"
