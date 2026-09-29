@@ -26,6 +26,7 @@ DEFAULT_BASE = "origin/main"
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120
 FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS = 10
 FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS = 600
+FOCUSED_PYTHON_DISPATCH_GRACE_SECONDS = 120
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
@@ -482,7 +483,8 @@ def related_test_paths(repo: Path, paths: list[str]) -> list[str]:
 
 
 def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
-                          skip_tests: bool = False) -> list[tuple[str, list[str], str | None]]:
+                          skip_tests: bool = False,
+                          timeout_scale: float = 1.0) -> list[tuple[str, list[str], str | None]]:
     if skip_tests:
         return [("focused-tests", [], "skipped by --skip-tests; test commands were not run")]
     if not tests:
@@ -506,13 +508,20 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
             else:
                 runner = (
                     "import subprocess, sys\n"
+                    "timeout = float(sys.argv[1])\n"
                     "failed = False\n"
-                    "for path in sys.argv[1:]:\n"
-                    "    result = subprocess.run([sys.executable, path])\n"
+                    "for path in sys.argv[2:]:\n"
+                    "    try:\n"
+                    "        result = subprocess.run([sys.executable, path], timeout=timeout)\n"
+                    "    except subprocess.TimeoutExpired:\n"
+                    "        print(f'{path} timed out after {timeout:g} seconds', file=sys.stderr)\n"
+                    "        failed = True\n"
+                    "        continue\n"
                     "    failed = failed or result.returncode != 0\n"
                     "raise SystemExit(1 if failed else 0)\n"
                 )
-                command = [sys.executable, "-c", runner, *absolute_python]
+                command = [sys.executable, "-c", runner,
+                           str(FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * timeout_scale), *absolute_python]
             commands.append(("focused-python-tests", command, None))
         elif pytest:
             commands.append(("focused-python-tests", [pytest, *absolute_python], None))
@@ -579,7 +588,9 @@ def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
                              case_count * FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS)
                          if other_test_file_count else 0)
     standalone_budget = standalone_script_count * FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS
-    return standalone_budget + other_file_budget or DEFAULT_CHECK_TIMEOUT_SECONDS
+    dispatch_grace = (standalone_script_count * FOCUSED_PYTHON_DISPATCH_GRACE_SECONDS
+                      if standalone_script_count > 1 else 0)
+    return standalone_budget + dispatch_grace + other_file_budget or DEFAULT_CHECK_TIMEOUT_SECONDS
 
 
 def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
@@ -1834,7 +1845,8 @@ def main(argv: list[str] | None = None) -> int:
 
     tests = related_test_paths(repo, paths)
     python_tests = [path for path in tests if path.endswith(".py")]
-    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests):
+    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests,
+                                                     timeout_scale=args.timeout_scale):
         timeout = (focused_python_test_timeout(repo, python_tests)
                    if name == "focused-python-tests" else DEFAULT_CHECK_TIMEOUT_SECONDS)
         commands.append(run_check(name, argv, timeout=timeout, skip_reason=reason,

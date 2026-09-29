@@ -579,13 +579,21 @@ class PreReviewTests(unittest.TestCase):
         test_file = self.repo / "tests" / "test_feature.py"
         test_file.parent.mkdir()
         marker = self.base / "main-guard-suite-setup-ran"
+        sibling_marker = self.base / "sibling-script-ran"
         sibling_test = self.repo / "tests" / "test_sibling.py"
         sibling_test.write_text(
+            "import time\n"
+            "from pathlib import Path\n"
             "import unittest\n"
+            f"MARKER = Path({str(sibling_marker)!r})\n"
             "class SiblingTests(unittest.TestCase):\n"
             "    def test_sibling(self):\n"
+            "        time.sleep(0.8)\n"
             "        self.assertTrue(True)\n"
             "if __name__ == '__main__':\n"
+            "    if MARKER.exists():\n"
+            "        raise SystemExit('sibling script ran more than once')\n"
+            "    MARKER.write_text('once', encoding='utf-8')\n"
             "    unittest.main()\n",
             encoding="utf-8",
         )
@@ -616,37 +624,43 @@ class PreReviewTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-        write_suite(0.4)
+        write_suite(0.8)
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture selected Python suite")
 
-        # The main guard creates 30 cases plus one ordinary case, while a
-        # second standalone file adds another per-file slice. The 600 ms
-        # per-file slices yield a 1.2 s aggregate budget, so the 800 ms case
-        # exceeds one slice but completes without running setup twice.
+        # The main guard creates 30 cases plus one ordinary case, while the
+        # second standalone file adds another 600-second slice. At this scale,
+        # each file gets 1.2 seconds; both take about 800 ms, so the combined
+        # run exceeds one slice but fits the 2.88-second aggregate budget.
         marker.unlink(missing_ok=True)
+        sibling_marker.unlink(missing_ok=True)
         git(self.repo, "add", "src/feature.py", "tests/test_feature.py", "tests/test_sibling.py")
         git(self.repo, "commit", "-m", "fixture selected Python suites")
-        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.001")
+        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.002")
         slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
-        self.assertEqual(slow_result.returncode, 0, slow_result.stdout + slow_result.stderr)
-        self.assertEqual(slow_check["status"], "pass")
+        self.assertEqual(slow_result.returncode, 0, json.dumps(slow_check, indent=2) + slow_result.stdout + slow_result.stderr)
+        self.assertEqual(slow_check["status"], "pass", json.dumps(slow_check, indent=2))
         self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+        self.assertEqual(sibling_marker.read_text(encoding="utf-8"), "once")
         namespace = runpy.run_path(str(SCRIPT))
         timeout = namespace["focused_python_test_timeout"](
             self.repo, ["tests/test_feature.py", "tests/test_sibling.py"]
         )
-        self.assertEqual(timeout, 1200)
+        self.assertEqual(timeout, 1440)
 
-        write_suite(2)
+        write_suite(3)
         marker.unlink()
+        sibling_marker.unlink()
         git(self.repo, "add", "tests/test_feature.py")
         git(self.repo, "commit", "-m", "fixture hung Python test")
-        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.001")
+        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.002")
         hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
         self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
-        self.assertEqual(hung_check["status"], "timeout")
+        self.assertEqual(hung_check["status"], "fail")
+        self.assertEqual(hung_check["exit_code"], 1)
+        self.assertIn("timed out after 1.2 seconds", hung_check["output_tail"])
         self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+        self.assertEqual(sibling_marker.read_text(encoding="utf-8"), "once")
 
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
