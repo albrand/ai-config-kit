@@ -63,6 +63,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Clone Node dependencies with `wt-deps`; never symlink `node_modules`. Below 20 GB free, do not install/build. Validate focused, use native toolchains, and stop every task-owned process tree before closeout.
 - Automations must be single-flight per target and must not treat their own push as completion while its agent still runs. For expensive/release/migration operations, use `execution-ownership`.
 - Do not kill, replace, or restart the bb app. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.
+- Never place or retain a project source on Hermes (srv1677963). Send review context only as the bounded claim, scope, and staged evidence via `bb fleet validate`; never ask Hermes to mount a project source.
 - For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
 
 ## Testing and reporting

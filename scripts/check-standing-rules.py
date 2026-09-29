@@ -130,6 +130,11 @@ RULES: dict[str, re.Pattern[str]] = {
     "hermes-agent-no-model-override": re.compile(
         r"(?is)(?:never|do not) pass a `--model` override to `acp-hermes-agent`"
     ),
+    "hermes-no-project-source": re.compile(
+        r"(?is)(?:never place or retain a project source on Hermes"
+        r".{0,180}never ask Hermes to mount a project source|"
+        r"Hermes.{0,40}will never hold a project source)"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -229,6 +234,7 @@ OPTIONAL_WHEN_ABSENT = {
     "hermes-no-broad-env-forwarding",
     "hermes-no-cmux-capability-export",
     "hermes-agent-no-model-override",
+    "hermes-no-project-source",
 }
 
 HOME_FILES = (
@@ -370,6 +376,7 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "hermes-no-broad-env-forwarding",
                     "hermes-no-cmux-capability-export",
                     "hermes-agent-no-model-override",
+                    "hermes-no-project-source",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -405,6 +412,7 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-no-broad-env-forwarding",
                 "hermes-no-cmux-capability-export",
                 "hermes-agent-no-model-override",
+                "hermes-no-project-source",
             })
         missing = missing_rules(
             content,

@@ -23,6 +23,7 @@ in the shared baseline when omission would otherwise lose coverage.
 | Browser input is mutation; prove exclusive delivery; target IDs/success are not proof; persistent quarantine; read-only after leak; quarantine survives restart; regression-gated re-enable; prompt cannot bypass | Claude and OpenCode had explicit browser-input isolation rules; baseline browser lifecycle rules existed in provider homes | `GLOBAL_AGENTS.md` shared browser baseline, inherited by every provider | `browser-input-*` and combined rendered-context mutation fixtures |
 | Never create reverse SSH/listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` | OpenCode | `GLOBAL_AGENTS.md` remote Hermes/cmux transport rule; inherited by every provider | `hermes-no-reverse-ssh`, `hermes-no-listeners`, `hermes-no-broad-env-forwarding`, `hermes-no-cmux-capability-export` |
 | Never pass a `--model` override to `acp-hermes-agent` | bb | `GLOBAL_AGENTS.md` remote Hermes/cmux transport rule and bb adapter | `hermes-agent-no-model-override` |
+| Never place or retain project source on Hermes; send bounded review context through `bb fleet validate` and never ask Hermes to mount source | bb and OpenCode | `GLOBAL_AGENTS.md` remote Hermes/cmux transport rule and bb/OpenCode adapters | `hermes-no-project-source`, including a mutation retaining the mount wording while weakening storage prohibition |
 
 All proposal rows are source-backed by the pre-edit home snapshots represented
 by the old sides of `claude.diff`, `codex.diff`, `opencode.diff`, and `bb.diff`.

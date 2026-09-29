@@ -134,6 +134,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "hermes-no-broad-env-forwarding",
             "hermes-no-cmux-capability-export",
             "hermes-agent-no-model-override",
+            "hermes-no-project-source",
         }
         mutations = {
             "hermes-no-reverse-ssh": (
@@ -155,6 +156,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "hermes-agent-no-model-override": (
                 "Never pass a `--model` override to `acp-hermes-agent`.",
                 "Pass a `--model` override to `acp-hermes-agent` when useful.",
+            ),
+            "hermes-no-project-source": (
+                "Never place or retain a project source on Hermes (srv1677963).",
+                "Project source may be stored on Hermes (srv1677963).",
             ),
         }
         providers = [
