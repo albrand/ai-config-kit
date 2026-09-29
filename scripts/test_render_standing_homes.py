@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,6 +138,7 @@ class InstallPreflightTests(unittest.TestCase):
             outputs = {key: f"replacement {key}\n" for key in targets}
             concurrent_edit = b"later sync edit after install lock releases\n"
             real_replace = RENDERER.os.replace
+            real_rename = RENDERER.os.rename
             probe_done = threading.Event()
             writer_done = threading.Event()
             writers = []
@@ -156,22 +159,27 @@ class InstallPreflightTests(unittest.TestCase):
                 finally:
                     writer_done.set()
 
-            def inject_before_rollback_replace(source, destination):
+            def fail_second_replace(source, destination):
                 nonlocal failed
                 destination = Path(destination)
                 if destination == targets["codex"] and not failed:
                     failed = True
                     raise OSError("injected later-home replacement failure")
-                if destination == targets["claude"] and failed:
+                return real_replace(source, destination)
+
+            def inject_before_rollback_rename(source, destination):
+                if Path(source) == targets["claude"] and failed:
                     writer = threading.Thread(target=later_sync_writer)
                     writers.append(writer)
                     writer.start()
                     self.assertTrue(probe_done.wait(timeout=2), "writer lock probe did not complete")
                     self.assertEqual(outputs["claude"].encode(), targets["claude"].read_bytes())
-                    return real_replace(source, destination)
-                return real_replace(source, destination)
+                return real_rename(source, destination)
 
-            with patch.object(RENDERER.os, "replace", side_effect=inject_before_rollback_replace):
+            with (
+                patch.object(RENDERER.os, "replace", side_effect=fail_second_replace),
+                patch.object(RENDERER.os, "rename", side_effect=inject_before_rollback_rename),
+            ):
                 with self.assertRaisesRegex(OSError, "injected later-home replacement failure"):
                     RENDERER.install_homes(targets, outputs, hashes, stamp="race")
 
@@ -183,6 +191,100 @@ class InstallPreflightTests(unittest.TestCase):
             self.assertEqual(concurrent_edit, targets["claude"].read_bytes())
             self.assertEqual(originals["codex"], targets["codex"].read_bytes())
             self.assertEqual(4, len(list(root.rglob("*.bak"))))
+
+    def test_unlocked_edit_at_restore_link_boundary_survives_and_fails_install(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            concurrent_edit = b"unlocked edit immediately before restore link\n"
+            real_replace = RENDERER.os.replace
+            real_link = RENDERER.os.link
+            failed = False
+            injected = False
+
+            def fail_second_replace(source, destination):
+                nonlocal failed
+                if Path(destination) == targets["codex"] and not failed:
+                    failed = True
+                    raise OSError("injected second-home replace failure")
+                return real_replace(source, destination)
+
+            def write_before_restore_link(source, destination, **kwargs):
+                nonlocal injected
+                if Path(destination) == targets["claude"] and not injected:
+                    injected = True
+                    targets["claude"].write_bytes(concurrent_edit)
+                return real_link(source, destination, **kwargs)
+
+            stderr = io.StringIO()
+            with (
+                patch.object(RENDERER, "TARGETS", targets),
+                patch.object(
+                    RENDERER,
+                    "install_from_sources",
+                    side_effect=lambda: RENDERER.install_homes(targets, outputs, hashes, stamp="unlocked-link"),
+                ),
+                patch.object(RENDERER.os, "replace", side_effect=fail_second_replace),
+                patch.object(RENDERER.os, "link", side_effect=write_before_restore_link),
+                patch.object(sys, "argv", [str(SCRIPT), "--install"]),
+                redirect_stderr(stderr),
+            ):
+                exit_code = RENDERER.main()
+
+            self.assertTrue(injected, "unlocked edit was not injected at the restore-link boundary")
+            self.assertEqual(2, exit_code)
+            self.assertIn("rollback conflict", stderr.getvalue())
+            self.assertIn("recreated the target", stderr.getvalue())
+            self.assertEqual(concurrent_edit, targets["claude"].read_bytes())
+            self.assertEqual(originals["codex"], targets["codex"].read_bytes())
+            backups = list(root.rglob("*.bak"))
+            self.assertEqual(4, len(backups))
+            self.assertIn(originals["claude"], [backup.read_bytes() for backup in backups])
+            recovery_dirs = list(root.rglob(".card21-rollback-*"))
+            self.assertEqual(1, len(recovery_dirs))
+            recovery_bytes = [path.read_bytes() for path in recovery_dirs[0].iterdir()]
+            self.assertIn(outputs["claude"].encode(), recovery_bytes)
+            self.assertIn(originals["claude"], recovery_bytes)
+
+    def test_unlocked_edit_before_atomic_capture_is_reinserted_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            concurrent_edit = b"unlocked edit immediately before atomic rename\n"
+            real_replace = RENDERER.os.replace
+            real_rename = RENDERER.os.rename
+            failed = False
+            injected = False
+
+            def fail_second_replace(source, destination):
+                nonlocal failed
+                if Path(destination) == targets["codex"] and not failed:
+                    failed = True
+                    raise OSError("injected second-home replace failure")
+                return real_replace(source, destination)
+
+            def write_before_capture_rename(source, destination):
+                nonlocal injected
+                if Path(source) == targets["claude"] and failed and not injected:
+                    injected = True
+                    targets["claude"].write_bytes(concurrent_edit)
+                return real_rename(source, destination)
+
+            with (
+                patch.object(RENDERER.os, "replace", side_effect=fail_second_replace),
+                patch.object(RENDERER.os, "rename", side_effect=write_before_capture_rename),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "rollback conflict.*target changed"):
+                    RENDERER.install_homes(targets, outputs, hashes, stamp="unlocked-rename")
+
+            self.assertTrue(injected, "unlocked edit was not injected before atomic capture")
+            self.assertEqual(concurrent_edit, targets["claude"].read_bytes())
+            self.assertEqual(originals["codex"], targets["codex"].read_bytes())
+            backups = list(root.rglob("*.bak"))
+            self.assertEqual(4, len(backups))
+            self.assertIn(originals["claude"], [backup.read_bytes() for backup in backups])
 
     def make_install_source_repo(self, root: Path) -> Path:
         repo = root / "repo"

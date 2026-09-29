@@ -10,6 +10,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -177,6 +178,83 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _rollback_home(
+    target: Path,
+    original: bytes,
+    installed_hash: str,
+    backup: Path,
+) -> str | None:
+    """Restore one home without replacing a path another writer created."""
+    recovery_dir = Path(tempfile.mkdtemp(prefix=".card21-rollback-", dir=target.parent))
+    captured = recovery_dir / "captured"
+    restore_path = None
+    target_moved = False
+    try:
+        # Rename atomically captures the destination's current contents. Unlike
+        # a hash-then-replace sequence, this leaves no gap in which a new edit
+        # can be silently overwritten.
+        try:
+            os.rename(target, captured)
+        except FileNotFoundError:
+            recovery_dir.rmdir()
+            return "rollback conflict; target disappeared before atomic capture"
+        target_moved = True
+        captured_stat = os.stat(captured, follow_symlinks=False)
+        if not stat.S_ISREG(captured_stat.st_mode):
+            try:
+                os.link(captured, target, follow_symlinks=False)
+            except OSError as exc:
+                return (
+                    f"rollback conflict; captured target is not a regular file and "
+                    f"could not be restored ({exc}); recovery artifacts preserved at {recovery_dir}"
+                )
+            target_moved = False
+            captured.unlink()
+            recovery_dir.rmdir()
+            return "rollback conflict; target was not a regular file at atomic capture"
+
+        if _digest(captured.read_bytes()) != installed_hash:
+            try:
+                os.link(captured, target, follow_symlinks=False)
+            except FileExistsError:
+                return (
+                    "rollback conflict; target changed before atomic capture and a new target appeared; "
+                    f"recovery artifacts preserved at {recovery_dir}"
+                )
+            target_moved = False
+            captured.unlink()
+            recovery_dir.rmdir()
+            return "rollback conflict; target changed after this install replaced it"
+
+        with tempfile.NamedTemporaryFile("wb", dir=recovery_dir, delete=False) as tmp:
+            tmp.write(original)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            restore_path = Path(tmp.name)
+        shutil.copystat(backup, restore_path, follow_symlinks=False)
+        try:
+            # Hard-link creation fails atomically if a concurrent writer has
+            # recreated target; preserve that edit and both recovery copies.
+            os.link(restore_path, target, follow_symlinks=False)
+        except FileExistsError:
+            return (
+                "rollback conflict; a concurrent writer recreated the target; "
+                f"recovery artifacts preserved at {recovery_dir}"
+            )
+        target_moved = False
+        captured.unlink()
+        restore_path.unlink()
+        recovery_dir.rmdir()
+        return None
+    except Exception as exc:
+        if target_moved or any(recovery_dir.iterdir()):
+            return f"rollback failed ({exc}); recovery artifacts preserved at {recovery_dir}"
+        if restore_path is not None:
+            restore_path.unlink(missing_ok=True)
+        recovery_dir.rmdir()
+        return f"rollback failed ({exc})"
+
+
 def _backup_paths(targets: dict[str, Path], stamp: str) -> dict[str, Path]:
     for suffix in range(10000):
         candidate_stamp = stamp if suffix == 0 else f"{stamp}-{suffix}"
@@ -253,33 +331,14 @@ def _install_homes(
         rollback_errors = []
         for key in reversed(replaced):
             target = targets[key]
-            restore_path = None
-            try:
-                if not target.is_file() or target.is_symlink():
-                    rollback_errors.append(
-                        f"{target}: rollback conflict; target is not a regular non-symlink file"
-                    )
-                    continue
-                if _digest(target.read_bytes()) != installed_hashes[key]:
-                    rollback_errors.append(
-                        f"{target}: rollback conflict; target changed after this install replaced it"
-                    )
-                    continue
-                with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as tmp:
-                    tmp.write(before[key])
-                    tmp.flush()
-                    os.fsync(tmp.fileno())
-                    restore_path = Path(tmp.name)
-                shutil.copystat(backup_paths[key], restore_path, follow_symlinks=False)
-                if not target.is_file() or target.is_symlink():
-                    raise RuntimeError("rollback conflict; target is not a regular non-symlink file")
-                if _digest(target.read_bytes()) != installed_hashes[key]:
-                    raise RuntimeError("rollback conflict; target changed after this install replaced it")
-                os.replace(restore_path, target)
-            except Exception as rollback_error:
+            rollback_error = _rollback_home(
+                target,
+                before[key],
+                installed_hashes[key],
+                backup_paths[key],
+            )
+            if rollback_error:
                 rollback_errors.append(f"{target}: {rollback_error}")
-                if restore_path is not None:
-                    restore_path.unlink(missing_ok=True)
         for path in staged.values():
             path.unlink(missing_ok=True)
         if rollback_errors:
