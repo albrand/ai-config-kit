@@ -366,6 +366,54 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         CHECKER.missing_rules(damaged, required_optional=rules),
                     )
 
+    def test_rendered_provider_contexts_keep_delegation_authorization_boundaries(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        rules = {
+            "delegation-approval-scale-and-bounded-fanout",
+            "delegation-cross-session-cmux-off",
+            "delegation-explicit-approval-outward-effects",
+        }
+        ordinary_authorization = "Ordinary delegation is authorized by default"
+        outward = (
+            "Require explicit approval before outward or hard-to-undo effects: board mutations, bulk imports, cloud changes, secret access, CI/repo-policy changes, destructive edits, PR/check automation, or shared-remote pushes."
+        )
+        scale = (
+            "require explicit approval for more than 3 concurrent delegates, broad parallel/swarm work, or fan-out without a named stop condition"
+        )
+        cmux = "Cross-session cmux delegation stays off by default."
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        for provider_path in providers:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            self.assertIn(ordinary_authorization, combined)
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [], CHECKER.missing_rules(combined, required_optional=rules)
+                )
+            cases = {
+                "outward-effects": (outward, "Ordinary delegation approval covers outward effects."),
+                "unbounded-fanout": (scale, "Delegates may fan out without a stop condition."),
+                "cross-session-cmux": (cmux, "Cross-session cmux delegation is allowed by default."),
+            }
+            for key, (original, weakened) in cases.items():
+                with self.subTest(provider=provider_path.name, mutation=key):
+                    damaged = combined.replace(original, weakened)
+                    self.assertIn(ordinary_authorization, damaged)
+                    expected = {
+                        "outward-effects": "delegation-explicit-approval-outward-effects",
+                        "unbounded-fanout": "delegation-approval-scale-and-bounded-fanout",
+                        "cross-session-cmux": "delegation-cross-session-cmux-off",
+                    }[key]
+                    self.assertIn(
+                        expected,
+                        CHECKER.missing_rules(damaged, required_optional=rules),
+                    )
+
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         baseline_path = rendered / "bb-AGENTS.md"

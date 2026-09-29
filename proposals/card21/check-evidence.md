@@ -10,8 +10,8 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (69 regexes; 41 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 69 regexes,
+matched applicable rules in the final checker (72 regexes; 41 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 72 regexes,
 including each Codex-only context-GC, email-consent, browser-lifecycle,
 browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
@@ -54,6 +54,9 @@ decision before adding a dependency.
 Broker-lane mutations independently remove the default-off state, concurrency/
 depth 1, explicit bounded activation, or separation from ordinary bb child
 threads.
+Delegation authorization mutations retain the “ordinary delegation authorized
+by default” sentence while deleting the explicit outward-effect approval,
+large/unbounded fan-out approval, or cross-session cmux default-off boundary.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -67,19 +70,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (69 regexes)
+PASS all 5 files contain all applicable rules (72 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (69 regexes)
+PASS all 5 files contain all applicable rules (72 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 26 tests
+Ran 27 tests
 OK
 ```
 

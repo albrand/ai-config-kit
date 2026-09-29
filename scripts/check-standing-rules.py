@@ -190,6 +190,25 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)(?:these broker limits do not restrict|this does not limit)"
         r" bb child threads"
     ),
+    "delegation-approval-scale-and-bounded-fanout": re.compile(
+        r"(?is)(?:require explicit approval for more than 3 concurrent delegates,"
+        r" broad parallel/swarm work, or fan-out without a named stop condition|"
+        r"explicit approval is required at either threshold.{0,220}more than 3"
+        r" concurrent delegates.{0,180}fan-out you cannot name the stop condition)"
+    ),
+    "delegation-cross-session-cmux-off": re.compile(
+        r"(?is)cross-session cmux delegation stays off by default|"
+        r"cmux cross-session delegation is off by default"
+    ),
+    "delegation-explicit-approval-outward-effects": re.compile(
+        r"(?is)(?:require explicit approval before outward or hard-to-undo effects:"
+        r" board mutations, bulk imports, cloud changes, secret access,"
+        r" CI/repo-policy changes, destructive edits, PR/check automation,"
+        r" or shared-remote pushes|explicit approval is required at either threshold"
+        r".{0,400}outward/irreversible effect.{0,180}board mutations.{0,300}"
+        r"shared remote|Get explicit approval before.{0,300}board mutations.{0,300}"
+        r"PR/check automation)"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -307,6 +326,9 @@ OPTIONAL_WHEN_ABSENT = {
     "hermes-broker-concurrency-depth-one",
     "hermes-broker-model-call-explicit-activation",
     "hermes-broker-limits-not-bb-children",
+    "delegation-approval-scale-and-bounded-fanout",
+    "delegation-cross-session-cmux-off",
+    "delegation-explicit-approval-outward-effects",
 }
 
 HOME_FILES = (
@@ -410,6 +432,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name == "delegate-no-unapproved-dependencies":
         return bool(RULES[name].search(text))
+    if name.startswith("delegation-"):
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -472,6 +496,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "hermes-broker-concurrency-depth-one",
                     "hermes-broker-model-call-explicit-activation",
                     "hermes-broker-limits-not-bb-children",
+                    "delegation-approval-scale-and-bounded-fanout",
+                    "delegation-cross-session-cmux-off",
+                    "delegation-explicit-approval-outward-effects",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -525,6 +552,9 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-broker-concurrency-depth-one",
                 "hermes-broker-model-call-explicit-activation",
                 "hermes-broker-limits-not-bb-children",
+                "delegation-approval-scale-and-bounded-fanout",
+                "delegation-cross-session-cmux-off",
+                "delegation-explicit-approval-outward-effects",
             })
         missing = missing_rules(
             content,
