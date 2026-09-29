@@ -10,8 +10,8 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (64 regexes; 37 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 64 regexes,
+matched applicable rules in the final checker (65 regexes; 38 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 65 regexes,
 including each Codex-only context-GC, email-consent, browser-lifecycle,
 browser-input-quarantine, and Hermes transport obligation. Worktree subrules
 have separate checks and mutation fixtures for each safeguard. A historical
@@ -48,6 +48,9 @@ foregrounded and claiming the exact login is open without adapter evidence.
 Child-cap mutations separately weaken the three-child no-ask limit, the six-child
 orchestration limit, the host-capacity bound, and its distinction from the
 10-instance OpenCode session cap.
+Dependency mutation weakens delegate dependency approval while preserving the
+other coordinator/delegate boundaries; the checker requires a new master
+decision before adding a dependency.
 Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
@@ -61,19 +64,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (64 regexes)
+PASS all 5 files contain all applicable rules (65 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (64 regexes)
+PASS all 5 files contain all applicable rules (65 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 24 tests
+Ran 25 tests
 OK
 ```
 
