@@ -5,6 +5,7 @@ import importlib.util
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +19,19 @@ SPEC.loader.exec_module(RENDERER)
 
 
 class InstallPreflightTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lock_root = tempfile.TemporaryDirectory()
+        self.lock_patch = patch.object(
+            RENDERER.standing_home_lock,
+            "LOCK_PATH",
+            Path(self.lock_root.name) / "home-writers.lock",
+        )
+        self.lock_patch.start()
+
+    def tearDown(self) -> None:
+        self.lock_patch.stop()
+        self.lock_root.cleanup()
+
     def make_homes(self, root: Path) -> tuple[dict[str, Path], dict[str, bytes], dict[str, str]]:
         targets = {}
         originals = {}
@@ -115,6 +129,61 @@ class InstallPreflightTests(unittest.TestCase):
             self.assertEqual(4, len(backups))
             self.assertIn(originals["claude"], [path.read_bytes() for path in backups])
 
+    def test_exclusive_writer_protocol_closes_rollback_replace_race(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets, originals, hashes = self.make_homes(root)
+            outputs = {key: f"replacement {key}\n" for key in targets}
+            concurrent_edit = b"later sync edit after install lock releases\n"
+            real_replace = RENDERER.os.replace
+            probe_done = threading.Event()
+            writer_done = threading.Event()
+            writers = []
+            failures = []
+            failed = False
+
+            def later_sync_writer():
+                try:
+                    with self.assertRaises(BlockingIOError):
+                        with RENDERER.standing_home_lock.exclusive_home_writer(blocking=False):
+                            pass
+                    probe_done.set()
+                    with RENDERER.standing_home_lock.exclusive_home_writer():
+                        targets["claude"].write_bytes(concurrent_edit)
+                except BaseException as exc:
+                    failures.append(exc)
+                    probe_done.set()
+                finally:
+                    writer_done.set()
+
+            def inject_before_rollback_replace(source, destination):
+                nonlocal failed
+                destination = Path(destination)
+                if destination == targets["codex"] and not failed:
+                    failed = True
+                    raise OSError("injected later-home replacement failure")
+                if destination == targets["claude"] and failed:
+                    writer = threading.Thread(target=later_sync_writer)
+                    writers.append(writer)
+                    writer.start()
+                    self.assertTrue(probe_done.wait(timeout=2), "writer lock probe did not complete")
+                    self.assertEqual(outputs["claude"].encode(), targets["claude"].read_bytes())
+                    return real_replace(source, destination)
+                return real_replace(source, destination)
+
+            with patch.object(RENDERER.os, "replace", side_effect=inject_before_rollback_replace):
+                with self.assertRaisesRegex(OSError, "injected later-home replacement failure"):
+                    RENDERER.install_homes(targets, outputs, hashes, stamp="race")
+
+            for writer in writers:
+                writer.join(timeout=2)
+
+            self.assertEqual([], failures)
+            self.assertTrue(writer_done.is_set(), "later sync did not finish after lock release")
+            self.assertEqual(concurrent_edit, targets["claude"].read_bytes())
+            self.assertEqual(originals["codex"], targets["codex"].read_bytes())
+            self.assertEqual(4, len(list(root.rglob("*.bak"))))
+
     def make_install_source_repo(self, root: Path) -> Path:
         repo = root / "repo"
         remote = root / "origin.git"
@@ -141,11 +210,11 @@ class InstallPreflightTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "add", "GLOBAL_AGENTS.md"], check=True)
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "Candidate instructions"], check=True)
 
-            with self.assertRaisesRegex(ValueError, "differ from fetched origin/main"):
-                RENDERER.assert_install_sources_in_origin_main(repo)
+            with self.assertRaisesRegex(ValueError, "differs from pinned origin/main"):
+                RENDERER.assert_install_sources_in_origin_main(RENDERER.capture_install_sources(repo), repo)
 
             subprocess.run(["git", "-C", str(repo), "push", "origin", "HEAD:main"], check=True, capture_output=True)
-            RENDERER.assert_install_sources_in_origin_main(repo)
+            RENDERER.assert_install_sources_in_origin_main(RENDERER.capture_install_sources(repo), repo)
 
     def test_fetch_refusal_does_not_echo_remote_credentials(self) -> None:
         fetch_args = ["git", "fetch", "origin", "main"]
@@ -158,7 +227,10 @@ class InstallPreflightTests(unittest.TestCase):
 
         with patch.object(RENDERER.subprocess, "run", return_value=result) as run:
             with self.assertRaisesRegex(ValueError, "git fetch origin/main failed with exit code 128") as raised:
-                RENDERER.assert_install_sources_in_origin_main(Path("/tmp/not-a-repo"))
+                RENDERER.assert_install_sources_in_origin_main(
+                    {source: b"" for source in RENDERER.INSTALL_SOURCE_PATHS},
+                    Path("/tmp/not-a-repo"),
+                )
 
         self.assertEqual(
             [
@@ -170,6 +242,72 @@ class InstallPreflightTests(unittest.TestCase):
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertNotIn("secret", str(raised.exception))
         self.assertNotIn("example.invalid", str(raised.exception))
+
+    def test_main_install_rejects_candidate_render_if_source_restores_before_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = self.make_install_source_repo(root)
+            targets = {key: root / "homes" / key / "AGENTS.md" for key in RENDERER.TARGETS}
+            for target in targets.values():
+                target.parent.mkdir(parents=True)
+                target.write_text("original live home\n", encoding="utf-8")
+
+            # Make the fixture renderer inputs valid, then pin matching live-home fingerprints.
+            (repo / "GLOBAL_AGENTS.md").write_text("main instructions\n", encoding="utf-8")
+            (repo / "proposals/card21/hard-rules.md").write_text("hard rules\n", encoding="utf-8")
+            (repo / "scripts/typed-decisions-sync.py").write_text(
+                'GLOBAL_BLOCK = "typed rules"\n', encoding="utf-8"
+            )
+            for name in ("claude", "codex", "opencode", "bb"):
+                (repo / f"proposals/card21/overlays/{name}.md").write_text(
+                    f"overlay {name}\n", encoding="utf-8"
+                )
+            candidate_outputs = {
+                key: RENDERER.rendered(key, RENDERER.capture_install_sources(repo))
+                for key in targets
+            }
+            manifest_path = repo / "proposals/card21/live-home-hashes.md"
+            manifest_path.write_text(
+                "\n".join(
+                    f"| {RENDERER.HASH_NAMES[key]} | `{hashlib.sha256(b'original live home\\n').hexdigest()}` |"
+                    for key in targets
+                ) + "\n",
+                encoding="utf-8",
+            )
+            base_global = (repo / "GLOBAL_AGENTS.md").read_bytes()
+            subprocess.run(["git", "-C", str(repo), "add", *RENDERER.INSTALL_SOURCE_PATHS], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "Valid main render sources"], check=True)
+            subprocess.run(["git", "-C", str(repo), "push", "-qu", "origin", "main"], check=True)
+            (repo / "GLOBAL_AGENTS.md").write_text("candidate instructions\n", encoding="utf-8")
+
+            real_guard = RENDERER.assert_install_sources_in_origin_main
+            real_rendered = RENDERER.rendered
+            rendered_candidate = []
+
+            def record_render(name, sources=None):
+                result = real_rendered(name, sources)
+                if sources is not None and sources["GLOBAL_AGENTS.md"] == b"candidate instructions\n":
+                    rendered_candidate.append((name, result))
+                return result
+
+            def restore_before_guard(snapshot, repo_root):
+                (repo_root / "GLOBAL_AGENTS.md").write_bytes(base_global)
+                return real_guard(snapshot, repo_root)
+
+            with (
+                patch.object(RENDERER, "ROOT", repo),
+                patch.object(RENDERER, "TARGETS", targets),
+                patch.object(RENDERER, "rendered", side_effect=record_render),
+                patch.object(RENDERER, "assert_install_sources_in_origin_main", side_effect=restore_before_guard),
+                patch.object(sys, "argv", [str(SCRIPT), "--install"]),
+            ):
+                self.assertEqual(2, RENDERER.main())
+
+            self.assertTrue(rendered_candidate, "complete entry point did not render candidate bytes")
+            self.assertIn("candidate instructions", dict(rendered_candidate)["bb"])
+            self.assertNotEqual(candidate_outputs["claude"], targets["claude"].read_text(encoding="utf-8"))
+            self.assertTrue(all(path.read_text(encoding="utf-8") == "original live home\n" for path in targets.values()))
+            self.assertEqual([], list(root.rglob("*.bak")))
 
     def test_check_and_render_modes_do_not_require_sources_on_main(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

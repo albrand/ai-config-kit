@@ -20,6 +20,11 @@ Usage:
 """
 import os, re, shutil, sys, tempfile
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+import standing_home_lock
+
 H = os.path.expanduser
 KIT = H("~/projects/agent-config-kit")
 FOOT = "Contract: the `typed-decisions` skill."
@@ -319,7 +324,11 @@ if __name__ == "__main__":
         live = run(True)
         print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
         sys.exit(1 if (falsify() or live) else 0)
-    bad = run("--check" in sys.argv)
+    if "--check" in sys.argv:
+        bad = run(True)
+    else:
+        with standing_home_lock.exclusive_home_writer():
+            bad = run(False)
     if not bad:
         print("typed-decisions: in place everywhere")
     sys.exit(1 if bad else 0)

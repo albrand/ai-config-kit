@@ -15,6 +15,13 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+import standing_home_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,64 +50,92 @@ INSTALL_SOURCE_PATHS = (
     "proposals/card21/live-home-hashes.md",
     "scripts/typed-decisions-sync.py",
     "scripts/render-standing-homes.py",
+    "scripts/standing_home_lock.py",
 )
 
 
-def assert_install_sources_in_origin_main(repo_root: Path = ROOT) -> None:
-    """Require every install input and this installer to match fetched origin/main."""
+def _git(repo_root: Path, *args: str, input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        input=input_bytes,
+        capture_output=True,
+        check=False,
+    )
+
+
+def capture_install_sources(repo_root: Path = ROOT) -> Mapping[str, bytes]:
+    """Capture all renderer, manifest, and lock inputs once as immutable bytes."""
+    sources = {}
+    for source in INSTALL_SOURCE_PATHS:
+        path = repo_root / source
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"install source is not a regular non-symlink file: {path}")
+        sources[source] = path.read_bytes()
+    return MappingProxyType(sources)
+
+
+def assert_install_sources_in_origin_main(
+    source_snapshot: Mapping[str, bytes], repo_root: Path = ROOT
+) -> tuple[str, Mapping[str, bytes]]:
+    """Return fetched main blobs only when they exactly match the captured inputs."""
+    if set(source_snapshot) != set(INSTALL_SOURCE_PATHS):
+        raise ValueError("install source snapshot is incomplete")
     fetch = subprocess.run(
         ["git", "-C", str(repo_root), "fetch", "--no-tags", "origin", "main:refs/remotes/origin/main"],
         capture_output=True,
-        text=True,
         check=False,
     )
     if fetch.returncode != 0:
         raise ValueError(f"git fetch origin/main failed with exit code {fetch.returncode}")
 
-    tracked = subprocess.run(
-        [
-            "git", "-C", str(repo_root), "ls-tree", "-r", "--name-only",
-            "origin/main", "--", *INSTALL_SOURCE_PATHS,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if tracked.returncode != 0:
-        detail = tracked.stderr.strip() or tracked.stdout.strip() or f"exit {tracked.returncode}"
-        raise ValueError(f"could not inspect origin/main install sources: {detail}")
-    tracked_paths = set(tracked.stdout.splitlines())
-    if tracked_paths != set(INSTALL_SOURCE_PATHS):
-        missing = sorted(set(INSTALL_SOURCE_PATHS) - tracked_paths)
-        raise ValueError(f"origin/main does not contain every install source: {missing}")
+    resolved = _git(repo_root, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+    if resolved.returncode != 0:
+        raise ValueError(f"could not pin fetched origin/main (exit {resolved.returncode})")
+    commit = resolved.stdout.decode("ascii", errors="strict").strip()
+    tree = _git(repo_root, "ls-tree", "-r", "-z", commit, "--", *INSTALL_SOURCE_PATHS)
+    if tree.returncode != 0:
+        raise ValueError(f"could not read pinned origin/main sources (exit {tree.returncode})")
 
+    entries = {}
+    for entry in tree.stdout.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split()
+        path = raw_path.decode("utf-8")
+        if mode not in {"100644", "100755"} or kind != "blob":
+            raise ValueError(f"unsafe install source in pinned origin/main: {path}")
+        entries[path] = oid
+    if set(entries) != set(INSTALL_SOURCE_PATHS):
+        raise ValueError("pinned origin/main is missing install sources")
+
+    pinned_sources = {}
     for source in INSTALL_SOURCE_PATHS:
-        path = repo_root / source
-        if not path.is_file() or path.is_symlink():
-            raise ValueError(f"install source is not a regular non-symlink file: {path}")
-
-    diff = subprocess.run(
-        [
-            "git", "-C", str(repo_root), "diff", "--quiet", "--no-ext-diff",
-            "--no-textconv", "origin/main", "--", *INSTALL_SOURCE_PATHS,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if diff.returncode == 1:
-        raise ValueError("install sources differ from fetched origin/main")
-    if diff.returncode != 0:
-        detail = diff.stderr.strip() or diff.stdout.strip() or f"exit {diff.returncode}"
-        raise ValueError(f"could not compare install sources with origin/main: {detail}")
+        blob = _git(repo_root, "cat-file", "blob", entries[source])
+        if blob.returncode != 0:
+            raise ValueError(f"could not read pinned install source (exit {blob.returncode})")
+        if blob.stdout != source_snapshot[source]:
+            raise ValueError(f"install source differs from pinned origin/main: {source}")
+        pinned_sources[source] = blob.stdout
+    return commit, MappingProxyType(pinned_sources)
 
 
-def rendered(name: str) -> str:
+def rendered(name: str, sources: Mapping[str, bytes] | None = None) -> str:
+    read = (lambda source: sources[source].decode("utf-8")) if sources is not None else None
     if name == "bb":
-        baseline = (ROOT / "GLOBAL_AGENTS.md").read_text(encoding="utf-8").rstrip()
+        baseline = (read("GLOBAL_AGENTS.md") if read else (ROOT / "GLOBAL_AGENTS.md").read_text(encoding="utf-8")).rstrip()
     else:
-        baseline = (ROOT / "proposals/card21/hard-rules.md").read_text(encoding="utf-8").strip()
-        module = ast.parse((ROOT / "scripts/typed-decisions-sync.py").read_text(encoding="utf-8"))
+        baseline = (
+            read("proposals/card21/hard-rules.md")
+            if read
+            else (ROOT / "proposals/card21/hard-rules.md").read_text(encoding="utf-8")
+        ).strip()
+        typed_source = (
+            read("scripts/typed-decisions-sync.py")
+            if read
+            else (ROOT / "scripts/typed-decisions-sync.py").read_text(encoding="utf-8")
+        )
+        module = ast.parse(typed_source)
         assignment = next(
             node for node in module.body
             if isinstance(node, ast.Assign)
@@ -108,7 +143,8 @@ def rendered(name: str) -> str:
         )
         typed_block = ast.literal_eval(assignment.value).strip()
         baseline = f"{baseline}\n\n{typed_block}"
-    overlay = (OVERLAYS / f"{name}.md").read_text(encoding="utf-8").strip()
+    overlay_path = f"proposals/card21/overlays/{name}.md"
+    overlay = (read(overlay_path) if read else (OVERLAYS / f"{name}.md").read_text(encoding="utf-8")).strip()
     return f"{baseline}\n\n{overlay}\n"
 
 
@@ -124,14 +160,17 @@ def write_atomic(path: Path, content: str) -> None:
     os.replace(temp_path, path)
 
 
-def load_expected_hashes(path: Path = ROOT / "proposals/card21/live-home-hashes.md") -> dict[str, str]:
-    text = path.read_text(encoding="utf-8")
+def parse_expected_hashes(text: str, source: str = "fingerprint manifest") -> dict[str, str]:
     rows = re.findall(r"(?m)^\| (Claude|Codex|OpenCode|bb) \| `([0-9a-fA-F]{64})` \|$", text)
     found = {name: digest.lower() for name, digest in rows}
     expected_names = set(HASH_NAMES.values())
     if len(rows) != 4 or set(found) != expected_names:
-        raise ValueError(f"expected exactly one fingerprint per home in {path}; found {sorted(found)}")
+        raise ValueError(f"expected exactly one fingerprint per home in {source}; found {sorted(found)}")
     return {key: found[name] for key, name in HASH_NAMES.items()}
+
+
+def load_expected_hashes(path: Path = ROOT / "proposals/card21/live-home-hashes.md") -> dict[str, str]:
+    return parse_expected_hashes(path.read_text(encoding="utf-8"), str(path))
 
 
 def _digest(data: bytes) -> str:
@@ -150,7 +189,7 @@ def _backup_paths(targets: dict[str, Path], stamp: str) -> dict[str, Path]:
     raise ValueError("could not reserve a unique backup set")
 
 
-def install_homes(
+def _install_homes(
     targets: dict[str, Path],
     outputs: dict[str, str],
     expected_hashes: dict[str, str],
@@ -250,6 +289,37 @@ def install_homes(
         raise
 
 
+def install_homes(
+    targets: dict[str, Path],
+    outputs: dict[str, str],
+    expected_hashes: dict[str, str],
+    *,
+    stamp: str | None = None,
+) -> dict[str, Path]:
+    """Serialize direct installs with the global instruction sync writer."""
+    with standing_home_lock.exclusive_home_writer():
+        return _install_homes(targets, outputs, expected_hashes, stamp=stamp)
+
+
+def install_from_sources(
+    repo_root: Path | None = None,
+    targets: dict[str, Path] | None = None,
+) -> dict[str, Path]:
+    """Install only outputs rendered from the immutable fetched-main snapshot."""
+    repo_root = ROOT if repo_root is None else repo_root
+    targets = TARGETS if targets is None else targets
+    with standing_home_lock.exclusive_home_writer():
+        candidate_sources = capture_install_sources(repo_root)
+        candidate_outputs = {key: rendered(key, candidate_sources) for key in targets}
+        _, approved_sources = assert_install_sources_in_origin_main(candidate_sources, repo_root)
+        approved_outputs = {key: rendered(key, approved_sources) for key in targets}
+        if approved_outputs != candidate_outputs:
+            raise ValueError("rendered install payload differs from pinned origin/main sources")
+        manifest = approved_sources["proposals/card21/live-home-hashes.md"].decode("utf-8")
+        expected_hashes = parse_expected_hashes(manifest, "pinned origin/main manifest")
+        return _install_homes(targets, approved_outputs, expected_hashes)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
@@ -264,6 +334,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.install:
+        try:
+            backups = install_from_sources()
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"REFUSE install: {exc}", file=sys.stderr)
+            return 2
+        for key, target in TARGETS.items():
+            print(f"INSTALLED {target} (backup {backups[key]})")
+        return 0
+
     outputs = {key: rendered(key) for key in TARGETS}
     if args.check:
         mismatches = []
@@ -276,17 +356,6 @@ def main() -> int:
             print("DIFFERS " + ", ".join(mismatches))
             return 1
         print("PASS all four live homes match the rendered sources")
-        return 0
-
-    if args.install:
-        try:
-            assert_install_sources_in_origin_main()
-            backups = install_homes(TARGETS, outputs, load_expected_hashes())
-        except (OSError, RuntimeError, ValueError) as exc:
-            print(f"REFUSE install: {exc}", file=sys.stderr)
-            return 2
-        for key, target in TARGETS.items():
-            print(f"INSTALLED {target} (backup {backups[key]})")
         return 0
 
     for key, content in outputs.items():
