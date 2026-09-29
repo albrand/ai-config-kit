@@ -124,3 +124,12 @@ Assert on target state, not process claims. Delegates return measured evidence. 
 
 Declare answer space; ask one atomic question at a time against identical state; compute the verdict. An out-of-space answer is a failed decision; never interpret it. High confidence acts, medium verifies, low/out-of-space escalates; high confidence still requires the checks for irreversible, security, and release decisions. Confidence needs measured checks, isolated agreement, or resolved history. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->
+
+## bb adapter
+
+- bb appends this data-dir file to every provider-backed thread. Keep it provider-neutral; workspace-specific rules belong in the workspace `.bb/AGENTS.md`.
+- Before login handoff, use `verified-qa-e2e` and its deterministic `manual_login` gate. Enumerate instances, reuse the thread-owned one (or create exactly one), disclose shared-window tab count/title before takeover, never type credentials, then release and verify auth on that same instance. Close only duplicates owned by this thread.
+- Hermes defects block merges. Hermes runs independently; use `bb fleet validate` with bounded evidence. Fix transport faults instead of asking Hermes to mount a project source.
+- Never place or retain a project source on Hermes (srv1677963).
+- Never pass a `--model` override to `acp-hermes-agent`.
+- Before child work, route with `bb fleet route` and use exactly its provider/model/reasoning. Keep one writer per worktree; stop on collisions.

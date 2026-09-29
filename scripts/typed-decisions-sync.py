@@ -20,6 +20,11 @@ Usage:
 """
 import os, re, shutil, sys, tempfile
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+import standing_home_lock
+
 H = os.path.expanduser
 KIT = H("~/projects/agent-config-kit")
 FOOT = "Contract: the `typed-decisions` skill."
@@ -187,23 +192,9 @@ TARGETS = {
 }
 
 GLOBAL_BLOCK = """<!-- typed-decisions:begin -->
-**Typed decisions (always-on)** — most agent steps are decisions (route, triage,
-in scope, risky, severity, pass/fail, done, escalate), not writing. For each:
-declare the answer space before asking (yes/no, pick-one, or a level whose
-levels are written out); an answer outside it is a failed decision, never one to
-interpret. Ask one atomic question at a time, judge each in isolation against
-the same state, and compose the verdict with explicit logic. Gate action on
-confidence — high acts, medium verifies, low escalates — and take confidence
-only from agreement across isolated judgments, a measurable check, or a recorded
-outcome history, never from a model's self-report. Typed is not correct: high
-confidence still gets the checks irreversible, security and release work
-require. Record each gated decision in the decision ledger with a findable
-`--ref`, and resolve it (held or overturned) when the truth arrives, even when
-the decision was another agent's. Run semantic atomic judgments on Jev,
-the System One decision model (`typed-decisions` section 10, `jev.py`):
-batched, isolated, recorded as `system-one`. Never in a blocking hook, never
-with secrets or personal data, and alone never enough for an irreversible
-or security call. Full detail: the `typed-decisions` skill.
+## Typed decisions
+
+Declare the answer space first; ask one atomic question at a time against identical state; compute the verdict. An out-of-space answer is a failed decision; never interpret it. High confidence acts, medium verifies, low/out-of-space escalates; high confidence still requires the checks for irreversible, security, and release decisions. Confidence needs measured checks, isolated agreement, or resolved history, never self-report. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.
@@ -333,7 +324,11 @@ if __name__ == "__main__":
         live = run(True)
         print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
         sys.exit(1 if (falsify() or live) else 0)
-    bad = run("--check" in sys.argv)
+    if "--check" in sys.argv:
+        bad = run(True)
+    else:
+        with standing_home_lock.exclusive_home_writer():
+            bad = run(False)
     if not bad:
         print("typed-decisions: in place everywhere")
     sys.exit(1 if bad else 0)
