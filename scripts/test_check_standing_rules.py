@@ -1,11 +1,14 @@
 """Focused fixtures for check-standing-rules.py."""
 
 import importlib.util
+import contextlib
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).with_name("check-standing-rules.py")
@@ -66,6 +69,53 @@ class StandingRuleCheckerTest(unittest.TestCase):
         damaged = ""
         _, missing = CHECKER.check_baseline_preservation(baseline, damaged)
         self.assertIn("credentials-never-handle", missing)
+
+    def test_baseline_entrypoint_returns_success_for_intact_source(self):
+        baseline = (
+            SCRIPT.parent.parent / "proposals/card21/baseline/"
+            "GLOBAL_AGENTS.card21-baseline.md"
+        )
+        self.assertEqual(
+            0,
+            self.run_main_with_baseline(CHECKER.KIT_SOURCE.read_text(), baseline),
+        )
+
+    def test_baseline_entrypoint_fails_for_missing_baseline(self):
+        self.assertNotEqual(0, self.run_main_with_baseline(CHECKER.KIT_SOURCE.read_text(), None))
+
+    def test_baseline_entrypoint_fails_for_lost_optional_rule(self):
+        baseline_path = (
+            SCRIPT.parent.parent / "proposals/card21/baseline/"
+            "GLOBAL_AGENTS.card21-baseline.md"
+        )
+        baseline = baseline_path.read_text(encoding="utf-8")
+        candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        name = next(
+            name for name, pattern in CHECKER.RULES.items()
+            if pattern.search(baseline) and name not in CHECKER.PROFILE_RULES["kit"]
+        )
+        damaged = CHECKER.RULES[name].sub("", candidate)
+        self.assertNotEqual(0, self.run_main_with_baseline(damaged, baseline_path))
+
+    @staticmethod
+    def run_main_with_baseline(candidate_text, baseline_path):
+        with tempfile.TemporaryDirectory(prefix="card21-baseline-main-") as tmp:
+            candidate = Path(tmp) / "candidate.md"
+            candidate.write_text(candidate_text, encoding="utf-8")
+            args = ["check-standing-rules.py", "--preserve-baseline"]
+            if baseline_path is None:
+                args.append(str(Path(tmp) / "missing-baseline.md"))
+            else:
+                args.append(str(baseline_path))
+            with (
+                patch.object(CHECKER, "KIT_SOURCE", candidate),
+                patch.object(CHECKER, "HOME_FILES", []),
+                patch.object(CHECKER, "check_files", return_value=(True, [])),
+                patch.object(sys, "argv", args),
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                return CHECKER.main()
 
     def test_intact_fixture_passes(self):
         self.assertEqual(CHECKER.missing_rules(INTACT), [])

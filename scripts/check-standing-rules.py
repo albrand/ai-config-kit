@@ -1011,6 +1011,7 @@ def main() -> int:
                 print(f"PASS {KIT_SOURCE}: retained all {count} rules matched in {args.preserve_baseline}")
     for failure in failures:
         print(f"FAIL {failure}", file=sys.stderr)
+    ok = not failures
     if ok:
         print(f"PASS all {len(paths)} files contain all applicable rules ({len(RULES)} regexes)")
         return 0
