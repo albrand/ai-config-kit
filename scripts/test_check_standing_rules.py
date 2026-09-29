@@ -197,6 +197,53 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         CHECKER.missing_rules(damaged, required_optional=rules),
                     )
 
+    def test_rendered_provider_contexts_require_verified_qa_for_authenticated_e2e(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        rules = {
+            "verified-qa-e2e-full-trigger-set",
+            "verified-qa-e2e-missing-fails-closed",
+        }
+        trigger = (
+            "For any browser E2E, authentication, seeded identity, manual login handoff, "
+            "QA publication, or E2E completion"
+        )
+        enforcement = (
+            "a missing or failing gate blocks the requested action at every reasoning effort"
+        )
+        providers = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]
+        for provider_path in providers:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [], CHECKER.missing_rules(combined, required_optional=rules)
+                )
+            # An already-authenticated E2E still needs the gate; narrowing this
+            # trigger set to login/authentication would let it bypass the gate.
+            login_only = combined.replace(
+                trigger,
+                "For authentication, seeded identity, manual login handoff, QA publication",
+            )
+            with self.subTest(provider=provider_path.name, mutation="already-authenticated-e2e"):
+                self.assertIn(
+                    "verified-qa-e2e-full-trigger-set",
+                    CHECKER.missing_rules(login_only, required_optional=rules),
+                )
+            missing_gate = combined.replace(
+                enforcement,
+                "the gate is optional when authentication is already complete",
+            )
+            with self.subTest(provider=provider_path.name, mutation="gate-fail-open"):
+                self.assertIn(
+                    "verified-qa-e2e-missing-fails-closed",
+                    CHECKER.missing_rules(missing_gate, required_optional=rules),
+                )
+
     def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         baseline_path = rendered / "bb-AGENTS.md"

@@ -15,10 +15,10 @@ prefix made it start `---`; the corrected reconstruction skips only headers.
 | Claude home | 45,926 | 3,480 | 11,482 | 870 | 92.4% |
 | Codex home | 52,922 | 5,034 | 13,231 | 1,259 | 90.5% |
 | OpenCode home | 41,853 | 4,577 | 10,463 | 1,144 | 89.1% |
-| bb baseline | 27,268 | 18,542 | 6,817 | 4,636 | 32.0% |
-| Kit `GLOBAL_AGENTS.md` | 42,565 | 17,544 | 10,641 | 4,386 | 58.8% |
-| **Claude + bb context** | **73,194** | **22,022** | **18,299** | **5,506** | **69.9%** |
-| **Codex + bb context** | **80,190** | **23,576** | **20,048** | **5,894** | **70.6%** |
+| bb baseline | 27,268 | 18,722 | 6,817 | 4,680 | 31.3% |
+| Kit `GLOBAL_AGENTS.md` | 42,565 | 17,724 | 10,641 | 4,431 | 58.4% |
+| **Claude + bb context** | **73,194** | **22,202** | **18,299** | **5,550** | **69.7%** |
+| **Codex + bb context** | **80,190** | **23,756** | **20,048** | **5,939** | **70.4%** |
 
 Both requested agent contexts exceed the 40% reduction target. Live homes remain
 unchanged pending the user's review.

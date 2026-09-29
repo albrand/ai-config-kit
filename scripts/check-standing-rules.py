@@ -142,6 +142,14 @@ RULES: dict[str, re.Pattern[str]] = {
     "hermes-no-local-terminal-socket": re.compile(
         r"(?is)never put prompts in argv(?:,| or) require a local terminal socket"
     ),
+    "verified-qa-e2e-full-trigger-set": re.compile(
+        r"(?is)for any browser E2E, authentication, seeded identit(?:y|ies), manual login handoff,"
+        r" QA publication, or E2E completion.{0,100}load `?verified-qa-e2e`?"
+        r" and pass its deterministic gate"
+    ),
+    "verified-qa-e2e-missing-fails-closed": re.compile(
+        r"(?is)a missing or failing gate blocks the requested action at every reasoning effort"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -245,6 +253,8 @@ OPTIONAL_WHEN_ABSENT = {
     "hermes-prompts-use-stdin",
     "hermes-no-prompts-in-argv",
     "hermes-no-local-terminal-socket",
+    "verified-qa-e2e-full-trigger-set",
+    "verified-qa-e2e-missing-fails-closed",
 }
 
 HOME_FILES = (
@@ -342,6 +352,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name.startswith("hermes-"):
         return bool(RULES[name].search(text))
+    if name.startswith("verified-qa-e2e-"):
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -390,6 +402,8 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                     "hermes-prompts-use-stdin",
                     "hermes-no-prompts-in-argv",
                     "hermes-no-local-terminal-socket",
+                    "verified-qa-e2e-full-trigger-set",
+                    "verified-qa-e2e-missing-fails-closed",
                 })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
@@ -429,6 +443,8 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "hermes-prompts-use-stdin",
                 "hermes-no-prompts-in-argv",
                 "hermes-no-local-terminal-socket",
+                "verified-qa-e2e-full-trigger-set",
+                "verified-qa-e2e-missing-fails-closed",
             })
         missing = missing_rules(
             content,
