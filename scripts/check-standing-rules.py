@@ -541,6 +541,7 @@ LIVE_HOME_RULES = {
 }
 KIT_BASELINE_RULES = {
     "public-exposure-current-conversation-service", "public-share-close-task-end",
+    "bb-app-never-quit", "bb-app-never-kill", "bb-app-never-replace",
     "safety-hook-block-cannot-be-bypassed",
     "public-share-closeout-audit",
     "credentials-never-paste", "credentials-never-handle",
@@ -969,15 +970,45 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
     return not failures, failures
 
 
+def check_baseline_preservation(baseline: str, candidate: str) -> tuple[int, list[str]]:
+    """Require every standing-rule regex found in a baseline to remain in a candidate."""
+    baseline_rules = {
+        name for name, pattern in RULES.items() if pattern.search(baseline)
+    }
+    missing = sorted(
+        name for name in baseline_rules if not RULES[name].search(candidate)
+    )
+    return len(baseline_rules), missing
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--files", nargs="+", type=Path,
         help="override the four home files and kit source (for fixtures)",
     )
+    parser.add_argument(
+        "--preserve-baseline", type=Path,
+        help="also require every standing-rule regex in this baseline to match the kit source",
+    )
     args = parser.parse_args()
     paths = args.files or [*HOME_FILES, KIT_SOURCE]
     ok, failures = check_files(paths)
+    if args.preserve_baseline:
+        if not args.preserve_baseline.is_file():
+            failures.append(f"{args.preserve_baseline}: baseline file missing")
+        elif not KIT_SOURCE.is_file():
+            failures.append(f"{KIT_SOURCE}: kit source missing")
+        else:
+            baseline = args.preserve_baseline.read_text(encoding="utf-8")
+            candidate = KIT_SOURCE.read_text(encoding="utf-8")
+            count, missing = check_baseline_preservation(baseline, candidate)
+            if missing:
+                failures.append(
+                    f"{KIT_SOURCE}: lost baseline rules {', '.join(missing)}"
+                )
+            else:
+                print(f"PASS {KIT_SOURCE}: retained all {count} rules matched in {args.preserve_baseline}")
     for failure in failures:
         print(f"FAIL {failure}", file=sys.stderr)
     if ok:

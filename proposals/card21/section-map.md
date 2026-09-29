@@ -105,24 +105,46 @@ moved out of always-on context is named explicitly.
 | `Global Hermes review transport` | Hand-written bb/Hermes adapter rules | `overlays/bb.md`; Codex/OpenCode transport additions → their respective overlays |
 | `Global child-agent routing (subscription-aware)` | Hand-written bb routing policy | `overlays/bb.md`; route details → provider routing skill |
 
-## `~/projects/agent-config-kit/GLOBAL_AGENTS.md`
+## Kit source section reconciliation
 
-| Existing section / block | Origin | Proposed loaded destination |
-|---|---|---|
-| `Global Agent Instructions` | Kit source | `GLOBAL_AGENTS.md` header |
-| `delivery-first` marker / `Delivery first` | Kit source | `GLOBAL_AGENTS.md` → Delivery first; shared prohibitions → `hard-rules.md` |
-| `Analyze, plan, and scope` | Kit source | Same section in compact `GLOBAL_AGENTS.md`; details → `scope-advisor` |
-| `Cost, models, and agents` | Kit source | Same section in compact `GLOBAL_AGENTS.md`; provider details → routing skills |
-| `Directive challenge and decisions` | Kit source | Same section in compact `GLOBAL_AGENTS.md`; semantic procedure → `typed-decisions` |
-| `Security and hard prohibitions` | Kit source | `hard-rules.md`; full security gate → security source and quality gate |
-| `Worktrees, host, and processes` | Kit source | Same section in compact `GLOBAL_AGENTS.md`; detail → `shared-host-capacity` |
-| `Testing and reporting` | Kit source | Same section in compact `GLOBAL_AGENTS.md`; evidence tiers → `meaningful-tests` |
-| `ai-config-kit-scope` marker / scope continuity | Kit source | Same section in compact `GLOBAL_AGENTS.md`; `scope-advisor` |
-| `email-prohibition` marker | Kit source | `hard-rules.md` |
-| `testing-claims` marker | Kit source | `hard-rules.md`; full contract → `meaningful-tests` |
-| `finish-the-job` marker | Kit source | `hard-rules.md`; detail → `finish-the-job` |
-| `token-efficient-orchestration` marker / section | Kit source | Same section in compact `GLOBAL_AGENTS.md` |
-| `typed-decisions` marker / section | `scripts/typed-decisions-sync.py` `GLOBAL_BLOCK` | Same section in compact `GLOBAL_AGENTS.md`; detailed procedure → `typed-decisions` skill |
+The baseline side below is the complete heading and managed-block inventory
+from the hash-confirmed `GLOBAL_AGENTS.md` at `b6775918a3f749bc643c76094aee8cedac5dbb11`,
+not a reconstruction from the compact candidate. Baseline sections originate
+in that hand-written kit file unless the row names the sync script. Detailed
+procedures move only to the named existing skill or source document.
+
+| Original baseline heading/block | Source origin | Retained compact rule | Detail and destination |
+|---|---|---|---|
+| `Global Agent Instructions` and opening paragraph | Hand-written in baseline kit file | Header defines a provider-neutral baseline; provider homes remain adapter-only and repeat hard prohibitions | — |
+| `delivery-first` marker block | Hand-written in kit file; copied into homes | `Delivery first` retains one-ticket/one-PR, reproduce, batch QA fixes, focused checks, named-Hermes-defect stop, and safety-hook block | End-to-end delivery → `finish-the-job`; Pallium PR workflow → `pallium-ship-workflow` |
+| `Core Operating Principles` §1–4 | Hand-written in kit file | `Analyze, plan, and scope` retains request/source inspection, non-code goal/deliverable/assumption/risk/output framing, proportionate plan, connected-surface tracing, reproduce/evidence, and explicit uncertainty | Scope procedure → `scope-advisor`; evidence limits → `meaningful-tests` |
+| `Board-Backed Regression Protection` | Hand-written in kit file | `Analyze, plan, and scope` retains proportional/configured-board scope, protected behavior, complete relevant inventory, blocker boundaries, and no-board/no-unrelated-findings rule | Board access and inventory procedure → `board-access-via-mcp` and `scope-advisor` |
+| `Security-First Defaults` introduction and security gate | Hand-written in kit file | `Security and hard prohibitions` retains trigger domains and mandatory `SECURITY_AND_PENTEST.md` / `QUALITY_GATES.md` gate | Detailed gate → those two sources |
+| `Interactive browser and tab hygiene` | Hand-written in kit file | Candidate hard rules retain isolated bb browser, page ownership, enumeration, non-creating lifecycle calls, and no personal browser | Browser workflow → `isolated-browser`; adapter-specific controls → `orca-browser-safety` |
+| `Manual login handoff in a shared browser window` | Hand-written in kit file | Candidate hard rules retain one owned instance, no focus-multiplying tabs, truthful shared-window claims, no credential handling, same-instance auth verification, and stop on challenge/decline/contradiction | Login and evidence gates → `isolated-browser` and `verified-qa-e2e` |
+| `Security-First Defaults` supply chain, residualization, high-stakes review, authorized defense | Hand-written in kit file | Candidate retains supply-chain/build-config priority, residual exposure, authorized defensive-only activity, no offensive tooling, and multi-pass high-stakes review | Full method → security docs and `adversarial-security-sweep` |
+| `Security-First Defaults` Hermes/native surface/session-start clauses | Hand-written in kit file | Candidate retains no reverse SSH/listeners/broad env forwarding, capability-secret ban, preference-gated native discovery, exact lease/attestation gate, and safe session resume | Transport → `CMUX_HERMES_ORCHESTRATION.md`; native surfaces and health → `NATIVE_AGENT_SURFACES.md`, `SESSION_START_HEALTH.md`, and `claude-session-hook-doctor.py` |
+| `Collaboration Defaults` | Hand-written in kit file | Candidate now retains directness, findings/verdict-first responses, paste-ready prompts, source-conflict questions, and durable workflow fixes; no-AI-signature rule remains explicit | PR-body limits and concrete-value requirement remain inline in `Analyze, plan, and scope` |
+| `Scope Boundaries` | Hand-written in kit file | Candidate now states global-vs-repository ownership and retains scope-advisor trigger/authority | Full scope protocol → `scope-advisor` and `SCOPE_DISCIPLINE.md` |
+| `Closed-Scope Protection` | Hand-written in kit file | Candidate now explicitly keeps credentials, private URLs, personal/account identifiers, non-public roadmap and organization facts out of global context | — |
+| `Completion Report Standard` | Hand-written in kit file | Candidate now retains implementation/review closeout fields, evidence, unvalidated work, residual risk/next step, and proposed/implemented/installed/verified distinctions | Test and capability procedure → `meaningful-tests` and `finish-the-job` |
+| Worktree lifecycle / shared-host-capacity blocks | Hand-written in kit file | Candidate retains own-worktree removal and own-live-bb-environment exception, dirty/unowned protections, detached-HEAD lifetime, one-writer, dependency clone, CPU, and disk rules | Full lifecycle and host procedure → `shared-host-capacity` |
+| No-feature-flags block | Hand-written in kit file | Candidate provider proposals and `hard-rules.md` retain all prohibitions, exceptions, removal ticket/default-on date, and regression assertion | — |
+| `ai-config-kit-scope` marker block | Hand-written in kit file; copied into homes | Candidate retains original request/revision, authorization, scope continuity, and closeout distinctions | Advisor protocol → `scope-advisor` and `SCOPE_DISCIPLINE.md` |
+| `email-prohibition` marker block | Hand-written in kit file; copied into homes | `hard-rules.md` and all applicable provider homes retain per-message approval, every compose/send route, safe verification, and open-compose handling | — |
+| `testing-claims` marker block | Hand-written in kit file; copied into homes | Candidate retains persona/target/goals/verdict, NOT RUN, full-workflow PASS, failure/blocked distinction, and no observation-as-verdict | Full contract and evidence ceilings → `meaningful-tests` |
+| `finish-the-job` marker, coordination rule, and bb-app prohibition | Hand-written in kit file; copied into homes | Candidate retains follow-through, capability-check-before-blocker, shared-consumer check, when-to-coordinate rules, and never quit/kill/replace bb | Full follow-through/coordination → `finish-the-job` and `orchestration` |
+| `token-efficient-orchestration` marker block | Hand-written in kit file; copied into homes | All six target-state, measurement-return, effort, mutation-ledger, verbatim-head, and retry-cost rules remain in compact candidate | Canonical expansion → `TOKEN_EFFICIENT_ORCHESTRATION.md` |
+| `typed-decisions` marker block | `scripts/typed-decisions-sync.py` `GLOBAL_BLOCK` | Synced block retains answer-space, atomic judgments, confidence evidence, ledger resolution, Jev boundaries | Full procedure → `typed-decisions` skill |
+
+The compact candidate itself is sourced from `GLOBAL_AGENTS.md`; the typed
+decisions block is the sole section actively regenerated by
+`scripts/typed-decisions-sync.py`. `scripts/render-standing-homes.py` reads the
+kit source and that sync block, then writes proposal files only unless
+`--install` is explicitly passed. The baseline-to-candidate preservation
+comparison uses every checker regex matching the archived original blob; each
+matched hard rule also has a mutation test that removes its matching candidate
+text and requires the checker to report it missing.
 
 ## Duplicated policy in loaded provider + bb contexts
 

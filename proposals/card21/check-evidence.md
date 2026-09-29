@@ -195,5 +195,23 @@ test module passed again (46 tests, 153.096s).
 The focused case passes all four intact homes and rejects each appended command
 through `--files` for every rendered home.
 
+The hash-confirmed kit baseline at Card 21 start is also a regression fixture.
+The reusable `--preserve-baseline` mode selects every standing-rule regex that
+matches that exact source and requires it to match the current kit source; the
+unit suite deletes each of those 42 matched clauses in turn and requires a
+failure.
+
+Latest baseline-preservation and current-home CLI output:
+
+```text
+PASS /Users/alexandrebrandizzi/.claude/CLAUDE.md: 64 applicable standing rules
+PASS /Users/alexandrebrandizzi/.codex/AGENTS.md: 73 applicable standing rules
+PASS /Users/alexandrebrandizzi/.config/opencode/AGENTS.md: 69 applicable standing rules
+PASS /Users/alexandrebrandizzi/.bb/AGENTS.md: 63 applicable standing rules
+PASS /Users/alexandrebrandizzi/projects/wt-card21-shorter-instructions/GLOBAL_AGENTS.md: 102 applicable standing rules
+PASS /Users/alexandrebrandizzi/projects/wt-card21-shorter-instructions/GLOBAL_AGENTS.md: retained all 42 rules matched in proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md
+PASS all 5 files contain all applicable rules (109 regexes)
+```
+
 Live homes were not modified. The renderer remains in proposal mode; its
 `--install` option was not run.

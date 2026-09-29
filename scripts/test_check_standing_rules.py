@@ -36,6 +36,37 @@ For Hermes/cmux transport, never create reverse SSH or listeners, forward broad 
 
 
 class StandingRuleCheckerTest(unittest.TestCase):
+    def test_archived_kit_baseline_rules_are_retained_with_deletion_coverage(self):
+        baseline_path = (
+            SCRIPT.parent.parent / "proposals/card21/baseline/"
+            "GLOBAL_AGENTS.card21-baseline.md"
+        )
+        baseline = baseline_path.read_text(encoding="utf-8")
+        candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
+        self.assertEqual(missing, [])
+        self.assertEqual(count, 42)
+
+        baseline_rules = [
+            name for name, pattern in CHECKER.RULES.items()
+            if pattern.search(baseline)
+        ]
+        for name in baseline_rules:
+            with self.subTest(rule=name):
+                damaged = CHECKER.RULES[name].sub("", candidate)
+                _, missing = CHECKER.check_baseline_preservation(baseline, damaged)
+                self.assertIn(name, missing)
+
+    def test_baseline_without_a_retained_rule_fails(self):
+        baseline = "Never type, paste, or handle credentials."
+        count, missing = CHECKER.check_baseline_preservation(baseline, baseline)
+        self.assertGreater(count, 0)
+        self.assertEqual(missing, [])
+
+        damaged = ""
+        _, missing = CHECKER.check_baseline_preservation(baseline, damaged)
+        self.assertIn("credentials-never-handle", missing)
+
     def test_intact_fixture_passes(self):
         self.assertEqual(CHECKER.missing_rules(INTACT), [])
 
