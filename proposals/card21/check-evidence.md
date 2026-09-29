@@ -10,10 +10,11 @@ Codex proposal require the complete context-GC procedure.
 
 After source compression, the final check was run against all four unchanged
 live homes and compact `GLOBAL_AGENTS.md`. Result: **PASS** — all five files
-matched applicable rules in the final checker (32 regexes; 30 applicable to the
-Codex home). The rendered proposals plus kit source also passed all 32 regexes,
-including each Codex-only context-GC and email-consent obligation. Worktree subrules have
-separate checks and mutation fixtures for each safeguard. A historical marker
+matched applicable rules in the final checker (35 regexes; 32 applicable to the
+Codex home). The rendered proposals plus kit source also passed all 35 regexes,
+including each Codex-only context-GC, email-consent, and browser-lifecycle
+obligation. Worktree subrules have separate checks and mutation fixtures for
+each safeguard. A historical marker
 on the matching line or directly preceding line invalidates a policy.
 
 `python3 scripts/test_check_standing_rules.py`: **18 tests, OK**. Fixtures cover
@@ -25,9 +26,11 @@ and own-environment protection. Historical notes separated from the policy by
 a blank line do not invalidate it. Email fixtures reject general-task and
 different-message consent, and delete each mail-safety obligation in turn.
 Mutation cases weaken each remaining hard prohibition and require the checker
-to reject the change.
-Codex-scoped deletion fixtures cover each context-GC obligation and the ban on
-garbage-collecting repositories, journals, user-owned sessions, or active sessions.
+to reject the change. Browser lifecycle tests combine every actual rendered
+provider proposal with the rendered bb baseline, then delete or weaken each
+lifecycle safeguard. Codex-scoped deletion fixtures cover each context-GC
+obligation and the ban on garbage-collecting repositories, journals, user-owned
+sessions, or active sessions.
 
 Baseline checker stdout:
 
@@ -38,19 +41,19 @@ PASS all 5 files contain all applicable rules (20 regexes)
 Final checker stdout (live homes + kit source):
 
 ```text
-PASS all 5 files contain all applicable rules (32 regexes)
+PASS all 5 files contain all applicable rules (35 regexes)
 ```
 
 Rendered-home checker stdout:
 
 ```text
-PASS all 5 files contain all applicable rules (32 regexes)
+PASS all 5 files contain all applicable rules (35 regexes)
 ```
 
 Unit-test stdout:
 
 ```text
-Ran 18 tests
+Ran 19 tests
 OK
 ```
 

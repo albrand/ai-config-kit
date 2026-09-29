@@ -16,7 +16,7 @@ Never add or fill a recipient, open/edit a compose surface, or send email by any
 Never quit, kill, or replace the running bb app; never use pkill or pgrep -f.
 Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
-Use only bb's isolated browser for interactive work; never use a personal browser.
+Use only bb's isolated browser for interactive work; never use a personal browser. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
 No feature flags or new off-by-default gates without an explicit ask; preserve auth, authorization, entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date.
 Remove only clean worktrees you created; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, a .keep-worktree tree, or an unreferenced detached commit. A detached review worktree must end with its command. Use git worktree remove without --force.
 Do not add AI attribution, signatures, or watermarks.
@@ -122,6 +122,52 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         required_optional=set(CHECKER.OPTIONAL_WHEN_ABSENT),
                     ),
                 )
+
+    def test_rendered_provider_contexts_preserve_browser_lifecycle(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        browser_rules = {
+            "browser-never-access-unowned",
+            "browser-lifecycle-ops-noncreating",
+            "browser-close-every-slice-outcome",
+        }
+        mutations = {
+            "browser-never-access-unowned": (
+                "Never access or close unowned, pre-existing, user-owned, or other-thread instances",
+                "access instances when needed",
+            ),
+            "browser-lifecycle-ops-noncreating": (
+                "Lookup, refresh, release, and close must never create a replacement tab.",
+                "Lookup, refresh, release, and close may create a replacement tab.",
+            ),
+            "browser-close-every-slice-outcome": (
+                "Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.",
+                "Keep the instance until it is no longer useful.",
+            ),
+        }
+        provider_files = [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+            baseline_path,
+        ]
+        for provider_path in provider_files:
+            provider = provider_path.read_text(encoding="utf-8")
+            combined = provider if provider_path == baseline_path else provider + "\n" + baseline
+            with self.subTest(provider=provider_path.name, mutation="intact"):
+                self.assertEqual(
+                    [],
+                    CHECKER.missing_rules(combined, required_optional=browser_rules),
+                )
+            for rule, (original, weakened_clause) in mutations.items():
+                with self.subTest(provider=provider_path.name, rule=rule):
+                    self.assertIn(original, combined)
+                    damaged = combined.replace(original, weakened_clause, 1)
+                    self.assertIn(
+                        rule,
+                        CHECKER.missing_rules(damaged, required_optional=browser_rules),
+                    )
 
     def test_deleted_keep_worktree_protection_fails(self):
         damaged = INTACT.replace(

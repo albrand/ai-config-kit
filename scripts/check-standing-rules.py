@@ -59,6 +59,23 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)(?:never control.{0,80}personal(?:/default)? browser|"
         r"never use (?:a |the user.s )?personal(?:/default)? browser)"
     ),
+    "browser-never-access-unowned": re.compile(
+        r"(?is)never access or close.{0,100}(?:unowned|pre-existing).{0,80}"
+        r"(?:user-owned|other-thread)"
+    ),
+    "browser-lifecycle-ops-noncreating": re.compile(
+        r"(?is)(?:lookup|listing).{0,40}(?:refresh|refreshing).{0,40}"
+        r"(?:release|releasing).{0,40}(?:close|closing).{0,120}"
+        r"(?:must\s+never\s+create\s+a replacement (?:tab|page)|"
+        r"remain\s+non-creating|creates a tab as an adapter\s+lifecycle defect)"
+    ),
+    "browser-close-every-slice-outcome": re.compile(
+        r"(?is)(?:close (?:this thread.s|the thread-owned).{0,60}instance.{0,120}"
+        r"bounded browser slice.{0,100}pass.{0,40}fail.{0,60}block.{0,60}"
+        r"abandon.{0,60}supersed|close it when.{0,80}bounded browser slice ends|"
+        r"close no-longer-needed instances.{0,100}slice is done.{0,60}blocked.{0,60}"
+        r"abandoned.{0,60}superseded|close\s+(?:the\s+)?thread-owned\s+instance\s+afterward)"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -139,6 +156,9 @@ OPTIONAL_WHEN_ABSENT = {
     "context-gc-fresh-opencode-sessions",
     "context-gc-audit",
     "context-gc-managed-runner-self-check",
+    "browser-never-access-unowned",
+    "browser-lifecycle-ops-noncreating",
+    "browser-close-every-slice-outcome",
 }
 
 HOME_FILES = (
@@ -154,9 +174,12 @@ def missing_rules(
     text: str,
     require_optional: bool = False,
     required_optional: set[str] | None = None,
+    skip_rules: set[str] | None = None,
 ) -> list[str]:
     missing: list[str] = []
     for name, pattern in RULES.items():
+        if skip_rules is not None and name in skip_rules:
+            continue
         match = pattern.search(text)
         required = require_optional or (required_optional is not None and name in required_optional)
         if (
@@ -192,6 +215,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name == "worktree-own-bb-environment":
         return bool(RULES[name].search(text))
+    if name == "browser-never-access-unowned":
+        return bool(RULES[name].search(text))
     if name == "no-gc-user-owned-state":
         return bool(RULES[name].search(text))
     if name.startswith("context-gc-"):
@@ -215,6 +240,12 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "no-pkill-pgrep-app-kill-path",
                 "worktree-own-bb-environment",
             })
+            if resolved == KIT_SOURCE.resolve() or (rendered and path.name == "bb-AGENTS.md"):
+                required_optional.update({
+                    "browser-never-access-unowned",
+                    "browser-lifecycle-ops-noncreating",
+                    "browser-close-every-slice-outcome",
+                })
         if (rendered and path.name == "codex-AGENTS.md") or resolved == Path(
             "~/.codex/AGENTS.md"
         ).expanduser().resolve():
@@ -227,7 +258,18 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 "context-gc-audit",
                 "context-gc-managed-runner-self-check",
             })
-        missing = missing_rules(content, required_optional=required_optional)
+        skip_rules = set()
+        if rendered and path.name != "bb-AGENTS.md":
+            skip_rules.update({
+                "browser-never-access-unowned",
+                "browser-lifecycle-ops-noncreating",
+                "browser-close-every-slice-outcome",
+            })
+        missing = missing_rules(
+            content,
+            required_optional=required_optional,
+            skip_rules=skip_rules,
+        )
         if missing:
             failures.append(f"{path}: missing {', '.join(missing)}")
         else:
@@ -235,6 +277,7 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
                 name in OPTIONAL_WHEN_ABSENT
                 and name not in required_optional
                 and not optional_present(name, content)
+                or name in skip_rules
                 for name in RULES
             )
             print(f"PASS {path}: {applicable} applicable standing rules")
