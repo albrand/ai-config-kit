@@ -184,6 +184,40 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         CHECKER.missing_rules(damaged, required_optional=browser_rules),
                     )
 
+    def test_negated_browser_closure_fails_in_every_rendered_context(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        baseline_path = rendered / "bb-AGENTS.md"
+        baseline = baseline_path.read_text(encoding="utf-8")
+        browser_rules = {
+            "browser-never-access-unowned",
+            "browser-enumerate-before-open",
+            "browser-no-standard-preamble",
+            "browser-close-before-isolation-change",
+            "browser-lifecycle-ops-noncreating",
+            "browser-close-every-slice-outcome",
+        }
+        original = (
+            "Close this thread's instance when its bounded browser slice passes, fails, "
+            "is blocked, abandoned, or superseded."
+        )
+        weakened = (
+            "Do not close this thread's instance when its bounded browser slice passes, "
+            "fails, is blocked, abandoned, or superseded."
+        )
+        for provider_path in [
+            rendered / "CLAUDE.md",
+            rendered / "codex-AGENTS.md",
+            rendered / "opencode-AGENTS.md",
+        ]:
+            combined = provider_path.read_text(encoding="utf-8") + "\n" + baseline
+            with self.subTest(provider=provider_path.name):
+                self.assertIn(original, combined)
+                missing = CHECKER.missing_rules(
+                    combined.replace(original, weakened, 1),
+                    required_optional=browser_rules,
+                )
+                self.assertIn("browser-close-every-slice-outcome", missing)
+
     def test_deleted_keep_worktree_protection_fails(self):
         damaged = INTACT.replace(
             "a .keep-worktree tree, or an unreferenced detached commit",

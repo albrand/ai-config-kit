@@ -17,7 +17,7 @@ obligation. Worktree subrules have separate checks and mutation fixtures for
 each safeguard. A historical marker
 on the matching line or directly preceding line invalidates a policy.
 
-`python3 scripts/test_check_standing_rules.py`: **18 tests, OK**. Fixtures cover
+`python3 scripts/test_check_standing_rules.py`: **20 tests, OK**. Fixtures cover
 an intact document, deleted rules, deletion in a file, and separate worktree
 mutations for dirty trees, `.keep-worktree`, detached commits with history words
 retained, detached-worktree lifetime, worktree-scoped `--force`, nonownership,
@@ -28,7 +28,8 @@ different-message consent, and delete each mail-safety obligation in turn.
 Mutation cases weaken each remaining hard prohibition and require the checker
 to reject the change. Browser lifecycle tests combine every actual rendered
 provider proposal with the rendered bb baseline, then delete or weaken each
-lifecycle safeguard. Codex-scoped deletion fixtures cover each context-GC
+lifecycle safeguard, including the opposite “do not close” instruction.
+Codex-scoped deletion fixtures cover each context-GC
 obligation and the ban on garbage-collecting repositories, journals, user-owned
 sessions, or active sessions.
 
@@ -53,7 +54,7 @@ PASS all 5 files contain all applicable rules (38 regexes)
 Unit-test stdout:
 
 ```text
-Ran 19 tests
+Ran 20 tests
 OK
 ```
 

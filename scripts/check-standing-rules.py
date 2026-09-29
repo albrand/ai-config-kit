@@ -203,9 +203,25 @@ def missing_rules(
             and not optional_present(name, text)
         ):
             continue
-        if not match or historical_clause(text, match.start()):
+        if (
+            not match
+            or historical_clause(text, match.start())
+            or contradicted_rule(name, text)
+        ):
             missing.append(name)
     return missing
+
+
+def contradicted_rule(name: str, text: str) -> bool:
+    if name == "browser-close-every-slice-outcome":
+        return bool(
+            re.search(
+                r"(?is)(?:do\s+not|never|must\s+not|should\s+not|don.t)\s+"
+                r"close.{0,180}bounded browser slice",
+                text,
+            )
+        )
+    return False
 
 
 def historical_clause(text: str, position: int) -> bool:
