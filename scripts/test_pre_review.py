@@ -466,6 +466,17 @@ class PreReviewTests(unittest.TestCase):
             "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
             "    e2e.*": [],
             "`x`*e2e.*": [1],
+            # Only CR, LF and CRLF end a line, only spaces and tabs make it blank, and only Zs, tab, LF, FF and CR
+            # are flanking whitespace; Python's splitlines(), strip() and isspace() accept more.
+            "Intro\u2028\u2028    e2e.*": [1],
+            "Intro\u2029\u2029    e2e.*": [1],
+            "Intro\x85\x85    e2e.*": [1],
+            "Intro\x0b\x0c\x1c\x1d\x1e    e2e.*": [1],
+            "Intro\n\u2028\n    e2e.*": [3],
+            "```\r\ne2e.*\r\n```": [],
+            "**Four red tests.**\u2028": [1],
+            # A closing tag alone on its line starts a type 7 HTML block, even for pre/script/style/textarea.
+            "- 1. <pre>\n     x\n</pre>\n`a\ne2e.* `": [5],
             # Backticks mixed with `<` or `[` keep main's hits (links, autolinks and raw HTML are not modelled).
             "[x](`) e2e.* `": [1],
             "**[x](`) e2e.* files** `": [1],

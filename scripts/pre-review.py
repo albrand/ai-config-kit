@@ -737,6 +737,20 @@ def markdown_expand_container_tabs(line: str) -> str:
 def markdown_indent(text: str) -> int:
     return len(text) - len(text.lstrip(" "))
 
+
+MARKDOWN_LINE_END = re.compile(r"\r\n|\r|\n")  # CommonMark line endings; str.splitlines() accepts more
+
+
+def markdown_blank(text: str) -> bool:
+    """CommonMark blank: only spaces and tabs (str.strip() would also drop U+2028, U+0085, ...)."""
+    return not text.strip(" \t")
+
+
+def markdown_whitespace(char: str) -> bool:
+    """CommonMark Unicode whitespace: category Zs, tab, line feed, form feed or carriage return."""
+    return char in "\t\n\f\r" or unicodedata.category(char) == "Zs"
+
+
 MARKDOWN_HTML_BLOCK_NAMES = (
     "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
     "fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|"
@@ -768,14 +782,13 @@ def markdown_html_block(body: str, paragraph_open: bool) -> tuple[bool, re.Patte
     for start, end in MARKDOWN_HTML_BLOCKS:
         if start.match(body):
             return True, end
-    if not paragraph_open and MARKDOWN_HTML_BLOCK_TAG.match(body) \
-            and not re.match(r"</?(?:script|pre|style|textarea)\b", body, re.I):
+    if not paragraph_open and MARKDOWN_HTML_BLOCK_TAG.match(body):
         return True, None
     return False, None
 
 def markdown_block_start(rest: str) -> bool:
     """True when a line (inside its containers) starts a block, so it cannot be a lazy paragraph line."""
-    if not rest.strip():
+    if markdown_blank(rest):
         return True
     if markdown_indent(rest) >= 4:
         return False
@@ -787,7 +800,7 @@ def markdown_block_start(rest: str) -> bool:
     return bool(body.startswith(">") or fence or MARKDOWN_THEMATIC_BREAK.match(body)
                 or markdown_html_block(body, True)[0]  # HTML block types 1-6 interrupt a paragraph
                 or MARKDOWN_ATX_HEADING.match(body)
-                or (item and (item.group(3) or not body[item.end():].strip())))  # an empty item too
+                or (item and (item.group(3) or markdown_blank(body[item.end():]))))  # an empty item too
 
 
 def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
@@ -823,7 +836,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             uncertain_lines = []
             uncertain_start = 0
 
-    for number, raw_line in enumerate(source.splitlines(), 1):
+    for number, raw_line in enumerate(MARKDOWN_LINE_END.split(source), 1):
         closed_by_indent = False
         line = markdown_expand_container_tabs(raw_line)
         pos = matched = 0
@@ -836,7 +849,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
                     matched += 1
                     continue
                 break
-            if not rest.strip():
+            if markdown_blank(rest):
                 matched += 1
                 continue
             if markdown_indent(rest) >= width:
@@ -846,7 +859,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             break
         rest = line[pos:]
         if html_open:
-            if matched >= html_depth and (html_end is not None or rest.strip()):
+            if matched >= html_depth and (html_end is not None or not markdown_blank(rest)):
                 uncertain_lines.append(rest)
                 if html_end is not None and html_end.search(rest):
                     html_open = False
@@ -855,7 +868,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             html_open = False  # a blank line ends types 6-7; a container exit ends every type
             flush_uncertain()
         if uncertain_lines:
-            if rest.strip() and matched == uncertain_depth and markdown_indent(rest) >= 4:
+            if not markdown_blank(rest) and matched == uncertain_depth and markdown_indent(rest) >= 4:
                 uncertain_lines.append(rest)
                 continue
             flush_uncertain()
@@ -863,7 +876,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             if matched >= fence_depth:
                 closer = MARKDOWN_FENCE.match(rest.lstrip(" "))
                 if closer and markdown_indent(rest) < 4 and closer.group(1)[0] == fence[0] \
-                        and len(closer.group(1)) >= len(fence) and not closer.group(2).strip():
+                        and len(closer.group(1)) >= len(fence) and markdown_blank(closer.group(2)):
                     fence = None
                 continue
             fence = None  # a fenced block also ends with its blockquote or list item
@@ -887,18 +900,18 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             if item and (item.group(3) or not body[item.end():]) and not MARKDOWN_THEMATIC_BREAK.match(body):
                 content = body[item.end():]
                 ordered_start = item.group(2)
-                if lines and (not content.strip() or (ordered_start is not None and ordered_start != "1")):
+                if lines and (markdown_blank(content) or (ordered_start is not None and ordered_start != "1")):
                     break  # an empty or non-1 ordered item cannot interrupt a paragraph
                 flush()
                 marker_width = offset + len(item.group(1))
                 spaces = len(item.group(3))
-                width = marker_width + (1 if not content.strip() or spaces > 4 else spaces)
+                width = marker_width + (1 if markdown_blank(content) or spaces > 4 else spaces)
                 stack.append(width)
                 step = min(width, len(rest))
                 pos, rest = pos + step, rest[step:]
                 continue
             break
-        if not rest.strip():
+        if markdown_blank(rest):
             flush()
             continue
         body = rest.lstrip(" ")
@@ -1000,10 +1013,10 @@ def markdown_star_closers(text: str) -> dict[int, tuple[int, list[int]]]:
     for run in MARKDOWN_STAR_RUN.finditer(text):
         before = text[run.start() - 1] if run.start() else " "
         after = text[run.end()] if run.end() < len(text) else " "
-        left = not after.isspace() and (not markdown_punctuation(after) or before.isspace()
-                                        or markdown_punctuation(before))
-        right = not before.isspace() and (not markdown_punctuation(before) or after.isspace()
-                                          or markdown_punctuation(after))
+        left = not markdown_whitespace(after) and (not markdown_punctuation(after) or markdown_whitespace(before)
+                                                   or markdown_punctuation(before))
+        right = not markdown_whitespace(before) and (not markdown_punctuation(before) or markdown_whitespace(after)
+                                                     or markdown_punctuation(after))
         length = remaining = len(run.group(0))
         consumed, starts = 0, []
         while right and remaining and openers:
