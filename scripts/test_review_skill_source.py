@@ -20,7 +20,12 @@ GLOBAL_AGENTS = ROOT / "GLOBAL_AGENTS.md"
 HERMES_AS_GATE = re.compile(
     r"(?is)(?:hermes[^.]{0,200}?(?:completion gate|publish(?:ing)? gate|must succeed before (?:posting|publishing))"
     r"|not complete (?:when|if|until|without)[^.]{0,80}?hermes (?:result|answer|pass|review|verdict)"
-    r"[^.]{0,40}?(?:is |was )?(?:missing|absent|unavailable|not returned|arrives))"
+    r"[^.]{0,40}?(?:is |was )?(?:missing|absent|unavailable|not returned|arrives)"
+    r"|(?:complete|done|finished|post(?:ed|ing)?|publish(?:ed|ing)?|approv(?:e|ed|al)|merg(?:e|ed|ing))"
+    r"[^.]{0,20}? only (?:after|when|once|if)[^.]{0,60}?hermes"
+    r"|(?:do not|don't|never|must not|cannot) (?:post|publish|approve|merge|complete|finish)[^.]{0,60}?"
+    r"(?:until|before|without)[^.]{0,40}?hermes (?:returns|answers|responds|replies|approves|accepts|verdict|result)"
+    r"|wait for hermes[^.]{0,40}?before (?:posting|publishing|approving|merging))"
 )
 # Extra agent-loaded files to scan (e.g. installed skills with no kit source), os.pathsep-separated.
 CHAIN_ENV = "REVIEW_CHAIN_PATHS"
@@ -41,12 +46,20 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "The review is not complete when the Hermes result is missing, stale, or unverified.",
             "A review is not complete until the Hermes verdict arrives.",
             "Hermes must succeed before posting.",
+            "A review is complete only after Hermes returns a verdict.",
+            "Post the review only once Hermes has answered.",
+            "Do not publish the review until Hermes returns.",
+            "Never approve without the Hermes verdict.",
+            "Wait for Hermes to answer before posting.",
         ]
         allowed = [
             "Its bounded Hermes advisor pass is mandatory to attempt, best-effort to obtain, and never a publish blocker.",
             'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
             "The review is not complete when the Hermes attempt was skipped while Hermes was reachable.",
             "This skill is an authorization and completion gate.",
+            "Do not silently replace Hermes with another model and do not claim the advisor pass happened.",
+            "Post anyway, on your own evidence, if Hermes does not answer.",
+            "Record Hermes gate: BLOCKED in the operator-facing close-out only.",
         ]
         for sentence in flagged:
             self.assertEqual(gate_sentences(sentence), [sentence], sentence)
