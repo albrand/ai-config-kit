@@ -41,15 +41,10 @@ def plain(text: str) -> str:
     return re.sub(r"[*_`~]+", "", text)
 
 
-# Exact, reviewed sentences that quote withdrawn wording to explain why it was withdrawn. No pattern
-# exemption: wording that only looks historical ("previously said ...; still binding") is still flagged.
-ALLOWED_HISTORY = frozenset({
-    'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
-})
-
-
+# No exemptions of any kind: context can reinstate quoted or "historical" wording, so explain withdrawn
+# rules without restating them. This pins known gate phrasings; it cannot prove every paraphrase absent.
 def gate_sentences(text: str) -> list[str]:
-    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s) and s.strip() not in ALLOWED_HISTORY]
+    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s)]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -76,7 +71,8 @@ class ReviewSkillSourceTests(unittest.TestCase):
         ]
         allowed = [
             "Its bounded Hermes advisor pass is mandatory to attempt, best-effort to obtain, and never a publish blocker.",
-            'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
+            "An earlier version of this section made the advisor result a condition for finishing the review, "
+            "and that suppressed real findings.",
             "The review is not complete when the Hermes attempt was skipped while Hermes was reachable.",
             "This skill is an authorization and completion gate.",
             "Do not silently replace Hermes with another model and do not claim the advisor pass happened.",
@@ -90,6 +86,10 @@ class ReviewSkillSourceTests(unittest.TestCase):
         allowed.append("It is **never** a *publish blocker*; `Hermes` help is best-effort.")
         for sentence in allowed:
             self.assertEqual(gate_sentences(sentence), [], sentence)
+        # Quoting the withdrawn wording is never exempt, alone or with a sentence that reinstates it.
+        quoted = 'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.'
+        self.assertEqual(gate_sentences(quoted), [quoted])
+        self.assertEqual(len(gate_sentences(quoted + " Continue enforcing the quoted completion requirement.")), 1)
 
     def test_hermes_is_never_described_as_a_completion_gate(self) -> None:
         offenders = []
