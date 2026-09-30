@@ -709,6 +709,7 @@ MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)
 MARKDOWN_LIST_ITEM = re.compile(r"([-*+]|(\d{1,9})[.)])( *)")
 MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
 MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+MARKDOWN_SETEXT_UNDERLINE = re.compile(r"(?:=+|-+)[ \t]*$")
 MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
 MARKDOWN_ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
@@ -744,9 +745,12 @@ def markdown_block_start(rest: str) -> bool:
         return False
     body = rest.lstrip(" ")
     item = MARKDOWN_LIST_ITEM.match(body)
-    return bool(body.startswith(">") or MARKDOWN_FENCE.match(body) or MARKDOWN_THEMATIC_BREAK.match(body)
+    fence = MARKDOWN_FENCE.match(body)
+    if fence and fence.group(1)[0] == "`" and "`" in fence.group(2):
+        fence = None  # a backtick run followed by more backticks is a code span, not a fence
+    return bool(body.startswith(">") or fence or MARKDOWN_THEMATIC_BREAK.match(body)
                 or MARKDOWN_ATX_HEADING.match(body)
-                or (item and item.group(3) and body[item.end():].strip()))
+                or (item and (item.group(3) or not body[item.end():].strip())))  # an empty item too
 
 
 def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
@@ -841,6 +845,9 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
             continue
         if markdown_indent(rest) >= 4 and not lines:
             continue  # indented code
+        if lines and matched == len(stack) and markdown_indent(rest) < 4 and MARKDOWN_SETEXT_UNDERLINE.match(body):
+            flush()  # a setext underline makes the paragraph above a heading and ends it
+            continue
         if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
             flush()
             if MARKDOWN_ATX_HEADING.match(body):

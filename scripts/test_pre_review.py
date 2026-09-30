@@ -467,6 +467,18 @@ class PreReviewTests(unittest.TestCase):
             "**Run [unit](foo*) tests.**": [1],
             "**Run <b>unit</b> tests.**": [1],
             "**See <https://x.test/a*> tests.**": [1],
+            # A setext underline ends the paragraph, so a code span cannot pair across it.
+            "`x\n===\ne2e.* y`": [3],
+            "`x\n---\ne2e.* y`": [3],
+            "Title e2e.*\n===": [1],
+            "===\ne2e.*": [2],
+            "`a\n===` e2e.*": [2],
+            # An empty list item is never a lazy line; it closes the quote, so the span cannot pair across it.
+            "> `x\n-\ne2e.* y`": [3],
+            "> `x\n2.\ne2e.* y`": [3],
+            "> `x\n===\ne2e.* y`": [],
+            # Backticks with more backticks after them are a code span, so the line is lazy, not a fence.
+            "> x\n```a `` b ```\n>     see qa.* now": [3],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):
