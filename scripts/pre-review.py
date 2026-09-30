@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -852,6 +853,50 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     return paragraphs
 
 
+def markdown_punctuation(char: str) -> bool:
+    return unicodedata.category(char)[0] in "PS"
+
+
+def markdown_star_closers(text: str) -> dict[int, tuple[int, list[int]]]:
+    """Pair `*` delimiter runs as CommonMark does: flanking rules, the rule of three, nearest opener first.
+
+    Returns, for each run that closes emphasis, (stars consumed as closers, content start offsets of the
+    openers it closed).
+    """
+    openers: list[list[int]] = []  # [remaining stars, run length, can also close, content start]
+    closers: dict[int, tuple[int, list[int]]] = {}
+    for run in MARKDOWN_STAR_RUN.finditer(text):
+        before = text[run.start() - 1] if run.start() else " "
+        after = text[run.end()] if run.end() < len(text) else " "
+        left = not after.isspace() and (not markdown_punctuation(after) or before.isspace()
+                                        or markdown_punctuation(before))
+        right = not before.isspace() and (not markdown_punctuation(before) or after.isspace()
+                                          or markdown_punctuation(after))
+        length = remaining = len(run.group(0))
+        consumed, starts = 0, []
+        while right and remaining and openers:
+            for index in range(len(openers) - 1, -1, -1):
+                _left, total, both, _start = openers[index]
+                if not ((both or left) and (total + length) % 3 == 0 and (total % 3 or length % 3)):
+                    break
+            else:
+                break
+            del openers[index + 1:]  # delimiters between opener and closer can no longer match
+            opener = openers[index]
+            use = 2 if remaining >= 2 and opener[0] >= 2 else 1
+            opener[0] -= use
+            remaining -= use
+            consumed += use
+            starts.append(opener[3])
+            if not opener[0]:
+                openers.pop()
+        if consumed:
+            closers[run.start()] = (consumed, starts)
+        if remaining and left:
+            openers.append([remaining, length, int(right), run.end()])
+    return closers
+
+
 def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
     # A glob star is lost whenever Markdown consumes it as emphasis: `*e2e.*` renders as italic
     # "e2e." and `**Use e2e.* files**` loses its star too. The only star that is not a glob is one
@@ -860,19 +905,13 @@ def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     for first_line, paragraph in markdown_paragraphs(source):
         text = MARKDOWN_CODE_SPAN.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), paragraph)
+        text = text.replace("\\\\", "!!").replace("\\*", "!!")  # escaped stars are literal punctuation
+        closers = markdown_star_closers(text)
         for match in MARKDOWN_GLOB.finditer(text):
-            stack: list[tuple[int, int]] = []  # (opener length, offset after the opener)
-            for run in MARKDOWN_STAR_RUN.finditer(text, 0, match.start()):
-                before = text[run.start() - 1] if run.start() else " "
-                after = text[run.end()] if run.end() < len(text) else " "
-                if stack and not before.isspace():
-                    stack.pop()
-                elif not after.isspace():
-                    stack.append((len(run.group(0)), run.end()))
-            stars = len(match.group(1))
-            open_length, content_start = stack[-1] if stack else (0, -1)
+            consumed, content_starts = closers.get(match.start(1), (0, []))
             word = text[match.start():match.start(1) - 1]
-            closes_prose = stars == open_length and content_start != match.start() and word in MARKDOWN_PROSE_WORDS
+            closes_prose = consumed == len(match.group(1)) and word in MARKDOWN_PROSE_WORDS \
+                and match.start() not in content_starts
             if not closes_prose:
                 hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
                              "line": first_line + text.count("\n", 0, match.start()),
