@@ -298,7 +298,7 @@ def falsify():
         for label, p in cases:
             f = resolve(p)
             orig = open(f).read()
-            damaged = (orig.replace("never from a model's self-report", "from the model")
+            damaged = (orig.replace(GLOBAL_BLOCK, GLOBAL_BLOCK.replace(" never ", " always ", 1))
                        if "reworded" in label else PAT.sub("", orig))
             assert damaged != orig, f"falsify case did not apply: {label}"
             open(f, "w").write(damaged)
