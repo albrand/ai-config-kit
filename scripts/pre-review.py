@@ -2144,10 +2144,12 @@ def main(argv: list[str] | None = None) -> int:
     commands.append(built_in)
 
     package, manager = package_metadata(repo)
-    has_ts = any(Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES for path in paths)
-    has_py = any(Path(path).suffix.lower() == ".py" for path in paths)
-    has_md = any(Path(path).suffix.lower() in {".md", ".markdown"} for path in paths)
-    workflows = [path for path in paths if path.startswith(".github/workflows/") and Path(path).suffix.lower() in {".yml", ".yaml"}]
+    # Deleted paths stay in the packet but are absent at head; file-level checkers fail on missing targets.
+    files = [path for path in paths if (repo / path).is_file()]
+    has_ts = any(Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES for path in files)
+    has_py = any(Path(path).suffix.lower() == ".py" for path in files)
+    has_md = any(Path(path).suffix.lower() in {".md", ".markdown"} for path in files)
+    workflows = [path for path in files if path.startswith(".github/workflows/") and Path(path).suffix.lower() in {".yml", ".yaml"}]
 
     typecheck = readonly_typecheck_command(repo, package, manager)
     if typecheck:
@@ -2162,7 +2164,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if has_py and has_mypy_config(repo):
         mypy = binary_path(repo, "mypy")
-        python_files = [path for path in paths if path.endswith(".py")]
+        python_files = [path for path in files if path.endswith(".py")]
         commands.append(run_check("python-mypy", [mypy, *command_paths(repo, python_files)] if mypy else [],
                                   skip_reason=None if mypy else "mypy not installed"))
 
@@ -2179,7 +2181,7 @@ def main(argv: list[str] | None = None) -> int:
     if has_ts:
         eslint = binary_path(repo, "eslint")
         config_present = any((repo / name).exists() for name in ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml"))
-        ts_files = [path for path in paths if Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES]
+        ts_files = [path for path in files if Path(path).suffix.lower() in TYPESCRIPT_SUFFIXES]
         if eslint and config_present:
             commands.append(run_check("eslint-no-floating-promises", [eslint, "--rule", "@typescript-eslint/no-floating-promises:error", *command_paths(repo, ts_files)], requires_hydration=True))
         else:
@@ -2193,14 +2195,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if has_md:
         markdownlint = binary_path(repo, "markdownlint-cli2") or binary_path(repo, "markdownlint")
-        markdown_files = [path for path in paths if Path(path).suffix.lower() in {".md", ".markdown"}]
+        markdown_files = [path for path in files if Path(path).suffix.lower() in {".md", ".markdown"}]
         commands.append(run_check("markdownlint", [markdownlint, *command_paths(repo, markdown_files)] if markdownlint else [],
                                   skip_reason=None if markdownlint else "markdownlint not installed"))
 
     semgrep = binary_path(repo, "semgrep")
     active_rule_files: list[Path] = [starter_rules_path()] if paths else []
     project_rules = project_rule_files(repo)
-    source_paths = [path for path in paths
+    source_paths = [path for path in files
                     if not is_pre_review_fixture(path)
                     and Path(path).suffix.lower() in ({".py", ".c", ".h", ".go", ".java", ".yaml", ".yml"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)]
     if source_paths:
@@ -2240,7 +2242,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             commands.append(run_check("semgrep", [], skip_reason="semgrep not installed"))
 
-    tests = related_test_paths(repo, paths)
+    # Deleted sources still select their surviving tests; deleted tests themselves cannot run.
+    tests = [path for path in related_test_paths(repo, paths) if (repo / path).is_file()]
     python_tests = [path for path in tests if path.endswith(".py")]
     for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests,
                                                      timeout_scale=args.timeout_scale):
