@@ -41,12 +41,15 @@ def plain(text: str) -> str:
     return re.sub(r"[*_`~]+", "", text)
 
 
-# Only the quoted text of an explicitly withdrawn wording is exempt; the rest of the sentence is checked.
-WITHDRAWN_QUOTE = re.compile(r"(?i)\b(?:used to (?:read|say)|formerly (?:read|said)|previously (?:read|said))\s*[\"“][^\"”]*[\"”]")
+# Exact, reviewed sentences that quote withdrawn wording to explain why it was withdrawn. No pattern
+# exemption: wording that only looks historical ("previously said ...; still binding") is still flagged.
+ALLOWED_HISTORY = frozenset({
+    'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
+})
 
 
 def gate_sentences(text: str) -> list[str]:
-    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(WITHDRAWN_QUOTE.sub("used to read <withdrawn>", s))]
+    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s) and s.strip() not in ALLOWED_HISTORY]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -63,6 +66,8 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "Wait for Hermes to answer before posting.",
             "This used to read differently; do not publish the review until Hermes returns.",
             'This used to read "Hermes is optional", and now the review is complete only after Hermes returns.',
+            'This previously said "Do not publish the review until Hermes returns"; this requirement remains binding.',
+            'This used to read "Hermes help is a completion gate", and that wording is still in force.',
         ]
         formatted = [
             "A review is complete **only after** Hermes returns a verdict.",
