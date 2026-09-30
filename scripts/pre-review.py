@@ -704,6 +704,48 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
             for match in pattern.finditer(source)]
 
 
+MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.(\*+)")
+MARKDOWN_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+MARKDOWN_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+MARKDOWN_STAR_RUN = re.compile(r"\*+")
+
+
+def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
+    # A glob star is lost when Markdown reads it as an emphasis closer: `*e2e.*` renders as
+    # italic "e2e.". Stars that only close prose emphasis ("**Four red tests.**") are not globs,
+    # and fenced blocks and code spans are literal text.
+    hits: list[dict[str, Any]] = []
+    fence: str | None = None
+    for number, line in enumerate(source.splitlines(), 1):
+        opener = MARKDOWN_FENCE.match(line)
+        if fence is not None:
+            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence) \
+                    and not line[opener.end():].strip():
+                fence = None
+            continue
+        if opener:
+            fence = opener.group(1)
+            continue
+        text = MARKDOWN_CODE_SPAN.sub(lambda match: " " * len(match.group(0)), line)
+        for match in MARKDOWN_GLOB.finditer(text):
+            stack: list[tuple[int, int]] = []  # (opener length, offset after the opener)
+            for run in MARKDOWN_STAR_RUN.finditer(text, 0, match.start()):
+                before = text[run.start() - 1] if run.start() else " "
+                after = text[run.end()] if run.end() < len(text) else " "
+                if stack and not before.isspace():
+                    stack.pop()
+                elif not after.isspace():
+                    stack.append((len(run.group(0)), run.end()))
+            stars = len(match.group(1))
+            open_length, content_start = stack[-1] if stack else (0, -1)
+            leftover_glob_star = stars > open_length
+            token_is_whole_span = bool(stack) and content_start == match.start()
+            if leftover_glob_star or token_is_whole_span:
+                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path, "line": number,
+                             "message": "glob-like token is emphasis text; wrap it in a Markdown code span"})
+    return hits
+
+
 def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     # A dereference caught by a broad handler cannot escape with the wrong shape.
@@ -1291,9 +1333,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
 
         if suffix in {".md", ".markdown"}:
             # Defect #52: markdown emphasis swallows a glob-like token outside code spans.
-            glob = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")
-            hits.extend(regex_hit("pre_review.markdown_glob_code_span", rel, source, glob,
-                                  "glob-like token is emphasis text; wrap it in a Markdown code span"))
+            hits.extend(markdown_glob_hits(rel, source))
 
     # Defect #48: gh run lookups need both a token in the job and actions:read permission.
     for rel, source in contents.items():

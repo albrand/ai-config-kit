@@ -387,6 +387,34 @@ class PreReviewTests(unittest.TestCase):
         self.assert_rule_pair("markdown-unbackticked-glob.md", "markdown-backticked-glob.md",
                               "docs/glob.md", "pre_review.markdown_glob_code_span")
 
+    def test_markdown_glob_rule_separates_globs_from_prose_emphasis_and_code(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        rule = "pre_review.markdown_glob_code_span"
+        cases = {
+            "The workflow matches *e2e.* files.": [1],
+            "e2e.*": [1],
+            "*e2e.**": [1],
+            "**Run scripts/qa.***": [1],
+            "See src/app.* and qa.* here.": [1, 1],
+            "**Four red tests.** Then e2e.* again.": [1],
+            "**Four red tests.**": [],
+            "*Run the tests.*": [],
+            "`e2e.*`": [],
+            "``tests.*``": [],
+            "```sh\nnpx playwright test e2e.*\n```": [],
+            "~~~\nqa.*\n~~~\nAfter the fence, e2e.* counts.": [4],
+            "````md\n```\ne2e.*\n```\n````": [],
+        }
+        for text, expected_lines in cases.items():
+            with self.subTest(text=text):
+                hits = namespace["study_regex_hits"](self.repo, {"docs/probe.md": text})
+                self.assertEqual([hit["line"] for hit in hits if hit["rule_id"] == rule], expected_lines)
+
+    def test_markdown_glob_rule_passes_bold_prose_and_fenced_code_end_to_end(self) -> None:
+        self.add_fixture("markdown-glob-prose-and-code.md", "docs/prose.md")
+        _result, packet = self.run_pre_review()
+        self.assertNotIn("pre_review.markdown_glob_code_span", self.rule_ids(packet))
+
     def test_plan_rewalk_consistency_rule_failing_and_passing_fixtures(self) -> None:
         plan = self.add_fixture("unresolved-plan.md", ".qa/plan.md")
         rewalk = self.add_fixture("passing-rewalk.json", ".qa/rewalk.json")
