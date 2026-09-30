@@ -404,6 +404,18 @@ class PreReviewTests(unittest.TestCase):
             "```sh\nnpx playwright test e2e.*\n```": [],
             "~~~\nqa.*\n~~~\nAfter the fence, e2e.* counts.": [4],
             "````md\n```\ne2e.*\n```\n````": [],
+            "**Use e2e.* files**": [1],
+            "*Use e2e.*": [1],
+            "**tests.**": [1],
+            "Intro line\n**Use the\ne2e.* files**": [3],
+            "**Four red\ntests.**": [],
+            "> **Four red\n> tests.**": [],
+            "> ```\n> e2e.*\n> ```": [],
+            "- item\n\n  ```\n  qa.*\n  ```": [],
+            "Run `npx\ne2e.*` locally.": [],
+            "Paragraph.\n\n    e2e.*\n\nAfter code, tests.* counts.": [5],
+            "```e2e.*``` is inline code": [],
+            "- **Four red tests.**\n\n    Then *e2e.* again.": [3],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):

@@ -705,28 +705,66 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
 
 
 MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.(\*+)")
-MARKDOWN_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-MARKDOWN_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+MARKDOWN_CONTAINER = re.compile(r"^[ \t]*(?:>[ \t]?[ \t]*)*")
+MARKDOWN_LIST_ITEM = re.compile(r"(?:[-*+]|\d+[.)])[ \t]+")
+MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
+MARKDOWN_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
+# Ordinary words that can end a sentence right before bold or italic prose closes.
+MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
+
+
+def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
+    """Return (first line number, text) for each paragraph outside fenced and indented code."""
+    paragraphs: list[tuple[int, str]] = []
+    lines: list[str] = []
+    start = 0
+    fence: str | None = None
+    in_list = in_indented_code = False
+    for number, line in enumerate(source.splitlines(), 1):
+        prefix = MARKDOWN_CONTAINER.match(line).group(0)  # type: ignore[union-attr]
+        body = line[len(prefix):]
+        item = MARKDOWN_LIST_ITEM.match(body)
+        marker = MARKDOWN_FENCE.match(body[item.end():] if item else body)
+        if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
+            marker = None  # a backtick run followed by more backticks is a code span, not a fence
+        if fence is not None:
+            if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) \
+                    and not marker.group(2).strip():
+                fence = None
+            continue
+        blank = not body.strip()
+        indented = not lines and not in_list and ">" not in prefix and line.startswith(("    ", "\t"))
+        if in_indented_code and (blank or indented or line.startswith(("    ", "\t"))):
+            continue
+        in_indented_code = False
+        if marker or blank or indented:
+            if lines:
+                paragraphs.append((start, "\n".join(lines)))
+                lines = []
+            fence = marker.group(1) if marker else None
+            in_indented_code = indented and not marker
+            continue
+        if not lines:
+            start = number
+            if item:
+                in_list = True
+            elif not prefix:
+                in_list = False
+        lines.append(line)
+    if lines:
+        paragraphs.append((start, "\n".join(lines)))
+    return paragraphs
 
 
 def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
-    # A glob star is lost when Markdown reads it as an emphasis closer: `*e2e.*` renders as
-    # italic "e2e.". Stars that only close prose emphasis ("**Four red tests.**") are not globs,
-    # and fenced blocks and code spans are literal text.
+    # A glob star is lost whenever Markdown consumes it as emphasis: `*e2e.*` renders as italic
+    # "e2e." and `**Use e2e.* files**` loses its star too. The only star that is not a glob is one
+    # that exactly closes prose emphasis ending in an ordinary word ("**Four red tests.**").
+    # Fenced blocks, indented code and code spans (which may span lines) are literal text.
     hits: list[dict[str, Any]] = []
-    fence: str | None = None
-    for number, line in enumerate(source.splitlines(), 1):
-        opener = MARKDOWN_FENCE.match(line)
-        if fence is not None:
-            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence) \
-                    and not line[opener.end():].strip():
-                fence = None
-            continue
-        if opener:
-            fence = opener.group(1)
-            continue
-        text = MARKDOWN_CODE_SPAN.sub(lambda match: " " * len(match.group(0)), line)
+    for first_line, paragraph in markdown_paragraphs(source):
+        text = MARKDOWN_CODE_SPAN.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), paragraph)
         for match in MARKDOWN_GLOB.finditer(text):
             stack: list[tuple[int, int]] = []  # (opener length, offset after the opener)
             for run in MARKDOWN_STAR_RUN.finditer(text, 0, match.start()):
@@ -738,10 +776,11 @@ def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
                     stack.append((len(run.group(0)), run.end()))
             stars = len(match.group(1))
             open_length, content_start = stack[-1] if stack else (0, -1)
-            leftover_glob_star = stars > open_length
-            token_is_whole_span = bool(stack) and content_start == match.start()
-            if leftover_glob_star or token_is_whole_span:
-                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path, "line": number,
+            word = text[match.start():match.start(1) - 1]
+            closes_prose = stars == open_length and content_start != match.start() and word in MARKDOWN_PROSE_WORDS
+            if not closes_prose:
+                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
+                             "line": first_line + text.count("\n", 0, match.start()),
                              "message": "glob-like token is emphasis text; wrap it in a Markdown code span"})
     return hits
 
