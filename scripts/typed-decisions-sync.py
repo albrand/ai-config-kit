@@ -26,7 +26,8 @@ if SCRIPT_DIR not in sys.path:
 import standing_home_lock
 
 H = os.path.expanduser
-KIT = H("~/projects/agent-config-kit")
+# AI_CONFIG_KIT lets scheduled checks read a merged-main export instead of a checkout parked on an old branch.
+KIT = os.environ.get("AI_CONFIG_KIT") or H("~/projects/agent-config-kit")
 FOOT = "Contract: the `typed-decisions` skill."
 
 SECTIONS = {
