@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import runpy
 import signal
 import shutil
@@ -386,6 +387,149 @@ class PreReviewTests(unittest.TestCase):
     def test_markdown_glob_rule_failing_and_passing_fixtures(self) -> None:
         self.assert_rule_pair("markdown-unbackticked-glob.md", "markdown-backticked-glob.md",
                               "docs/glob.md", "pre_review.markdown_glob_code_span")
+
+    def test_markdown_glob_rule_separates_globs_from_prose_emphasis_and_code(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        rule = "pre_review.markdown_glob_code_span"
+        cases = {
+            "The workflow matches *e2e.* files.": [1],
+            "e2e.*": [1],
+            "*e2e.**": [1],
+            "**Run scripts/qa.***": [1],
+            "See src/app.* and qa.* here.": [1, 1],
+            "**Four red tests.** Then e2e.* again.": [1],
+            "**Four red tests.**": [],
+            "*Run the tests.*": [],
+            "`e2e.*`": [],
+            "``tests.*``": [],
+            "```sh\nnpx playwright test e2e.*\n```": [],
+            "~~~\nqa.*\n~~~\nAfter the fence, e2e.* counts.": [4],
+            "````md\n```\ne2e.*\n```\n````": [],
+            "**Use e2e.* files**": [1],
+            "*Use e2e.*": [1],
+            "**tests.**": [1],
+            "Intro line\n**Use the\ne2e.* files**": [3],
+            "**Four red\ntests.**": [],
+            "> **Four red\n> tests.**": [],
+            "> ```\n> e2e.*\n> ```": [],
+            "- item\n\n  ```\n  qa.*\n  ```": [],
+            "Run `npx\ne2e.*` locally.": [],
+            "Paragraph.\n\n    e2e.*\n\nAfter code, tests.* counts.": [5],
+            "```e2e.*``` is inline code": [],
+            "- **Four red tests.**\n\n    Then *e2e.* again.": [3],
+            "> ```\n> example\ne2e.*": [3],
+            "- ```\n  example\ne2e.*": [3],
+            "- item\n\n  ```\n  example\nqa.*": [5],
+            "> ```\n>\n> e2e.*\n> ```": [],
+            "- ```\n\n  qa.*\n  ```": [],
+            "```\nexample\n\ne2e.*\n```": [],
+            "````\ndone\n- ````\n  x\n**e2e.***": [],
+            "```\nx\n> ```\n> qa.*\n> ```": [],
+            "*done*\n- item\n\n    *tests.**": [4],
+            "- ```\n  x\n  ```\n\n    **done** then tests.*": [5],
+            "- item\n\n    tests.*\n````\ndone\n````\n    see e2e.* now": [3],
+            "- item\n\n      e2e.*": [],
+            "    ```\ne2e.*": [2],
+            "```\n    ```\ne2e.*\n```": [],
+            "   ```\ne2e.*\n   ```": [],
+            "- item\n\n      ```\n  e2e.*": [4],
+            "\t```\ne2e.*": [2],
+            "~~~\n\t~~~\n*src/app.**\n~~~": [],
+            "> \t\t~~~\n> **qa.***\n> ~~~": [2],
+            "`npx\n> `e2e.*`": [],
+            "- item\n  > ```\n  > e2e.*\n> e2e.*": [4],
+            "> - item\n>   ```\n>   qa.*\n> qa.*": [4],
+            "- a\n  - b\n    ```\n    e2e.*\n    ```\n  tests.*": [6],
+            "> text\nlazy e2e.*": [2],
+            "1. item\n\n   ```\n   e2e.*\n   ```": [],
+            "**Run (*unit*) tests.**": [],
+            "**Run \\*unit\\* tests.**": [],
+            "*a **b** tests.*": [],
+            "**x** and *Run the tests.*": [],
+            "e2e.\\*": [],
+            "\\*e2e.*": [1],
+            "(*e2e.*)": [1],
+            "***e2e.***": [1],
+            "**Run (*unit*) e2e.* files**": [1],
+            "Run \\` e2e.* \\` locally.": [1],
+            "Run \\\\`e2e.*` locally.": [],
+            "Run \\\\\\`e2e.*\\` locally.": [1],
+            "`foo\\` e2e.*": [1],
+            "``a ` e2e.* ``": [],
+            "```a `` e2e.* ```": [],
+            "`` e2e.* `": [1],
+            "**`Run` tests.**": [],
+            "*`Run` tests.*": [],
+            "**Run `unit` tests.**": [],
+            "**Run the `tests.*`**": [],
+            "> **done**! tests.*\n> > 10. > ````\n    > x\n    *qa.**": [1, 4],
+            "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
+            "    e2e.*": [],
+            "`x`*e2e.*": [1],
+            # Only CR, LF and CRLF end a line, only spaces and tabs make it blank, and only Zs, tab, LF, FF and CR
+            # are flanking whitespace; Python's splitlines(), strip() and isspace() accept more.
+            "Intro\u2028\u2028    e2e.*": [1],
+            "Intro\u2029\u2029    e2e.*": [1],
+            "Intro\x85\x85    e2e.*": [1],
+            "Intro\x0b\x0c\x1c\x1d\x1e    e2e.*": [1],
+            "Intro\n\u2028\n    e2e.*": [3],
+            "```\r\ne2e.*\r\n```": [],
+            "**Four red tests.**\u2028": [1],
+            # A closing tag alone on its line starts a type 7 HTML block, even for pre/script/style/textarea.
+            "- 1. <pre>\n     x\n</pre>\n`a\ne2e.* `": [5],
+            # Backticks mixed with `<` or `[` keep main's hits (links, autolinks and raw HTML are not modelled).
+            "[x](`) e2e.* `": [1],
+            "**[x](`) e2e.* files** `": [1],
+            '[x](/u "`") e2e.* `': [1],
+            "<http://a`b> e2e.* `": [1],
+            '<span title="`"> e2e.* `</span>': [1],
+            '**<a href="`"> e2e.* files** `': [1],
+            '[x]: /u "`"\n\ne2e.* `': [3],
+            "[foo`](/uri)` e2e.*": [1],
+            "[x] (`) e2e.* `": [1],
+            "[x](`e2e.*`)": [],
+            # An HTML block is raw text up to its end condition; types 1-6 are never lazy paragraph lines.
+            '<!-- ` --> qa.* `\n2) - - item\n\n         [x](/u "`") scripts/run.* `': [1, 4],
+            "- - text\n  <? x\n  ```a `` src/app.* ```": [3],
+            "<div>\n`a\ne2e.* `\n</div>": [3],
+            "<div>\n\n`x` e2e.*": [3],
+            "**`Run` e2e.* files**": [1],
+            # Unmodelled inline constructs keep the base rule's hit (fail safe, same as before this change).
+            "**Run [unit](foo*) tests.**": [1],
+            "**Run <b>unit</b> tests.**": [1],
+            "**See <https://x.test/a*> tests.**": [1],
+            # A setext underline ends the paragraph, so a code span cannot pair across it.
+            "`x\n===\ne2e.* y`": [3],
+            "`x\n---\ne2e.* y`": [3],
+            "Title e2e.*\n===": [1],
+            "===\ne2e.*": [2],
+            "`a\n===` e2e.*": [2],
+            # An empty list item is never a lazy line; it closes the quote, so the span cannot pair across it.
+            "> `x\n-\ne2e.* y`": [3],
+            "> `x\n2.\ne2e.* y`": [3],
+            "> `x\n===\ne2e.* y`": [],
+            # Backticks with more backticks after them are a code span, so the line is lazy, not a fence.
+            "> x\n```a `` b ```\n>     see qa.* now": [3],
+        }
+        for text, expected_lines in cases.items():
+            with self.subTest(text=text):
+                hits = namespace["study_regex_hits"](self.repo, {"docs/probe.md": text})
+                self.assertEqual([hit["line"] for hit in hits if hit["rule_id"] == rule], expected_lines)
+
+    def test_markdown_glob_uncertain_regions_match_main_regex_lines(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        text = "> **done**! tests.*\n> > 10. > ````\n    > x\n    *qa.**"
+        regions = namespace["markdown_paragraphs"](text)
+        self.assertTrue(any(uncertain for _start, _paragraph, uncertain in regions))
+        main_glob = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")
+        expected = [text.count("\n", 0, match.start()) + 1 for match in main_glob.finditer(text)]
+        actual = [hit["line"] for hit in namespace["markdown_glob_hits"]("docs/probe.md", text)]
+        self.assertEqual(actual, expected)
+
+    def test_markdown_glob_rule_passes_bold_prose_and_fenced_code_end_to_end(self) -> None:
+        self.add_fixture("markdown-glob-prose-and-code.md", "docs/prose.md")
+        _result, packet = self.run_pre_review()
+        self.assertNotIn("pre_review.markdown_glob_code_span", self.rule_ids(packet))
 
     def test_plan_rewalk_consistency_rule_failing_and_passing_fixtures(self) -> None:
         plan = self.add_fixture("unresolved-plan.md", ".qa/plan.md")

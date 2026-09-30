@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -704,6 +705,373 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
             for match in pattern.finditer(source)]
 
 
+MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.(\*+)")
+MARKDOWN_UNCERTAIN_GLOB = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")  # Preserve main's exact hits in uncertain Markdown regions.
+MARKDOWN_LIST_ITEM = re.compile(r"([-*+]|(\d{1,9})[.)])( *)")
+MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
+MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+MARKDOWN_SETEXT_UNDERLINE = re.compile(r"(?:=+|-+)[ \t]*$")
+MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
+MARKDOWN_ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+MARKDOWN_STAR_RUN = re.compile(r"\*+")
+# Ordinary words that can end a sentence right before bold or italic prose closes.
+MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
+
+
+def markdown_expand_container_tabs(line: str) -> str:
+    """Expand tabs among leading whitespace, blockquote and list markers to CommonMark's 4-column stops."""
+    column = 0
+    out: list[str] = []
+    for index, char in enumerate(line):
+        if char == "\t":
+            out.append(" " * (4 - column % 4))
+            column += 4 - column % 4
+        elif char in " >-*+.)0123456789":
+            out.append(char)
+            column += 1
+        else:
+            return "".join(out) + line[index:]
+    return "".join(out)
+
+
+def markdown_indent(text: str) -> int:
+    return len(text) - len(text.lstrip(" "))
+
+
+MARKDOWN_LINE_END = re.compile(r"\r\n|\r|\n")  # CommonMark line endings; str.splitlines() accepts more
+
+
+def markdown_blank(text: str) -> bool:
+    """CommonMark blank: only spaces and tabs (str.strip() would also drop U+2028, U+0085, ...)."""
+    return not text.strip(" \t")
+
+
+def markdown_whitespace(char: str) -> bool:
+    """CommonMark Unicode whitespace: category Zs, tab, line feed, form feed or carriage return."""
+    return char in "\t\n\f\r" or unicodedata.category(char) == "Zs"
+
+
+MARKDOWN_HTML_BLOCK_NAMES = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
+    "fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|"
+    "main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|"
+    "title|tr|track|ul")
+# (start, end) for CommonMark HTML block types 1-6; end None means the block ends at a blank line.
+MARKDOWN_HTML_BLOCKS = [
+    (re.compile(r"<(?:script|pre|style|textarea)(?:\s|>|$)", re.I), re.compile(r"</(?:script|pre|style|textarea)>", re.I)),
+    (re.compile(r"<!--"), re.compile(r"-->")),
+    (re.compile(r"<\?"), re.compile(r"\?>")),
+    (re.compile(r"<![A-Za-z]"), re.compile(r">")),
+    (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>")),
+    (re.compile(rf"</?(?:{MARKDOWN_HTML_BLOCK_NAMES})(?:\s|/?>|$)", re.I), None),
+]
+# Type 7: a complete open or closing tag alone on its line; it cannot interrupt a paragraph.
+MARKDOWN_HTML_BLOCK_TAG = re.compile(
+    r"(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>"
+    r"|</[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$")
+
+
+def markdown_unmodelled(text: str) -> bool:
+    """True when backticks mix with `<` or `[`: links, autolinks, raw HTML and reference definitions can then
+    decide where a code span starts. Such text is not modelled; it is scanned with main's rule instead."""
+    return "`" in text and ("<" in text or "[" in text)
+
+
+def markdown_html_block(body: str, paragraph_open: bool) -> tuple[bool, re.Pattern[str] | None]:
+    """(starts, end pattern) for an HTML block starting at `body`; end None means it ends at a blank line."""
+    for start, end in MARKDOWN_HTML_BLOCKS:
+        if start.match(body):
+            return True, end
+    if not paragraph_open and MARKDOWN_HTML_BLOCK_TAG.match(body):
+        return True, None
+    return False, None
+
+def markdown_block_start(rest: str) -> bool:
+    """True when a line (inside its containers) starts a block, so it cannot be a lazy paragraph line."""
+    if markdown_blank(rest):
+        return True
+    if markdown_indent(rest) >= 4:
+        return False
+    body = rest.lstrip(" ")
+    item = MARKDOWN_LIST_ITEM.match(body)
+    fence = MARKDOWN_FENCE.match(body)
+    if fence and fence.group(1)[0] == "`" and "`" in fence.group(2):
+        fence = None  # a backtick run followed by more backticks is a code span, not a fence
+    return bool(body.startswith(">") or fence or MARKDOWN_THEMATIC_BREAK.match(body)
+                or markdown_html_block(body, True)[0]  # HTML block types 1-6 interrupt a paragraph
+                or MARKDOWN_ATX_HEADING.match(body)
+                or (item and (item.group(3) or markdown_blank(body[item.end():]))))  # an empty item too
+
+
+def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
+    """Return (first line number, text, uncertain) paragraphs following CommonMark containers.
+
+    Blockquotes and list items form a container stack. Each line first matches the open containers,
+    then may open new ones. A fenced block ends at its closing fence or when any enclosing container
+    ends; a paragraph also continues lazily when a line matches too few containers. Indented lines
+    after a container boundary are kept as uncertain regions so inline code cannot pair across them.
+    """
+    paragraphs: list[tuple[int, str, bool]] = []
+    lines: list[str] = []
+    start = 0
+    uncertain_lines: list[str] = []
+    uncertain_start = 0
+    uncertain_depth = 0
+    stack: list[int] = []  # 0 = blockquote; n > 0 = list item whose content starts n columns in
+    fence: str | None = None
+    fence_depth = 0
+    html_open, html_end, html_depth = False, None, 0  # an open HTML block and its end condition
+
+    def flush() -> None:
+        nonlocal lines
+        if lines:
+            text = "\n".join(lines)
+            paragraphs.append((start, text, markdown_unmodelled(text)))
+            lines = []
+
+    def flush_uncertain() -> None:
+        nonlocal uncertain_start, uncertain_lines
+        if uncertain_lines:
+            paragraphs.append((uncertain_start, "\n".join(uncertain_lines), True))
+            uncertain_lines = []
+            uncertain_start = 0
+
+    for number, raw_line in enumerate(MARKDOWN_LINE_END.split(source), 1):
+        closed_by_indent = False
+        line = markdown_expand_container_tabs(raw_line)
+        pos = matched = 0
+        for width in stack:
+            rest = line[pos:]
+            if width == 0:
+                offset = markdown_indent(rest)
+                if offset < 4 and rest[offset:offset + 1] == ">":
+                    pos += offset + 1 + (line[pos + offset + 1:pos + offset + 2] == " ")
+                    matched += 1
+                    continue
+                break
+            if markdown_blank(rest):
+                matched += 1
+                continue
+            if markdown_indent(rest) >= width:
+                pos += width
+                matched += 1
+                continue
+            break
+        rest = line[pos:]
+        if html_open:
+            if matched >= html_depth and (html_end is not None or not markdown_blank(rest)):
+                uncertain_lines.append(rest)
+                if html_end is not None and html_end.search(rest):
+                    html_open = False
+                    flush_uncertain()
+                continue
+            html_open = False  # a blank line ends types 6-7; a container exit ends every type
+            flush_uncertain()
+        if uncertain_lines:
+            if not markdown_blank(rest) and matched == uncertain_depth and markdown_indent(rest) >= 4:
+                uncertain_lines.append(rest)
+                continue
+            flush_uncertain()
+        if fence is not None:
+            if matched >= fence_depth:
+                closer = MARKDOWN_FENCE.match(rest.lstrip(" "))
+                if closer and markdown_indent(rest) < 4 and closer.group(1)[0] == fence[0] \
+                        and len(closer.group(1)) >= len(fence) and markdown_blank(closer.group(2)):
+                    fence = None
+                continue
+            fence = None  # a fenced block also ends with its blockquote or list item
+        if matched < len(stack):
+            if lines and not markdown_block_start(rest):
+                lines.append(rest)  # lazy continuation keeps the paragraph and its containers
+                continue
+            flush()
+            closed_by_indent = matched < len(stack) and markdown_indent(rest) >= 4
+            del stack[matched:]
+        while markdown_indent(rest) < 4:  # open new containers
+            offset = markdown_indent(rest)
+            body = rest[offset:]
+            if body.startswith(">"):
+                flush()
+                stack.append(0)
+                step = offset + 1 + (body[1:2] == " ")
+                pos, rest = pos + step, rest[step:]
+                continue
+            item = MARKDOWN_LIST_ITEM.match(body)
+            if item and (item.group(3) or not body[item.end():]) and not MARKDOWN_THEMATIC_BREAK.match(body):
+                content = body[item.end():]
+                ordered_start = item.group(2)
+                if lines and (markdown_blank(content) or (ordered_start is not None and ordered_start != "1")):
+                    break  # an empty or non-1 ordered item cannot interrupt a paragraph
+                flush()
+                marker_width = offset + len(item.group(1))
+                spaces = len(item.group(3))
+                width = marker_width + (1 if markdown_blank(content) or spaces > 4 else spaces)
+                stack.append(width)
+                step = min(width, len(rest))
+                pos, rest = pos + step, rest[step:]
+                continue
+            break
+        if markdown_blank(rest):
+            flush()
+            continue
+        body = rest.lstrip(" ")
+        marker = MARKDOWN_FENCE.match(body) if markdown_indent(rest) < 4 else None
+        if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
+            marker = None  # a backtick run followed by more backticks is a code span, not a fence
+        if marker:
+            flush()
+            fence, fence_depth = marker.group(1), len(stack)
+            continue
+        starts, end = markdown_html_block(body, bool(lines)) if markdown_indent(rest) < 4 else (False, None)
+        if starts:  # raw HTML lines are not Markdown text; keep main's hits there
+            flush()
+            uncertain_start, uncertain_lines = number, [rest]
+            if end is not None and end.search(rest, 1):
+                flush_uncertain()
+            else:
+                html_open, html_end, html_depth = True, end, len(stack)
+            continue
+        if markdown_indent(rest) >= 4 and not lines:
+            if closed_by_indent:
+                flush()
+                uncertain_start = number
+                uncertain_lines.append(rest)
+                uncertain_depth = len(stack)
+            continue  # indented code, or an unmasked uncertain region after a container boundary
+        if lines and matched == len(stack) and markdown_indent(rest) < 4 and MARKDOWN_SETEXT_UNDERLINE.match(body):
+            flush()  # a setext underline makes the paragraph above a heading and ends it
+            continue
+        if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
+            flush()
+            if MARKDOWN_ATX_HEADING.match(body):
+                paragraphs.append((number, body, markdown_unmodelled(body)))
+            continue
+        if not lines:
+            start = number
+        lines.append(rest)
+    flush()
+    flush_uncertain()
+    return paragraphs
+
+
+def markdown_mask_inline_code(text: str) -> str:
+    """Neutralise code-span contents and backslash escapes, scanning left to right as CommonMark does.
+
+    Outside code, `\\` before ASCII punctuation makes that character literal (it can neither open a code
+    span nor delimit emphasis), so both become `!`. A backtick run opens a code span only when a run of
+    exactly the same length follows; inside the span backslashes are literal. The span's contents become
+    letters and its backticks stay, so emphasis flanking next to the span matches the source. Newlines are kept.
+    """
+    out = list(text)
+    index, size = 0, len(text)
+    while index < size:
+        char = text[index]
+        if char == "\\" and index + 1 < size and text[index + 1] in MARKDOWN_ASCII_PUNCTUATION:
+            out[index] = out[index + 1] = "!"
+            index += 2
+            continue
+        if char != "`":
+            index += 1
+            continue
+        run_end = index
+        while run_end < size and text[run_end] == "`":
+            run_end += 1
+        length, cursor, close = run_end - index, run_end, -1
+        while cursor < size:
+            found = text.find("`" * length, cursor)
+            if found < 0:
+                break
+            after = found
+            while after < size and text[after] == "`":
+                after += 1
+            if after - found == length:
+                close = found
+                break
+            cursor = after  # a longer or shorter run cannot close this span
+        if close < 0:
+            index = run_end  # an unmatched run is literal text
+            continue
+        for position in range(run_end, close):
+            if out[position] != "\n":
+                out[position] = "x"  # the span's backticks stay, so neighbouring `*` keep their flanking
+        index = close + length
+    return "".join(out)
+
+
+def markdown_punctuation(char: str) -> bool:
+    return unicodedata.category(char)[0] in "PS"
+
+
+def markdown_star_closers(text: str) -> dict[int, tuple[int, list[int]]]:
+    """Pair `*` delimiter runs as CommonMark does: flanking rules, the rule of three, nearest opener first.
+
+    Returns, for each run that closes emphasis, (stars consumed as closers, content start offsets of the
+    openers it closed).
+    """
+    openers: list[list[int]] = []  # [remaining stars, run length, can also close, content start]
+    closers: dict[int, tuple[int, list[int]]] = {}
+    for run in MARKDOWN_STAR_RUN.finditer(text):
+        before = text[run.start() - 1] if run.start() else " "
+        after = text[run.end()] if run.end() < len(text) else " "
+        left = not markdown_whitespace(after) and (not markdown_punctuation(after) or markdown_whitespace(before)
+                                                   or markdown_punctuation(before))
+        right = not markdown_whitespace(before) and (not markdown_punctuation(before) or markdown_whitespace(after)
+                                                     or markdown_punctuation(after))
+        length = remaining = len(run.group(0))
+        consumed, starts = 0, []
+        while right and remaining and openers:
+            for index in range(len(openers) - 1, -1, -1):
+                _left, total, both, _start = openers[index]
+                if not ((both or left) and (total + length) % 3 == 0 and (total % 3 or length % 3)):
+                    break
+            else:
+                break
+            del openers[index + 1:]  # delimiters between opener and closer can no longer match
+            opener = openers[index]
+            use = 2 if remaining >= 2 and opener[0] >= 2 else 1
+            opener[0] -= use
+            remaining -= use
+            consumed += use
+            starts.append(opener[3])
+            if not opener[0]:
+                openers.pop()
+        if consumed:
+            closers[run.start()] = (consumed, starts)
+        if remaining and left:
+            openers.append([remaining, length, int(right), run.end()])
+    return closers
+
+
+def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
+    # A glob star is lost whenever Markdown consumes it as emphasis: `*e2e.*` renders as italic
+    # "e2e." and `**Use e2e.* files**` loses its star too. The only star that is not a glob is one
+    # that exactly closes prose emphasis ending in an ordinary word ("**Four red tests.**").
+    # Fenced blocks, indented code and code spans (which may span lines) are literal text.
+    hits: list[dict[str, Any]] = []
+    for first_line, paragraph, uncertain in markdown_paragraphs(source):
+        if uncertain:
+            for match in MARKDOWN_UNCERTAIN_GLOB.finditer(paragraph):
+                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
+                             "line": first_line + paragraph.count("\n", 0, match.start()),
+                             "message": "glob-like token is emphasis text; wrap it in a Markdown code span"})
+            continue
+        text = markdown_mask_inline_code(paragraph)
+        closers = markdown_star_closers(text)
+        for match in MARKDOWN_GLOB.finditer(text):
+            consumed, content_starts = closers.get(match.start(1), (0, []))
+            word = text[match.start():match.start(1) - 1]
+            # Links, autolinks and HTML can hide or add delimiters this scan does not model, so a span
+            # containing them keeps the base rule's hit instead of trusting the pairing.
+            span = text[min(content_starts, default=match.start()):match.start(1)]
+            closes_prose = consumed == len(match.group(1)) and word in MARKDOWN_PROSE_WORDS \
+                and match.start() not in content_starts and not any(char in span for char in "[]<>")
+            if not closes_prose:
+                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
+                             "line": first_line + text.count("\n", 0, match.start()),
+                             "message": "glob-like token is emphasis text; wrap it in a Markdown code span"})
+    return hits
+
+
 def external_response_shape_hits(path: str, source: str) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     # A dereference caught by a broad handler cannot escape with the wrong shape.
@@ -1291,9 +1659,7 @@ def study_regex_hits(repo: Path, contents: dict[str, str]) -> list[dict[str, Any
 
         if suffix in {".md", ".markdown"}:
             # Defect #52: markdown emphasis swallows a glob-like token outside code spans.
-            glob = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")
-            hits.extend(regex_hit("pre_review.markdown_glob_code_span", rel, source, glob,
-                                  "glob-like token is emphasis text; wrap it in a Markdown code span"))
+            hits.extend(markdown_glob_hits(rel, source))
 
     # Defect #48: gh run lookups need both a token in the job and actions:read permission.
     for rel, source in contents.items():
