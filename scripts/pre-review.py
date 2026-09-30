@@ -189,9 +189,12 @@ def run_capture(argv: list[str], cwd: Path, timeout: float = 30,
     except subprocess.TimeoutExpired as error:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
-        output, _ = process.communicate()
+        output = error.output or b""
+        if process.stdout:
+            process.stdout.close()
+        process.wait()
         raise subprocess.TimeoutExpired(argv, timeout, output=output or error.output) from error
     return subprocess.CompletedProcess(argv, process.returncode, output)
 
@@ -525,12 +528,17 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
                     "    process = subprocess.Popen([sys.executable, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)\n"
                     "    try:\n"
                     "        output, _ = process.communicate(timeout=timeout)\n"
-                    "    except subprocess.TimeoutExpired:\n"
+                    "    except subprocess.TimeoutExpired as error:\n"
                     "        try:\n"
                     "            os.killpg(process.pid, signal.SIGKILL)\n"
-                    "        except ProcessLookupError:\n"
+                    "        except (ProcessLookupError, PermissionError):\n"
                     "            pass\n"
-                    "        output, _ = process.communicate()\n"
+                    "        output = error.output or b''\n"
+                    "        if process.stdout:\n"
+                    "            process.stdout.close()\n"
+                    "        process.wait()\n"
+                    "        sys.stdout.buffer.write(output)\n"
+                    "        sys.stdout.buffer.flush()\n"
                     "        print(f'{path} timed out after {timeout:g} seconds', file=sys.stderr)\n"
                     "        failed = True\n"
                     "        continue\n"

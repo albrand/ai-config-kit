@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import signal
 import shutil
 import subprocess
 import sys
@@ -768,6 +769,74 @@ class PreReviewTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 3)
         self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
         assert_child_stopped()
+
+    def test_record_command_bounds_capture_when_detached_descendants_hold_pipes(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        child_pid_file = self.base / "detached-child.pid"
+        later_marker = self.base / "detached-later-script-ran"
+        parent_script = self.repo / "tests" / "test_detached_parent.py"
+        parent_script.parent.mkdir(parents=True)
+        parent_script.write_text(
+            "import subprocess\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"PID_FILE = Path({str(child_pid_file)!r})\n"
+            "class DetachedParentTests(unittest.TestCase):\n"
+            "    def test_spawn_detached_pipe_holder(self):\n"
+            "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+            "        PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        later_script = self.repo / "tests" / "test_detached_later.py"
+        later_script.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"MARKER = Path({str(later_marker)!r})\n"
+            "class LaterTests(unittest.TestCase):\n"
+            "    def test_runs_after_detached_sibling(self):\n"
+            "        MARKER.write_text('once', encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+
+        def cleanup_detached_child() -> None:
+            if child_pid_file.exists():
+                child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+        self.addCleanup(cleanup_detached_child)
+        single = namespace["focused_test_commands"](
+            self.repo, ["tests/test_detached_parent.py"], self.output
+        )[0]
+        started = time.monotonic()
+        single_command = namespace["record_command"](
+            single[0], single[1], self.repo, timeout=1.5
+        )
+        self.assertEqual(single_command["status"], "timeout")
+        self.assertLess(time.monotonic() - started, 2)
+
+        child_pid_file.unlink()
+        commands = namespace["focused_test_commands"](
+            self.repo, ["tests/test_detached_parent.py", "tests/test_detached_later.py"],
+            self.output, timeout_scale=0.0025,
+        )
+        multi = next(command for command in commands if command[0] == "focused-python-tests")
+        started = time.monotonic()
+        multi_command = namespace["record_command"](
+            multi[0], multi[1], self.repo, timeout=5
+        )
+        self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
+        self.assertEqual(multi_command["exit_code"], 1)
+        self.assertIn("timed out after 1.5 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
 
     def test_environment_failures_are_unverified_errors(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
