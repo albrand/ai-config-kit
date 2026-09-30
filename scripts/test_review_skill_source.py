@@ -41,8 +41,12 @@ def plain(text: str) -> str:
     return re.sub(r"[*_`~]+", "", text)
 
 
+# Only the quoted text of an explicitly withdrawn wording is exempt; the rest of the sentence is checked.
+WITHDRAWN_QUOTE = re.compile(r"(?i)\b(?:used to (?:read|say)|formerly (?:read|said)|previously (?:read|said))\s*[\"“][^\"”]*[\"”]")
+
+
 def gate_sentences(text: str) -> list[str]:
-    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s) and "used to read" not in s.lower()]
+    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(WITHDRAWN_QUOTE.sub("used to read <withdrawn>", s))]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -57,6 +61,8 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "Do not publish the review until Hermes returns.",
             "Never approve without the Hermes verdict.",
             "Wait for Hermes to answer before posting.",
+            "This used to read differently; do not publish the review until Hermes returns.",
+            'This used to read "Hermes is optional", and now the review is complete only after Hermes returns.',
         ]
         formatted = [
             "A review is complete **only after** Hermes returns a verdict.",
