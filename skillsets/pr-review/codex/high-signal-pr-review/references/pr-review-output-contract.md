@@ -1,5 +1,13 @@
 # PR Review Output Contract
 
+Before the first LLM review submission, attach both JSON and Markdown packets
+from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
+advisor round; keep LLM review focused on semantic gaps left by deterministic
+checks. Each defect fix must add the cheapest deterministic detector that
+would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
+line when only semantic review can catch it. Put generic rules in the kit starter
+pack and project-specific rules in `.review-rules/`.
+
 Load this reference before producing final artifacts for `high-signal-pr-review`, `/code-review`, PR review comments, merge-readiness reviews, or PR bodies.
 
 This file is the normative source for public PR-review output. Codex, Claude
@@ -87,7 +95,12 @@ Keep the review focused on technical correctness and delivery evidence:
 Board and ownership metadata are evidence sources, not automatic additional
 approval layers. Missing board access blocks approval only when the relevant
 technical behavior or acceptance criterion cannot be established from current
-tickets, docs, linked PRs, code, tests, or equivalent evidence.
+tickets, docs, linked PRs, code, tests, or equivalent evidence. This
+proportional rule yields to current user and workspace instructions: when they
+require board access, full inventory, or readiness evidence for every review
+(the kit's `GLOBAL_AGENTS.md` board regression rule does), missing board access
+or incomplete inventory is **Blocked / NOT READY**, and delegation does not
+waive it.
 
 ## Preflight
 
@@ -224,8 +237,8 @@ When posting:
   characters — `gh` does not interpret escapes in `-f`/`-F` values, and single
   quotes stop the shell interpreting them either. The author then reads
   `settled.\n\n` in the middle of a sentence. This has already happened on
-  posted reviews (Sea-Haven shoc-frontend-new #124, comment 3821954709: four
-  literal `\n` and one real newline).
+  posted reviews (one posted comment carried four literal `\n` and one real
+  newline).
   Build the payload with a tool that escapes for you, and pipe real JSON:
 
   ```

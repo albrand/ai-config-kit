@@ -18,6 +18,13 @@ would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
 line when only semantic review can catch it. Put generic rules in the kit starter
 pack and project-specific rules in `.review-rules/`.
 
+For every pull-request review, also load and obey the `hermes-assisted-pr-review`
+skill. Its bounded Hermes advisor pass is mandatory to attempt, best-effort to
+obtain, and never a publish blocker: if the advisor is unavailable, publish the
+independently evidenced verdict unchanged and record the unadvised gap only in
+the operator close-out. Keep Hermes, model, AI, agent, and provenance details
+out of every team- or author-facing PR surface.
+
 ## Workflow
 
 1. Read and obey `references/pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
@@ -43,6 +50,11 @@ pack and project-specific rules in `.review-rules/`.
 6. Apply **proportional** board-backed regression checking. Board access is
    mandatory only when a board is configured or linked for the repository, or
    when risk/product/release scope makes board-backed invariants material.
+   - Current user and workspace instructions govern board access, inventory, and
+     readiness. When they require the board for every repository or review (the
+     kit's `GLOBAL_AGENTS.md` board regression rule does), that stricter rule
+     wins over the proportional wording in this step and in the guardrails.
+     Delegated technical authority does not waive it.
    - Treat the board as evidence for ticket intent and protected behavior, not as an extra approval hierarchy. A delegated tech-lead review must not solicit separate product-owner or CODEOWNERS sign-off; record any explicit branch/release requirement separately from the technical verdict.
    - When a board applies, inventory all visible board tickets, not only the PR's
      linked issue: key, title, type, status, sprint/release, component/area,
