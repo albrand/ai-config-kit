@@ -457,6 +457,12 @@ class PreReviewTests(unittest.TestCase):
             "``a ` e2e.* ``": [],
             "```a `` e2e.* ```": [],
             "`` e2e.* `": [1],
+            "**`Run` tests.**": [],
+            "*`Run` tests.*": [],
+            "**Run `unit` tests.**": [],
+            "**Run the `tests.*`**": [],
+            "`x`*e2e.*": [1],
+            "**`Run` e2e.* files**": [1],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):

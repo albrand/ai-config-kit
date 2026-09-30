@@ -854,11 +854,12 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
 
 
 def markdown_mask_inline_code(text: str) -> str:
-    """Blank code spans and neutralise backslash escapes, scanning left to right as CommonMark does.
+    """Neutralise code-span contents and backslash escapes, scanning left to right as CommonMark does.
 
     Outside code, `\\` before ASCII punctuation makes that character literal (it can neither open a code
     span nor delimit emphasis), so both become `!`. A backtick run opens a code span only when a run of
-    exactly the same length follows; inside the span backslashes are literal. Newlines are kept.
+    exactly the same length follows; inside the span backslashes are literal. The span's contents become
+    letters and its backticks stay, so emphasis flanking next to the span matches the source. Newlines are kept.
     """
     out = list(text)
     index, size = 0, len(text)
@@ -889,9 +890,9 @@ def markdown_mask_inline_code(text: str) -> str:
         if close < 0:
             index = run_end  # an unmatched run is literal text
             continue
-        for position in range(index, close + length):
+        for position in range(run_end, close):
             if out[position] != "\n":
-                out[position] = " "
+                out[position] = "x"  # the span's backticks stay, so neighbouring `*` keep their flanking
         index = close + length
     return "".join(out)
 
