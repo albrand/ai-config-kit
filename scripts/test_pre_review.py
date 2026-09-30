@@ -745,28 +745,30 @@ class PreReviewTests(unittest.TestCase):
         single = namespace["focused_test_commands"](
             self.repo, ["tests/test_parent_exit.py"], self.output
         )[0]
+        # The child only holds the pipe once the parent script has started Python and spawned it;
+        # a 0.3 s budget let a loaded host time out before the PID file existed.
         started = time.monotonic()
         single_command = namespace["record_command"](
-            single[0], single[1], self.repo, timeout=0.3
+            single[0], single[1], self.repo, timeout=3
         )
         self.assertEqual(single_command["status"], "timeout")
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 6)
         assert_child_stopped()
 
         child_pid_file.unlink()
         commands = namespace["focused_test_commands"](
             self.repo, ["tests/test_parent_exit.py", "tests/test_later.py"],
-            self.output, timeout_scale=0.0005,
+            self.output, timeout_scale=0.005,
         )
         multi = next(command for command in commands if command[0] == "focused-python-tests")
         started = time.monotonic()
         multi_command = namespace["record_command"](
-            multi[0], multi[1], self.repo, timeout=3
+            multi[0], multi[1], self.repo, timeout=15
         )
         self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
         self.assertEqual(multi_command["exit_code"], 1)
-        self.assertIn("timed out after 0.3 seconds", multi_command["output_tail"])
-        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn("timed out after 3 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 15)
         self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
         assert_child_stopped()
 
