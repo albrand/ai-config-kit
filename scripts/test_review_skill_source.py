@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unittest
 from pathlib import Path
@@ -17,21 +18,55 @@ GLOBAL_AGENTS = ROOT / "GLOBAL_AGENTS.md"
 # Hermes help is mandatory to attempt and never a publish blocker (hermes-assisted-pr-review,
 # "Failure behavior"). Calling it a completion/publish gate once suppressed real findings.
 HERMES_AS_GATE = re.compile(
-    r"(?is)hermes[^.]{0,200}?(?:completion gate|publish(?:ing)? gate|must succeed before (?:posting|publishing))"
+    r"(?is)(?:hermes[^.]{0,200}?(?:completion gate|publish(?:ing)? gate|must succeed before (?:posting|publishing))"
+    r"|not complete (?:when|if|until|without)[^.]{0,80}?hermes (?:result|answer|pass|review|verdict)"
+    r"[^.]{0,40}?(?:is |was )?(?:missing|absent|unavailable|not returned|arrives))"
 )
+# Extra agent-loaded files to scan (e.g. installed skills with no kit source), os.pathsep-separated.
+CHAIN_ENV = "REVIEW_CHAIN_PATHS"
 
 
 def sentences(text: str) -> list[str]:
     return re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text))
 
 
+def gate_sentences(text: str) -> list[str]:
+    return [s for s in sentences(text) if HERMES_AS_GATE.search(s) and "used to read" not in s.lower()]
+
+
 class ReviewSkillSourceTests(unittest.TestCase):
+    def test_gate_predicate_controls(self) -> None:
+        flagged = [
+            "Its bounded Hermes advisor pass is a mandatory internal completion gate.",
+            "The review is not complete when the Hermes result is missing, stale, or unverified.",
+            "A review is not complete until the Hermes verdict arrives.",
+            "Hermes must succeed before posting.",
+        ]
+        allowed = [
+            "Its bounded Hermes advisor pass is mandatory to attempt, best-effort to obtain, and never a publish blocker.",
+            'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
+            "The review is not complete when the Hermes attempt was skipped while Hermes was reachable.",
+            "This skill is an authorization and completion gate.",
+        ]
+        for sentence in flagged:
+            self.assertEqual(gate_sentences(sentence), [sentence], sentence)
+        for sentence in allowed:
+            self.assertEqual(gate_sentences(sentence), [], sentence)
+
     def test_hermes_is_never_described_as_a_completion_gate(self) -> None:
         offenders = []
         for path in sorted(SKILLSETS.rglob("*.md")):
-            for sentence in sentences(path.read_text(encoding="utf-8")):
-                if HERMES_AS_GATE.search(sentence) and "used to read" not in sentence.lower():
-                    offenders.append(f"{path.relative_to(ROOT)}: {sentence[:160]}")
+            for sentence in gate_sentences(path.read_text(encoding="utf-8")):
+                offenders.append(f"{path.relative_to(ROOT)}: {sentence[:160]}")
+        self.assertEqual(offenders, [])
+
+    @unittest.skipUnless(os.environ.get(CHAIN_ENV), f"set {CHAIN_ENV} to scan installed files")
+    def test_installed_review_chain_has_no_hermes_gate(self) -> None:
+        offenders = []
+        for raw in os.environ[CHAIN_ENV].split(os.pathsep):
+            path = Path(raw).expanduser()
+            for sentence in gate_sentences(path.read_text(encoding="utf-8")):
+                offenders.append(f"{path}: {sentence[:160]}")
         self.assertEqual(offenders, [])
 
     def test_codex_skill_points_to_hermes_skill_with_attempt_semantics(self) -> None:
