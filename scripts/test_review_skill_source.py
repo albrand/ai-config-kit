@@ -35,8 +35,14 @@ def sentences(text: str) -> list[str]:
     return re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text))
 
 
+def plain(text: str) -> str:
+    """Drop Markdown emphasis, code marks, and link syntax so formatting cannot hide a sentence."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    return re.sub(r"[*_`~]+", "", text)
+
+
 def gate_sentences(text: str) -> list[str]:
-    return [s for s in sentences(text) if HERMES_AS_GATE.search(s) and "used to read" not in s.lower()]
+    return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s) and "used to read" not in s.lower()]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -52,6 +58,11 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "Never approve without the Hermes verdict.",
             "Wait for Hermes to answer before posting.",
         ]
+        formatted = [
+            "A review is complete **only after** Hermes returns a verdict.",
+            "Its bounded `Hermes` advisor pass is a *completion gate*.",
+            "The review is __not complete__ when the [Hermes](SKILL.md) result is missing.",
+        ]
         allowed = [
             "Its bounded Hermes advisor pass is mandatory to attempt, best-effort to obtain, and never a publish blocker.",
             'This used to read "Hermes help is a completion gate", and that wording suppressed real findings.',
@@ -63,6 +74,9 @@ class ReviewSkillSourceTests(unittest.TestCase):
         ]
         for sentence in flagged:
             self.assertEqual(gate_sentences(sentence), [sentence], sentence)
+        for sentence in formatted:
+            self.assertEqual(len(gate_sentences(sentence)), 1, sentence)
+        allowed.append("It is **never** a *publish blocker*; `Hermes` help is best-effort.")
         for sentence in allowed:
             self.assertEqual(gate_sentences(sentence), [], sentence)
 
