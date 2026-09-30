@@ -706,6 +706,7 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
 
 
 MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.(\*+)")
+MARKDOWN_UNCERTAIN_GLOB = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")  # Preserve main's exact hits in uncertain Markdown regions.
 MARKDOWN_LIST_ITEM = re.compile(r"([-*+]|(\d{1,9})[.)])( *)")
 MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
 MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
@@ -753,16 +754,20 @@ def markdown_block_start(rest: str) -> bool:
                 or (item and (item.group(3) or not body[item.end():].strip())))  # an empty item too
 
 
-def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
-    """Return (first line number, text) for each paragraph outside code, following CommonMark containers.
+def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
+    """Return (first line number, text, uncertain) paragraphs following CommonMark containers.
 
     Blockquotes and list items form a container stack. Each line first matches the open containers,
     then may open new ones. A fenced block ends at its closing fence or when any enclosing container
-    ends; a paragraph also continues lazily when a line matches too few containers.
+    ends; a paragraph also continues lazily when a line matches too few containers. Indented lines
+    after a container boundary are kept as uncertain regions so inline code cannot pair across them.
     """
-    paragraphs: list[tuple[int, str]] = []
+    paragraphs: list[tuple[int, str, bool]] = []
     lines: list[str] = []
     start = 0
+    uncertain_lines: list[str] = []
+    uncertain_start = 0
+    uncertain_depth = 0
     stack: list[int] = []  # 0 = blockquote; n > 0 = list item whose content starts n columns in
     fence: str | None = None
     fence_depth = 0
@@ -770,10 +775,18 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     def flush() -> None:
         nonlocal lines
         if lines:
-            paragraphs.append((start, "\n".join(lines)))
+            paragraphs.append((start, "\n".join(lines), False))
             lines = []
 
+    def flush_uncertain() -> None:
+        nonlocal uncertain_start, uncertain_lines
+        if uncertain_lines:
+            paragraphs.append((uncertain_start, "\n".join(uncertain_lines), True))
+            uncertain_lines = []
+            uncertain_start = 0
+
     for number, raw_line in enumerate(source.splitlines(), 1):
+        closed_by_indent = False
         line = markdown_expand_container_tabs(raw_line)
         pos = matched = 0
         for width in stack:
@@ -794,6 +807,11 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
                 continue
             break
         rest = line[pos:]
+        if uncertain_lines:
+            if rest.strip() and matched == uncertain_depth and markdown_indent(rest) >= 4:
+                uncertain_lines.append(rest)
+                continue
+            flush_uncertain()
         if fence is not None:
             if matched >= fence_depth:
                 closer = MARKDOWN_FENCE.match(rest.lstrip(" "))
@@ -807,6 +825,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
                 lines.append(rest)  # lazy continuation keeps the paragraph and its containers
                 continue
             flush()
+            closed_by_indent = matched < len(stack) and markdown_indent(rest) >= 4
             del stack[matched:]
         while markdown_indent(rest) < 4:  # open new containers
             offset = markdown_indent(rest)
@@ -844,19 +863,25 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
             fence, fence_depth = marker.group(1), len(stack)
             continue
         if markdown_indent(rest) >= 4 and not lines:
-            continue  # indented code
+            if closed_by_indent:
+                flush()
+                uncertain_start = number
+                uncertain_lines.append(rest)
+                uncertain_depth = len(stack)
+            continue  # indented code, or an unmasked uncertain region after a container boundary
         if lines and matched == len(stack) and markdown_indent(rest) < 4 and MARKDOWN_SETEXT_UNDERLINE.match(body):
             flush()  # a setext underline makes the paragraph above a heading and ends it
             continue
         if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
             flush()
             if MARKDOWN_ATX_HEADING.match(body):
-                paragraphs.append((number, body))
+                paragraphs.append((number, body, False))
             continue
         if not lines:
             start = number
         lines.append(rest)
     flush()
+    flush_uncertain()
     return paragraphs
 
 
@@ -954,7 +979,13 @@ def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
     # that exactly closes prose emphasis ending in an ordinary word ("**Four red tests.**").
     # Fenced blocks, indented code and code spans (which may span lines) are literal text.
     hits: list[dict[str, Any]] = []
-    for first_line, paragraph in markdown_paragraphs(source):
+    for first_line, paragraph, uncertain in markdown_paragraphs(source):
+        if uncertain:
+            for match in MARKDOWN_UNCERTAIN_GLOB.finditer(paragraph):
+                hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
+                             "line": first_line + paragraph.count("\n", 0, match.start()),
+                             "message": "glob-like token is emphasis text; wrap it in a Markdown code span"})
+            continue
         text = markdown_mask_inline_code(paragraph)
         closers = markdown_star_closers(text)
         for match in MARKDOWN_GLOB.finditer(text):

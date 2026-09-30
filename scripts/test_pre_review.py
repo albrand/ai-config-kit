@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import runpy
 import signal
 import shutil
@@ -461,6 +462,9 @@ class PreReviewTests(unittest.TestCase):
             "*`Run` tests.*": [],
             "**Run `unit` tests.**": [],
             "**Run the `tests.*`**": [],
+            "> **done**! tests.*\n> > 10. > ````\n    > x\n    *qa.**": [1, 4],
+            "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
+            "    e2e.*": [],
             "`x`*e2e.*": [1],
             "**`Run` e2e.* files**": [1],
             # Unmodelled inline constructs keep the base rule's hit (fail safe, same as before this change).
@@ -484,6 +488,16 @@ class PreReviewTests(unittest.TestCase):
             with self.subTest(text=text):
                 hits = namespace["study_regex_hits"](self.repo, {"docs/probe.md": text})
                 self.assertEqual([hit["line"] for hit in hits if hit["rule_id"] == rule], expected_lines)
+
+    def test_markdown_glob_uncertain_regions_match_main_regex_lines(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        text = "> **done**! tests.*\n> > 10. > ````\n    > x\n    *qa.**"
+        regions = namespace["markdown_paragraphs"](text)
+        self.assertTrue(any(uncertain for _start, _paragraph, uncertain in regions))
+        main_glob = re.compile(r"(?<!`)\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.\*(?!`)")
+        expected = [text.count("\n", 0, match.start()) + 1 for match in main_glob.finditer(text)]
+        actual = [hit["line"] for hit in namespace["markdown_glob_hits"]("docs/probe.md", text)]
+        self.assertEqual(actual, expected)
 
     def test_markdown_glob_rule_passes_bold_prose_and_fenced_code_end_to_end(self) -> None:
         self.add_fixture("markdown-glob-prose-and-code.md", "docs/prose.md")
