@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 
@@ -500,9 +502,196 @@ class PreReviewTests(unittest.TestCase):
             commands = namespace["focused_test_commands"](self.repo, ["tests/test_sample.py"], self.output)
         self.assertEqual(commands, [("focused-python-tests", [sys.executable, "./tests/test_sample.py"], None)])
 
+    def test_standalone_unittest_main_guard_setup_runs_once(self) -> None:
+        marker = self.base / "main-guard-setup-ran"
+        test_file = self.repo / "tests" / "test_sample.py"
+        test_file.parent.mkdir()
+        test_file.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            "class ExampleTest(unittest.TestCase):\n"
+            "    def test_result(self):\n"
+            "        self.assertTrue(True)\n"
+            "if __name__ == '__main__':\n"
+            f"    marker = Path({str(marker)!r})\n"
+            "    if marker.exists():\n"
+            "        raise SystemExit('main-guard setup ran more than once')\n"
+            "    marker.write_text('once', encoding='utf-8')\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        git(self.repo, "add", "tests/test_sample.py")
+        git(self.repo, "commit", "-m", "fixture non-idempotent unittest setup")
+
+        result, packet = self.run_pre_review()
+        focused = next(item for item in packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(focused["status"], "pass")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+
+    def test_multiple_standalone_unittest_scripts_all_run_and_failures_propagate(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        markers = [self.base / "first-ran", self.base / "second-ran"]
+        test_paths = [self.repo / "tests" / "test_first.py", self.repo / "tests" / "test_second.py"]
+        test_paths[0].parent.mkdir()
+
+        def write_test(path: Path, marker: Path, fails: bool) -> None:
+            path.write_text(
+                "import unittest\n"
+                f"with open({str(marker)!r}, 'a', encoding='utf-8') as marker_file:\n"
+                "    marker_file.write('ran\\n')\n"
+                "class ExampleTest(unittest.TestCase):\n"
+                "    def test_result(self):\n"
+                f"        self.assertTrue({not fails!r})\n"
+                "if __name__ == '__main__':\n"
+                "    unittest.main()\n",
+                encoding="utf-8",
+            )
+
+        def run_tests(failing_index: int | None) -> subprocess.CompletedProcess[str]:
+            for marker in markers:
+                marker.unlink(missing_ok=True)
+            for index, (path, marker) in enumerate(zip(test_paths, markers)):
+                write_test(path, marker, index == failing_index)
+            with patch.object(shutil, "which", return_value="/pyenv/shims/pytest"):
+                commands = namespace["focused_test_commands"](
+                    self.repo, ["tests/test_first.py", "tests/test_second.py"], self.output
+                )
+            self.assertEqual(len(commands), 1)
+            return subprocess.run(
+                commands[0][1], cwd=self.repo, text=True, capture_output=True, check=False
+            )
+
+        passed = run_tests(failing_index=None)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        for marker in markers:
+            self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
+
+        for failing_index in (0, 1):
+            with self.subTest(failing_index=failing_index):
+                failed = run_tests(failing_index=failing_index)
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                for marker in markers:
+                    self.assertEqual(marker.read_text(encoding="utf-8").splitlines(), ["ran"])
+
+    def test_focused_python_timeout_uses_per_file_slices_and_bounds_hung_suite(self) -> None:
+        source_file = self.repo / "src" / "feature.py"
+        source_file.parent.mkdir()
+        source_file.write_text("VALUE = 1\n", encoding="utf-8")
+        test_file = self.repo / "tests" / "test_feature.py"
+        test_file.parent.mkdir()
+        marker = self.base / "main-guard-suite-setup-ran"
+        sibling_marker = self.base / "sibling-script-ran"
+        child_pid_file = self.base / "hung-child.pid"
+        sibling_test = self.repo / "tests" / "test_sibling.py"
+        sibling_test.write_text(
+            "import time\n"
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"MARKER = Path({str(sibling_marker)!r})\n"
+            "class SiblingTests(unittest.TestCase):\n"
+            "    def test_sibling(self):\n"
+            "        time.sleep(0.8)\n"
+            "        self.assertTrue(True)\n"
+            "if __name__ == '__main__':\n"
+            "    if MARKER.exists():\n"
+            "        raise SystemExit('sibling script ran more than once')\n"
+            "    MARKER.write_text('once', encoding='utf-8')\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+
+        def write_suite(sleep_seconds: float, spawn_hanging_child: bool = False) -> None:
+            test_file.write_text(
+                "import subprocess\n"
+                "import sys\n"
+                "import time\n"
+                "from pathlib import Path\n"
+                "import unittest\n"
+                f"SLEEP_SECONDS = {sleep_seconds!r}\n"
+                f"SPAWN_HANGING_CHILD = {spawn_hanging_child!r}\n"
+                f"CHILD_PID_FILE = Path({str(child_pid_file)!r})\n"
+                "class OrdinaryFeatureTests(unittest.TestCase):\n"
+                "    def test_ordinary_case(self):\n"
+                "        self.assertTrue(True)\n"
+                "if __name__ == '__main__':\n"
+                f"    marker = Path({str(marker)!r})\n"
+                "    if marker.exists():\n"
+                "        raise SystemExit('main-guard setup ran more than once')\n"
+                "    marker.write_text('once', encoding='utf-8')\n"
+                "    class GeneratedFeatureTests(unittest.TestCase):\n"
+                "        pass\n"
+                "    for index in range(30):\n"
+                "        def generated_test(self, index=index):\n"
+                "            if index == 0:\n"
+                "                if SPAWN_HANGING_CHILD:\n"
+                "                    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                "                    CHILD_PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
+                "                time.sleep(SLEEP_SECONDS)\n"
+                "            self.assertTrue(True)\n"
+                "        setattr(GeneratedFeatureTests, f'test_case_{index:02d}', generated_test)\n"
+                "    unittest.main()\n",
+                encoding="utf-8",
+            )
+
+        write_suite(0.8)
+        git(self.repo, "add", "src/feature.py", "tests/test_feature.py")
+        git(self.repo, "commit", "-m", "fixture selected Python suite")
+
+        # The main guard creates 30 cases plus one ordinary case, while the
+        # second standalone file adds another 600-second slice. At this scale,
+        # each file gets 1.8 seconds; both take about 800 ms, so the combined
+        # run exceeds one slice but fits the 4.32-second aggregate budget.
+        marker.unlink(missing_ok=True)
+        sibling_marker.unlink(missing_ok=True)
+        git(self.repo, "add", "src/feature.py", "tests/test_feature.py", "tests/test_sibling.py")
+        git(self.repo, "commit", "-m", "fixture selected Python suites")
+        slow_result, slow_packet = self.run_pre_review("--timeout-scale", "0.003")
+        slow_check = next(item for item in slow_packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertEqual(slow_result.returncode, 0, json.dumps(slow_check, indent=2) + slow_result.stdout + slow_result.stderr)
+        self.assertEqual(slow_check["status"], "pass", json.dumps(slow_check, indent=2))
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+        self.assertEqual(sibling_marker.read_text(encoding="utf-8"), "once")
+        namespace = runpy.run_path(str(SCRIPT))
+        timeout = namespace["focused_python_test_timeout"](
+            self.repo, ["tests/test_feature.py", "tests/test_sibling.py"]
+        )
+        self.assertEqual(timeout, 1440)
+
+        write_suite(3, spawn_hanging_child=True)
+        marker.unlink()
+        sibling_marker.unlink()
+        child_pid_file.unlink(missing_ok=True)
+        git(self.repo, "add", "tests/test_feature.py")
+        git(self.repo, "commit", "-m", "fixture hung Python test")
+        capture_started = time.monotonic()
+        hung_result, hung_packet = self.run_pre_review("--timeout-scale", "0.003")
+        capture_elapsed = time.monotonic() - capture_started
+        hung_check = next(item for item in hung_packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertNotEqual(hung_result.returncode, 0, hung_result.stdout + hung_result.stderr)
+        self.assertEqual(hung_check["status"], "fail")
+        self.assertEqual(hung_check["exit_code"], 1)
+        self.assertIn("timed out after 1.8 seconds", hung_check["output_tail"])
+        self.assertLess(hung_check["duration_ms"], 4320)
+        self.assertLess(capture_elapsed, 6)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "once")
+        self.assertEqual(sibling_marker.read_text(encoding="utf-8"), "once")
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        child_stopped = False
+        for _ in range(50):
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                child_stopped = True
+                break
+            time.sleep(0.02)
+        self.assertTrue(child_stopped, f"timed-out descendant {child_pid} is still running")
+
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run", side_effect=subprocess.TimeoutExpired(["slow-check"], 1, output=b"still running")):
+        with patch.dict(namespace["record_command"].__globals__, run_capture=Mock(side_effect=subprocess.TimeoutExpired(
+            ["slow-check"], 1, output=b"still running"
+        ))):
             command = namespace["record_command"]("slow-check", ["slow-check"], self.repo)
         self.assertEqual(command["status"], "timeout")
         self.assertEqual(command["verification"], "unverified")
@@ -510,15 +699,154 @@ class PreReviewTests(unittest.TestCase):
         self.assertIn("result is unverified", command["output_tail"])
         self.assertNotEqual(command["status"], "fail")
 
+    def test_record_command_kills_pipe_holding_descendants_for_single_and_multi_python(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        child_pid_file = self.base / "pipe-holder.pid"
+        later_marker = self.base / "later-script-ran"
+        parent_script = self.repo / "tests" / "test_parent_exit.py"
+        parent_script.parent.mkdir(parents=True)
+        parent_script.write_text(
+            "import subprocess\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"PID_FILE = Path({str(child_pid_file)!r})\n"
+            "class ParentExitTests(unittest.TestCase):\n"
+            "    def test_spawn_pipe_holder(self):\n"
+            "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "        PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        later_script = self.repo / "tests" / "test_later.py"
+        later_script.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"MARKER = Path({str(later_marker)!r})\n"
+            "class LaterTests(unittest.TestCase):\n"
+            "    def test_runs_after_timed_out_sibling(self):\n"
+            "        MARKER.write_text('once', encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+
+        def assert_child_stopped() -> None:
+            child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+            for _ in range(50):
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    return
+                time.sleep(0.02)
+            self.fail(f"captured-output descendant {child_pid} is still running")
+
+        single = namespace["focused_test_commands"](
+            self.repo, ["tests/test_parent_exit.py"], self.output
+        )[0]
+        started = time.monotonic()
+        single_command = namespace["record_command"](
+            single[0], single[1], self.repo, timeout=0.3
+        )
+        self.assertEqual(single_command["status"], "timeout")
+        self.assertLess(time.monotonic() - started, 2)
+        assert_child_stopped()
+
+        child_pid_file.unlink()
+        commands = namespace["focused_test_commands"](
+            self.repo, ["tests/test_parent_exit.py", "tests/test_later.py"],
+            self.output, timeout_scale=0.0005,
+        )
+        multi = next(command for command in commands if command[0] == "focused-python-tests")
+        started = time.monotonic()
+        multi_command = namespace["record_command"](
+            multi[0], multi[1], self.repo, timeout=3
+        )
+        self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
+        self.assertEqual(multi_command["exit_code"], 1)
+        self.assertIn("timed out after 0.3 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
+        assert_child_stopped()
+
+    def test_record_command_bounds_capture_when_detached_descendants_hold_pipes(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        child_pid_file = self.base / "detached-child.pid"
+        later_marker = self.base / "detached-later-script-ran"
+        parent_script = self.repo / "tests" / "test_detached_parent.py"
+        parent_script.parent.mkdir(parents=True)
+        parent_script.write_text(
+            "import subprocess\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"PID_FILE = Path({str(child_pid_file)!r})\n"
+            "class DetachedParentTests(unittest.TestCase):\n"
+            "    def test_spawn_detached_pipe_holder(self):\n"
+            "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+            "        PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        later_script = self.repo / "tests" / "test_detached_later.py"
+        later_script.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"MARKER = Path({str(later_marker)!r})\n"
+            "class LaterTests(unittest.TestCase):\n"
+            "    def test_runs_after_detached_sibling(self):\n"
+            "        MARKER.write_text('once', encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+
+        def cleanup_detached_child() -> None:
+            if child_pid_file.exists():
+                child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+        self.addCleanup(cleanup_detached_child)
+        single = namespace["focused_test_commands"](
+            self.repo, ["tests/test_detached_parent.py"], self.output
+        )[0]
+        started = time.monotonic()
+        single_command = namespace["record_command"](
+            single[0], single[1], self.repo, timeout=1.5
+        )
+        self.assertEqual(single_command["status"], "timeout")
+        self.assertLess(time.monotonic() - started, 2)
+
+        child_pid_file.unlink()
+        commands = namespace["focused_test_commands"](
+            self.repo, ["tests/test_detached_parent.py", "tests/test_detached_later.py"],
+            self.output, timeout_scale=0.0025,
+        )
+        multi = next(command for command in commands if command[0] == "focused-python-tests")
+        started = time.monotonic()
+        multi_command = namespace["record_command"](
+            multi[0], multi[1], self.repo, timeout=5
+        )
+        self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
+        self.assertEqual(multi_command["exit_code"], 1)
+        self.assertIn("timed out after 1.5 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
+
     def test_environment_failures_are_unverified_errors(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
         for output in (b"EPERM: operation not permitted", b"DATABASE_URL is not set",
                        b"refusing to provision fixture identities: DATABASE_URL is not a postgres:// URL",
                        b"no server is available", b"Operation not permitted (os error 1)",
                        b"Process from config.webServer was not able to start. Exit code: 127; next: command not found"):
-            with self.subTest(output=output), patch.object(
-                namespace["subprocess"], "run",
-                return_value=subprocess.CompletedProcess(["check"], 1, output),
+            with self.subTest(output=output), patch.dict(
+                namespace["record_command"].__globals__,
+                run_capture=Mock(return_value=subprocess.CompletedProcess(["check"], 1, output))
             ):
                 command = namespace["record_command"]("environment-check", ["check"], self.repo)
                 self.assertEqual(command["status"], "error")
@@ -532,28 +860,26 @@ class PreReviewTests(unittest.TestCase):
                        b"Cannot find package 'node_modules/example-runtime' imported from app.ts",
                        b"Cannot find module 'react' or its corresponding type declarations.",
                        b"Cannot find package '@radix-ui/react-tabs' imported from app.ts"):
-            with self.subTest(output=output), patch.object(
-                namespace["subprocess"], "run",
-                return_value=subprocess.CompletedProcess(["tsc"], 2, output),
+            with self.subTest(output=output), patch.dict(
+                namespace["record_command"].__globals__,
+                run_capture=Mock(return_value=subprocess.CompletedProcess(["tsc"], 2, output))
             ):
                 command = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
                 self.assertEqual(command["status"], "error")
                 self.assertEqual(command["verification"], "unverified")
                 self.assertEqual(command["error_kind"], "environment")
 
-        with patch.object(
-            namespace["subprocess"], "run",
-            return_value=subprocess.CompletedProcess(
+        with patch.dict(
+            namespace["record_command"].__globals__, run_capture=Mock(return_value=subprocess.CompletedProcess(
                 ["tsc"], 2, b"Cannot find module './missing-source' or its corresponding type declarations."
-            ),
+            )),
         ):
             source_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
         self.assertEqual(source_error["status"], "fail")
-        with patch.object(
-            namespace["subprocess"], "run",
-            return_value=subprocess.CompletedProcess(
+        with patch.dict(
+            namespace["record_command"].__globals__, run_capture=Mock(return_value=subprocess.CompletedProcess(
                 ["tsc"], 2, b"Cannot find module '@/missing-source' or its corresponding type declarations."
-            ),
+            )),
         ):
             alias_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
         self.assertEqual(alias_error["status"], "fail")
@@ -608,16 +934,16 @@ class PreReviewTests(unittest.TestCase):
         self.assertFalse(output_dir.is_relative_to(self.repo))
         self.assertIn("--reporter=json", commands[0][1])
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run",
-                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+        run = Mock(return_value=subprocess.CompletedProcess(["playwright"], 0, b""))
+        with patch.dict(namespace["record_command"].__globals__, run_capture=run):
             namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
                                         output_dir=self.output)
         environment = run.call_args.kwargs["env"]
         self.assertEqual(environment["PLAYWRIGHT_JSON_OUTPUT_FILE"], str(self.output / "playwright-report.json"))
         self.assertEqual(environment["TMPDIR"], str(self.output))
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run",
-                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+        run = Mock(return_value=subprocess.CompletedProcess(["playwright"], 0, b""))
+        with patch.dict(namespace["record_command"].__globals__, run_capture=run):
             namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
                                         output_dir=self.output)
         environment = run.call_args.kwargs["env"]

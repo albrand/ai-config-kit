@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shutil
 import shlex
 import subprocess
@@ -23,6 +24,10 @@ from typing import Any
 PACKET_BUDGET = 64 * 1024
 OUTPUT_TAIL_BUDGET = 4 * 1024
 DEFAULT_BASE = "origin/main"
+DEFAULT_CHECK_TIMEOUT_SECONDS = 120
+FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS = 10
+FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS = 600
+FOCUSED_PYTHON_DISPATCH_GRACE_SECONDS = 120
 MIN_FREE_BYTES = 20 * 1024**3
 TYPESCRIPT_SUFFIXES = {".ts", ".tsx", ".mts", ".cts"}
 JAVASCRIPT_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
@@ -177,8 +182,21 @@ def hydrate_checkout(repo: Path, output_dir: Path) -> str | None:
 
 def run_capture(argv: list[str], cwd: Path, timeout: float = 30,
                 env: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=timeout, check=False, shell=False, env=env)
+    process = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               shell=False, env=env, start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        output = error.output or b""
+        if process.stdout:
+            process.stdout.close()
+        process.wait()
+        raise subprocess.TimeoutExpired(argv, timeout, output=output or error.output) from error
+    return subprocess.CompletedProcess(argv, process.returncode, output)
 
 
 def output_tail(raw: bytes) -> str:
@@ -337,7 +355,7 @@ def binary_path(repo: Path, name: str) -> str | None:
     return shutil.which(name)
 
 
-def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = 120,
+def record_command(name: str, argv: list[str], repo: Path, *, timeout: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
                    timeout_scale: float = 1.0, skip_reason: str | None = None,
                    output_dir: Path | None = None,
                    unavailable_reason: str | None = None) -> dict[str, Any]:
@@ -479,7 +497,8 @@ def related_test_paths(repo: Path, paths: list[str]) -> list[str]:
 
 
 def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
-                          skip_tests: bool = False) -> list[tuple[str, list[str], str | None]]:
+                          skip_tests: bool = False,
+                          timeout_scale: float = 1.0) -> list[tuple[str, list[str], str | None]]:
     if skip_tests:
         return [("focused-tests", [], "skipped by --skip-tests; test commands were not run")]
     if not tests:
@@ -498,7 +517,39 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
         )
         pytest = binary_path(repo, "pytest")
         if standalone_unittest:
-            commands.append(("focused-python-tests", [sys.executable, *absolute_python], None))
+            if len(absolute_python) == 1:
+                command = [sys.executable, *absolute_python]
+            else:
+                runner = (
+                    "import os, signal, subprocess, sys\n"
+                    "timeout = float(sys.argv[1])\n"
+                    "failed = False\n"
+                    "for path in sys.argv[2:]:\n"
+                    "    process = subprocess.Popen([sys.executable, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)\n"
+                    "    try:\n"
+                    "        output, _ = process.communicate(timeout=timeout)\n"
+                    "    except subprocess.TimeoutExpired as error:\n"
+                    "        try:\n"
+                    "            os.killpg(process.pid, signal.SIGKILL)\n"
+                    "        except (ProcessLookupError, PermissionError):\n"
+                    "            pass\n"
+                    "        output = error.output or b''\n"
+                    "        if process.stdout:\n"
+                    "            process.stdout.close()\n"
+                    "        process.wait()\n"
+                    "        sys.stdout.buffer.write(output)\n"
+                    "        sys.stdout.buffer.flush()\n"
+                    "        print(f'{path} timed out after {timeout:g} seconds', file=sys.stderr)\n"
+                    "        failed = True\n"
+                    "        continue\n"
+                    "    sys.stdout.buffer.write(output or b'')\n"
+                    "    sys.stdout.buffer.flush()\n"
+                    "    failed = failed or process.returncode != 0\n"
+                    "raise SystemExit(1 if failed else 0)\n"
+                )
+                command = [sys.executable, "-c", runner,
+                           str(FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * timeout_scale), *absolute_python]
+            commands.append(("focused-python-tests", command, None))
         elif pytest:
             commands.append(("focused-python-tests", [pytest, *absolute_python], None))
         else:
@@ -535,6 +586,38 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
         else:
             commands.append(("focused-typescript-tests", [], "no configured focused TypeScript test runner"))
     return commands
+
+
+def focused_python_test_timeout(repo: Path, tests: list[str]) -> int:
+    """Give each standalone unittest script a ten-minute slice."""
+    case_count = 0
+    standalone_script_count = 0
+    other_test_file_count = 0
+    for path in tests:
+        try:
+            source = (repo / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * max(len(tests), 1)
+        if "unittest.main(" in source:
+            standalone_script_count += 1
+            continue
+        other_test_file_count += 1
+        try:
+            tree = ast.parse(source, filename=path)
+        except SyntaxError:
+            return FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS * max(len(tests), 1)
+        case_count += sum(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test")
+            for node in ast.walk(tree)
+        )
+    other_file_budget = (max(DEFAULT_CHECK_TIMEOUT_SECONDS,
+                             case_count * FOCUSED_PYTHON_CASE_TIMEOUT_SECONDS)
+                         if other_test_file_count else 0)
+    standalone_budget = standalone_script_count * FOCUSED_PYTHON_FILE_TIMEOUT_SECONDS
+    dispatch_grace = (standalone_script_count * FOCUSED_PYTHON_DISPATCH_GRACE_SECONDS
+                      if standalone_script_count > 1 else 0)
+    return standalone_budget + dispatch_grace + other_file_budget or DEFAULT_CHECK_TIMEOUT_SECONDS
 
 
 def python_digit_rule(path: str, source: str) -> list[dict[str, Any]]:
@@ -1679,7 +1762,7 @@ def main(argv: list[str] | None = None) -> int:
     target_error = setup_error if execution_mode == "unverified" or (execution_mode == "detached-worktree" and not worktree) else None
     dependency_error = setup_error if worktree else None
 
-    def run_check(name: str, argv: list[str], *, timeout: float = 120,
+    def run_check(name: str, argv: list[str], *, timeout: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
                   skip_reason: str | None = None, requires_hydration: bool = False) -> dict[str, Any]:
         return record_command(name, argv, repo, timeout=timeout, timeout_scale=args.timeout_scale,
                               skip_reason=skip_reason, output_dir=output_dir,
@@ -1788,10 +1871,15 @@ def main(argv: list[str] | None = None) -> int:
             commands.append(run_check("semgrep", [], skip_reason="semgrep not installed"))
 
     tests = related_test_paths(repo, paths)
-    commands.extend(run_check(name, argv, skip_reason=reason,
-                              requires_hydration=name in {"focused-playwright-tests", "focused-typescript-tests",
-                                                          "focused-node-tests"})
-                    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests))
+    python_tests = [path for path in tests if path.endswith(".py")]
+    for name, argv, reason in focused_test_commands(repo, tests, output_dir, args.skip_tests,
+                                                     timeout_scale=args.timeout_scale):
+        timeout = (focused_python_test_timeout(repo, python_tests)
+                   if name == "focused-python-tests" else DEFAULT_CHECK_TIMEOUT_SECONDS)
+        commands.append(run_check(name, argv, timeout=timeout, skip_reason=reason,
+                                  requires_hydration=name in {"focused-playwright-tests",
+                                                              "focused-typescript-tests",
+                                                              "focused-node-tests"}))
 
     # Keep rule IDs stable and avoid reporting the same finding from both the
     # built-in safety net and Semgrep.
