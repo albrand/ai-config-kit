@@ -18,7 +18,7 @@ Usage:
   typed-decisions-sync.py --check    report only; exit 1 on any gap
   typed-decisions-sync.py --falsify  --check, plus proof the check can fail
 """
-import os, re, shutil, sys, tempfile
+import argparse, os, re, shutil, sys, tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
@@ -319,12 +319,22 @@ def falsify():
         shutil.rmtree(tmp)
 
 
+def parse_args(argv):
+    """Parse before touching anything: --help and unknown options must exit without writing."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--check", action="store_true", help="report only; exit 1 on any gap")
+    # The daily agent-hooks run passes --check --falsify together; --falsify wins, as before.
+    parser.add_argument("--falsify", action="store_true", help="--check, plus proof the check can fail")
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    if "--falsify" in sys.argv:
+    args = parse_args(sys.argv[1:])
+    if args.falsify:
         live = run(True)
         print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
         sys.exit(1 if (falsify() or live) else 0)
-    if "--check" in sys.argv:
+    if args.check:
         bad = run(True)
     else:
         with standing_home_lock.exclusive_home_writer():
