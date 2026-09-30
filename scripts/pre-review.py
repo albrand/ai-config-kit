@@ -720,7 +720,9 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     lines: list[str] = []
     start = 0
     fence: str | None = None
-    in_list = in_indented_code = False
+    fence_quote = fence_indent = 0
+    list_indent = -1  # content column of the open list item; -1 outside lists
+    in_indented_code = False
     for number, line in enumerate(source.splitlines(), 1):
         prefix = MARKDOWN_CONTAINER.match(line).group(0)  # type: ignore[union-attr]
         body = line[len(prefix):]
@@ -729,28 +731,41 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
         if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
             marker = None  # a backtick run followed by more backticks is a code span, not a fence
         if fence is not None:
-            if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) \
-                    and not marker.group(2).strip():
-                fence = None
-            continue
+            # A fenced block also ends when its blockquote or list item ends.
+            left_container = prefix.count(">") < fence_quote or (
+                fence_indent > 0 and bool(body.strip()) and len(prefix) < fence_indent)
+            if not left_container:
+                closer = MARKDOWN_FENCE.match(body)  # a closing fence sits at the fence's own level
+                if closer and prefix.count(">") == fence_quote and closer.group(1)[0] == fence[0] \
+                        and len(closer.group(1)) >= len(fence) and not closer.group(2).strip():
+                    fence = None
+                continue
+            fence = None
         blank = not body.strip()
-        indented = not lines and not in_list and ">" not in prefix and line.startswith(("    ", "\t"))
-        if in_indented_code and (blank or indented or line.startswith(("    ", "\t"))):
+        leading = len(line) - len(line.lstrip(" \t"))
+        if item:
+            list_indent = len(prefix) + item.end()
+        elif not blank and leading < list_indent and (not lines or marker or line.lstrip().startswith(">")):
+            list_indent = -1  # a block that starts left of the item's content ends the list
+        code_indent = list_indent + 4 if list_indent >= 0 else 4
+        indented = not lines and not item and ">" not in prefix and leading >= code_indent
+        if in_indented_code and (blank or leading >= code_indent):
             continue
         in_indented_code = False
+        if item and lines:  # a list item interrupts the paragraph above it
+            paragraphs.append((start, "\n".join(lines)))
+            lines = []
         if marker or blank or indented:
             if lines:
                 paragraphs.append((start, "\n".join(lines)))
                 lines = []
             fence = marker.group(1) if marker else None
+            fence_quote = prefix.count(">")
+            fence_indent = max(list_indent, 0)
             in_indented_code = indented and not marker
             continue
         if not lines:
             start = number
-            if item:
-                in_list = True
-            elif not prefix:
-                in_list = False
         lines.append(line)
     if lines:
         paragraphs.append((start, "\n".join(lines)))

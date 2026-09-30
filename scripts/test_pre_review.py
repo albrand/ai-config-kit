@@ -416,6 +416,18 @@ class PreReviewTests(unittest.TestCase):
             "Paragraph.\n\n    e2e.*\n\nAfter code, tests.* counts.": [5],
             "```e2e.*``` is inline code": [],
             "- **Four red tests.**\n\n    Then *e2e.* again.": [3],
+            "> ```\n> example\ne2e.*": [3],
+            "- ```\n  example\ne2e.*": [3],
+            "- item\n\n  ```\n  example\nqa.*": [5],
+            "> ```\n>\n> e2e.*\n> ```": [],
+            "- ```\n\n  qa.*\n  ```": [],
+            "```\nexample\n\ne2e.*\n```": [],
+            "````\ndone\n- ````\n  x\n**e2e.***": [],
+            "```\nx\n> ```\n> qa.*\n> ```": [],
+            "*done*\n- item\n\n    *tests.**": [4],
+            "- ```\n  x\n  ```\n\n    **done** then tests.*": [5],
+            "- item\n\n    tests.*\n````\ndone\n````\n    see e2e.* now": [3],
+            "- item\n\n      e2e.*": [],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):
