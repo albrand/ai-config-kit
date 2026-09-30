@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -35,8 +36,9 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_sync(self, *args: str) -> subprocess.CompletedProcess[str]:
-        env = {**os.environ, "HOME": str(self.home)}
+    def run_sync(self, *args: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in os.environ.items() if key != "AI_CONFIG_KIT"}
+        env.update({"HOME": str(self.home)}, **extra_env)
         return subprocess.run([sys.executable, str(SCRIPT), *args], env=env, cwd=self.home, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
 
@@ -75,6 +77,26 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
         self.assertIn(str(self.home / "projects/agent-config-kit/GLOBAL_AGENTS.md"), result.stdout)
         for target in self.targets:
             self.assertNotEqual(target.read_text(encoding="utf-8"), STALE, str(target))
+
+    def test_ai_config_kit_selects_the_checked_kit(self) -> None:
+        kit = self.home / "merged-main"
+        kit.mkdir()
+        (kit / "GLOBAL_AGENTS.md").write_text(STALE, encoding="utf-8")
+        result = self.run_sync("--check", AI_CONFIG_KIT=str(kit))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(str(kit / "GLOBAL_AGENTS.md"), result.stdout)
+        self.assertNotIn(str(self.home / "projects/agent-config-kit/GLOBAL_AGENTS.md"), result.stdout)
+        self.assertEqual((kit / "GLOBAL_AGENTS.md").read_text(encoding="utf-8"), STALE)
+        self.assert_untouched()
+
+
+class KitBaselineTests(unittest.TestCase):
+    def test_kit_baseline_carries_the_canonical_typed_block(self) -> None:
+        # The bb home is rendered verbatim from GLOBAL_AGENTS.md; the other homes take GLOBAL_BLOCK.
+        module = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        block = next(ast.literal_eval(node.value) for node in module.body if isinstance(node, ast.Assign)
+                     and any(getattr(target, "id", "") == "GLOBAL_BLOCK" for target in node.targets))
+        self.assertIn(block, (SCRIPT.parents[1] / "GLOBAL_AGENTS.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
