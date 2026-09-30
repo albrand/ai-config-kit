@@ -463,6 +463,10 @@ class PreReviewTests(unittest.TestCase):
             "**Run the `tests.*`**": [],
             "`x`*e2e.*": [1],
             "**`Run` e2e.* files**": [1],
+            # Unmodelled inline constructs keep the base rule's hit (fail safe, same as before this change).
+            "**Run [unit](foo*) tests.**": [1],
+            "**Run <b>unit</b> tests.**": [1],
+            "**See <https://x.test/a*> tests.**": [1],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):

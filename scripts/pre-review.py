@@ -953,8 +953,11 @@ def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
         for match in MARKDOWN_GLOB.finditer(text):
             consumed, content_starts = closers.get(match.start(1), (0, []))
             word = text[match.start():match.start(1) - 1]
+            # Links, autolinks and HTML can hide or add delimiters this scan does not model, so a span
+            # containing them keeps the base rule's hit instead of trusting the pairing.
+            span = text[min(content_starts, default=match.start()):match.start(1)]
             closes_prose = consumed == len(match.group(1)) and word in MARKDOWN_PROSE_WORDS \
-                and match.start() not in content_starts
+                and match.start() not in content_starts and not any(char in span for char in "[]<>")
             if not closes_prose:
                 hits.append({"rule_id": "pre_review.markdown_glob_code_span", "path": path,
                              "line": first_line + text.count("\n", 0, match.start()),
