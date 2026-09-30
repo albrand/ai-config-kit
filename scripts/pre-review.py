@@ -714,19 +714,42 @@ MARKDOWN_STAR_RUN = re.compile(r"\*+")
 MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
 
 
+def markdown_expand_container_tabs(line: str) -> str:
+    """Expand tabs in leading whitespace and blockquote markers to CommonMark's 4-column stops."""
+    column = 0
+    out: list[str] = []
+    for index, char in enumerate(line):
+        if char == "\t":
+            out.append(" " * (4 - column % 4))
+            column += 4 - column % 4
+        elif char in " >":
+            out.append(char)
+            column += 1
+        else:
+            return "".join(out) + line[index:]
+    return "".join(out)
+
+
 def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     """Return (first line number, text) for each paragraph outside fenced and indented code."""
     paragraphs: list[tuple[int, str]] = []
     lines: list[str] = []
     start = 0
     fence: str | None = None
-    fence_quote = fence_indent = 0
+    fence_quote = fence_indent = paragraph_quote = 0
     list_indent = -1  # content column of the open list item; -1 outside lists
     in_indented_code = False
-    for number, line in enumerate(source.splitlines(), 1):
+    for number, raw_line in enumerate(source.splitlines(), 1):
+        line = markdown_expand_container_tabs(raw_line)
         prefix = MARKDOWN_CONTAINER.match(line).group(0)  # type: ignore[union-attr]
         body = line[len(prefix):]
+        quoted = ">" in prefix
+        # Indentation inside the innermost container; a blockquote marker owns one following space.
+        inner = len(prefix) - prefix.rfind(">") - 1 if quoted else len(prefix)
+        inner -= 1 if quoted and inner else 0
         item = MARKDOWN_LIST_ITEM.match(body)
+        if item and inner - (0 if quoted or list_indent < 0 else list_indent) >= 4:
+            item = None  # four or more columns in is indented code, not a list item
         marker = MARKDOWN_FENCE.match(body[item.end():] if item else body)
         if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
             marker = None  # a backtick run followed by more backticks is a code span, not a fence
@@ -736,8 +759,9 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
                 fence_indent > 0 and bool(body.strip()) and len(prefix) < fence_indent)
             if not left_container:
                 closer = MARKDOWN_FENCE.match(body)  # a closing fence sits at the fence's own level
-                if closer and prefix.count(">") == fence_quote and closer.group(1)[0] == fence[0] \
-                        and len(closer.group(1)) >= len(fence) and not closer.group(2).strip():
+                if closer and prefix.count(">") == fence_quote and inner - fence_indent < 4 \
+                        and closer.group(1)[0] == fence[0] and len(closer.group(1)) >= len(fence) \
+                        and not closer.group(2).strip():
                     fence = None
                 continue
             fence = None
@@ -747,13 +771,16 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
             list_indent = len(prefix) + item.end()
         elif not blank and leading < list_indent and (not lines or marker or line.lstrip().startswith(">")):
             list_indent = -1  # a block that starts left of the item's content ends the list
+        base = list_indent if list_indent >= 0 and not quoted else 0
+        if marker and not item and inner - base >= 4:
+            marker = None  # a fence indented four or more columns is code or paragraph text
         code_indent = list_indent + 4 if list_indent >= 0 else 4
         indented = not lines and not item and ">" not in prefix and leading >= code_indent
         if in_indented_code and (blank or leading >= code_indent):
             continue
         in_indented_code = False
-        if item and lines:  # a list item interrupts the paragraph above it
-            paragraphs.append((start, "\n".join(lines)))
+        if lines and (item or prefix.count(">") > paragraph_quote):
+            paragraphs.append((start, "\n".join(lines)))  # a list item or deeper quote interrupts it
             lines = []
         if marker or blank or indented:
             if lines:
@@ -761,11 +788,12 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
                 lines = []
             fence = marker.group(1) if marker else None
             fence_quote = prefix.count(">")
-            fence_indent = max(list_indent, 0)
+            fence_indent = base
             in_indented_code = indented and not marker
             continue
         if not lines:
             start = number
+            paragraph_quote = prefix.count(">")
         lines.append(line)
     if lines:
         paragraphs.append((start, "\n".join(lines)))
