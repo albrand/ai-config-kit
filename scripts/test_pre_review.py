@@ -745,28 +745,30 @@ class PreReviewTests(unittest.TestCase):
         single = namespace["focused_test_commands"](
             self.repo, ["tests/test_parent_exit.py"], self.output
         )[0]
+        # The child only holds the pipe once the parent script has started Python and spawned it;
+        # a 0.3 s budget let a loaded host time out before the PID file existed.
         started = time.monotonic()
         single_command = namespace["record_command"](
-            single[0], single[1], self.repo, timeout=0.3
+            single[0], single[1], self.repo, timeout=3
         )
         self.assertEqual(single_command["status"], "timeout")
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 6)
         assert_child_stopped()
 
         child_pid_file.unlink()
         commands = namespace["focused_test_commands"](
             self.repo, ["tests/test_parent_exit.py", "tests/test_later.py"],
-            self.output, timeout_scale=0.0005,
+            self.output, timeout_scale=0.005,
         )
         multi = next(command for command in commands if command[0] == "focused-python-tests")
         started = time.monotonic()
         multi_command = namespace["record_command"](
-            multi[0], multi[1], self.repo, timeout=3
+            multi[0], multi[1], self.repo, timeout=15
         )
         self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
         self.assertEqual(multi_command["exit_code"], 1)
-        self.assertIn("timed out after 0.3 seconds", multi_command["output_tail"])
-        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn("timed out after 3 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 15)
         self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
         assert_child_stopped()
 
@@ -1099,6 +1101,47 @@ class PreReviewTests(unittest.TestCase):
             namespace["related_test_paths"](self.repo, ["scripts/pre-review.py"]),
             ["scripts/test_pre_review.py"],
         )
+
+    def test_underscore_suffix_python_tests_are_selected(self) -> None:
+        # A changed foo_test.py used to be reported as "no related test files changed or found".
+        test_file = self.repo / "tests" / "lease_owner_test.py"
+        test_file.parent.mkdir()
+        test_file.write_text("import unittest\nunittest.main()\n", encoding="utf-8")
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "lease-owner.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "notes.md").write_text("notes\n", encoding="utf-8")
+        git(self.repo, "add", "tests/lease_owner_test.py", "scripts/lease-owner.py", "docs/notes.md")
+        related = runpy.run_path(str(SCRIPT))["related_test_paths"]
+        self.assertEqual(related(self.repo, ["tests/lease_owner_test.py"]), ["tests/lease_owner_test.py"])
+        self.assertEqual(related(self.repo, ["scripts/lease-owner.py"]), ["tests/lease_owner_test.py"])
+        self.assertEqual(related(self.repo, ["docs/notes.md"]), [])
+        self.assertEqual(related(self.repo, ["scripts/latest.py"]), [])
+
+    def test_changed_underscore_suffix_test_is_executed_and_its_failure_reported(self) -> None:
+        marker = self.base / "underscore-test-ran"
+        test_file = self.repo / "pkg" / "widget_test.py"
+        test_file.parent.mkdir()
+        (self.repo / "pkg" / "widget.py").write_text("WIDTH = 2\n", encoding="utf-8")
+        test_file.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            "class WidgetTest(unittest.TestCase):\n"
+            "    def test_width(self):\n"
+            f"        Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
+            "        self.assertEqual(1, 2)\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        git(self.repo, "add", "pkg/widget.py", "pkg/widget_test.py")
+        git(self.repo, "commit", "-m", "fixture underscore-suffix test")
+
+        result, packet = self.run_pre_review()
+        focused = next(item for item in packet["commands"] if item["name"] == "focused-python-tests")
+        self.assertEqual(focused["status"], "fail", result.stderr + result.stdout)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "ran")
+        self.assertNotIn("focused-tests", [item["name"] for item in packet["commands"]])
 
     def test_typescript_source_finds_sibling_spec_test(self) -> None:
         spec = self.repo / "src" / "module.spec.ts"
