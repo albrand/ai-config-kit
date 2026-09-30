@@ -588,6 +588,51 @@ class PreReviewTests(unittest.TestCase):
         semgrep_command = next(item for item in packet["commands"] if item["name"] == "semgrep")
         self.assertIn(str(project_rules.resolve()), semgrep_command["command"])
 
+    def test_deleted_paths_are_not_passed_to_file_checkers(self) -> None:
+        files = {
+            "mypy.ini": "[mypy]\n",
+            "src/keep.py": "VALUE = 1\n",
+            "src/old.py": "OLD = 1\n",
+            "src/old.ts": "export const old = 1;\n",
+            "docs/old.md": "# Old\n",
+            ".github/workflows/old.yml": "on: push\njobs: {}\n",
+            "tests/test_keep.py": "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n\n\n"
+                                  "if __name__ == '__main__':\n    unittest.main()\n",
+            "tests/test_old.py": "import unittest\n\nif __name__ == '__main__':\n    unittest.main()\n",
+        }
+        for rel, text in files.items():
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text(text, encoding="utf-8")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-m", "base with files")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        deleted = ["src/old.py", "src/old.ts", "docs/old.md", ".github/workflows/old.yml", "tests/test_old.py"]
+        git(self.repo, "rm", "-q", *deleted)
+        (self.repo / "src/keep.py").write_text("VALUE = 2\n", encoding="utf-8")
+        git(self.repo, "commit", "-am", "delete old files")
+        fake_bin = self.base / "bin"
+        fake_bin.mkdir()
+        for name in ("mypy", "actionlint", "markdownlint-cli2", "semgrep"):
+            checker = fake_bin / name
+            # Fail like the real tools do when handed a path that does not exist.
+            checker.write_text("#!/usr/bin/env python3\nimport os, sys\n"
+                               "missing = [a for a in sys.argv[1:] if a.startswith('./') and not os.path.exists(a)]\n"
+                               "print('missing: ' + ' '.join(missing) if missing else '{\"results\": []}')\n"
+                               "sys.exit(2 if missing else 0)\n", encoding="utf-8")
+            checker.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        _result, packet = self.run_pre_review(env=env)
+        self.assertEqual(set(packet["changed_paths"]), {*deleted, "src/keep.py"})
+        argv = [arg for item in packet["commands"] for arg in item.get("command") or []]
+        self.assertFalse([path for path in deleted if "./" + path in argv], argv)
+        by_name = {item["name"]: item for item in packet["commands"]}
+        self.assertEqual(by_name["python-mypy"]["status"], "pass")
+        self.assertEqual(by_name["semgrep"]["status"], "pass")
+        self.assertNotIn("actionlint", by_name)
+        self.assertNotIn("markdownlint", by_name)
+        self.assertIn("./tests/test_keep.py", by_name["focused-python-tests"]["command"])
+
     def test_unresolvable_base_fails_closed_without_packet(self) -> None:
         result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.repo), "--base", "missing/base",
                                  "--output-dir", str(self.output)], cwd=self.repo, text=True,
