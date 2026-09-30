@@ -713,61 +713,6 @@ MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 MARKDOWN_SETEXT_UNDERLINE = re.compile(r"(?:=+|-+)[ \t]*$")
 MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
 MARKDOWN_ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
-MARKDOWN_AUTOLINK = re.compile(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)>")
-
-
-def markdown_link_tail_end(text: str, start: int) -> int:
-    """End index of an inline link tail `(destination "title")` starting at `(`, or -1 when none parses."""
-    size, index = len(text), start + 1
-
-    def skip_space(position: int) -> int:
-        newlines = 0
-        while position < size and text[position] in " \t\n":
-            newlines += text[position] == "\n"
-            position += 1
-        return position if newlines <= 1 else -1
-
-    index = skip_space(index)
-    if index < 0:
-        return -1
-    if index < size and text[index] == "<":
-        index += 1
-        while index < size and text[index] not in "<>\n":
-            index += 2 if text[index] == "\\" else 1
-        if index >= size or text[index] != ">":
-            return -1
-        index += 1
-    else:
-        depth = 0
-        while index < size and text[index] > " ":
-            char = text[index]
-            if char == "\\" and index + 1 < size:
-                index += 2
-                continue
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    break
-                depth -= 1
-            index += 1
-        if depth:
-            return -1
-    before_title = index
-    index = skip_space(index)
-    if index < 0:
-        return -1
-    if index > before_title and index < size and text[index] in "\"'(":
-        closer = ")" if text[index] == "(" else text[index]
-        index += 1
-        while index < size and text[index] != closer:
-            index += 2 if text[index] == "\\" else 1
-        if index >= size:
-            return -1
-        index = skip_space(index + 1)
-        if index < 0:
-            return -1
-    return index + 1 if index < size and text[index] == ")" else -1
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
 # Ordinary words that can end a sentence right before bold or italic prose closes.
 MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
@@ -792,6 +737,41 @@ def markdown_expand_container_tabs(line: str) -> str:
 def markdown_indent(text: str) -> int:
     return len(text) - len(text.lstrip(" "))
 
+MARKDOWN_HTML_BLOCK_NAMES = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
+    "fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|"
+    "main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|"
+    "title|tr|track|ul")
+# (start, end) for CommonMark HTML block types 1-6; end None means the block ends at a blank line.
+MARKDOWN_HTML_BLOCKS = [
+    (re.compile(r"<(?:script|pre|style|textarea)(?:\s|>|$)", re.I), re.compile(r"</(?:script|pre|style|textarea)>", re.I)),
+    (re.compile(r"<!--"), re.compile(r"-->")),
+    (re.compile(r"<\?"), re.compile(r"\?>")),
+    (re.compile(r"<![A-Za-z]"), re.compile(r">")),
+    (re.compile(r"<!\[CDATA\["), re.compile(r"\]\]>")),
+    (re.compile(rf"</?(?:{MARKDOWN_HTML_BLOCK_NAMES})(?:\s|/?>|$)", re.I), None),
+]
+# Type 7: a complete open or closing tag alone on its line; it cannot interrupt a paragraph.
+MARKDOWN_HTML_BLOCK_TAG = re.compile(
+    r"(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>"
+    r"|</[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$")
+
+
+def markdown_unmodelled(text: str) -> bool:
+    """True when backticks mix with `<` or `[`: links, autolinks, raw HTML and reference definitions can then
+    decide where a code span starts. Such text is not modelled; it is scanned with main's rule instead."""
+    return "`" in text and ("<" in text or "[" in text)
+
+
+def markdown_html_block(body: str, paragraph_open: bool) -> tuple[bool, re.Pattern[str] | None]:
+    """(starts, end pattern) for an HTML block starting at `body`; end None means it ends at a blank line."""
+    for start, end in MARKDOWN_HTML_BLOCKS:
+        if start.match(body):
+            return True, end
+    if not paragraph_open and MARKDOWN_HTML_BLOCK_TAG.match(body) \
+            and not re.match(r"</?(?:script|pre|style|textarea)\b", body, re.I):
+        return True, None
+    return False, None
 
 def markdown_block_start(rest: str) -> bool:
     """True when a line (inside its containers) starts a block, so it cannot be a lazy paragraph line."""
@@ -805,6 +785,7 @@ def markdown_block_start(rest: str) -> bool:
     if fence and fence.group(1)[0] == "`" and "`" in fence.group(2):
         fence = None  # a backtick run followed by more backticks is a code span, not a fence
     return bool(body.startswith(">") or fence or MARKDOWN_THEMATIC_BREAK.match(body)
+                or markdown_html_block(body, True)[0]  # HTML block types 1-6 interrupt a paragraph
                 or MARKDOWN_ATX_HEADING.match(body)
                 or (item and (item.group(3) or not body[item.end():].strip())))  # an empty item too
 
@@ -826,11 +807,13 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
     stack: list[int] = []  # 0 = blockquote; n > 0 = list item whose content starts n columns in
     fence: str | None = None
     fence_depth = 0
+    html_open, html_end, html_depth = False, None, 0  # an open HTML block and its end condition
 
     def flush() -> None:
         nonlocal lines
         if lines:
-            paragraphs.append((start, "\n".join(lines), False))
+            text = "\n".join(lines)
+            paragraphs.append((start, text, markdown_unmodelled(text)))
             lines = []
 
     def flush_uncertain() -> None:
@@ -862,6 +845,15 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
                 continue
             break
         rest = line[pos:]
+        if html_open:
+            if matched >= html_depth and (html_end is not None or rest.strip()):
+                uncertain_lines.append(rest)
+                if html_end is not None and html_end.search(rest):
+                    html_open = False
+                    flush_uncertain()
+                continue
+            html_open = False  # a blank line ends types 6-7; a container exit ends every type
+            flush_uncertain()
         if uncertain_lines:
             if rest.strip() and matched == uncertain_depth and markdown_indent(rest) >= 4:
                 uncertain_lines.append(rest)
@@ -917,6 +909,15 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
             flush()
             fence, fence_depth = marker.group(1), len(stack)
             continue
+        starts, end = markdown_html_block(body, bool(lines)) if markdown_indent(rest) < 4 else (False, None)
+        if starts:  # raw HTML lines are not Markdown text; keep main's hits there
+            flush()
+            uncertain_start, uncertain_lines = number, [rest]
+            if end is not None and end.search(rest, 1):
+                flush_uncertain()
+            else:
+                html_open, html_end, html_depth = True, end, len(stack)
+            continue
         if markdown_indent(rest) >= 4 and not lines:
             if closed_by_indent:
                 flush()
@@ -930,7 +931,7 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str, bool]]:
         if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
             flush()
             if MARKDOWN_ATX_HEADING.match(body):
-                paragraphs.append((number, body, False))
+                paragraphs.append((number, body, markdown_unmodelled(body)))
             continue
         if not lines:
             start = number
@@ -949,32 +950,13 @@ def markdown_mask_inline_code(text: str) -> str:
     letters and its backticks stay, so emphasis flanking next to the span matches the source. Newlines are kept.
     """
     out = list(text)
-    index, size, open_brackets = 0, len(text), 0
+    index, size = 0, len(text)
     while index < size:
         char = text[index]
         if char == "\\" and index + 1 < size and text[index + 1] in MARKDOWN_ASCII_PUNCTUATION:
             out[index] = out[index + 1] = "!"
             index += 2
             continue
-        if char == "[":
-            open_brackets += 1
-        elif char == "]" and open_brackets:
-            open_brackets -= 1
-            end = markdown_link_tail_end(text, index + 1) if text[index + 1:index + 2] == "(" else -1
-            if end > 0:  # a link destination or title is parsed before any code span inside it
-                for position in range(index + 1, end):
-                    if out[position] == "`":
-                        out[position] = "!"
-                index = end
-                continue
-        elif char == "<":
-            autolink = MARKDOWN_AUTOLINK.match(text, index)
-            if autolink:  # an autolink starting before a backtick wins over the code span
-                for position in range(index, autolink.end()):
-                    if out[position] == "`":
-                        out[position] = "!"
-                index = autolink.end()
-                continue
         if char != "`":
             index += 1
             continue

@@ -466,15 +466,22 @@ class PreReviewTests(unittest.TestCase):
             "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
             "    e2e.*": [],
             "`x`*e2e.*": [1],
-            # A link destination, title or autolink is parsed before a code span starting inside it.
+            # Backticks mixed with `<` or `[` keep main's hits (links, autolinks and raw HTML are not modelled).
             "[x](`) e2e.* `": [1],
             "**[x](`) e2e.* files** `": [1],
-            "[x](<`>) e2e.* `": [1],
             '[x](/u "`") e2e.* `': [1],
             "<http://a`b> e2e.* `": [1],
+            '<span title="`"> e2e.* `</span>': [1],
+            '**<a href="`"> e2e.* files** `': [1],
+            '[x]: /u "`"\n\ne2e.* `': [3],
             "[foo`](/uri)` e2e.*": [1],
-            "[x] (`) e2e.* `": [],
-            "[x](` e2e.* `)": [],
+            "[x] (`) e2e.* `": [1],
+            "[x](`e2e.*`)": [],
+            # An HTML block is raw text up to its end condition; types 1-6 are never lazy paragraph lines.
+            '<!-- ` --> qa.* `\n2) - - item\n\n         [x](/u "`") scripts/run.* `': [1, 4],
+            "- - text\n  <? x\n  ```a `` src/app.* ```": [3],
+            "<div>\n`a\ne2e.* `\n</div>": [3],
+            "<div>\n\n`x` e2e.*": [3],
             "**`Run` e2e.* files**": [1],
             # Unmodelled inline constructs keep the base rule's hit (fail safe, same as before this change).
             "**Run [unit](foo*) tests.**": [1],
