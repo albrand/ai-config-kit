@@ -705,9 +705,10 @@ def regex_hit(rule_id: str, path: str, source: str, pattern: re.Pattern[str], me
 
 
 MARKDOWN_GLOB = re.compile(r"\b(?:e2e|qa|tests?|scripts|src)(?:/[A-Za-z0-9_.-]+)?\.(\*+)")
-MARKDOWN_CONTAINER = re.compile(r"^[ \t]*(?:>[ \t]?[ \t]*)*")
-MARKDOWN_LIST_ITEM = re.compile(r"(?:[-*+]|\d+[.)])[ \t]+")
+MARKDOWN_LIST_ITEM = re.compile(r"([-*+]|(\d{1,9})[.)])( *)")
 MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
+MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
 MARKDOWN_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
 # Ordinary words that can end a sentence right before bold or italic prose closes.
@@ -715,14 +716,14 @@ MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
 
 
 def markdown_expand_container_tabs(line: str) -> str:
-    """Expand tabs in leading whitespace and blockquote markers to CommonMark's 4-column stops."""
+    """Expand tabs among leading whitespace, blockquote and list markers to CommonMark's 4-column stops."""
     column = 0
     out: list[str] = []
     for index, char in enumerate(line):
         if char == "\t":
             out.append(" " * (4 - column % 4))
             column += 4 - column % 4
-        elif char in " >":
+        elif char in " >-*+.)0123456789":
             out.append(char)
             column += 1
         else:
@@ -730,73 +731,124 @@ def markdown_expand_container_tabs(line: str) -> str:
     return "".join(out)
 
 
+def markdown_indent(text: str) -> int:
+    return len(text) - len(text.lstrip(" "))
+
+
+def markdown_block_start(rest: str) -> bool:
+    """True when a line (inside its containers) starts a block, so it cannot be a lazy paragraph line."""
+    if not rest.strip():
+        return True
+    if markdown_indent(rest) >= 4:
+        return False
+    body = rest.lstrip(" ")
+    item = MARKDOWN_LIST_ITEM.match(body)
+    return bool(body.startswith(">") or MARKDOWN_FENCE.match(body) or MARKDOWN_THEMATIC_BREAK.match(body)
+                or MARKDOWN_ATX_HEADING.match(body)
+                or (item and item.group(3) and body[item.end():].strip()))
+
+
 def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
-    """Return (first line number, text) for each paragraph outside fenced and indented code."""
+    """Return (first line number, text) for each paragraph outside code, following CommonMark containers.
+
+    Blockquotes and list items form a container stack. Each line first matches the open containers,
+    then may open new ones. A fenced block ends at its closing fence or when any enclosing container
+    ends; a paragraph also continues lazily when a line matches too few containers.
+    """
     paragraphs: list[tuple[int, str]] = []
     lines: list[str] = []
     start = 0
+    stack: list[int] = []  # 0 = blockquote; n > 0 = list item whose content starts n columns in
     fence: str | None = None
-    fence_quote = fence_indent = paragraph_quote = 0
-    list_indent = -1  # content column of the open list item; -1 outside lists
-    in_indented_code = False
+    fence_depth = 0
+
+    def flush() -> None:
+        nonlocal lines
+        if lines:
+            paragraphs.append((start, "\n".join(lines)))
+            lines = []
+
     for number, raw_line in enumerate(source.splitlines(), 1):
         line = markdown_expand_container_tabs(raw_line)
-        prefix = MARKDOWN_CONTAINER.match(line).group(0)  # type: ignore[union-attr]
-        body = line[len(prefix):]
-        quoted = ">" in prefix
-        # Indentation inside the innermost container; a blockquote marker owns one following space.
-        inner = len(prefix) - prefix.rfind(">") - 1 if quoted else len(prefix)
-        inner -= 1 if quoted and inner else 0
-        item = MARKDOWN_LIST_ITEM.match(body)
-        if item and inner - (0 if quoted or list_indent < 0 else list_indent) >= 4:
-            item = None  # four or more columns in is indented code, not a list item
-        marker = MARKDOWN_FENCE.match(body[item.end():] if item else body)
-        if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
-            marker = None  # a backtick run followed by more backticks is a code span, not a fence
+        pos = matched = 0
+        for width in stack:
+            rest = line[pos:]
+            if width == 0:
+                offset = markdown_indent(rest)
+                if offset < 4 and rest[offset:offset + 1] == ">":
+                    pos += offset + 1 + (line[pos + offset + 1:pos + offset + 2] == " ")
+                    matched += 1
+                    continue
+                break
+            if not rest.strip():
+                matched += 1
+                continue
+            if markdown_indent(rest) >= width:
+                pos += width
+                matched += 1
+                continue
+            break
+        rest = line[pos:]
         if fence is not None:
-            # A fenced block also ends when its blockquote or list item ends.
-            left_container = prefix.count(">") < fence_quote or (
-                fence_indent > 0 and bool(body.strip()) and len(prefix) < fence_indent)
-            if not left_container:
-                closer = MARKDOWN_FENCE.match(body)  # a closing fence sits at the fence's own level
-                if closer and prefix.count(">") == fence_quote and inner - fence_indent < 4 \
-                        and closer.group(1)[0] == fence[0] and len(closer.group(1)) >= len(fence) \
-                        and not closer.group(2).strip():
+            if matched >= fence_depth:
+                closer = MARKDOWN_FENCE.match(rest.lstrip(" "))
+                if closer and markdown_indent(rest) < 4 and closer.group(1)[0] == fence[0] \
+                        and len(closer.group(1)) >= len(fence) and not closer.group(2).strip():
                     fence = None
                 continue
-            fence = None
-        blank = not body.strip()
-        leading = len(line) - len(line.lstrip(" \t"))
-        if item:
-            list_indent = len(prefix) + item.end()
-        elif not blank and leading < list_indent and (not lines or marker or line.lstrip().startswith(">")):
-            list_indent = -1  # a block that starts left of the item's content ends the list
-        base = list_indent if list_indent >= 0 and not quoted else 0
-        if marker and not item and inner - base >= 4:
-            marker = None  # a fence indented four or more columns is code or paragraph text
-        code_indent = list_indent + 4 if list_indent >= 0 else 4
-        indented = not lines and not item and ">" not in prefix and leading >= code_indent
-        if in_indented_code and (blank or leading >= code_indent):
+            fence = None  # a fenced block also ends with its blockquote or list item
+        if matched < len(stack):
+            if lines and not markdown_block_start(rest):
+                lines.append(rest)  # lazy continuation keeps the paragraph and its containers
+                continue
+            flush()
+            del stack[matched:]
+        while markdown_indent(rest) < 4:  # open new containers
+            offset = markdown_indent(rest)
+            body = rest[offset:]
+            if body.startswith(">"):
+                flush()
+                stack.append(0)
+                step = offset + 1 + (body[1:2] == " ")
+                pos, rest = pos + step, rest[step:]
+                continue
+            item = MARKDOWN_LIST_ITEM.match(body)
+            if item and (item.group(3) or not body[item.end():]) and not MARKDOWN_THEMATIC_BREAK.match(body):
+                content = body[item.end():]
+                ordered_start = item.group(2)
+                if lines and (not content.strip() or (ordered_start is not None and ordered_start != "1")):
+                    break  # an empty or non-1 ordered item cannot interrupt a paragraph
+                flush()
+                marker_width = offset + len(item.group(1))
+                spaces = len(item.group(3))
+                width = marker_width + (1 if not content.strip() or spaces > 4 else spaces)
+                stack.append(width)
+                step = min(width, len(rest))
+                pos, rest = pos + step, rest[step:]
+                continue
+            break
+        if not rest.strip():
+            flush()
             continue
-        in_indented_code = False
-        if lines and (item or prefix.count(">") > paragraph_quote):
-            paragraphs.append((start, "\n".join(lines)))  # a list item or deeper quote interrupts it
-            lines = []
-        if marker or blank or indented:
-            if lines:
-                paragraphs.append((start, "\n".join(lines)))
-                lines = []
-            fence = marker.group(1) if marker else None
-            fence_quote = prefix.count(">")
-            fence_indent = base
-            in_indented_code = indented and not marker
+        body = rest.lstrip(" ")
+        marker = MARKDOWN_FENCE.match(body) if markdown_indent(rest) < 4 else None
+        if marker and marker.group(1)[0] == "`" and "`" in marker.group(2):
+            marker = None  # a backtick run followed by more backticks is a code span, not a fence
+        if marker:
+            flush()
+            fence, fence_depth = marker.group(1), len(stack)
+            continue
+        if markdown_indent(rest) >= 4 and not lines:
+            continue  # indented code
+        if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
+            flush()
+            if MARKDOWN_ATX_HEADING.match(body):
+                paragraphs.append((number, body))
             continue
         if not lines:
             start = number
-            paragraph_quote = prefix.count(">")
-        lines.append(line)
-    if lines:
-        paragraphs.append((start, "\n".join(lines)))
+        lines.append(rest)
+    flush()
     return paragraphs
 
 

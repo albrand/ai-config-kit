@@ -436,6 +436,11 @@ class PreReviewTests(unittest.TestCase):
             "~~~\n\t~~~\n*src/app.**\n~~~": [],
             "> \t\t~~~\n> **qa.***\n> ~~~": [2],
             "`npx\n> `e2e.*`": [],
+            "- item\n  > ```\n  > e2e.*\n> e2e.*": [4],
+            "> - item\n>   ```\n>   qa.*\n> qa.*": [4],
+            "- a\n  - b\n    ```\n    e2e.*\n    ```\n  tests.*": [6],
+            "> text\nlazy e2e.*": [2],
+            "1. item\n\n   ```\n   e2e.*\n   ```": [],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):
