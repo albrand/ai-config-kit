@@ -710,7 +710,7 @@ MARKDOWN_LIST_ITEM = re.compile(r"([-*+]|(\d{1,9})[.)])( *)")
 MARKDOWN_FENCE = re.compile(r"(`{3,}|~{3,})(.*)")
 MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
-MARKDOWN_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+MARKDOWN_ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
 # Ordinary words that can end a sentence right before bold or italic prose closes.
 MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
@@ -853,6 +853,49 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     return paragraphs
 
 
+def markdown_mask_inline_code(text: str) -> str:
+    """Blank code spans and neutralise backslash escapes, scanning left to right as CommonMark does.
+
+    Outside code, `\\` before ASCII punctuation makes that character literal (it can neither open a code
+    span nor delimit emphasis), so both become `!`. A backtick run opens a code span only when a run of
+    exactly the same length follows; inside the span backslashes are literal. Newlines are kept.
+    """
+    out = list(text)
+    index, size = 0, len(text)
+    while index < size:
+        char = text[index]
+        if char == "\\" and index + 1 < size and text[index + 1] in MARKDOWN_ASCII_PUNCTUATION:
+            out[index] = out[index + 1] = "!"
+            index += 2
+            continue
+        if char != "`":
+            index += 1
+            continue
+        run_end = index
+        while run_end < size and text[run_end] == "`":
+            run_end += 1
+        length, cursor, close = run_end - index, run_end, -1
+        while cursor < size:
+            found = text.find("`" * length, cursor)
+            if found < 0:
+                break
+            after = found
+            while after < size and text[after] == "`":
+                after += 1
+            if after - found == length:
+                close = found
+                break
+            cursor = after  # a longer or shorter run cannot close this span
+        if close < 0:
+            index = run_end  # an unmatched run is literal text
+            continue
+        for position in range(index, close + length):
+            if out[position] != "\n":
+                out[position] = " "
+        index = close + length
+    return "".join(out)
+
+
 def markdown_punctuation(char: str) -> bool:
     return unicodedata.category(char)[0] in "PS"
 
@@ -904,8 +947,7 @@ def markdown_glob_hits(path: str, source: str) -> list[dict[str, Any]]:
     # Fenced blocks, indented code and code spans (which may span lines) are literal text.
     hits: list[dict[str, Any]] = []
     for first_line, paragraph in markdown_paragraphs(source):
-        text = MARKDOWN_CODE_SPAN.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), paragraph)
-        text = text.replace("\\\\", "!!").replace("\\*", "!!")  # escaped stars are literal punctuation
+        text = markdown_mask_inline_code(paragraph)
         closers = markdown_star_closers(text)
         for match in MARKDOWN_GLOB.finditer(text):
             consumed, content_starts = closers.get(match.start(1), (0, []))

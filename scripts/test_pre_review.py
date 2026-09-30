@@ -450,6 +450,13 @@ class PreReviewTests(unittest.TestCase):
             "(*e2e.*)": [1],
             "***e2e.***": [1],
             "**Run (*unit*) e2e.* files**": [1],
+            "Run \\` e2e.* \\` locally.": [1],
+            "Run \\\\`e2e.*` locally.": [],
+            "Run \\\\\\`e2e.*\\` locally.": [1],
+            "`foo\\` e2e.*": [1],
+            "``a ` e2e.* ``": [],
+            "```a `` e2e.* ```": [],
+            "`` e2e.* `": [1],
         }
         for text, expected_lines in cases.items():
             with self.subTest(text=text):
