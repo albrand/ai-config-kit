@@ -480,9 +480,13 @@ def test_stem(path: Path) -> str:
     return stem[5:] if stem.startswith("test_") else stem
 
 
+# test_*.py and test*.js style, Python's *_test.py, and JS/TS *.test.* / *.spec.*.
+TEST_PATH_RE = re.compile(r"(?:^|/)(?:test[^/]*|[^/]*_test\.py|[^/]*\.(?:test|spec)\.[^.]+)$")
+
+
 def related_test_paths(repo: Path, paths: list[str]) -> list[str]:
     changed = {Path(path) for path in paths}
-    tests = {path for path in paths if re.search(r"(?:^|/)(?:test[^/]*|[^/]*\.(?:test|spec)\.[^.]+)$", path)}
+    tests = {path for path in paths if TEST_PATH_RE.search(path)}
     source_stems = {test_stem(path) for path in changed if path.suffix in ({".py"} | TYPESCRIPT_SUFFIXES | JAVASCRIPT_SUFFIXES)}
     tracked_paths = nul_paths(git_output(repo, "ls-files", "-z"))
     candidates = tracked_paths | set(paths)
@@ -491,7 +495,7 @@ def related_test_paths(repo: Path, paths: list[str]) -> list[str]:
         if any(part in ignored_parts for part in Path(rel).parts):
             continue
         candidate = Path(rel)
-        if re.search(r"(?:^|/)(?:test[^/]*|[^/]*\.(?:test|spec)\.[^.]+)$", rel) and test_stem(candidate) in source_stems:
+        if TEST_PATH_RE.search(rel) and test_stem(candidate) in source_stems:
             tests.add(rel)
     return sorted(tests)
 
