@@ -19,9 +19,11 @@ line when only semantic review can catch it. Put generic rules in the kit starte
 pack and project-specific rules in `.review-rules/`.
 
 For every pull-request review, also load and obey the `hermes-assisted-pr-review`
-skill. Its bounded Hermes advisor pass is a mandatory internal completion gate.
-Keep Hermes, model, AI, agent, and provenance details out of every team- or
-author-facing PR surface.
+skill. Its bounded Hermes advisor pass is mandatory to attempt, best-effort to
+obtain, and never a publish blocker: if the advisor is unavailable, publish the
+independently evidenced verdict unchanged and record the unadvised gap only in
+the operator close-out. Keep Hermes, model, AI, agent, and provenance details
+out of every team- or author-facing PR surface.
 
 ## Workflow
 
