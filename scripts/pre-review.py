@@ -762,7 +762,6 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
     stack: list[int] = []  # 0 = blockquote; n > 0 = list item whose content starts n columns in
     fence: str | None = None
     fence_depth = 0
-    after_indented_code = False
 
     def flush() -> None:
         nonlocal lines
@@ -820,8 +819,6 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
                 ordered_start = item.group(2)
                 if lines and (not content.strip() or (ordered_start is not None and ordered_start != "1")):
                     break  # an empty or non-1 ordered item cannot interrupt a paragraph
-                if after_indented_code and ordered_start not in (None, "1") and content.lstrip().startswith(">"):
-                    break  # after indented code, CommonMark keeps this non-1 nested quote in paragraph text
                 flush()
                 marker_width = offset + len(item.group(1))
                 spaces = len(item.group(3))
@@ -843,7 +840,6 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
             fence, fence_depth = marker.group(1), len(stack)
             continue
         if markdown_indent(rest) >= 4 and not lines:
-            after_indented_code = True
             continue  # indented code
         if markdown_indent(rest) < 4 and (MARKDOWN_THEMATIC_BREAK.match(body) or MARKDOWN_ATX_HEADING.match(body)):
             flush()
@@ -853,7 +849,6 @@ def markdown_paragraphs(source: str) -> list[tuple[int, str]]:
         if not lines:
             start = number
         lines.append(rest)
-        after_indented_code = False
     flush()
     return paragraphs
 

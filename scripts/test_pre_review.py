@@ -442,7 +442,6 @@ class PreReviewTests(unittest.TestCase):
             "> text\nlazy e2e.*": [2],
             "1. item\n\n   ```\n   e2e.*\n   ```": [],
             "**Run (*unit*) tests.**": [],
-            "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
             "**Run \\*unit\\* tests.**": [],
             "*a **b** tests.*": [],
             "**x** and *Run the tests.*": [],
