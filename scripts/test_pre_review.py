@@ -466,6 +466,15 @@ class PreReviewTests(unittest.TestCase):
             "    `qa.*`\n> 10. > ~~~\n    > e2e.***": [3],
             "    e2e.*": [],
             "`x`*e2e.*": [1],
+            # A link destination, title or autolink is parsed before a code span starting inside it.
+            "[x](`) e2e.* `": [1],
+            "**[x](`) e2e.* files** `": [1],
+            "[x](<`>) e2e.* `": [1],
+            '[x](/u "`") e2e.* `': [1],
+            "<http://a`b> e2e.* `": [1],
+            "[foo`](/uri)` e2e.*": [1],
+            "[x] (`) e2e.* `": [],
+            "[x](` e2e.* `)": [],
             "**`Run` e2e.* files**": [1],
             # Unmodelled inline constructs keep the base rule's hit (fail safe, same as before this change).
             "**Run [unit](foo*) tests.**": [1],

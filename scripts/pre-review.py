@@ -713,6 +713,61 @@ MARKDOWN_THEMATIC_BREAK = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 MARKDOWN_SETEXT_UNDERLINE = re.compile(r"(?:=+|-+)[ \t]*$")
 MARKDOWN_ATX_HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
 MARKDOWN_ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+MARKDOWN_AUTOLINK = re.compile(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)>")
+
+
+def markdown_link_tail_end(text: str, start: int) -> int:
+    """End index of an inline link tail `(destination "title")` starting at `(`, or -1 when none parses."""
+    size, index = len(text), start + 1
+
+    def skip_space(position: int) -> int:
+        newlines = 0
+        while position < size and text[position] in " \t\n":
+            newlines += text[position] == "\n"
+            position += 1
+        return position if newlines <= 1 else -1
+
+    index = skip_space(index)
+    if index < 0:
+        return -1
+    if index < size and text[index] == "<":
+        index += 1
+        while index < size and text[index] not in "<>\n":
+            index += 2 if text[index] == "\\" else 1
+        if index >= size or text[index] != ">":
+            return -1
+        index += 1
+    else:
+        depth = 0
+        while index < size and text[index] > " ":
+            char = text[index]
+            if char == "\\" and index + 1 < size:
+                index += 2
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            index += 1
+        if depth:
+            return -1
+    before_title = index
+    index = skip_space(index)
+    if index < 0:
+        return -1
+    if index > before_title and index < size and text[index] in "\"'(":
+        closer = ")" if text[index] == "(" else text[index]
+        index += 1
+        while index < size and text[index] != closer:
+            index += 2 if text[index] == "\\" else 1
+        if index >= size:
+            return -1
+        index = skip_space(index + 1)
+        if index < 0:
+            return -1
+    return index + 1 if index < size and text[index] == ")" else -1
 MARKDOWN_STAR_RUN = re.compile(r"\*+")
 # Ordinary words that can end a sentence right before bold or italic prose closes.
 MARKDOWN_PROSE_WORDS = {"test", "tests", "scripts"}
@@ -894,13 +949,32 @@ def markdown_mask_inline_code(text: str) -> str:
     letters and its backticks stay, so emphasis flanking next to the span matches the source. Newlines are kept.
     """
     out = list(text)
-    index, size = 0, len(text)
+    index, size, open_brackets = 0, len(text), 0
     while index < size:
         char = text[index]
         if char == "\\" and index + 1 < size and text[index + 1] in MARKDOWN_ASCII_PUNCTUATION:
             out[index] = out[index + 1] = "!"
             index += 2
             continue
+        if char == "[":
+            open_brackets += 1
+        elif char == "]" and open_brackets:
+            open_brackets -= 1
+            end = markdown_link_tail_end(text, index + 1) if text[index + 1:index + 2] == "(" else -1
+            if end > 0:  # a link destination or title is parsed before any code span inside it
+                for position in range(index + 1, end):
+                    if out[position] == "`":
+                        out[position] = "!"
+                index = end
+                continue
+        elif char == "<":
+            autolink = MARKDOWN_AUTOLINK.match(text, index)
+            if autolink:  # an autolink starting before a backtick wins over the code span
+                for position in range(index, autolink.end()):
+                    if out[position] == "`":
+                        out[position] = "!"
+                index = autolink.end()
+                continue
         if char != "`":
             index += 1
             continue
