@@ -21,6 +21,15 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(RENDERER)
 
 
+class CommittedSnapshotTests(unittest.TestCase):
+    def test_committed_rendered_homes_match_the_renderer(self) -> None:
+        # check-standing-rules fingerprints these files; a source edit must regenerate them.
+        snapshots = RENDERER.ROOT / "proposals/card21/rendered-homes"
+        for name, filename in RENDERER.NAMES.items():
+            with self.subTest(home=name):
+                self.assertEqual((snapshots / filename).read_text(encoding="utf-8"), RENDERER.rendered(name))
+
+
 class InstallPreflightTests(unittest.TestCase):
     def setUp(self) -> None:
         self.lock_root = tempfile.TemporaryDirectory()
