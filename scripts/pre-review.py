@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shutil
 import shlex
 import subprocess
@@ -181,8 +182,18 @@ def hydrate_checkout(repo: Path, output_dir: Path) -> str | None:
 
 def run_capture(argv: list[str], cwd: Path, timeout: float = 30,
                 env: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=timeout, check=False, shell=False, env=env)
+    process = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               shell=False, env=env, start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        output, _ = process.communicate()
+        raise subprocess.TimeoutExpired(argv, timeout, output=output or error.output) from error
+    return subprocess.CompletedProcess(argv, process.returncode, output)
 
 
 def output_tail(raw: bytes) -> str:
@@ -511,19 +522,21 @@ def focused_test_commands(repo: Path, tests: list[str], output_dir: Path,
                     "timeout = float(sys.argv[1])\n"
                     "failed = False\n"
                     "for path in sys.argv[2:]:\n"
-                    "    process = subprocess.Popen([sys.executable, path], start_new_session=True)\n"
+                    "    process = subprocess.Popen([sys.executable, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)\n"
                     "    try:\n"
-                    "        result = process.wait(timeout=timeout)\n"
+                    "        output, _ = process.communicate(timeout=timeout)\n"
                     "    except subprocess.TimeoutExpired:\n"
                     "        try:\n"
                     "            os.killpg(process.pid, signal.SIGKILL)\n"
                     "        except ProcessLookupError:\n"
                     "            pass\n"
-                    "        process.wait()\n"
+                    "        output, _ = process.communicate()\n"
                     "        print(f'{path} timed out after {timeout:g} seconds', file=sys.stderr)\n"
                     "        failed = True\n"
                     "        continue\n"
-                    "    failed = failed or result != 0\n"
+                    "    sys.stdout.buffer.write(output or b'')\n"
+                    "    sys.stdout.buffer.flush()\n"
+                    "    failed = failed or process.returncode != 0\n"
                     "raise SystemExit(1 if failed else 0)\n"
                 )
                 command = [sys.executable, "-c", runner,

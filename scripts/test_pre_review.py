@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 
@@ -688,7 +688,9 @@ class PreReviewTests(unittest.TestCase):
 
     def test_command_timeout_is_unverified_not_failure(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run", side_effect=subprocess.TimeoutExpired(["slow-check"], 1, output=b"still running")):
+        with patch.dict(namespace["record_command"].__globals__, run_capture=Mock(side_effect=subprocess.TimeoutExpired(
+            ["slow-check"], 1, output=b"still running"
+        ))):
             command = namespace["record_command"]("slow-check", ["slow-check"], self.repo)
         self.assertEqual(command["status"], "timeout")
         self.assertEqual(command["verification"], "unverified")
@@ -696,15 +698,86 @@ class PreReviewTests(unittest.TestCase):
         self.assertIn("result is unverified", command["output_tail"])
         self.assertNotEqual(command["status"], "fail")
 
+    def test_record_command_kills_pipe_holding_descendants_for_single_and_multi_python(self) -> None:
+        namespace = runpy.run_path(str(SCRIPT))
+        child_pid_file = self.base / "pipe-holder.pid"
+        later_marker = self.base / "later-script-ran"
+        parent_script = self.repo / "tests" / "test_parent_exit.py"
+        parent_script.parent.mkdir(parents=True)
+        parent_script.write_text(
+            "import subprocess\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"PID_FILE = Path({str(child_pid_file)!r})\n"
+            "class ParentExitTests(unittest.TestCase):\n"
+            "    def test_spawn_pipe_holder(self):\n"
+            "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "        PID_FILE.write_text(str(child.pid), encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        later_script = self.repo / "tests" / "test_later.py"
+        later_script.write_text(
+            "from pathlib import Path\n"
+            "import unittest\n"
+            f"MARKER = Path({str(later_marker)!r})\n"
+            "class LaterTests(unittest.TestCase):\n"
+            "    def test_runs_after_timed_out_sibling(self):\n"
+            "        MARKER.write_text('once', encoding='utf-8')\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+
+        def assert_child_stopped() -> None:
+            child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+            for _ in range(50):
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    return
+                time.sleep(0.02)
+            self.fail(f"captured-output descendant {child_pid} is still running")
+
+        single = namespace["focused_test_commands"](
+            self.repo, ["tests/test_parent_exit.py"], self.output
+        )[0]
+        started = time.monotonic()
+        single_command = namespace["record_command"](
+            single[0], single[1], self.repo, timeout=0.3
+        )
+        self.assertEqual(single_command["status"], "timeout")
+        self.assertLess(time.monotonic() - started, 2)
+        assert_child_stopped()
+
+        child_pid_file.unlink()
+        commands = namespace["focused_test_commands"](
+            self.repo, ["tests/test_parent_exit.py", "tests/test_later.py"],
+            self.output, timeout_scale=0.0005,
+        )
+        multi = next(command for command in commands if command[0] == "focused-python-tests")
+        started = time.monotonic()
+        multi_command = namespace["record_command"](
+            multi[0], multi[1], self.repo, timeout=3
+        )
+        self.assertEqual(multi_command["status"], "fail", multi_command["output_tail"])
+        self.assertEqual(multi_command["exit_code"], 1)
+        self.assertIn("timed out after 0.3 seconds", multi_command["output_tail"])
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(later_marker.read_text(encoding="utf-8"), "once")
+        assert_child_stopped()
+
     def test_environment_failures_are_unverified_errors(self) -> None:
         namespace = runpy.run_path(str(SCRIPT))
         for output in (b"EPERM: operation not permitted", b"DATABASE_URL is not set",
                        b"refusing to provision fixture identities: DATABASE_URL is not a postgres:// URL",
                        b"no server is available", b"Operation not permitted (os error 1)",
                        b"Process from config.webServer was not able to start. Exit code: 127; next: command not found"):
-            with self.subTest(output=output), patch.object(
-                namespace["subprocess"], "run",
-                return_value=subprocess.CompletedProcess(["check"], 1, output),
+            with self.subTest(output=output), patch.dict(
+                namespace["record_command"].__globals__,
+                run_capture=Mock(return_value=subprocess.CompletedProcess(["check"], 1, output))
             ):
                 command = namespace["record_command"]("environment-check", ["check"], self.repo)
                 self.assertEqual(command["status"], "error")
@@ -718,28 +791,26 @@ class PreReviewTests(unittest.TestCase):
                        b"Cannot find package 'node_modules/example-runtime' imported from app.ts",
                        b"Cannot find module 'react' or its corresponding type declarations.",
                        b"Cannot find package '@radix-ui/react-tabs' imported from app.ts"):
-            with self.subTest(output=output), patch.object(
-                namespace["subprocess"], "run",
-                return_value=subprocess.CompletedProcess(["tsc"], 2, output),
+            with self.subTest(output=output), patch.dict(
+                namespace["record_command"].__globals__,
+                run_capture=Mock(return_value=subprocess.CompletedProcess(["tsc"], 2, output))
             ):
                 command = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
                 self.assertEqual(command["status"], "error")
                 self.assertEqual(command["verification"], "unverified")
                 self.assertEqual(command["error_kind"], "environment")
 
-        with patch.object(
-            namespace["subprocess"], "run",
-            return_value=subprocess.CompletedProcess(
+        with patch.dict(
+            namespace["record_command"].__globals__, run_capture=Mock(return_value=subprocess.CompletedProcess(
                 ["tsc"], 2, b"Cannot find module './missing-source' or its corresponding type declarations."
-            ),
+            )),
         ):
             source_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
         self.assertEqual(source_error["status"], "fail")
-        with patch.object(
-            namespace["subprocess"], "run",
-            return_value=subprocess.CompletedProcess(
+        with patch.dict(
+            namespace["record_command"].__globals__, run_capture=Mock(return_value=subprocess.CompletedProcess(
                 ["tsc"], 2, b"Cannot find module '@/missing-source' or its corresponding type declarations."
-            ),
+            )),
         ):
             alias_error = namespace["record_command"]("typescript-typecheck", ["tsc"], self.repo)
         self.assertEqual(alias_error["status"], "fail")
@@ -794,16 +865,16 @@ class PreReviewTests(unittest.TestCase):
         self.assertFalse(output_dir.is_relative_to(self.repo))
         self.assertIn("--reporter=json", commands[0][1])
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run",
-                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+        run = Mock(return_value=subprocess.CompletedProcess(["playwright"], 0, b""))
+        with patch.dict(namespace["record_command"].__globals__, run_capture=run):
             namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
                                         output_dir=self.output)
         environment = run.call_args.kwargs["env"]
         self.assertEqual(environment["PLAYWRIGHT_JSON_OUTPUT_FILE"], str(self.output / "playwright-report.json"))
         self.assertEqual(environment["TMPDIR"], str(self.output))
         namespace = runpy.run_path(str(SCRIPT))
-        with patch.object(namespace["subprocess"], "run",
-                          return_value=subprocess.CompletedProcess(["playwright"], 0, b"")) as run:
+        run = Mock(return_value=subprocess.CompletedProcess(["playwright"], 0, b""))
+        with patch.dict(namespace["record_command"].__globals__, run_capture=run):
             namespace["record_command"]("focused-playwright-tests", ["playwright", "test"], self.repo,
                                         output_dir=self.output)
         environment = run.call_args.kwargs["env"]
