@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the continuation check without replacing other gates or hook settings."""
+"""Install the continuation check and its delivery budget with backups."""
 import argparse
 import hashlib
 import json
@@ -7,7 +7,10 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
+import tomllib
 
 
 def digest(path):
@@ -42,6 +45,7 @@ def replace(source, target):
 
 def install(source, home, backup):
     pairs = [(source / "hooks/qa-stop-hook.sh", home / ".agent-hooks/qa-stop-hook.sh")]
+    pairs.append((source / "hooks/hook-timeouts.py", home / ".agent-hooks/hook-timeouts.py"))
     check_target(home, pairs[0][1])
     for provider_home in (".agents", ".bb", ".claude", ".codex"):
         root = home / provider_home / "skills/scope-ledger"
@@ -62,6 +66,15 @@ def install(source, home, backup):
         manifest.append({"target": str(target), "source": str(origin), "existed": target.exists(),
                          "before_sha256": digest(target), "after_sha256": digest(origin),
                          "backup": str(backup / str(i))})
+    configs = [home / ".claude/settings.json", home / ".codex/hooks.json"]
+    for config in configs:
+        check_target(home, config)
+        if config.exists():
+            json.loads(config.read_text())
+    trust_config = home / ".codex/config.toml"
+    if configs[1].exists():
+        check_target(home, trust_config)
+        tomllib.loads(trust_config.read_text())
     backup.mkdir(parents=True, exist_ok=False)
     for item in manifest:
         check_target(home, Path(item["target"]))
@@ -76,6 +89,16 @@ def install(source, home, backup):
         replace(Path(item["source"]), target)
         if digest(target) != item["after_sha256"]:
             raise RuntimeError(f"Installation parity failed: {target}")
+    env = dict(os.environ, HOME=str(home), HOOK_GATES_DIR=str(home / ".agents/skills"))
+    for config in configs:
+        check_target(home, config)
+    subprocess.run([sys.executable, str(source / "hooks/hook-timeouts.py"), "apply",
+                                    *(str(config) for config in configs)], env=env, check=True,
+                                   capture_output=True, text=True, timeout=30)
+    if configs[1].exists():
+        check_target(home, trust_config)
+        subprocess.run([sys.executable, str(source / "hooks/codex-hook-trust.py"), "--trust"],
+                       env=env, check=True, capture_output=True, text=True, timeout=30)
     return {"backup": str(backup), "installed_files": len(manifest), "parity": f"{len(manifest)}/{len(manifest)}"}
 
 

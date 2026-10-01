@@ -264,6 +264,11 @@ correction must not hide unfinished work.
   continue actionable authorized work, and prepare independent steps while a
   decision is pending. It does not authorize scope or permission changes. If
   every remaining step needs the user, retain the precise approval request.
+- The registered `qa-stop-hook.sh` command needs a host timeout of at least
+  15 seconds. Its repository lookup alone permits 5 seconds, before the
+  evidence/closeout stages; a 5-second host limit can discard their result on
+  a loaded host. `hook-timeouts.py` checks/applies this alongside the existing
+  PreToolUse budget, preserving unrelated settings and backing up changes.
 - `stop_hook_active` (the retry after a nudge), an unreadable ledger and
   unreadable thread state allow the stop. Without a BB thread id the bounded
   message check still runs, but no BB ledger or thread state is read. Native

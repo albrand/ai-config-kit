@@ -1,8 +1,10 @@
 """Exercise installation, backups and refusal before modifying a fixture home."""
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,9 +29,42 @@ class ContinuationInstallTests(unittest.TestCase):
             (root / "SKILL.md").write_text("old skill\n")
             shutil.copy2(ROOT / "shared/scope-ledger/scripts/scope-gate.py", root / "scripts/scope-gate.py")
 
+    def native_config(self):
+        config = {"hooks": {
+            "PreToolUse": [{"hooks": [{"type": "command", "command": str(self.home / ".agent-hooks/coordinator-hook-pretool.sh"), "timeout": 20}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": str(self.home / ".agent-hooks/qa-stop-hook.sh"), "timeout": 5}]}],
+        }, "keep": "unchanged"}
+        path = self.home / ".codex/hooks.json"
+        path.write_text(json.dumps(config))
+        (self.home / ".codex/config.toml").write_text('model = "fixture"\n')
+        return path, config
+
+    def test_install_updates_delivery_budget_and_native_trust(self):
+        path, before = self.native_config()
+        installer.install(ROOT, self.home, self.backup)
+        after = json.loads(path.read_text())
+        after["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 5
+        self.assertEqual(after, before)
+        states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
+        self.assertEqual(len(states), 2)
+        self.assertTrue(all(state["enabled"] and state["trusted_hash"].startswith("sha256:") for state in states.values()))
+        self.assertEqual((self.home / ".agent-hooks/hook-timeouts.py").read_bytes(), (ROOT / "hooks/hook-timeouts.py").read_bytes())
+
+    def test_symlink_native_trust_config_refuses_before_changing_any_gate(self):
+        self.native_config()
+        config = self.home / ".codex/config.toml"
+        outside = Path(self.temp.name) / "unrelated-config.toml"
+        config.rename(outside)
+        config.symlink_to(outside)
+        with self.assertRaisesRegex(RuntimeError, "symlink"):
+            installer.install(ROOT, self.home, self.backup)
+        self.assertEqual(outside.read_text(), 'model = "fixture"\n')
+        self.assertEqual((self.home / ".agent-hooks/qa-stop-hook.sh").read_text(), "original stop wrapper\n")
+        self.assertFalse(self.backup.exists())
+
     def test_install_updates_all_copies_and_preserves_backups_and_other_gates(self):
         result = installer.install(ROOT, self.home, self.backup)
-        self.assertEqual(result["installed_files"], 9)
+        self.assertEqual(result["installed_files"], 10)
         self.assertEqual((self.backup / "0").read_text(), "original stop wrapper\n")
         self.assertEqual((self.home / ".agent-hooks/other-safety-hook.sh").read_text(), "preserve this safety check\n")
         for provider_home in (".agents", ".bb", ".claude", ".codex"):
