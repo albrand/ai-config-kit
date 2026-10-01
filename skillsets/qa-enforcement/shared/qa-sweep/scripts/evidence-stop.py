@@ -129,15 +129,19 @@ def has_evidence_packet(text):
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
                 continue  # separator row
+            heads = [cell.lower() for cell in cells]
+            goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
+            verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
+            if goal is not None and verdict is not None and goal != verdict:
+                columns = (goal, verdict)  # a goal/verdict table, two columns or more
+                current = None
+                continue
+            if columns and len(cells) > max(columns):
+                fields.setdefault("goals", []).append(cells[columns[0]])
+                fields.setdefault("derived_verdict", []).append(cells[columns[1]])
+                current = None
+                continue
             if len(cells) > 2:
-                heads = [cell.lower() for cell in cells]
-                goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
-                verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
-                if goal is not None and verdict is not None:
-                    columns = (goal, verdict)
-                elif columns and len(cells) > max(columns):
-                    fields.setdefault("goals", []).append(cells[columns[0]])
-                    fields.setdefault("derived_verdict", []).append(cells[columns[1]])
                 current = None
                 continue
             if len(cells) == 2:
