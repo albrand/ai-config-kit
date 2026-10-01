@@ -16,7 +16,8 @@ CLAIM_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:it|this|everything|all|(?:all|both|each|every|the|these|those|my|our)\s+(?:[\w-]+\s+){0,3}?"
+        r"\b(?:it|this|everything|all|(?:all|both|each|every|the|these|those|my|our)\s+"
+        r"(?:(?!(?:so|that|and|or|but|to|of|if|when|each|every|all|both|these|those)\b)[\w-]+\s+){0,3}?"
         r"(?:work|tasks?|changes?|fix(?:es)?|features?|workflows?|flows?|issues?|bugs?|requests?|implementations?|"
         r"builds?|apps?|sites?|releases?|prs?|deployments?|branch(?:es)?|journeys?|items?|steps?|deliverables?|"
         r"outcomes?|edits?|updates?))\s+"
@@ -38,7 +39,8 @@ NEGATED = re.compile(
 # "when each fix is ready", "confirm the deployment is ready", "none of the items is fixed".
 NOT_A_REPORT = re.compile(
     r"\b(?:when|once|if|until|unless|whether|after|before|confirm(?:s|ing)?|check(?:s|ing)?|verify(?:ing)?|"
-    r"ensure|make sure|none of|neither)\b[^.;:\n]*$",
+    r"ensure|make sure|none of|neither|proves?|recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|"
+    r"could)\b[^.;:\n]*$",
     re.IGNORECASE,
 )
 NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGNORECASE)
@@ -196,7 +198,8 @@ def first_claim(text):
     for match in sorted(found, key=lambda item: item.start()):
         prefix = text[max(0, match.start() - 36):match.start()]
         line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
-        if line.lstrip().startswith(">") or NEGATED.search(prefix) or NOT_A_REPORT.search(prefix):
+        in_code = line.count("`") % 2 == 1 or text.count("```", 0, match.start()) % 2 == 1
+        if line.lstrip().startswith(">") or in_code or NEGATED.search(prefix) or NOT_A_REPORT.search(prefix):
             continue
         return match.group("claim").lower()
     return None

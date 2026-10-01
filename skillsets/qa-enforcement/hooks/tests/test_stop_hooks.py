@@ -83,7 +83,10 @@ class StopHooksTests(unittest.TestCase):
         for text in ("Are all three changes complete?", "Not all three changes are complete yet.",
                      "Here is the plan for the three changes.", "None of the three items is fixed.",
                      "When each fix is ready, I'll queue it.", "Confirm the Vercel deployment is ready.",
-                     "V is now confirming the production deployment is READY."):
+                     "V is now confirming the production deployment is READY.",
+                     "The new test feeds `all authorized work is complete.` to the hook.",
+                     "Fixture:\n```\nAll three requested changes are complete.\n```",
+                     "Recommendation: approve updating our checks so each change is tested as it will look after merging."):
             with self.subTest(text=text):
                 self.assertFalse(evidence.inspect(text)["block"], text)
 
