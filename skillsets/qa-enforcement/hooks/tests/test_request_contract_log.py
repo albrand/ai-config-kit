@@ -67,8 +67,9 @@ class RequestContractLogTests(unittest.TestCase):
         lines = events.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
         event = json.loads(lines[0])
-        self.assertEqual(set(event), {"schema_version", "ts", "event", "thread_id", "row_count",
+        self.assertEqual(set(event), {"schema_version", "ts", "event", "event_id", "thread_id", "row_count",
                                       "row_status_counts"})
+        self.assertRegex(event["event_id"], r"^[0-9a-f]{16}$")
         self.assertEqual(event["schema_version"], 1)
         self.assertEqual(event["event"], "request-contract")
         self.assertEqual(event["thread_id"], THREAD)
@@ -219,6 +220,21 @@ class RequestContractLogTests(unittest.TestCase):
                                 capture_output=True, text=True, env=self.env())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["events"], 2)
+
+    def test_identical_closeouts_in_one_second_count_twice(self):
+        # Two runs on the same contract: same ts second, thread and counts; only event_id differs.
+        self.write_contract()
+        for _ in range(2):
+            self.assertEqual(self.run_logger().returncode, 0)
+        main = self.home / ".local/state/agent-quality/events.jsonl"
+        events = [json.loads(line) for line in main.read_text().splitlines()]
+        self.assertNotEqual(events[0]["event_id"], events[1]["event_id"])
+        same = [dict(e, ts="2026-10-01T13:00:00+00:00") for e in events]
+        main.write_text("".join(json.dumps(e) + "\n" for e in same + same[:1]))
+        result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z"],
+                                capture_output=True, text=True, env=self.env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["events"], 2, "distinct closeouts count; a re-read row does not")
 
     def test_uptake_reports_a_missing_thread_store(self):
         result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z",

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
 import sys
 
@@ -58,6 +59,8 @@ def _event(thread_id, contract):
         "schema_version": 1,
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "event": "request-contract",
+        # A random id keeps two identical closeouts in the same second distinct for the uptake count.
+        "event_id": secrets.token_hex(8),
         "thread_id": thread_id,
         "row_count": len(contract["outcomes"]),
         "row_status_counts": counts,
