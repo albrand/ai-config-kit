@@ -205,6 +205,21 @@ class RequestContractLogTests(unittest.TestCase):
         self.assertEqual(report["events"], 3)
         self.assertEqual(report["threads_outside_tree"], ["thr_at_boundary", "thr_subsecond"])
 
+    def test_uptake_keeps_same_second_rows_that_differ_only_in_status_counts(self):
+        # Same ts, thread_id and row_count; only row_status_counts differ: two real closeouts, not a duplicate.
+        main = self.home / ".local/state/agent-quality/events.jsonl"
+        main.parent.mkdir(parents=True)
+        base = {"schema_version": 1, "ts": "2026-10-01T13:00:00+00:00", "event": "request-contract",
+                "thread_id": "thr_same", "row_count": 2}
+        main.write_text("\n".join([
+            json.dumps(dict(base, row_status_counts={"complete": 2, "blocked": 0})),
+            json.dumps(dict(base, row_status_counts={"complete": 1, "blocked": 1})),
+        ]) + "\n")
+        result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z"],
+                                capture_output=True, text=True, env=self.env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["events"], 2)
+
     def test_uptake_reports_a_missing_thread_store(self):
         result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z",
                                  "--exclude-tree", "thr_root", "--bb-db", str(self.base / "absent.db")],
