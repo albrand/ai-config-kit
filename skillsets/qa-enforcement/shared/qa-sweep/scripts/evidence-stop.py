@@ -47,6 +47,10 @@ SUBJECT_NOT_A_REPORT = re.compile(
     r"suggest|confirm\w*|verify|ensure|make sure|how|what|which|why|where)\b|\b(?:when|once|after|before|while)\s+[^,]*$",
     re.IGNORECASE,
 )
+# After a named subject's claim word, these may follow a report ("is merged into dev", "is fixed and pushed",
+# "is ready for review"); any other word, unless an adverb, makes the claim word an adjective ("are fixed HTTPS bases").
+AFTER_CLAIM = re.compile(r"\s+(?!(?:and|or|but|in|into|on|onto|at|to|for|with|by|from|as|after|before|since|via|now|"
+                         r"except|apart|without|locally|here|there|again|too|already|yet|today|both|all|successfully|cleanly)\b|\w+ly\b)[A-Za-z]\w*")
 # "Working" said of agents, or followed by what is being worked on, is work in progress.
 IN_PROGRESS = re.compile(r"\b(?:child(?:ren)?|agents?|threads?|workers?|lanes?|team|they|we|I)\b", re.IGNORECASE)
 # "Once everything is fixed, I push" is a condition; "Before handing off, all three fixes are done" reports done
@@ -259,6 +263,8 @@ def first_claim(text):
             continue
         subject = match.groupdict().get("subject")
         if subject and SUBJECT_NOT_A_REPORT.search(subject):
+            continue
+        if subject and AFTER_CLAIM.match(text, match.end()):
             continue
         if subject and match.group("claim").lower() == "working" and (
                 IN_PROGRESS.search(subject) or re.match(r"\s+(?:on|through|in|with|towards?|to)\b", text[match.end():])):
