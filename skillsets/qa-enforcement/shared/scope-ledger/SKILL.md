@@ -55,8 +55,11 @@ python3 ~/.agents/skills/scope-ledger/scripts/request-contract-log.py \
   <contract.json> --thread-id <thread-id>
 ```
 
-The logger stores only the thread id, row count, and status counts. If it fails,
-note the failure and continue; this review step never blocks work.
+The logger stores only the thread id, row count, and status counts in
+`~/.local/state/agent-quality/events.jsonl`. When a sandbox cannot write there
+(Codex workspace-write), it appends to `/tmp/agent-quality-<uid>/events.jsonl`,
+a directory only that user can enter; uptake counts read both files. If both
+fail, note the failure and continue; this review step never blocks work.
 
 ## The gate (PreToolUse, Claude Code and Codex)
 

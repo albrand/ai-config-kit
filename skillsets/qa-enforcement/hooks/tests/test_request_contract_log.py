@@ -23,6 +23,7 @@ class RequestContractLogTests(unittest.TestCase):
         self.home = self.base / "home"
         self.home.mkdir()
         self.contract_path = self.base / "contract.json"
+        self.fallback = self.base / "fallback"
         self.contract = {
             "target": "private target detail",
             "outcomes": [
@@ -40,13 +41,20 @@ class RequestContractLogTests(unittest.TestCase):
     def write_contract(self):
         self.contract_path.write_text(json.dumps(self.contract), encoding="utf-8")
 
+    def env(self):
+        return dict(os.environ, HOME=str(self.home), REQUEST_CONTRACT_FALLBACK_DIR=str(self.fallback))
+
+    def block_fallback(self):
+        # A regular file where the fallback directory should be: the fallback cannot be used either.
+        self.fallback.write_text("not a directory", encoding="utf-8")
+
     def run_logger(self):
-        env = dict(os.environ, HOME=str(self.home))
+        env = self.env()
         return subprocess.run(["python3", str(LOGGER), str(self.contract_path), "--thread-id", THREAD],
                               capture_output=True, text=True, env=env)
 
     def run_logger_with_timeout(self):
-        env = dict(os.environ, HOME=str(self.home))
+        env = self.env()
         return subprocess.run(["python3", str(LOGGER), str(self.contract_path), "--thread-id", THREAD],
                               capture_output=True, text=True, env=env, timeout=2)
 
@@ -94,6 +102,7 @@ class RequestContractLogTests(unittest.TestCase):
         event_path = self.home / ".local/state/agent-quality/events.jsonl"
         event_path.parent.mkdir(parents=True)
         os.mkfifo(event_path)
+        self.block_fallback()
         started = time.monotonic()
         result = self.run_logger_with_timeout()
         self.assertLess(time.monotonic() - started, 2)
@@ -105,10 +114,52 @@ class RequestContractLogTests(unittest.TestCase):
         event_path = self.home / ".local/state/agent-quality/events.jsonl"
         event_path.parent.mkdir(parents=True)
         event_path.mkdir()
+        self.block_fallback()
         result = self.run_logger()
         self.assertEqual(result.returncode, 1)
         self.assertIn("could not append metadata event", result.stderr)
         self.assertNotIn(SECRET_TEXT, result.stderr)
+
+    def test_sandbox_blocked_home_state_falls_back_to_a_private_tmp_dir(self):
+        # Codex workspace-write cannot write ~/.local/state; a complying agent's event was lost (2026-10-01 probe).
+        self.write_contract()
+        state = self.home / ".local"
+        state.mkdir()
+        state.chmod(0o500)
+        try:
+            result = self.run_logger()
+        finally:
+            state.chmod(0o700)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sandbox fallback", result.stdout)
+        events = self.fallback / "events.jsonl"
+        event = json.loads(events.read_text(encoding="utf-8"))
+        self.assertEqual(event["event"], "request-contract")
+        self.assertEqual(event["row_count"], 2)
+        self.assertNotIn(SECRET_TEXT, events.read_text(encoding="utf-8"))
+        self.assertEqual(self.fallback.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(events.stat().st_mode & 0o777, 0o600)
+
+    def test_shared_or_linked_fallback_dir_is_refused(self):
+        self.write_contract()
+        state = self.home / ".local"
+        state.mkdir()
+        state.chmod(0o500)
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir(mode=0o700)
+        try:
+            self.fallback.mkdir(mode=0o777)
+            self.fallback.chmod(0o777)
+            shared = self.run_logger()
+            self.fallback.rmdir()
+            self.fallback.symlink_to(elsewhere)
+            linked = self.run_logger()
+        finally:
+            state.chmod(0o700)
+        for result in (shared, linked):
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn("could not append metadata event", result.stderr)
+        self.assertEqual(list(elsewhere.iterdir()), [])
 
 
 if __name__ == "__main__":
