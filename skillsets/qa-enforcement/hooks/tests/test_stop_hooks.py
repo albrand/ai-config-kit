@@ -76,6 +76,7 @@ class StopHooksTests(unittest.TestCase):
         probe = ("All three requested changes are complete.\n\n- Updated durations.py to parse compound units.\n"
                  "- `git diff --check` passed. Tests were **not run**. No push, messages, or spawns.")
         for text in (probe, "Both fixes are done.", "The three requested changes are complete.",
+                     "All three PRs are merged.", "The fix is merged.", "After: all three changes are done.",
                      "These changes are now complete.", "All requested items are finished.",
                      "The requested work is done."):
             with self.subTest(text=text[:40]):
@@ -86,7 +87,13 @@ class StopHooksTests(unittest.TestCase):
                      "V is now confirming the production deployment is READY.",
                      "The new test feeds `all authorized work is complete.` to the hook.",
                      "Fixture:\n```\nAll three requested changes are complete.\n```",
-                     "Recommendation: approve updating our checks so each change is tested as it will look after merging."):
+                     "Recommendation: approve updating our checks so each change is tested as it will look after merging.",
+                     "If the focused suite passes: all three changes are done.",
+                     "Once both PRs are merged: the release is ready.",
+                     "Merged `origin/develop` into the branch.", "I released the session lease.",
+                     "I remove each builder's copy of the code once its work is merged.",
+                     "Nothing in it is merged or deployed yet.",
+                     'The reviewer flagged "All three PRs are merged." as unmatched.'):
             with self.subTest(text=text):
                 self.assertFalse(evidence.inspect(text)["block"], text)
 
