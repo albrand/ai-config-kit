@@ -122,6 +122,33 @@ class StopHooksTests(unittest.TestCase):
         self.assertIn("Only when it cannot be run now", reason)
         self.assertIn("name the blocker", reason)
 
+    def retry_run(self, temp, text, session="s1"):
+        env = dict(os.environ, QA_EVIDENCE_RETRY_STATE=str(pathlib.Path(temp) / "retry.json"),
+                   QA_GATE_EVENTS_FILE=str(pathlib.Path(temp) / "events.jsonl"))
+        payload = {"stop_hook_active": True, "session_id": session, "last_assistant_message": text}
+        out = run(["python3", str(EVIDENCE)], env=env, data=json.dumps(payload)).stdout.strip()
+        return json.loads(out)["decision"] if out else "none"
+
+    def test_retry_blocks_once_when_tests_are_reported_unrun_without_a_blocker(self):
+        # The 2026-10-01 probe's final text after the nudge, verbatim in shape.
+        probe = "Completed all three requested items.\n`git diff --check` passed. Tests were **not run**."
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(self.retry_run(temp, probe), "block")
+            self.assertEqual(self.retry_run(temp, probe), "none", "a second retry in the window must not loop")
+            self.assertEqual(self.retry_run(temp, probe, session="s2"), "block", "the bound is per session")
+            self.assertEqual(self.retry_run(temp, "Implemented; workflow NOT RUN; remaining: run the suite.",
+                                            session="s3"), "block")
+
+    def test_retry_allows_unrun_work_with_a_named_blocker_and_unrelated_text(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for i, text in enumerate([
+                "Implemented; workflow NOT RUN. Blocker: the staging login requires the owner's credentials.",
+                "Tests were not run because the sandbox has no network to install the test runner.",
+                "Ran 12 tests, all pass. Persona: dev; Target: repo abc1234; Goal: parse; Verdict: PASS.",
+                "Here is the summary you asked for.",
+            ]):
+                self.assertEqual(self.retry_run(temp, text, session=f"a{i}"), "none", text)
+
     def test_stop_hook_uses_transcript_when_last_message_is_missing(self):
         self.assert_stop_fixture("transcript fallback nudge", opted_in=False, transcript=True,
                                  expected="[qa-evidence]", claim="Done — the workflow is fixed.")

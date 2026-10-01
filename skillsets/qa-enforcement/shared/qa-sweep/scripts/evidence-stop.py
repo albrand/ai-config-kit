@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 
 CLAIM_PATTERNS = (
@@ -34,6 +35,23 @@ NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGN
 REMAINS = re.compile(r"\b(?:what remains|remaining|still needs? to|next steps?|remains? to)\b", re.IGNORECASE)
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     os.path.expanduser("~"), ".local", "state", "agent-quality", "events.jsonl")
+# The retry after a nudge carries stop_hook_active. A probe answered the nudge with "Tests were not run" and
+# stopped with a sub-second suite unrun (2026-10-01), so one more bounded check runs on that retry.
+UNRUN = re.compile(
+    r"\b(?:tests?|test suite|suite|workflow|checks?|e2e|qa)\b[^.\n]{0,40}?"
+    r"\b(?:not run|were not run|was not run|weren't run|wasn't run|not executed|not exercised)\b"
+    r"|\bworkflow\s+not\s+run\b",
+    re.IGNORECASE,
+)
+BLOCKER = re.compile(
+    r"\b(?:blocked|blocker|cannot|can't|unable|requires?|required|unavailable|no access|denied|"
+    r"not permitted|permission|credentials?|log ?in|offline|timed? out|missing|not installed|"
+    r"no (?:test|python|node|network|browser)|sandbox)\b",
+    re.IGNORECASE,
+)
+RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
+    os.path.expanduser("~"), ".local", "state", "agent-quality", "evidence-retry.json")
+RETRY_WINDOW_S = 600
 
 
 def has_evidence_packet(text):
@@ -119,7 +137,7 @@ def inspect(text):
         "target (stack plus commit SHA or deployment ID), user outcomes attempted, and a verdict for each "
         "goal. Only when it cannot be run now, restate the claim as ‘implemented; workflow NOT RUN’, name "
         "the blocker, and say what remains. Relabelling a runnable check as NOT RUN is not a fix. "
-        "This is a one-time nudge for this turn."
+        "If you then report it unrun without naming a blocker, one last nudge follows."
     )
     return {"block": True, "claim": claim, "reason": reason}
 
@@ -238,6 +256,38 @@ def append_claim_event(payload, claim, decision):
         pass
 
 
+def retry_check(payload, text):
+    """On the retry stop: one more nudge when work is reported unrun with no blocker named."""
+    plain = text.replace("**", "").replace("__", "")
+    if not UNRUN.search(plain) or BLOCKER.search(plain):
+        return None
+    key = str(payload.get("session_id") or payload.get("sessionId") or payload.get("transcript_path")
+              or payload.get("transcriptPath") or payload.get("cwd") or "")
+    now = time.time()
+    try:
+        with open(RETRY_STATE, encoding="utf-8") as stream:
+            state = json.load(stream)
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError):
+        state = {}
+    state = {k: v for k, v in state.items() if isinstance(v, (int, float)) and now - v < RETRY_WINDOW_S}
+    if key in state:
+        return None  # already nudged on a retry in this window: never loop
+    state[key] = now
+    try:
+        os.makedirs(os.path.dirname(RETRY_STATE), mode=0o700, exist_ok=True)
+        tmp = RETRY_STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+        os.replace(tmp, RETRY_STATE)
+    except OSError:
+        return None  # without the bound, do not block
+    return ("[qa-evidence] You report the workflow or tests as not run and name no blocker. If they can run, "
+            "run them now and report the result with an evidence packet. If they cannot, name the blocker. "
+            "This is the last nudge for this turn.")
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -245,14 +295,19 @@ def main():
         return 0
     if not isinstance(payload, dict):
         return 0
-    if payload.get("stop_hook_active") or payload.get("stopHookActive"):
-        return 0
+    retry = bool(payload.get("stop_hook_active") or payload.get("stopHookActive"))
     text = payload.get("text")
     if not isinstance(text, str):
         text = payload.get("last_assistant_message") or payload.get("lastAssistantMessage") or ""
     if not isinstance(text, str) or not text:
         text = transcript_assistant_text(payload.get("transcript_path") or payload.get("transcriptPath"))
     if not isinstance(text, str) or not text:
+        return 0
+    if retry:
+        reason = retry_check(payload, text)
+        if reason:
+            append_claim_event(payload, "unrun-on-retry", "block")
+            print(json.dumps({"decision": "block", "reason": reason}))
         return 0
     result = inspect(text)
     if result.get("claim"):
