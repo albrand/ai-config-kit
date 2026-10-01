@@ -36,7 +36,8 @@ class StopHooksTests(unittest.TestCase):
         # Sentence-initial named subjects were the main gap (4 of 20 blind-labelled claims caught before).
         for text in ("ENG-1192 is merged.", "The PR #45 comparison is complete.", "All good. The login fix is now done.",
                      "`parse_duration` is fixed and pushed.", "The checkout flow is working.",
-                     "PR #56 is merged into ours as 3387bfae2.", "The fix is ready for review."):
+                     "PR #56 is merged into ours as 3387bfae2.", "The fix is ready for review.",
+                     "The branch is merged into dev.", "The walk-through of `a491b56f` is finished except for the case-map step."):
             self.assertIsNotNone(evidence.first_claim(text), text)
         for text in ("If the build is done, merge it.", "Nothing is implemented yet.", "The other children are working.",
                      "The team is working on the export.", "It saves how each client was resolved.",
