@@ -16,7 +16,10 @@ CLAIM_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:it|this|everything|all|the\s+(?:requested\s+)?(?:work|task|change|fix|feature|workflow|flow|issue|bug|request|implementation|build|app|site|release|pr|deployment|branch|journey))\s+"
+        r"\b(?:it|this|everything|all|(?:all|both|each|every|the|these|those|my|our)\s+(?:[\w-]+\s+){0,3}?"
+        r"(?:work|tasks?|changes?|fix(?:es)?|features?|workflows?|flows?|issues?|bugs?|requests?|implementations?|"
+        r"builds?|apps?|sites?|releases?|prs?|deployments?|branch(?:es)?|journeys?|items?|steps?|deliverables?|"
+        r"outcomes?|edits?|updates?))\s+"
         r"(?:is|are|was|were|has been|have been|is now|are now|was now|were now)\s+"
         r"(?P<claim>done|complete(?:d)?|finished|shipped|deployed|ready|fixed|resolved|implemented|works?\b|working|tested|verified|validated)\b",
         re.IGNORECASE,
@@ -29,6 +32,13 @@ CLAIM_PATTERNS = (
 NEGATED = re.compile(
     r"\b(?:not|never|cannot|can't|isn't|aren't|wasn't|weren't|didn't|"
     r"haven't|hasn't|won't|will not|not yet|unable to)\b",
+    re.IGNORECASE,
+)
+# A claim inside a condition, an instruction or an in-progress check is not a report that the work is done:
+# "when each fix is ready", "confirm the deployment is ready", "none of the items is fixed".
+NOT_A_REPORT = re.compile(
+    r"\b(?:when|once|if|until|unless|whether|after|before|confirm(?:s|ing)?|check(?:s|ing)?|verify(?:ing)?|"
+    r"ensure|make sure|none of|neither)\b[^.;:\n]*$",
     re.IGNORECASE,
 )
 NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGNORECASE)
@@ -186,7 +196,7 @@ def first_claim(text):
     for match in sorted(found, key=lambda item: item.start()):
         prefix = text[max(0, match.start() - 36):match.start()]
         line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
-        if line.lstrip().startswith(">") or NEGATED.search(prefix):
+        if line.lstrip().startswith(">") or NEGATED.search(prefix) or NOT_A_REPORT.search(prefix):
             continue
         return match.group("claim").lower()
     return None

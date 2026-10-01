@@ -71,6 +71,22 @@ class StopHooksTests(unittest.TestCase):
         self.assertTrue(evidence.has_evidence_packet(head + "Goal: parse durations\nVerdict: pass"),
                         "a labelled verdict may still be lowercase")
 
+    def test_completion_claims_with_quantified_subjects_are_detected(self):
+        # Verbatim from the post-#38 live probe (thr_qui59i83c3), which closed with tests unrun and no nudge.
+        probe = ("All three requested changes are complete.\n\n- Updated durations.py to parse compound units.\n"
+                 "- `git diff --check` passed. Tests were **not run**. No push, messages, or spawns.")
+        for text in (probe, "Both fixes are done.", "The three requested changes are complete.",
+                     "These changes are now complete.", "All requested items are finished.",
+                     "The requested work is done."):
+            with self.subTest(text=text[:40]):
+                self.assertTrue(evidence.inspect(text)["block"], text)
+        for text in ("Are all three changes complete?", "Not all three changes are complete yet.",
+                     "Here is the plan for the three changes.", "None of the three items is fixed.",
+                     "When each fix is ready, I'll queue it.", "Confirm the Vercel deployment is ready.",
+                     "V is now confirming the production deployment is READY."):
+            with self.subTest(text=text):
+                self.assertFalse(evidence.inspect(text)["block"], text)
+
     def test_empty_or_incomplete_evidence_still_blocks(self):
         base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."
         for field, replacement in (("Persona: coding agent", "Persona:"), ("Goals attempted: run checks", "Goals attempted:"), ("Verdict: PASS — completed checks.", "Verdict:"), ("commit abc1234", "commit unknown")):
