@@ -40,13 +40,18 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
 UNRUN = re.compile(
     r"\b(?:tests?|test suite|suite|workflow|checks?|e2e|qa)\b[^.\n]{0,40}?"
     r"\b(?:not run|were not run|was not run|weren't run|wasn't run|not executed|not exercised)\b"
-    r"|\bworkflow\s+not\s+run\b",
+    r"|\bworkflow\s+not\s+run\b"
+    r"|\b(?:did not|didn't|have not|haven't|has not|hasn't|could not|couldn't)\s+(?:yet\s+)?(?:run|execute)\b"
+    r"[^.\n]{0,20}?\b(?:tests?|suite|workflow|checks?|e2e|qa)\b"
+    r"|\bwithout\s+running\b[^.\n]{0,20}?\b(?:tests?|suite|workflow|checks?|e2e|qa)\b",
     re.IGNORECASE,
 )
+# Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in
+# the message must not excuse runnable work (PR #36 review).
 BLOCKER = re.compile(
-    r"\b(?:blocked|blocker|cannot|can't|unable|requires?|required|unavailable|no access|denied|"
-    r"not permitted|permission|credentials?|log ?in|offline|timed? out|missing|not installed|"
-    r"no (?:test|python|node|network|browser)|sandbox)\b",
+    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]"
+    r"|\bblocked\s+(?:by|on)\b"
+    r"|\b(?:cannot|can't|can not|could not|couldn't|unable to)\s+(?:be\s+)?(?:run|execute|reach|access|start)\b",
     re.IGNORECASE,
 )
 RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(

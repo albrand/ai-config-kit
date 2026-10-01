@@ -138,12 +138,23 @@ class StopHooksTests(unittest.TestCase):
             self.assertEqual(self.retry_run(temp, probe, session="s2"), "block", "the bound is per session")
             self.assertEqual(self.retry_run(temp, "Implemented; workflow NOT RUN; remaining: run the suite.",
                                             session="s3"), "block")
+            # An ordinary word that only sounds like a blocker does not excuse runnable work.
+            for i, text in enumerate([
+                "Tests were not run. The suite requires Python 3.12.",
+                "Tests were not run in the sandbox environment.",
+                "Nothing is missing from the change; tests were not run.",
+                "I didn't run the tests.",
+                "Shipped without running the suite.",
+                "Tests were not run because the sandbox has no network to install the test runner.",
+            ]):
+                self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)
 
     def test_retry_allows_unrun_work_with_a_named_blocker_and_unrelated_text(self):
         with tempfile.TemporaryDirectory() as temp:
             for i, text in enumerate([
                 "Implemented; workflow NOT RUN. Blocker: the staging login requires the owner's credentials.",
-                "Tests were not run because the sandbox has no network to install the test runner.",
+                "Tests were not run: blocked by the sandbox, which has no network to install the test runner.",
+                "The tests cannot be run here because the sandbox has no network; remaining: run them in CI.",
                 "Ran 12 tests, all pass. Persona: dev; Target: repo abc1234; Goal: parse; Verdict: PASS.",
                 "Here is the summary you asked for.",
             ]):
