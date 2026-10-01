@@ -631,11 +631,31 @@ def _draft_set_has_positional_message(words_):
     return len(positional) > 1
 
 
+# An output redirection: `2>&1`, `>f`, `2>/dev/null`, `&>f`, or a bare operator
+# whose target is the next word. Input redirections and here-strings are not
+# included: they feed bb text.
+OUT_REDIRECT = re.compile(r"^\d*(>>?|&>>?|>&)(\d+|-|\S+)?$")
+
+
+def _drop_output_redirects(rest):
+    out, i = [], 0
+    while i < len(rest):
+        m = OUT_REDIRECT.match(rest[i])
+        if m:
+            i += 1 if m.group(2) else 2  # a bare operator also takes its target word
+            continue
+        out.append(rest[i])
+        i += 1
+    return out
+
+
 def bare_help(rest, verb):
     """`bb <verb path> --help|-h` and nothing else: bb prints the help and
     sends nothing. A help word anywhere else can be an option's value
     (`--title -h`) or a positional after `--`, and the dispatch runs (review
-    r2c), so it does not count."""
+    r2c), so it does not count. Output redirections (`--help 2>&1`) only move
+    where the help is printed, so they are ignored."""
+    rest = _drop_output_redirects(rest)
     return len(rest) == len(verb.split()) + 1 and rest[-1] in HELP_WORDS and rest[:-1] == verb.split()
 
 
