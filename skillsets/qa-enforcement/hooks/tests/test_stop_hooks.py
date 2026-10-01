@@ -122,10 +122,10 @@ class StopHooksTests(unittest.TestCase):
         self.assertIn("Only when it cannot be run now", reason)
         self.assertIn("name the blocker", reason)
 
-    def retry_run(self, temp, text, session="s1"):
+    def retry_run(self, temp, text, session="s1", retry=True):
         env = dict(os.environ, QA_EVIDENCE_RETRY_STATE=str(pathlib.Path(temp) / "retry.json"),
                    QA_GATE_EVENTS_FILE=str(pathlib.Path(temp) / "events.jsonl"))
-        payload = {"stop_hook_active": True, "session_id": session, "last_assistant_message": text}
+        payload = {"stop_hook_active": retry, "session_id": session, "last_assistant_message": text}
         out = run(["python3", str(EVIDENCE)], env=env, data=json.dumps(payload)).stdout.strip()
         return json.loads(out)["decision"] if out else "none"
 
@@ -154,9 +154,23 @@ class StopHooksTests(unittest.TestCase):
                 "I haven't run the e2e checks yet.",
                 "I skipped the tests.",
                 "The workflow has not been exercised.",
+                # Blocker-shaped dodges with no cause, or a cause that is only a choice.
+                "Tests were not run \u2014 I can't run them here.",
+                "Tests were not run; I cannot run them.",
+                "Tests were not run. Blocker: none.",
+                "Tests were not run because I ran out of time, so I cannot run them: later.",
+                "Tests were not run; they cannot be run now because it takes too long.",
                 "Tests were not run because the sandbox has no network to install the test runner.",
             ]):
                 self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)
+
+    def test_retry_nudge_returns_in_a_later_turn_of_the_same_session(self):
+        text = "Tests were not run."
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(self.retry_run(temp, text), "block")
+            self.assertEqual(self.retry_run(temp, text), "none", "bounded within the turn")
+            self.retry_run(temp, "Next turn's first stop.", retry=False)  # a new turn starts
+            self.assertEqual(self.retry_run(temp, text), "block", "a later turn gets its own last nudge")
 
     def test_retry_allows_unrun_work_with_a_named_blocker_and_unrelated_text(self):
         with tempfile.TemporaryDirectory() as temp:

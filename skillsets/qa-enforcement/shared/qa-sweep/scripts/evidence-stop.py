@@ -55,9 +55,16 @@ UNRUN = re.compile(
 # Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in
 # the message must not excuse runnable work (PR #36 review).
 BLOCKER = re.compile(
-    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]"
-    r"|\bblocked\s+(?:by|on)\b"
-    r"|\b(?:cannot|can't|can not|could not|couldn't|unable to)\s+(?:be\s+)?(?:run|execute|reach|access|start)\b",
+    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]\s*(?!(?:none|n/?a|nothing|no)\b)\w+"
+    r"|\bblocked\s+(?:by|on)\s+\w+"
+    r"|\b(?:cannot|can't|can not|could not|couldn't|unable to)\s+(?:be\s+)?(?:run|execute|reach|access|start)\b"
+    r"[^.\n]{0,60}?(?:\b(?:because|since|due to|without)\b|:)\s*\w+",
+    re.IGNORECASE,
+)
+# A stated cause that is only a choice is not a blocker.
+NOT_A_BLOCKER = re.compile(
+    r"\b(?:out of time|no time|to save time|for brevity|time ?box(?:ed)?|not needed|unnecessary|"
+    r"not worth|too slow|takes too long|later)\b",
     re.IGNORECASE,
 )
 RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
@@ -267,13 +274,34 @@ def append_claim_event(payload, claim, decision):
         pass
 
 
+def retry_key(payload):
+    return str(payload.get("session_id") or payload.get("sessionId") or payload.get("transcript_path")
+               or payload.get("transcriptPath") or payload.get("cwd") or "")
+
+
+def clear_retry(payload):
+    """A first stop starts a new turn: forget the previous turn's retry nudge for this session."""
+    try:
+        with open(RETRY_STATE, encoding="utf-8") as stream:
+            state = json.load(stream)
+        key = retry_key(payload)
+        if not isinstance(state, dict) or key not in state:
+            return
+        del state[key]
+        tmp = RETRY_STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+        os.replace(tmp, RETRY_STATE)
+    except (OSError, ValueError):
+        return
+
+
 def retry_check(payload, text):
     """On the retry stop: one more nudge when work is reported unrun with no blocker named."""
     plain = text.replace("**", "").replace("__", "")
-    if not UNRUN.search(plain) or BLOCKER.search(plain):
+    if not UNRUN.search(plain) or (BLOCKER.search(plain) and not NOT_A_BLOCKER.search(plain)):
         return None
-    key = str(payload.get("session_id") or payload.get("sessionId") or payload.get("transcript_path")
-              or payload.get("transcriptPath") or payload.get("cwd") or "")
+    key = retry_key(payload)
     now = time.time()
     try:
         with open(RETRY_STATE, encoding="utf-8") as stream:
@@ -307,6 +335,8 @@ def main():
     if not isinstance(payload, dict):
         return 0
     retry = bool(payload.get("stop_hook_active") or payload.get("stopHookActive"))
+    if not retry:
+        clear_retry(payload)
     text = payload.get("text")
     if not isinstance(text, str):
         text = payload.get("last_assistant_message") or payload.get("lastAssistantMessage") or ""
