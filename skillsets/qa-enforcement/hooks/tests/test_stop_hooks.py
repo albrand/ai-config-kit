@@ -49,6 +49,12 @@ class StopHooksTests(unittest.TestCase):
         self.assertFalse(evidence.has_evidence_packet(base + "Outcomes and verdicts:\n- make the FAIL case reproducible\n"))
         self.assertFalse(evidence.has_evidence_packet(base + "## Goals and verdicts\n- Get CI to PASS on merge\n"))
         self.assertTrue(evidence.has_evidence_packet(base + "## Goals and verdicts\n- Get CI to PASS on merge — PASS\n"))
+        # Bold alone is not verdict position, and a token that starts goal prose is not a verdict.
+        self.assertFalse(evidence.has_evidence_packet(base + "## Goals and verdicts\n- make the **FAIL** case reproducible\n"))
+        self.assertFalse(evidence.has_evidence_packet(base + "Goals:\n- fix the **BLOCKED** path mentioned in issue 9\n"))
+        self.assertFalse(evidence.has_evidence_packet(base + "Goals: PASS rate above 90%\n"))
+        self.assertTrue(evidence.has_evidence_packet(base + "Goals:\n- Suite passes — **PASS** (54 tests)\n"))
+        self.assertTrue(evidence.has_evidence_packet(base + "Goal: deploy: FAIL — the migration crashed\n"))
         # The nudge's own wording for an unrun workflow is a verdict.
         self.assertTrue(evidence.has_evidence_packet(base + "Outcome: parser updated, implemented; workflow NOT RUN\n"))
         self.assertFalse(evidence.has_evidence_packet(base + "Outcome: suite passes\nCommand: make test\n"))
