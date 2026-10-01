@@ -257,6 +257,16 @@ class CloseoutStopTests(unittest.TestCase):
         text = "The old report said:\n> Implemented; workflow NOT RUN; remaining: run the import."
         self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
 
+    def test_solo_inline_quotes_do_not_create_unfinished_work(self):
+        self.set_state(children=[])
+        for quoted in ('"Want me to implement the fix?"', '“Want me to implement the fix?”',
+                       "'Want me to implement the fix?'", '‘Want me to implement the fix?’',
+                       '`Want me to implement the fix?`'):
+            with self.subTest(quoted=quoted):
+                text = f"The transcript quoted: {quoted}; all authorized work is complete."
+                self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
+        self.assertEqual(self.closeout({"last_assistant_message": "If you'd like, I can implement it."})["decision"], "block")
+
     def test_solo_transcript_fallback_checks_final_message(self):
         self.set_state(children=[])
         transcript = pathlib.Path(self.tmp.name) / "solo.jsonl"

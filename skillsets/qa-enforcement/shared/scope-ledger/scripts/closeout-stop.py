@@ -89,6 +89,7 @@ def admits_unfinished_work(payload):
     """A bounded continuation check for solo threads; not a judgment of authorization."""
     text = re.sub(r"```[^\n]*\n.*?```", "", final_text(payload), flags=re.S)
     text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
+    text = re.sub(r'''"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`''', "", text)
     return bool(UNFINISHED.search(text))
 
 
