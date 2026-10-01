@@ -917,12 +917,18 @@ MCP_EXEMPT = {
 }
 
 
-# Discoverable plugin RPC methods (`bb plugin rpc list`), by prefix, with why
-# none hands an agent text; the selftest fails on any other method.
+# Discoverable plugin RPC methods (`bb plugin rpc list`), with why none hands an
+# agent text; the selftest fails on any other method. A key ending in "." covers
+# its namespace; any other key is one exact method, so a method bb adds later is
+# flagged until someone reads it.
 RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits",
-              # bb added the bb-account plugin 2026-10-01: status and waitForStatusChange read the
-              # account; fetch calls getbb.app under /api/ai/ and its reply returns to the caller.
-              "bb-account.v1.": "reads this bb's getbb.app account or calls its /api/ai/ endpoints; no thread"}
+              # bb-account (bb 2026-10-01): status/waitForStatusChange return the in-memory account status.
+              "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
+              "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status",
+              # fetch only accepts paths under /api/ai/ on getbb.app or this server's gate, and returns
+              # {status, body} to the caller; bb's server has no /api/ai/ route (only bb-ai's client calls
+              # to /api/ai/v1/complete and /api/ai/v1/usage on getbb.app).
+              "bb-account.v1.fetch": "a getbb.app /api/ai/ request whose reply returns to the caller"}
 
 
 def rpc_methods(bb="bb"):
@@ -950,8 +956,8 @@ def rpc_methods(bb="bb"):
 
 
 def open_rpc(methods):
-    """The RPC methods no RPC_EXEMPT prefix covers."""
-    return sorted({m for m in methods if not any(m.startswith(p) for p in RPC_EXEMPT)})
+    """The RPC methods no RPC_EXEMPT entry covers: a namespace key ("x.v1.") or an exact name."""
+    return sorted({m for m in methods if not any(m == k or (k.endswith(".") and m.startswith(k)) for k in RPC_EXEMPT)})
 
 
 def mcp_exempt(name):
@@ -1481,7 +1487,10 @@ def selftest():
     unmatched = [h for h in shown if not HELP_TEXT.search(h)]
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
-    good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell"]) == ["fleet.v1.tell"]
+    # Exact names don't cover their siblings: a new bb-account method is flagged until it is read.
+    good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell", "bb-account.v1.status",
+                     "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread"]) == [
+        "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "fleet.v1.tell"]
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
     # The fake bb served only the hook cases; the coverage scans read the real one.
