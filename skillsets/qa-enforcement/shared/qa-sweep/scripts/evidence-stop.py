@@ -56,8 +56,12 @@ def has_evidence_packet(text):
         if fence is not None or stripped.startswith(">"):
             current = None
             continue
+        if re.match(r"^#{1,6}(?:\s|$)", stripped) or re.fullmatch(r"(?:[-*_]\s*){3,}", stripped):
+            current = None
+            continue
         line = re.sub(r"[*_`]", "", raw).strip().lstrip("- ")
-        if line.startswith("|"):
+        table_row = line.startswith("|")
+        if table_row:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if len(cells) == 2:
                 line = cells[0] + ": " + cells[1]
@@ -66,6 +70,8 @@ def has_evidence_packet(text):
             key = match.group(1).lower()
             current = "goals" if key.startswith(("goal", "user outcome")) else key.rstrip("s")
             fields.setdefault(current, []).append(match.group(2))
+        elif table_row:
+            current = None
         elif current and line:
             fields[current].append(line)
     values = {key: " ".join(parts).strip() for key, parts in fields.items()}
