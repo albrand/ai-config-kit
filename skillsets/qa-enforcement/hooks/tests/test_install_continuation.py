@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("continuation_installer", ROOT / "hooks/install-continuation.py")
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+trust_spec = importlib.util.spec_from_file_location("continuation_trust", ROOT / "hooks/codex-hook-trust.py")
+trust = importlib.util.module_from_spec(trust_spec)
+trust_spec.loader.exec_module(trust)
 
 
 class ContinuationInstallTests(unittest.TestCase):
@@ -39,14 +42,45 @@ class ContinuationInstallTests(unittest.TestCase):
         }, "keep": "unchanged"}
         path = self.home / ".codex/hooks.json"
         path.write_text(json.dumps(config))
-        (self.home / ".codex/config.toml").write_text('model = "fixture"\n')
+        key = f"{path}:pre_tool_use:0:0"
+        fingerprint = trust.codex_hook_hash("pre_tool_use", config["hooks"]["PreToolUse"][0]["hooks"][0]["command"], 20)
+        (self.home / ".codex/config.toml").write_text('model = "fixture"\n\n[hooks.state.' + json.dumps(key)
+                                                    + ']\ntrusted_hash = ' + json.dumps(fingerprint) + '\nenabled = true\n')
         return path, config
 
     def assert_native_trust(self):
-        result = subprocess.run([sys.executable, str(ROOT / "hooks/codex-hook-trust.py"), "--check"],
+        result = subprocess.run([sys.executable, str(ROOT / "hooks/codex-hook-trust.py"), "--check", "--only-command",
+                                 str(self.home / ".agent-hooks/qa-stop-hook.sh")],
                                 env=dict(os.environ, HOME=str(self.home)), capture_output=True,
                                 text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unrelated_disabled_hook_and_its_trust_state_are_preserved(self):
+        path, _ = self.native_config()
+        key = f"{path}:pre_tool_use:0:0"
+        trust_config = self.home / ".codex/config.toml"
+        original = {"trusted_hash": "previous-user-trust", "enabled": False}
+        trust_config.write_text('model = "fixture"\n\n[hooks.state.' + json.dumps(key) + ']\n'
+                                'trusted_hash = "previous-user-trust"\nenabled = false\n')
+        installer.install(ROOT, self.home, self.backup)
+        self.assertEqual(tomllib.loads(trust_config.read_text())["hooks"]["state"][key], original)
+        self.assert_native_trust()
+
+    def test_scoped_trust_refuses_missing_or_unowned_command_without_writing_config(self):
+        path, config = self.native_config()
+        outside = "/unrelated/qa-stop-hook.sh"
+        config["hooks"]["Stop"][0]["hooks"].append({"command": outside, "timeout": 5})
+        path.write_text(json.dumps(config))
+        trust_config = self.home / ".codex/config.toml"
+        original = trust_config.read_bytes()
+        for command in (outside, str(self.home / ".agent-hooks/missing.sh")):
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, str(ROOT / "hooks/codex-hook-trust.py"),
+                                         "--trust", "--only-command", command],
+                                        env=dict(os.environ, HOME=str(self.home)), capture_output=True,
+                                        text=True, timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(trust_config.read_bytes(), original)
 
     def test_install_updates_delivery_budget_and_native_trust(self):
         path, before = self.native_config()
@@ -76,6 +110,7 @@ class ContinuationInstallTests(unittest.TestCase):
         path, config = self.native_config()
         del config["hooks"]["PreToolUse"]
         path.write_text(json.dumps(config))
+        (self.home / ".codex/config.toml").write_text('model = "fixture"\n')
         installer.install(ROOT, self.home, self.backup)
         self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["timeout"], 15)
         states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
@@ -87,17 +122,18 @@ class ContinuationInstallTests(unittest.TestCase):
         self.native_config()
         config = self.home / ".codex/config.toml"
         outside = Path(self.temp.name) / "unrelated-config.toml"
+        original = config.read_text()
         config.rename(outside)
         config.symlink_to(outside)
         with self.assertRaisesRegex(RuntimeError, "symlink"):
             installer.install(ROOT, self.home, self.backup)
-        self.assertEqual(outside.read_text(), 'model = "fixture"\n')
+        self.assertEqual(outside.read_text(), original)
         self.assertEqual((self.home / ".agent-hooks/qa-stop-hook.sh").read_text(), "original stop wrapper\n")
         self.assertFalse(self.backup.exists())
 
     def test_install_updates_all_copies_and_preserves_backups_and_other_gates(self):
         result = installer.install(ROOT, self.home, self.backup)
-        self.assertEqual(result["installed_files"], 10)
+        self.assertEqual(result["installed_files"], 11)
         self.assertEqual((self.backup / "0").read_text(), "original stop wrapper\n")
         self.assertEqual((self.home / ".agent-hooks/other-safety-hook.sh").read_text(), "preserve this safety check\n")
         for provider_home in (".agents", ".bb", ".claude", ".codex"):

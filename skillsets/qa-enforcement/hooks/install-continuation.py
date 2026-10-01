@@ -46,6 +46,7 @@ def replace(source, target):
 def install(source, home, backup):
     pairs = [(source / "hooks/qa-stop-hook.sh", home / ".agent-hooks/qa-stop-hook.sh")]
     pairs.append((source / "hooks/hook-timeouts.py", home / ".agent-hooks/hook-timeouts.py"))
+    pairs.append((source / "hooks/codex-hook-trust.py", home / ".agent-hooks/codex-hook-trust.py"))
     check_target(home, pairs[0][1])
     for provider_home in (".agents", ".bb", ".claude", ".codex"):
         root = home / provider_home / "skills/scope-ledger"
@@ -97,8 +98,15 @@ def install(source, home, backup):
                                    capture_output=True, text=True, timeout=30)
     if configs[1].exists():
         check_target(home, trust_config)
-        subprocess.run([sys.executable, str(source / "hooks/codex-hook-trust.py"), "--trust"],
-                       env=env, check=True, capture_output=True, text=True, timeout=30)
+        native = json.loads(configs[1].read_text())
+        stop_commands = {hook.get("command", "")
+                         for group in native.get("hooks", {}).get("Stop", [])
+                         for hook in group.get("hooks", [])
+                         if str(hook.get("command", "")).rstrip().endswith("qa-stop-hook.sh")}
+        for command in sorted(stop_commands):
+            subprocess.run([sys.executable, str(source / "hooks/codex-hook-trust.py"),
+                            "--trust", "--only-command", command], env=env, check=True,
+                           capture_output=True, text=True, timeout=30)
     return {"backup": str(backup), "installed_files": len(manifest), "parity": f"{len(manifest)}/{len(manifest)}"}
 
 
