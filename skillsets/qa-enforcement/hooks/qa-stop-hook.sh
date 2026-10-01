@@ -12,14 +12,23 @@ if printf '%s' "$inventory" | python3 -c 'import json,sys; d=json.load(sys.stdin
   exit 0
 fi
 evidence=$(printf '%s' "$payload" | python3 "$HOME/.agents/skills/qa-sweep/scripts/evidence-stop.py") || exit 0
-if printf '%s' "$evidence" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("decision")=="block" else 1)' 2>/dev/null; then
-  printf '%s\n' "$evidence"
-  exit 0
-fi
-# One nudge per turn: the closeout check runs only when the evidence nudge did not block.
+# Compute both checks before one bounded retry. A formatting nudge must not
+# hide unfinished work until stop_hook_active lets the retry end.
 closeout="$HOME/.agents/skills/scope-ledger/scripts/closeout-stop.py"
-[ -f "$closeout" ] || exit 0
-result=$(printf '%s' "$payload" | python3 "$closeout") || exit 0
-if printf '%s' "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("decision")=="block" else 1)' 2>/dev/null; then
-  printf '%s\n' "$result"
+result='{}'
+if [ -f "$closeout" ]; then
+  result=$(printf '%s' "$payload" | python3 "$closeout") || result='{}'
 fi
+QA_STOP_EVIDENCE="$evidence" QA_STOP_CLOSEOUT="$result" python3 -c '
+import json,os
+reasons=[]
+for key in ("QA_STOP_EVIDENCE", "QA_STOP_CLOSEOUT"):
+    try:
+        result=json.loads(os.environ[key])
+    except (ValueError, KeyError):
+        continue
+    if isinstance(result,dict) and result.get("decision")=="block":
+        reasons.append(result["reason"])
+if reasons:
+    print(json.dumps({"decision":"block","reason":"\n\n".join(reasons)}))
+'

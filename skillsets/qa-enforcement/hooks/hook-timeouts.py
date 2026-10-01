@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hold the host's PreToolUse timeout above the gates' own deadline.
+"""Hold host hook timeouts above the chains' delivery budgets.
 
 A timed-out PreToolUse hook lets the command run: verified 2026-09-25 with a
 live probe on Claude Code 2.1.282 (a hook sleeping past its 2 s timeout, the
@@ -17,16 +17,30 @@ the command ran ungated.
 
 Configs default to ~/.claude/settings.json and ~/.codex/hooks.json. The gates
 are read from ~/.agents/skills unless HOOK_GATES_DIR points at a skills tree.
+
+The Stop chain also needs margin: its repository lookup alone permits 5 s,
+before Python startup and the evidence/closeout stages. A 5 s Stop timeout
+can discard a valid continuation decision. Keep this chain at least 15 s.
+The narrow continuation installer uses apply-stop, which checks and changes
+only owned Stop budgets, without requiring or changing PreToolUse registration.
 """
 import copy
 import datetime
+import importlib.util
 import json
 import os
 import re
 import shutil
 import sys
+from pathlib import Path
+
+TRUST_SPEC = importlib.util.spec_from_file_location("hook_command_ownership", Path(__file__).with_name("codex-hook-trust.py"))
+TRUST = importlib.util.module_from_spec(TRUST_SPEC)
+TRUST_SPEC.loader.exec_module(TRUST)
 
 CHAIN = "coordinator-hook-pretool.sh"
+STOP_CHAIN = "qa-stop-hook.sh"
+STOP_HOST_TIMEOUT_S = 15
 HOME = os.path.expanduser("~")
 DEFAULT_CONFIGS = [os.path.join(HOME, ".claude", "settings.json"), os.path.join(HOME, ".codex", "hooks.json")]
 GATES = ["qa-sweep/scripts/ship-gate.py", "scope-ledger/scripts/scope-gate.py"]
@@ -43,7 +57,8 @@ def host_timeout(problems, warn=print):
     for rel in GATES:
         path = os.path.join(root, rel)
         try:
-            m = CONST.search(open(path, encoding="utf-8").read())
+            with open(path, encoding="utf-8") as stream:
+                m = CONST.search(stream.read())
         except FileNotFoundError:
             continue  # that gate is not installed here (install.sh ships only qa-sweep)
         except OSError as e:
@@ -60,47 +75,58 @@ def host_timeout(problems, warn=print):
     return max(values.values()) if values else None
 
 
-def chain_entries(cfg):
-    """(PreToolUse group index, hook index, hook) for every hook running the chain."""
-    for gi, group in enumerate((cfg.get("hooks") or {}).get("PreToolUse") or []):
+def chain_entries(cfg, event="PreToolUse", chain=CHAIN):
+    """(group index, hook index, hook) for matching entries of one event."""
+    for gi, group in enumerate((cfg.get("hooks") or {}).get(event) or []):
         for hi, h in enumerate(group.get("hooks") or []):
-            if str(h.get("command", "")).rstrip().endswith(CHAIN):
+            command = str(h.get("command", ""))
+            if event == "Stop" and (h.get("type", "command") != "command"
+                                    or not TRUST.is_owned_stop_command(command, home=HOME)):
+                continue
+            if command.rstrip().endswith(chain):
                 yield gi, hi, h
 
 
-def check(configs):
+def delivery_entries(cfg, pretool_need, stop_only=False):
+    if not stop_only:
+        for gi, hi, h in chain_entries(cfg):
+            yield "PreToolUse", gi, hi, h, pretool_need
+    for gi, hi, h in chain_entries(cfg, "Stop", STOP_CHAIN):
+        yield "Stop", gi, hi, h, STOP_HOST_TIMEOUT_S
+
+
+def check(configs, stop_only=False):
     problems = []
-    need = host_timeout(problems)
+    need = STOP_HOST_TIMEOUT_S if stop_only else host_timeout(problems)
     for path in configs:
         if not os.path.exists(path):
             continue
         try:
-            cfg = json.load(open(path, encoding="utf-8"))
+            with open(path, encoding="utf-8") as stream:
+                cfg = json.load(stream)
         except (OSError, ValueError) as e:
             problems.append(f"{path}: unreadable ({e})")
             continue
         entries = list(chain_entries(cfg))
-        if not entries:
+        if not entries and not stop_only:
             problems.append(f"{path}: no PreToolUse entry runs {CHAIN}")
-        for gi, hi, h in entries:
+        for event, gi, hi, h, required in delivery_entries(cfg, need, stop_only):
             t = h.get("timeout")
-            if need is None:
+            if required is None:
                 continue  # no gate to compare against: already a problem
-            if not isinstance(t, (int, float)) or t < need:
-
-                problems.append(f"{path}: PreToolUse[{gi}].hooks[{hi}] timeout {t} < {need:.0f} s "
-                                f"(the chain decides by 12.5 s from its start and needs the margin)")
-
+            if not isinstance(t, (int, float)) or t < required:
+                problems.append(f"{path}: {event}[{gi}].hooks[{hi}] timeout {t} < {required:.0f} s "
+                                "(the chain needs delivery margin before the host timeout)")
             else:
-                print(f"ok {path}: PreToolUse[{gi}].hooks[{hi}] timeout {t} >= {need:.0f}")
+                print(f"ok {path}: {event}[{gi}].hooks[{hi}] timeout {t} >= {required:.0f}")
     for p in problems:
         print(f"FAIL {p}")
     return 1 if problems else 0
 
 
-def apply(configs):
+def apply(configs, stop_only=False):
     problems = []
-    need = host_timeout(problems)
+    need = STOP_HOST_TIMEOUT_S if stop_only else host_timeout(problems)
     if need is None:
         for p in problems:
             print(f"FAIL {p}")
@@ -110,20 +136,25 @@ def apply(configs):
     for path in configs:
         if not os.path.exists(path):
             continue
-        before = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as stream:
+            before = json.load(stream)
         after = copy.deepcopy(before)
         changed = 0
-        for gi, hi, h in list(chain_entries(after)):
-            if not isinstance(h.get("timeout"), (int, float)) or h["timeout"] < need:
-                after["hooks"]["PreToolUse"][gi]["hooks"][hi]["timeout"] = int(need)
+        for event, gi, hi, h, required in delivery_entries(after, need, stop_only):
+            if not isinstance(h.get("timeout"), (int, float)) or h["timeout"] < required:
+                after["hooks"][event][gi]["hooks"][hi]["timeout"] = int(required)
                 changed += 1
         if not changed:
             print(f"unchanged {path}")
             continue
         # Nothing but the chain entries' timeouts may differ.
         strip = copy.deepcopy(after)
-        for gi, hi, _ in chain_entries(strip):
-            strip["hooks"]["PreToolUse"][gi]["hooks"][hi]["timeout"] = before["hooks"]["PreToolUse"][gi]["hooks"][hi].get("timeout")
+        for event, gi, hi, h, _ in delivery_entries(strip, need, stop_only):
+            original = before["hooks"][event][gi]["hooks"][hi]
+            if "timeout" in original:
+                h["timeout"] = original["timeout"]
+            else:
+                h.pop("timeout", None)
         if strip != before:
             print(f"FAIL {path}: refusing, the patch would change more than the chain timeouts")
             return 1
@@ -135,16 +166,16 @@ def apply(configs):
             f.write("\n")
         os.chmod(tmp, os.stat(path).st_mode & 0o777)
         os.replace(tmp, path)
-        print(f"set {changed} chain timeout(s) to {int(need)} s in {path} (backup {bk})")
-    return check(configs)
+        print(f"set {changed} chain timeout(s) to their required budgets in {path} (backup {bk})")
+    return check(configs, stop_only)
 
 
 def main(argv):
-    if not argv or argv[0] not in ("check", "apply"):
+    if not argv or argv[0] not in ("check", "apply", "apply-stop"):
         print(__doc__)
         return 2
     configs = argv[1:] or DEFAULT_CONFIGS
-    return check(configs) if argv[0] == "check" else apply(configs)
+    return check(configs) if argv[0] == "check" else apply(configs, stop_only=argv[0] == "apply-stop")
 
 
 if __name__ == "__main__":

@@ -12,8 +12,11 @@ None fields dropped because the identity passes through TOML.
   codex-hook-trust.py --trust   record trust only for commands resolving under
                                 ~/.agent-hooks (backs up config.toml first)
   --falsify                     prove the hash reproduces a known trusted value
+  --only-command COMMAND        limit trust/check to this exact registered command
+  --only-event EVENT            limit trust/check to this registration event
 """
 import hashlib
+import argparse
 import json
 import os
 import re
@@ -50,13 +53,15 @@ def hook_entries():
                 key = "%s:%s:%d:%d" % (HOOKS, LABEL.get(ev, ev), gi, hi)
                 command = h.get("command", "")
                 out[key] = {
+                    "event": ev,
+                    "command": command,
                     "hash": codex_hook_hash(LABEL.get(ev, ev), command, h.get("timeout", 600), g.get("matcher")),
                     "owned": is_agent_hook_command(command),
                 }
     return out
 
 
-def is_agent_hook_command(command):
+def is_agent_hook_command(command, home=None):
     """Only trust command hooks whose executable script lives in agent-hooks."""
     try:
         parts = shlex.split(command)
@@ -69,6 +74,8 @@ def is_agent_hook_command(command):
         index = 1
         while index < len(parts) and (parts[index].startswith("-") or "=" in parts[index]):
             index += 1
+    if index >= len(parts):
+        return False
     executable = os.path.basename(parts[index]) if index < len(parts) else ""
     interpreters = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl"}
     target = parts[index + 1] if executable in interpreters and index + 1 < len(parts) else parts[index]
@@ -78,39 +85,73 @@ def is_agent_hook_command(command):
     if not os.path.isabs(expanded):
         expanded = shutil.which(expanded) or expanded
     resolved = os.path.realpath(expanded)
-    root = os.path.realpath(os.path.expanduser("~/.agent-hooks"))
+    root = os.path.realpath(os.path.join(home or os.path.expanduser("~"), ".agent-hooks"))
     return resolved.startswith(root + os.sep)
 
 
-def check(scope_only=False):
+def is_owned_stop_command(command, home=None):
+    """Only a direct wrapper invocation qualifies for automatic Stop repair."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if len(parts) == 2 and os.path.basename(parts[0]) in {"bash", "sh", "zsh"}:
+        target = parts[1]
+    elif len(parts) == 1:
+        target = parts[0]
+    else:
+        return False
+    root = os.path.join(home or os.path.expanduser("~"), ".agent-hooks", "qa-stop-hook.sh")
+    return os.path.realpath(os.path.expanduser(target)) == os.path.realpath(root)
+
+
+def check(scope_only=False, only_command=None, only_event=None):
     state = tomllib.load(open(CFG, "rb")).get("hooks", {}).get("state", {})
     bad = 0
+    checked = 0
     for key, entry in hook_entries().items():
+        if only_event is not None and entry["event"] != only_event:
+            continue
+        if only_command is not None and entry["command"] != only_command:
+            continue
         if scope_only and not entry["owned"]:
             continue
+        checked += 1
         h = entry["hash"]
         st = state.get(key, {})
         if st.get("trusted_hash") != h or st.get("enabled") is False:
             bad += 1
             scope = "" if entry["owned"] else " (outside ~/.agent-hooks; left unchanged)"
             print("UNTRUSTED", key.split(":", 1)[1] + scope, "(Codex will silently skip it; inspect before trusting)")
-    print("codex hooks: %d checked, %d untrusted" % (len(hook_entries()), bad))
+    if (only_command is not None or only_event is not None) and not checked:
+        print("REFUSED: selected command is absent")
+        return 1
+    print("codex hooks: %d checked, %d untrusted" % (checked, bad))
     return 1 if bad else 0
 
 
-def trust():
+def trust(only_command=None, only_event=None):
     entries = hook_entries()
-    owned = {key: entry["hash"] for key, entry in entries.items() if entry["owned"]}
+    owned = {key: entry["hash"] for key, entry in entries.items()
+             if entry["owned"] and (only_command is None or entry["command"] == only_command)
+             and (only_event is None or entry["event"] == only_event)}
+    if (only_command is not None or only_event is not None) and not owned:
+        print("REFUSED: selected command is absent or outside ~/.agent-hooks")
+        return 1
     for key, entry in entries.items():
+        if only_event is not None and entry["event"] != only_event:
+            continue
+        if only_command is not None and entry["command"] != only_command:
+            continue
         if not entry["owned"]:
             state = tomllib.load(open(CFG, "rb")).get("hooks", {}).get("state", {}).get(key, {})
             if state.get("trusted_hash") != entry["hash"] or state.get("enabled") is False:
                 print("SKIP untrusted hook outside ~/.agent-hooks:", key.split(":", 1)[1])
     if not owned:
         print("no ~/.agent-hooks command hooks found; no trust entries changed")
-        return check(scope_only=True)
+        return check(scope_only=True, only_command=only_command, only_event=only_event)
     s = open(CFG).read()
-    shutil.copy(CFG, CFG + ".bak-" + time.strftime("%Y%m%d%H%M%S"))
+    shutil.copy(CFG, CFG + ".bak-" + str(time.time_ns()))
     for key, h in owned.items():
         header = '[hooks.state."%s"]' % key
         block = re.compile(re.escape(header) + r"\n(?:(?!\[).*\n?)*")
@@ -118,7 +159,7 @@ def trust():
         s = block.sub(new, s, count=1) if block.search(s) else s.rstrip("\n") + "\n\n" + new
     tomllib.loads(s)  # refuse to write invalid TOML
     open(CFG, "w").write(s)
-    return check(scope_only=True)
+    return check(scope_only=True, only_command=only_command, only_event=only_event)
 
 
 def falsify():
@@ -130,11 +171,18 @@ def falsify():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trust", action="store_true")
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--falsify", action="store_true")
+    parser.add_argument("--only-command", help="Limit trust/check to this exact registered command")
+    parser.add_argument("--only-event", choices=LABEL, help="Limit trust/check to this registration event")
+    args = parser.parse_args()
     rc = 0
-    if "--falsify" in sys.argv:
+    if args.falsify:
         rc |= falsify()
-    if "--trust" in sys.argv:
-        rc |= trust()
-    elif "--check" in sys.argv or len(sys.argv) == 1:
-        rc |= check()
+    if args.trust:
+        rc |= trust(only_command=args.only_command, only_event=args.only_event)
+    elif args.check or not args.falsify:
+        rc |= check(only_command=args.only_command, only_event=args.only_event)
     sys.exit(rc)

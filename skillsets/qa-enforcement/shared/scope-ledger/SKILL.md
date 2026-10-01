@@ -223,9 +223,9 @@ the main real failure was coordinators stopping early with a status report,
 "remains blocked" or an offer to continue while authorized work was left. The
 user corrected each one well before the idle guard's 30 minutes; 5 of the 6
 cases were Codex. `scripts/closeout-stop.py` runs the idle guard's predicate
-when the turn ends. `~/.agent-hooks/qa-stop-hook.sh` calls it after the
-evidence nudge, and only when that nudge did not block, so a turn gets one
-nudge at most.
+when the turn ends. `~/.agent-hooks/qa-stop-hook.sh` computes it alongside
+the evidence check and returns both reasons in one bounded nudge. A formatting
+correction must not hide unfinished work.
 
 - It blocks the stop once when the thread's ledger has an open purpose and
   nothing carries it.
@@ -254,14 +254,38 @@ nudge at most.
 - A thread with child threads and no ledger is asked once per thread
   (`~/.local/state/agent-quality/closeout-ledger-nudged.json`) to record the
   user's purposes with `init`.
-- `stop_hook_active` (the retry after a nudge), a missing thread id, an
-  unreadable ledger and unreadable thread state all allow the stop.
+- A solo thread without a ledger also receives a continuation check when its
+  final message explicitly reports unrun workflows/QA/E2E, an open purpose id, unfinished implementation,
+  an unperformed next step, or offers to do reversible work. Quoted and fenced
+  examples are excluded, Markdown bold status labels are recognized, and a
+  report beginning "Paused as requested" retains the user's stop. Direct hook text and bounded Claude/Codex transcript
+  fallbacks are supported; tool output and reasoning are excluded.
+- The check asks the agent to load `finish-the-job` and `meaningful-tests`,
+  continue actionable authorized work, and prepare independent steps while a
+  decision is pending. It does not authorize scope or permission changes. If
+  every remaining step needs the user, retain the precise approval request.
+- The registered `qa-stop-hook.sh` command needs a host timeout of at least
+  15 seconds. Its repository lookup alone permits 5 seconds, before the
+  evidence/closeout stages; a 5-second host limit can discard their result on
+  a loaded host. `hook-timeouts.py` checks/applies this alongside the existing
+  PreToolUse budget, preserving unrelated settings and backing up changes.
+- `stop_hook_active` (the retry after a nudge), an unreadable ledger and
+  unreadable thread state allow the stop. Without a BB thread id the bounded
+  message check still runs, but no BB ledger or thread state is read. Native
+  Codex hooks can lack the shell tool's `BB_THREAD_ID`; their own Stop result
+  resumes that native session. Metadata-only audit records may include its
+  session id so a live interception can be matched to the provider session.
 - Each decision goes to `~/.local/state/agent-quality/events.jsonl` as a
   `closeout-stop` event with the thread, branch, decision and purpose IDs,
   never text.
 - Kill rule, set before shipping: after 20 blocks, read what each agent did
   next. If more than a quarter stopped again with no new action, narrow the
   check or remove it.
+
+This is a bounded continuation check, not proof that the model completed the
+workflow. The retry can still end, state-reading failures still allow a stop,
+and implicit unfinished work may not match the solo text patterns. Product
+completion still requires the full user journey and its evidence.
 
 ## Archive hold (fleet plugin)
 
