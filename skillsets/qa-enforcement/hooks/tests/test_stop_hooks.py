@@ -108,6 +108,43 @@ class StopHooksTests(unittest.TestCase):
         self.assertTrue(evidence.has_evidence_packet(head + "Goal: parse durations\nVerdict: pass"),
                         "a labelled verdict may still be lowercase")
 
+    def test_completion_claims_with_quantified_subjects_are_detected(self):
+        # Verbatim from the post-#38 live probe (thr_qui59i83c3), which closed with tests unrun and no nudge.
+        probe = ("All three requested changes are complete.\n\n- Updated durations.py to parse compound units.\n"
+                 "- `git diff --check` passed. Tests were **not run**. No push, messages, or spawns.")
+        for text in (probe, "Both fixes are done.", "The three requested changes are complete.",
+                     "All three PRs are merged.", "The fix is merged.", "After: all three changes are done.",
+                     "Before handing off, all three fixes are done.", "After the sweep, the release is verified.",
+                     "Before dispatch I fixed three defects in the executor prompt.",
+                     "I worked in an isolated copy and touched nothing. I verified the run.",
+                     "Nothing is deployed yet, but all three fixes are done.",
+                     "Could you check? Everything is done.", "If it helps, all three fixes are done.",
+                     "Could you check, everything is done.", "Please confirm, all three fixes are done.",
+                     "If that's okay, all three fixes are done.", "If you get a chance, everything is done.",
+                     "If the suite passes, the release is ready.",
+                     "Should I wait? All three changes are complete.", "When can we talk? The fix is merged.",
+                     "These changes are now complete.", "All requested items are finished.",
+                     "The requested work is done."):
+            with self.subTest(text=text[:40]):
+                self.assertTrue(evidence.inspect(text)["block"], text)
+        for text in ("Are all three changes complete?", "Not all three changes are complete yet.",
+                     "Here is the plan for the three changes.", "None of the three items is fixed.",
+                     "When each fix is ready, I'll queue it.", "Confirm the Vercel deployment is ready.",
+                     "V is now confirming the production deployment is READY.",
+                     "The new test feeds `all authorized work is complete.` to the hook.",
+                     "Fixture:\n```\nAll three requested changes are complete.\n```",
+                     "Recommendation: approve updating our checks so each change is tested as it will look after merging.",
+                     "If the focused suite passes: all three changes are done.",
+                     "Once both PRs are merged: the release is ready.",
+                     "Merged `origin/develop` into the branch.", "I released the session lease.",
+                     "I remove each builder's copy of the code once its work is merged.",
+                     "Nothing in it is merged or deployed yet.",
+                     'The reviewer flagged "All three PRs are merged." as unmatched.',
+                     "Once everything is fixed, I push.", "Remaining before this is done:",
+                     "When the fix is merged, I'll tell K1.", "If the suite passes the release is ready."):
+            with self.subTest(text=text):
+                self.assertFalse(evidence.inspect(text)["block"], text)
+
     def test_empty_or_incomplete_evidence_still_blocks(self):
         base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."
         for field, replacement in (("Persona: coding agent", "Persona:"), ("Goals attempted: run checks", "Goals attempted:"), ("Verdict: PASS — completed checks.", "Verdict:"), ("commit abc1234", "commit unknown")):
