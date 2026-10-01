@@ -200,18 +200,22 @@ evidence nudge, and only when that nudge did not block, so a turn gets one
 nudge at most.
 
 - It blocks the stop once when the thread's ledger has an open purpose and
-  nothing carries it. A queued message or the thread's own background task
-  carries every purpose (each resumes this thread, which runs the check
-  again). An active or pending child carries only the purposes its brief and
-  inputs since its last completed turn name in `serves: P<n>`, so one
-  purpose's worker cannot hide another purpose left unattended, and a child
-  reused for P2 no longer carries the P1 it finished. A child that serves only
-  a revision carries none.
+  nothing carries it.
+  - A queued message carries every purpose: it is the next input and resumes
+    this thread, which runs the check again.
+  - An active or pending child carries only the purposes its brief and inputs
+    since its last completed turn name in `serves: P<n>`. One purpose's
+    worker cannot hide another purpose left unattended, and a child reused for
+    P2 no longer carries the P1 it finished. A child that serves only a
+    revision carries none.
+  - The thread's own background task carries only the purposes its
+    description names in `serves: P<n>`. An unrelated watcher that never
+    finishes hides nothing.
 - It reads bb's store (`~/.bb/bb.db`) read-only rather than the bb CLI: at load
   ~290 each CLI call took 4-20 s, past Codex's 5 s Stop-hook budget, so the
   check would have failed open whenever the fleet was busy. A background task
-  is running while its start (within 24 h) has no completion. The nudge lists the
-  unattended purposes and allows three outcomes:
+  is running while its start (within 24 h) has no completion.
+- The nudge lists the unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask` for a decision only the user owns (money, an
   outward or irreversible effect, credentials, a genuine ambiguity). A status

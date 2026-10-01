@@ -61,7 +61,7 @@ class CloseoutStopTests(unittest.TestCase):
                     QA_GATE_EVENTS_FILE=str(self.events), CLOSEOUT_NUDGED_FILE=str(self.nudged),
                     CLOSEOUT_BB_DB=str(self.db))
 
-    def set_state(self, children=None, queued=0, background=0):
+    def set_state(self, children=None, queued=0, background=None):
         with sqlite3.connect(self.db) as db:
             if children is not None:
                 db.execute("DELETE FROM threads WHERE parent_thread_id = ?", (THREAD,))
@@ -72,8 +72,9 @@ class CloseoutStopTests(unittest.TestCase):
             for n in range(queued):
                 db.execute("INSERT INTO queued_thread_messages VALUES (?, ?)", (f"q{n}", THREAD))
             db.execute("DELETE FROM events WHERE thread_id = ? AND item_kind = 'backgroundTask'", (THREAD,))
-        for n in range(background):
-            self.event(THREAD, "item/started", item_id=f"bg{n}", item_kind="backgroundTask")
+        for n, desc in enumerate(background or []):
+            self.event(THREAD, "item/started", {"item": {"type": "backgroundTask", "id": f"bg{n}", "description": desc}},
+                       item_id=f"bg{n}", item_kind="backgroundTask")
 
     def write_ledger(self, *purposes):
         (self.ledgers / f"{THREAD}.json").write_text(json.dumps({
@@ -112,7 +113,7 @@ class CloseoutStopTests(unittest.TestCase):
         for label, state in [("active child serving P5", dict(children=[{"id": "thr_c", "status": "active"}])),
                              ("pending child serving P5", dict(children=[{"id": "thr_c", "status": "pending"}])),
                              ("queued message", dict(children=[], queued=1)),
-                             ("background task", dict(children=[], background=2))]:
+                             ("background task serving P5", dict(children=[], background=["serves: P5 — full suite"]))]:
             self.set_state(**state)
             self.assertEqual(self.closeout()["decision"], "allow", label)
 
@@ -155,6 +156,18 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertEqual(self.closeout({"stop_hook_active": True})["decision"], "allow")
         # Positive control: both assignments outstanding in the running turn.
         self.dispatch("thr_w1", "serves: P1 — and land the fix follow-up in the same pass")
+        self.assertEqual(self.closeout()["decision"], "allow")
+
+    # Review r3: an unrelated unfinished background task must not hide unattended work.
+    def test_background_task_carries_only_the_purposes_it_names(self):
+        self.write_ledger(self.purpose("P2", text="Finish authorized QA"))
+        self.set_state(children=[], background=["Wait for the Hermes verdict"])
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn('P2 "Finish authorized QA"', nudged["reason"])
+        self.assertEqual(self.closeout({"stop_hook_active": True})["decision"], "allow")
+        # Positive control: the coordinator waits on background work it labels as serving P2.
+        self.set_state(children=[], background=["Wait for the Hermes verdict", "serves: P2 — run the QA walk"])
         self.assertEqual(self.closeout()["decision"], "allow")
 
     def test_child_with_no_serves_line_carries_nothing(self):

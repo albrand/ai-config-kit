@@ -9,8 +9,9 @@ the same predicate when the turn ends:
 - the ledger has an open purpose (or a blocked-on-user one the user has since
   answered in this turn), and
 - nothing carries it: no active or pending child whose brief or tells name that
-  purpose in `serves:`, no queued message, no background task of its own (those
-  resume this thread, which then runs the check again).
+  purpose in `serves:`, no background task of its own whose description names
+  it in `serves:`, and no queued message (the next input resumes this thread,
+  which then runs the check again).
 
 Then the stop is blocked once with the open purposes and the three allowed
 outcomes. A coordinator with child threads but no ledger is asked once, per
@@ -58,13 +59,13 @@ def thread_state(thread, want_self=True):
                 queued = db.execute("SELECT count(*) FROM queued_thread_messages WHERE thread_id = ?", (thread,)).fetchone()[0]
                 # A background task is running while its start has no completion; older starts are treated as lost.
                 since = int((datetime.datetime.now(datetime.timezone.utc).timestamp() - BACKGROUND_HORIZON_S) * 1000)
-                running = db.execute(
-                    "SELECT count(*) FROM events s WHERE s.thread_id = ? AND s.type = 'item/started' "
+                rows = db.execute(
+                    "SELECT s.data FROM events s WHERE s.thread_id = ? AND s.type = 'item/started' "
                     "AND s.item_kind = 'backgroundTask' AND s.created_at > ? AND NOT EXISTS (SELECT 1 FROM events c "
                     "WHERE c.thread_id = s.thread_id AND c.item_id = s.item_id "
-                    "AND c.type IN ('item/backgroundTask/completed', 'item/completed'))", (thread, since)).fetchone()[0]
+                    "AND c.type IN ('item/backgroundTask/completed', 'item/completed'))", (thread, since)).fetchall()
                 state["self"] = {"id": thread, "queuedMessageCount": queued,
-                                 "activity": {"activeBackgroundCommandCount": running}}
+                                 "background": [task_description(data) for (data,) in rows]}
             return state
         finally:
             db.close()
@@ -103,37 +104,51 @@ def child_serves(child_ids, serves_pattern):
         for item in items:
             text = item.get("text") if isinstance(item, dict) else None
             if isinstance(text, str):
-                for group in serves_pattern.findall(text):
-                    out[thread].update(re.findall(r"P\d+", group))
+                out[thread] |= named_purposes(text, serves_pattern)
     return out
 
 
-def carried_by(state, pending_ids, serves_reader):
+def task_description(data):
+    try:
+        item = json.loads(data).get("item") or {}
+        return str(item.get("description") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
+def named_purposes(text, serves_pattern):
+    return {pid for group in serves_pattern.findall(text or "") for pid in re.findall(r"P\d+", group)}
+
+
+def carried_by(state, pending_ids, serves_reader, serves_pattern):
     """(ids carried, why) for the pending purposes; None when thread state is unreadable.
 
-    A queued message or the thread's own background task resumes this thread, so it carries every purpose.
-    An active child carries only the purposes it was dispatched to serve.
+    A queued message is the thread's next input and resumes it at once, so it carries every purpose.
+    A background task of its own carries only the purposes its description names in `serves:`: an unrelated
+    watcher that never finishes must not hide unattended work. An active child carries only the purposes
+    its outstanding inputs were dispatched to serve.
     """
     children, me = state.get("children"), state.get("self")
     if not isinstance(children, list) or not isinstance(me, dict):
         return None
-    me = me.get("thread", me)
     every = set(pending_ids)
     if (me.get("queuedMessageCount") or 0) > 0:
         return every, f"{me['queuedMessageCount']} message(s) queued"
-    act = me.get("activity") or {}
-    running = sum(act.get(k) or 0 for k in ("activeBackgroundCommandCount", "activeBackgroundAgentCount", "activeWorkflowCount"))
-    if running > 0:
-        return every, f"{running} background task(s) running"
+    carried, why = set(), []
+    tasks = me.get("background") or []
+    if tasks:
+        for desc in tasks:
+            carried |= named_purposes(desc, serves_pattern)
+        why.append(f"{len(tasks)} background task(s), serving {','.join(sorted(carried)) or 'none'}")
     active = [c.get("id") for c in children if isinstance(c, dict) and c.get("status") in ("active", "pending")]
-    if not active:
-        return set(), ""
-    serves = serves_reader(active)
-    if serves is None:
-        # Without the link, fall back to the idle guard's rule: any active child carries the work.
-        return every, "child thread(s) active (purposes unreadable): " + ", ".join(map(str, active))
-    carried = set().union(*serves.values()) & every
-    return carried, "child thread(s) active: " + ", ".join(f"{c} serves {','.join(sorted(serves[c])) or 'none'}" for c in active)
+    if active:
+        serves = serves_reader(active)
+        if serves is None:
+            # Without the link, fall back to the idle guard's rule: any active child carries the work.
+            return every, "child thread(s) active (purposes unreadable): " + ", ".join(map(str, active))
+        carried |= set().union(*serves.values())
+        why.append("child thread(s) active: " + ", ".join(f"{c} serves {','.join(sorted(serves[c])) or 'none'}" for c in active))
+    return carried & every, "; ".join(why)
 
 
 def entry_user_text(entry):
@@ -206,14 +221,15 @@ def pending_purposes(ledger, answered_at):
 def nudge_text(thread, purposes):
     gate = "python3 ~/.agents/skills/scope-ledger/scripts/scope-gate.py"
     lines = ["[scope-closeout] You are stopping with open purposes in your scope ledger, and nothing is carrying them "
-             "(no active child dispatched to serve them, no queued message, no background task):"]
+             "(no active child or background task naming them in `serves:`, no queued message):"]
     for p in purposes:
         text = p["text"] if len(p["text"]) <= 300 else p["text"][:297] + "..."
         state = " (blocked-on-user, answered since)" if p["status"] == "blocked-on-user" else ""
         lines.append(f'- {p["id"]}{state} "{text}"')
     lines += [
         "Do one of these before stopping:",
-        "1. Continue the next authorized step now (do it, or dispatch it to a child).",
+        "1. Continue the next authorized step now: do it, dispatch it to a child with `serves: <Pn>`, or start the "
+        "background task you will wait on with `serves: <Pn>` in its description.",
         f'2. If it is finished: {gate} mark {thread} <Pn> done --evidence "<commit, URL or measurement>"',
         f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>". '
         "Only for money, an outward or irreversible effect, credentials, or a genuine ambiguity in the request.",
@@ -309,7 +325,7 @@ def decide(payload, thread, gate, state_reader=thread_state):
     if not pending:
         return allow("no open purposes")
     ids = [p["id"] for p in pending]
-    got = carried_by(state_reader(thread), ids, serves_reader=lambda c: child_serves(c, gate.SERVES_P))
+    got = carried_by(state_reader(thread), ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
     if got is None:
         log(thread, "ledger", "allow", "state unreadable", ids)
         return allow("thread state unreadable")
