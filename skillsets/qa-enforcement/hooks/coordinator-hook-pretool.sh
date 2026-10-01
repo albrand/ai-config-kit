@@ -83,7 +83,7 @@ def collapse: gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "");
 def gluedvar: test("(^|\\s)([^\\s;&|()]+/)?(bb|\\$BB_CLI|\\$\\{BB_CLI[^}]*\\})\\s+(--[A-Za-z-]+(=\\S+)?\\s+)*(thread|fleet|automation|instructions)\\$[A-Za-z0-9_]|(^|\\s)([^\\s;&|()]+/)?(bb|\\$BB_CLI|\\$\\{BB_CLI[^}]*\\})\\s+(--[A-Za-z-]+(=\\S+)?\\s+)*(thread\\s+(spawn|create|fork|tell|message|edit-message)|thread\\s+queue\\s+(create|update|send)|thread\\s+interactions\\s+(answer|respond)|fleet\\s+(group-create|task-add|advise|member-add)|automation\\s+(create|update|run|resume)|instructions\\s+set)\\$[A-Za-z0-9_]"; "i");
 def blank: gsub("(?<k>\\$\\x27(?:\\\\[\\s\\S]|[^\\x27\\\\])*\\x27|\\x27[^\\x27]*\\x27|\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"|\\\\[\\s\\S])|(?:^|(?<=[\\s;&|()]))(?<c>#[^\\n]*)";
   if .k != null then .k else (.c | gsub("[^;&|()]"; " ")) end);
-def coarse: test("fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|[^\\s]`|[^\\s]\\$\\{|[^\\s$=]\\$$"; "i")
+def coarse: test("fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call|[^\\s]`|[^\\s]\\$\\{|[^\\s$=]\\$$"; "i")
   or (test("\\s\\$$") and test("(^|\\s)(bb|\\$BB_CLI|\\$\\{BB_CLI[^}]*\\}|thread|fleet|automation|instructions)(\\s|$)"; "i"));
 def nested: test("(^|\\s)-[A-Za-z]*[ce](\\s|$)|(^|[\\s/])eval(\\s|$)|--script|<<<|(^|\\s)(-[A-Za-z]*S|--split-string)"; "i");
 def fields: {fleet_member_spawn: ["prompt", "concern"], fleet_member_tell: ["message"],
@@ -135,7 +135,7 @@ scope_dispatch_denied() {
     deny) return 0 ;;
   esac
   printf '%s' "$input" | grep -q "\\$'[^']*\\\\" && return 0
-  scope_flat | grep -qiE 'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions)|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|[^[:space:]=]\$\(|[^[:space:]]\$\{|[^[:space:]]`'
+  scope_flat | grep -qiE 'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions)|fleet.{0,20}(group-create|task-add|advise|member-add)|automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call|[^[:space:]=]\$\(|[^[:space:]]\$\{|[^[:space:]]`'
 }
 # --- end scope shape ---
 

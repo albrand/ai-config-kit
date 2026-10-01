@@ -107,7 +107,7 @@ HOOK_HARD_S = 10.0
 COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
                              r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
                              r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
-                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set', re.I)
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -917,13 +917,11 @@ MCP_EXEMPT = {
 }
 
 
-# Discoverable plugin RPC methods (`bb plugin rpc list`), by prefix, with why
-# none hands an agent text; the selftest fails on any other method.
-RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits"}
+from shell_dispatch import RPC_EXEMPT, rpc_exempt  # noqa: E402  (the exempt reads; any other method is gated)
 
 
 def rpc_methods(bb="bb"):
-    """[plugin method] for every discoverable plugin RPC method."""
+    """[(plugin id, method)] for every discoverable plugin RPC handler."""
     import subprocess
     try:
         listing = json.loads(subprocess.run([bb, "plugin", "rpc", "list", "--json"], capture_output=True, text=True,
@@ -936,7 +934,7 @@ def rpc_methods(bb="bb"):
         if isinstance(o, dict):
             m = o.get("method") or o.get("name")
             if isinstance(m, str) and ("pluginId" in o or "plugin" in o):
-                out.append(m)
+                out.append((str(o.get("pluginId") or o.get("plugin")), m))
             for v in o.values():
                 walk(v)
         elif isinstance(o, list):
@@ -946,9 +944,9 @@ def rpc_methods(bb="bb"):
     return out
 
 
-def open_rpc(methods):
-    """The RPC methods no RPC_EXEMPT prefix covers."""
-    return sorted({m for m in methods if not any(m.startswith(p) for p in RPC_EXEMPT)})
+def open_rpc(handlers):
+    """The (plugin id, method) pairs RPC_EXEMPT does not name exactly."""
+    return sorted({h for h in handlers if not rpc_exempt(*h)})
 
 
 def mcp_exempt(name):
@@ -1478,7 +1476,14 @@ def selftest():
     unmatched = [h for h in shown if not HELP_TEXT.search(h)]
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
-    good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell"]) == ["fleet.v1.tell"]
+    # Exact pairs don't cover siblings: a method bb adds later, or an exempt method name
+    # served by another plugin (#27 r6), is flagged until it is read.
+    good = open_rpc([("provider-codex", "provider-usage.v1.listResources"), ("fleet", "fleet.v1.tell"),
+                     ("bb-account", "bb-account.v1.status"), ("bb-account", "bb-account.v1.tellThread"),
+                     ("provider-codex", "provider-usage.v1.tellThread"),
+                     ("uninspected-plugin", "bb-account.v1.status")]) == [
+        ("bb-account", "bb-account.v1.tellThread"), ("fleet", "fleet.v1.tell"),
+        ("provider-codex", "provider-usage.v1.tellThread"), ("uninspected-plugin", "bb-account.v1.status")]
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
     # The fake bb served only the hook cases; the coverage scans read the real one.
@@ -1502,13 +1507,17 @@ def selftest():
               f"{': not found ' + ', '.join(unseen) if unseen else ''}")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
-        # Every discoverable plugin RPC method is a read, or gated (review r2d:
-        # `bb plugin rpc call` reaches a plugin without its CLI group).
-        methods = rpc_methods()
-        unexempt = open_rpc(methods or [])
-        failed += methods is None or bool(unexempt)
-        print(f"{'ok  ' if methods is not None and not unexempt else 'FAIL'} every plugin RPC method is a read "
-              f"({len(methods or [])} found){': not exempt: ' + ', '.join(unexempt) if unexempt else ''}")
+        # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
+        # call` of it is a dispatch (review r2d: it reaches a plugin without its
+        # CLI group; #27: bb-account.v1.fetch can't be shown to reach no thread).
+        handlers = rpc_methods()
+        unexempt = open_rpc(handlers or [])
+        loose_rpc = [h for h in unexempt if not dispatches(f"bb plugin rpc call {h[0]} {h[1]}")]
+        shown = lambda hs: ", ".join(f"{p} {m}" for p, m in hs)
+        failed += handlers is None or bool(loose_rpc)
+        print(f"{'ok  ' if handlers is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
+              f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
+              f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
         tools = plugin_tools()
         loose = loose_tools(tools)
         failed += bool(loose) or not tools

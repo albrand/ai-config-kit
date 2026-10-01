@@ -83,6 +83,39 @@ GROUPS = ("thread", "fleet", "automation", "instructions")
 # (review r2d): the plugin ids of the gated plugin groups.
 PLUGIN_GROUPS = {"automations": "automation", "custom-instructions": "instructions", "fleet": "fleet"}
 HELP_WORDS = ("--help", "-h")
+# Discoverable plugin RPC handlers (`bb plugin rpc list`) whose implementation
+# was read and hands no text to a thread, as exact (plugin id, method) pairs.
+# `bb plugin rpc call` of anything else is a dispatch: a method bb adds later,
+# the same method name served by another plugin (#27 r6), a namespace (r4), and
+# bb-account.v1.fetch, which POSTs caller JSON to getbb.app (r2).
+RPC_EXEMPT = {
+    # input {}; the handler lists bb's hosts and usage providers (#27 r5: getResource
+    # is not exempt, its collection path delegates to code not read here).
+    ("provider-codex", "provider-usage.v1.listResources"): "lists codex usage resources from local metadata",
+    ("provider-claude-code", "provider-usage.v1.listResources"): "lists claude usage resources from local metadata",
+    ("provider-acp", "provider-usage.v1.listResources"): "lists acp usage resources from local metadata",
+    # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
+    ("bb-account", "bb-account.v1.status"): "returns this bb's getbb.app sign-in status",
+    ("bb-account", "bb-account.v1.waitForStatusChange"): "long-polls the same sign-in status",
+}
+RPC_CALL_ARG_OPTS = ("--input-file",)
+
+
+def rpc_exempt(plugin, method):
+    return (plugin, method) in RPC_EXEMPT
+
+
+def _rpc_call_target(tail):
+    """(plugin id, method) of `bb plugin rpc call [options] <plugin-id> <method>`, or None."""
+    pos, skip = [], False
+    for a in tail:
+        if skip:
+            skip = False
+        elif a in RPC_CALL_ARG_OPTS:
+            skip = True
+        elif not a.startswith("-"):
+            pos.append(a)
+    return (pos[0], pos[1]) if len(pos) > 1 else None
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
 DEFAULTED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}]*)\}$")
@@ -619,6 +652,17 @@ def _dispatch_verb(rest):
             # custom-instructions set instructions <text>` is `instructions set`
             if nxt == ["config", "custom-instructions", "set"]:
                 return "instructions set"
+            # `bb plugin rpc call <plugin> <method>` reaches a plugin without its
+            # CLI group: any method not known to hand no text is a dispatch. A
+            # word built at run time anywhere in the call can change which
+            # method runs (#27 r3: `call $ARGS bb-account.v1.status`), so it is one too.
+            if nxt[:2] == ["rpc", "call"]:
+                tail = rest[j + 3:]
+                if any(unreadable(a) for a in tail):
+                    return "plugin rpc call"
+                target = _rpc_call_target(tail)
+                if target is not None and not rpc_exempt(*target):
+                    return "plugin rpc call"
             return None
         if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""

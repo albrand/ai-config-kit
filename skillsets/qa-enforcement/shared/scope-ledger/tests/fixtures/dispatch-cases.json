@@ -195,6 +195,25 @@
     {"label": "read-only verbs with substitutions after them are not dispatches (list)", "want": 0, "command": "bb thread list --json"},
     {"label": "read-only verbs with substitutions after them are not dispatches (show $ID)", "want": 0, "command": "bb thread show $ID"},
     {"label": "r2d-followup: a substitution as the plugin id of plugin run is a dispatch", "want": 2, "command": "bb plugin run $(echo) automations create --name n --in 1m --prompt hi"},
-    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"}
+    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"},
+    {"label": "#27: plugin rpc call of a non-exempt method without serves", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call with options before the plugin and method", "want": 2, "command": "bb plugin rpc call --json --input-file {tmp}/in.json bb-account bb-account.v1.fetch"},
+    {"label": "#27: plugin rpc call of a method bb adds later is gated by default", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.tellThread"},
+    {"label": "#27: plugin rpc call whose method is built at run time", "want": 2, "command": "bb plugin rpc call bb-account $(echo bb-account.v1.fetch)"},
+    {"label": "#27: plugin rpc call of a non-exempt method with serves", "want": 0, "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27 r5: provider-usage getResource is gated (its collection path was not read)", "want": 2, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call of an exempt exact read", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status"},
+    {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"},
+    {"label": "#27 r3: run-time words before an exempt method can pick another (call $ARGS status)", "want": 2, "command": "bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a run-time word after the method is a dispatch too", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.status $X"},
+    {"label": "#27 r3: a run-time input file on an exempt read is a dispatch (fails closed)", "want": 2, "command": "bb plugin rpc call --input-file \"$F\" bb-account bb-account.v1.status"},
+    {"label": "#27 r3: run-time words with serves are allowed", "want": 0, "command": "SCOPE=\"serves: P1 account check\" bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a literal exempt read with a literal input file stays allowed", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status --input-file {tmp}/in.json"},
+    {"label": "#27 r4: an unknown method in an exempt plugin's namespace is a dispatch", "want": 2, "command": "bb plugin rpc call provider-codex provider-usage.v1.tellThread --input-file {tmp}/in.json"},
+    {"label": "#27 r4: the same unknown method with serves is allowed", "want": 0, "command": "SCOPE=\"serves: P1 x\" bb plugin rpc call provider-codex provider-usage.v1.tellThread"},
+    {"label": "#27 r4: provider-usage listResources is an exempt read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.listResources"},
+    {"label": "#27 r6: an exempt method name served by an uninspected plugin is a dispatch", "want": 2, "command": "bb plugin rpc call uninspected-plugin bb-account.v1.status"},
+    {"label": "#27 r6: listResources under a plugin that was not read is a dispatch", "want": 2, "command": "bb plugin rpc call provider-pi provider-usage.v1.listResources"},
+    {"label": "#27 r6: the inspected provider-claude-code listResources stays an exempt read", "want": 0, "command": "bb plugin rpc call provider-claude-code provider-usage.v1.listResources"}
   ]
 }
