@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixtures for the scope-ledger closeout check at Stop and its place in the stop chain."""
 import json
+from contextlib import closing
 import os
 import pathlib
 import shutil
@@ -32,7 +33,7 @@ class CloseoutStopTests(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
         self.db = base / "bb.db"
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             db.execute("CREATE TABLE events (thread_id TEXT, type TEXT, data TEXT, created_at INTEGER, "
                        "item_id TEXT, item_kind TEXT)")
             db.execute("CREATE TABLE threads (id TEXT, status TEXT, archived_at INTEGER, parent_thread_id TEXT, "
@@ -43,7 +44,7 @@ class CloseoutStopTests(unittest.TestCase):
 
     def event(self, thread, kind, data=None, item_id=None, item_kind=None):
         self.clock += 1000
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             db.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",
                        (thread, kind, json.dumps(data or {}), self.clock, item_id, item_kind))
 
@@ -62,7 +63,7 @@ class CloseoutStopTests(unittest.TestCase):
                     CLOSEOUT_BB_DB=str(self.db))
 
     def set_state(self, children=None, queued=0, background=None):
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             if children is not None:
                 db.execute("DELETE FROM threads WHERE parent_thread_id = ?", (THREAD,))
                 for c in children:
@@ -231,7 +232,8 @@ class CloseoutStopTests(unittest.TestCase):
     def test_solo_formatted_qa_and_e2e_reports_require_a_continuation_check(self):
         self.set_state(children=[])
         for text in ("**Live QA NOT RUN:** The administrator save, reload and complete journey is pending.",
-                     "Current E2E remains **NOT RUN**.", "Workflows are **NOT RUN**."):
+                     "Current E2E remains **NOT RUN**.", "Workflows are **NOT RUN**.",
+                     "**Live QA:** NOT RUN.", "**E2E:** NOT RUN."):
             with self.subTest(text=text):
                 self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "block")
 
