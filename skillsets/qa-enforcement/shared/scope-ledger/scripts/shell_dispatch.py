@@ -83,28 +83,30 @@ GROUPS = ("thread", "fleet", "automation", "instructions")
 # (review r2d): the plugin ids of the gated plugin groups.
 PLUGIN_GROUPS = {"automations": "automation", "custom-instructions": "instructions", "fleet": "fleet"}
 HELP_WORDS = ("--help", "-h")
-# Discoverable plugin RPC methods (`bb plugin rpc list`) whose implementation
-# was read and hands no text to a thread, by exact name. `bb plugin rpc call` of
-# any other method, including one bb adds later to a listed plugin, is a
-# dispatch (#27 r2: bb-account.v1.fetch POSTs caller JSON to getbb.app, whose
-# handling can't be read here; r4: no namespace is trusted wholesale).
+# Discoverable plugin RPC handlers (`bb plugin rpc list`) whose implementation
+# was read and hands no text to a thread, as exact (plugin id, method) pairs.
+# `bb plugin rpc call` of anything else is a dispatch: a method bb adds later,
+# the same method name served by another plugin (#27 r6), a namespace (r4), and
+# bb-account.v1.fetch, which POSTs caller JSON to getbb.app (r2).
 RPC_EXEMPT = {
-    # provider-codex/-claude-code/-acp: input {}; the handler lists bb's hosts and usage providers.
-    # (getResource is not exempt: its collection path delegates to code not read here, #27 r5.)
-    "provider-usage.v1.listResources": "lists this host's usage resources from local metadata",
+    # input {}; the handler lists bb's hosts and usage providers (#27 r5: getResource
+    # is not exempt, its collection path delegates to code not read here).
+    ("provider-codex", "provider-usage.v1.listResources"): "lists codex usage resources from local metadata",
+    ("provider-claude-code", "provider-usage.v1.listResources"): "lists claude usage resources from local metadata",
+    ("provider-acp", "provider-usage.v1.listResources"): "lists acp usage resources from local metadata",
     # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
-    "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
-    "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status",
+    ("bb-account", "bb-account.v1.status"): "returns this bb's getbb.app sign-in status",
+    ("bb-account", "bb-account.v1.waitForStatusChange"): "long-polls the same sign-in status",
 }
 RPC_CALL_ARG_OPTS = ("--input-file",)
 
 
-def rpc_exempt(method):
-    return method in RPC_EXEMPT
+def rpc_exempt(plugin, method):
+    return (plugin, method) in RPC_EXEMPT
 
 
-def _rpc_call_method(tail):
-    """The <method> of `bb plugin rpc call [options] <plugin-id> <method>`, or None."""
+def _rpc_call_target(tail):
+    """(plugin id, method) of `bb plugin rpc call [options] <plugin-id> <method>`, or None."""
     pos, skip = [], False
     for a in tail:
         if skip:
@@ -113,7 +115,7 @@ def _rpc_call_method(tail):
             skip = True
         elif not a.startswith("-"):
             pos.append(a)
-    return pos[1] if len(pos) > 1 else None
+    return (pos[0], pos[1]) if len(pos) > 1 else None
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
 DEFAULTED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}]*)\}$")
@@ -658,8 +660,8 @@ def _dispatch_verb(rest):
                 tail = rest[j + 3:]
                 if any(unreadable(a) for a in tail):
                     return "plugin rpc call"
-                method = _rpc_call_method(tail)
-                if method is not None and not rpc_exempt(method):
+                target = _rpc_call_target(tail)
+                if target is not None and not rpc_exempt(*target):
                     return "plugin rpc call"
             return None
         if a in GROUPS:

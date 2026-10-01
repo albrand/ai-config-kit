@@ -921,7 +921,7 @@ from shell_dispatch import RPC_EXEMPT, rpc_exempt  # noqa: E402  (the exempt rea
 
 
 def rpc_methods(bb="bb"):
-    """[plugin method] for every discoverable plugin RPC method."""
+    """[(plugin id, method)] for every discoverable plugin RPC handler."""
     import subprocess
     try:
         listing = json.loads(subprocess.run([bb, "plugin", "rpc", "list", "--json"], capture_output=True, text=True,
@@ -934,7 +934,7 @@ def rpc_methods(bb="bb"):
         if isinstance(o, dict):
             m = o.get("method") or o.get("name")
             if isinstance(m, str) and ("pluginId" in o or "plugin" in o):
-                out.append(m)
+                out.append((str(o.get("pluginId") or o.get("plugin")), m))
             for v in o.values():
                 walk(v)
         elif isinstance(o, list):
@@ -944,9 +944,9 @@ def rpc_methods(bb="bb"):
     return out
 
 
-def open_rpc(methods):
-    """The RPC methods RPC_EXEMPT does not name exactly."""
-    return sorted({m for m in methods if not rpc_exempt(m)})
+def open_rpc(handlers):
+    """The (plugin id, method) pairs RPC_EXEMPT does not name exactly."""
+    return sorted({h for h in handlers if not rpc_exempt(*h)})
 
 
 def mcp_exempt(name):
@@ -1476,10 +1476,14 @@ def selftest():
     unmatched = [h for h in shown if not HELP_TEXT.search(h)]
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
-    # Exact names don't cover their siblings: a method bb adds later is flagged until it is read.
-    good = open_rpc(["provider-usage.v1.listResources", "fleet.v1.tell", "bb-account.v1.status",
-                     "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "provider-usage.v1.tellThread"]) == [
-        "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "fleet.v1.tell", "provider-usage.v1.tellThread"]
+    # Exact pairs don't cover siblings: a method bb adds later, or an exempt method name
+    # served by another plugin (#27 r6), is flagged until it is read.
+    good = open_rpc([("provider-codex", "provider-usage.v1.listResources"), ("fleet", "fleet.v1.tell"),
+                     ("bb-account", "bb-account.v1.status"), ("bb-account", "bb-account.v1.tellThread"),
+                     ("provider-codex", "provider-usage.v1.tellThread"),
+                     ("uninspected-plugin", "bb-account.v1.status")]) == [
+        ("bb-account", "bb-account.v1.tellThread"), ("fleet", "fleet.v1.tell"),
+        ("provider-codex", "provider-usage.v1.tellThread"), ("uninspected-plugin", "bb-account.v1.status")]
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
     # The fake bb served only the hook cases; the coverage scans read the real one.
@@ -1506,13 +1510,14 @@ def selftest():
         # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
         # call` of it is a dispatch (review r2d: it reaches a plugin without its
         # CLI group; #27: bb-account.v1.fetch can't be shown to reach no thread).
-        methods = rpc_methods()
-        unexempt = open_rpc(methods or [])
-        loose_rpc = [m for m in unexempt if not dispatches(f"bb plugin rpc call some-plugin {m}")]
-        failed += methods is None or bool(loose_rpc)
-        print(f"{'ok  ' if methods is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
-              f"read or gated ({len(methods or [])} found, gated: {', '.join(unexempt) or 'none'})"
-              f"{': neither: ' + ', '.join(loose_rpc) if loose_rpc else ''}")
+        handlers = rpc_methods()
+        unexempt = open_rpc(handlers or [])
+        loose_rpc = [h for h in unexempt if not dispatches(f"bb plugin rpc call {h[0]} {h[1]}")]
+        shown = lambda hs: ", ".join(f"{p} {m}" for p, m in hs)
+        failed += handlers is None or bool(loose_rpc)
+        print(f"{'ok  ' if handlers is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
+              f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
+              f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
         tools = plugin_tools()
         loose = loose_tools(tools)
         failed += bool(loose) or not tools

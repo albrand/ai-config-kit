@@ -64,10 +64,11 @@ after the QA ship gate.
   cannot be read. `bb plugin run <plugin> ...` counts as that plugin's
   command, and `bb plugin config custom-instructions set ...` (the custom
   instructions are that plugin's setting) as `instructions set`.
-  `bb plugin rpc call <plugin> <method>` is a dispatch unless the method is
-  named exactly in `RPC_EXEMPT` (`shell_dispatch.py`) as one whose
-  implementation was read and hands no text to a thread. No namespace is
-  exempt, so a method bb adds later is gated until someone reads it. A call
+  `bb plugin rpc call <plugin> <method>` is a dispatch unless that exact
+  (plugin id, method) pair is in `RPC_EXEMPT` (`shell_dispatch.py`) as a
+  handler whose implementation was read and hands no text to a thread. No
+  namespace is exempt, and an exempt method name served by another plugin is
+  not, so a handler bb adds later is gated until someone reads it. A call
   with any word built at run time is a dispatch too. The selftest fails on a
   discoverable method (`bb plugin rpc list`) that is neither exempt nor gated. The serves line of `instructions set` is part of the
   text every agent then receives, as with `fleet_context_set`. An answer
