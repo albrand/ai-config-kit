@@ -65,6 +65,11 @@ class StopHooksTests(unittest.TestCase):
         prose = (head + "**User outcomes and verdicts**\n1. Parse durations: observed the assertion.\n\n"
                  "Integration NOT RUN.")
         self.assertFalse(evidence.has_evidence_packet(prose), "prose after the section is not a verdict")
+        leaked = (head + "Goal: parse durations\nVerdict:\n\n| Goal | Observed | Verdict |\n|---|---|---|\n"
+                  "| parse | ran | the assertion pass |")
+        self.assertFalse(evidence.has_evidence_packet(leaked), "an empty Verdict: label must not relax the table check")
+        self.assertTrue(evidence.has_evidence_packet(head + "Goal: parse durations\nVerdict: pass"),
+                        "a labelled verdict may still be lowercase")
 
     def test_empty_or_incomplete_evidence_still_blocks(self):
         base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."

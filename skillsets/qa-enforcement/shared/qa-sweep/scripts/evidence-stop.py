@@ -95,7 +95,6 @@ def has_evidence_packet(text):
     label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
-    labelled_verdict = False
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
@@ -117,7 +116,7 @@ def has_evidence_packet(text):
         if both.match(heading_text):
             current = "both"
             fields.setdefault("goals", [])
-            fields.setdefault("verdict", [])
+            fields.setdefault("derived_verdict", [])
             continue
         setext = bool(stripped and re.fullmatch(r"(?:=+|-+)", next_line))
         html_heading = re.match(r"^<h[1-6](?:\s[^>]*)?>", stripped, re.I)
@@ -138,7 +137,7 @@ def has_evidence_packet(text):
                     columns = (goal, verdict)
                 elif columns and len(cells) > max(columns):
                     fields.setdefault("goals", []).append(cells[columns[0]])
-                    fields.setdefault("verdict", []).append(cells[columns[1]])
+                    fields.setdefault("derived_verdict", []).append(cells[columns[1]])
                 current = None
                 continue
             if len(cells) == 2:
@@ -147,14 +146,13 @@ def has_evidence_packet(text):
         if match:
             key = match.group(1).lower()
             current = "goals" if key.startswith(("goal", "user outcome")) else key.rstrip("s")
-            labelled_verdict = labelled_verdict or current == "verdict"
             fields.setdefault(current, []).append(match.group(2))
         elif table_row:
             current = None
         elif current == "both":
             if re.match(r"(?:\d+[.)]|[-*+])\s", stripped):
                 fields["goals"].append(line)
-                fields["verdict"].append(line)
+                fields["derived_verdict"].append(line)
             elif line:
                 current = None  # prose after the list is not part of the section
         elif re.match(r"^[A-Za-z][A-Za-z /()&-]{0,30}:\s", line):
@@ -162,11 +160,15 @@ def has_evidence_packet(text):
         elif current and line:
             fields[current].append(line)
     values = {key: " ".join(parts).strip() for key, parts in fields.items()}
-    if not all(values.get(key) for key in ("persona", "target", "goals", "verdict")):
+    if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
     # A "Verdict:" field may say "pass"; a verdict read from a table column or an outcomes section must be the
-    # explicit uppercase token, so prose such as "the assertion pass" is not a verdict.
-    if not re.search(r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b", values["verdict"], 0 if not labelled_verdict else re.I):
+    # explicit uppercase token, so prose such as "the assertion pass" is not a verdict. Each source is judged
+    # on its own value, so an empty "Verdict:" label cannot relax the check on the other.
+    token = r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b"
+    labelled = bool(re.search(token, values.get("verdict", ""), re.I))
+    derived = bool(re.search(token, values.get("derived_verdict", "")))
+    if not (labelled or derived):
         return False
     target = values["target"]
     has_deployment = bool(re.search(r"https?://\S+", target) and re.search(r"\bdeployment(?:\s+id)?\b", target, re.IGNORECASE))
