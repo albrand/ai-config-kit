@@ -107,7 +107,7 @@ HOOK_HARD_S = 10.0
 COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
                              r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
                              r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
-                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set', re.I)
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -917,18 +917,7 @@ MCP_EXEMPT = {
 }
 
 
-# Discoverable plugin RPC methods (`bb plugin rpc list`), with why none hands an
-# agent text; the selftest fails on any other method. A key ending in "." covers
-# its namespace; any other key is one exact method, so a method bb adds later is
-# flagged until someone reads it.
-RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits",
-              # bb-account (bb 2026-10-01): status/waitForStatusChange return the in-memory account status.
-              "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
-              "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status",
-              # fetch only accepts paths under /api/ai/ on getbb.app or this server's gate, and returns
-              # {status, body} to the caller; bb's server has no /api/ai/ route (only bb-ai's client calls
-              # to /api/ai/v1/complete and /api/ai/v1/usage on getbb.app).
-              "bb-account.v1.fetch": "a getbb.app /api/ai/ request whose reply returns to the caller"}
+from shell_dispatch import RPC_EXEMPT, rpc_exempt  # noqa: E402  (the exempt reads; any other method is gated)
 
 
 def rpc_methods(bb="bb"):
@@ -957,7 +946,7 @@ def rpc_methods(bb="bb"):
 
 def open_rpc(methods):
     """The RPC methods no RPC_EXEMPT entry covers: a namespace key ("x.v1.") or an exact name."""
-    return sorted({m for m in methods if not any(m == k or (k.endswith(".") and m.startswith(k)) for k in RPC_EXEMPT)})
+    return sorted({m for m in methods if not rpc_exempt(m)})
 
 
 def mcp_exempt(name):
@@ -1514,13 +1503,16 @@ def selftest():
               f"{': not found ' + ', '.join(unseen) if unseen else ''}")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
-        # Every discoverable plugin RPC method is a read, or gated (review r2d:
-        # `bb plugin rpc call` reaches a plugin without its CLI group).
+        # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
+        # call` of it is a dispatch (review r2d: it reaches a plugin without its
+        # CLI group; #27: bb-account.v1.fetch can't be shown to reach no thread).
         methods = rpc_methods()
         unexempt = open_rpc(methods or [])
-        failed += methods is None or bool(unexempt)
-        print(f"{'ok  ' if methods is not None and not unexempt else 'FAIL'} every plugin RPC method is a read "
-              f"({len(methods or [])} found){': not exempt: ' + ', '.join(unexempt) if unexempt else ''}")
+        loose_rpc = [m for m in unexempt if not dispatches(f"bb plugin rpc call some-plugin {m}")]
+        failed += methods is None or bool(loose_rpc)
+        print(f"{'ok  ' if methods is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
+              f"read or gated ({len(methods or [])} found, gated: {', '.join(unexempt) or 'none'})"
+              f"{': neither: ' + ', '.join(loose_rpc) if loose_rpc else ''}")
         tools = plugin_tools()
         loose = loose_tools(tools)
         failed += bool(loose) or not tools

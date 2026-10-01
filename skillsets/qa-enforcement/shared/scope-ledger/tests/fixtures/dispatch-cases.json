@@ -195,6 +195,14 @@
     {"label": "read-only verbs with substitutions after them are not dispatches (list)", "want": 0, "command": "bb thread list --json"},
     {"label": "read-only verbs with substitutions after them are not dispatches (show $ID)", "want": 0, "command": "bb thread show $ID"},
     {"label": "r2d-followup: a substitution as the plugin id of plugin run is a dispatch", "want": 2, "command": "bb plugin run $(echo) automations create --name n --in 1m --prompt hi"},
-    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"}
+    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"},
+    {"label": "#27: plugin rpc call of a non-exempt method without serves", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call with options before the plugin and method", "want": 2, "command": "bb plugin rpc call --json --input-file {tmp}/in.json bb-account bb-account.v1.fetch"},
+    {"label": "#27: plugin rpc call of a method bb adds later is gated by default", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.tellThread"},
+    {"label": "#27: plugin rpc call whose method is built at run time", "want": 2, "command": "bb plugin rpc call bb-account $(echo bb-account.v1.fetch)"},
+    {"label": "#27: plugin rpc call of a non-exempt method with serves", "want": 0, "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call of an exempt namespace read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call of an exempt exact read", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status"},
+    {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"}
   ]
 }

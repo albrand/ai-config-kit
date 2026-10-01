@@ -83,6 +83,33 @@ GROUPS = ("thread", "fleet", "automation", "instructions")
 # (review r2d): the plugin ids of the gated plugin groups.
 PLUGIN_GROUPS = {"automations": "automation", "custom-instructions": "instructions", "fleet": "fleet"}
 HELP_WORDS = ("--help", "-h")
+# Discoverable plugin RPC methods (`bb plugin rpc list`) that hand an agent no
+# text, with why. `bb plugin rpc call` of any other method is a dispatch (review
+# #27 r2: bb-account.v1.fetch POSTs caller JSON to getbb.app, whose handling
+# can't be read here). A key ending in "." covers its namespace; any other key
+# is one exact method.
+RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits",
+              # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
+              "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
+              "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status"}
+RPC_CALL_ARG_OPTS = ("--input-file",)
+
+
+def rpc_exempt(method):
+    return any(method == k or (k.endswith(".") and method.startswith(k)) for k in RPC_EXEMPT)
+
+
+def _rpc_call_method(tail):
+    """The <method> of `bb plugin rpc call [options] <plugin-id> <method>`, or None."""
+    pos, skip = [], False
+    for a in tail:
+        if skip:
+            skip = False
+        elif a in RPC_CALL_ARG_OPTS:
+            skip = True
+        elif not a.startswith("-"):
+            pos.append(a)
+    return pos[1] if len(pos) > 1 else None
 DISPATCH_VERBS = THREAD_VERBS  # kept for callers of the old name
 SUBST = "__SUBST__"
 DEFAULTED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}]*)\}$")
@@ -619,6 +646,12 @@ def _dispatch_verb(rest):
             # custom-instructions set instructions <text>` is `instructions set`
             if nxt == ["config", "custom-instructions", "set"]:
                 return "instructions set"
+            # `bb plugin rpc call <plugin> <method>` reaches a plugin without its
+            # CLI group: any method not known to hand no text is a dispatch.
+            if nxt[:2] == ["rpc", "call"]:
+                method = _rpc_call_method(rest[j + 3:])
+                if method is not None and (unreadable(method) or not rpc_exempt(method)):
+                    return "plugin rpc call"
             return None
         if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""
