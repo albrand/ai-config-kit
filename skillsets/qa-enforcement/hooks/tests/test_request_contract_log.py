@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGGER = ROOT.parent / "shared/scope-ledger/scripts/request-contract-log.py"
+UPTAKE = ROOT.parent / "shared/scope-ledger/scripts/request-contract-uptake.py"
 THREAD = "thr_test123"
 SECRET_TEXT = "verbatim outcome text must never leak into telemetry"
 
@@ -136,9 +137,52 @@ class RequestContractLogTests(unittest.TestCase):
         event = json.loads(events.read_text(encoding="utf-8"))
         self.assertEqual(event["event"], "request-contract")
         self.assertEqual(event["row_count"], 2)
-        self.assertNotIn(SECRET_TEXT, events.read_text(encoding="utf-8"))
+        self.assert_no_contract_text(events.read_text(encoding="utf-8"))
         self.assertEqual(self.fallback.stat().st_mode & 0o777, 0o700)
         self.assertEqual(events.stat().st_mode & 0o777, 0o600)
+
+    def assert_no_contract_text(self, logged):
+        """No string from anywhere in the contract body may reach telemetry."""
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from strings(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from strings(item)
+        leaked = [text for text in strings(self.contract) if len(text) > 8 and text in logged]
+        self.assertEqual(leaked, [])
+
+    def test_uptake_counts_both_files_and_separates_the_author_tree(self):
+        import sqlite3
+        db_path = self.base / "bb.db"
+        db = sqlite3.connect(db_path)
+        db.execute("create table threads (id text, parent_thread_id text)")
+        db.executemany("insert into threads values (?, ?)",
+                       [("thr_root", None), ("thr_child", "thr_root"), ("thr_grand", "thr_child"), ("thr_other", None)])
+        db.commit()
+        db.close()
+        main = self.home / ".local/state/agent-quality/events.jsonl"
+        main.parent.mkdir(parents=True)
+        self.fallback.mkdir(mode=0o700)
+        row = lambda ts, thread: json.dumps({"schema_version": 1, "ts": ts, "event": "request-contract",
+                                             "thread_id": thread, "row_count": 2,
+                                             "row_status_counts": {"complete": 2, "blocked": 0}})
+        main.write_text("\n".join([row("2026-10-01T10:00:00+00:00", "thr_other"),
+                                    row("2026-10-01T13:00:00+00:00", "thr_other"),
+                                    json.dumps({"event": "evidence-claim", "ts": "2026-10-01T13:00:01+00:00"})]) + "\n")
+        (self.fallback / "events.jsonl").write_text(row("2026-10-01T13:05:00+00:00", "thr_grand") + "\n")
+        result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z",
+                                 "--exclude-tree", "thr_root", "--bb-db", str(db_path)],
+                                capture_output=True, text=True, env=self.env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["events"], 2)
+        self.assertEqual(report["threads_outside_tree"], ["thr_other"])
+        self.assertEqual(report["threads_inside_tree"], ["thr_grand"])
+        self.assertEqual(sorted(report["files"].values()), [1, 1])
 
     def test_shared_or_linked_fallback_dir_is_refused(self):
         self.write_contract()
