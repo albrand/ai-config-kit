@@ -105,7 +105,7 @@ RETRY_WINDOW_S = 600
 
 
 GOAL_LINE_VERDICT = re.compile(
-    r"(?:[\u2014\u2013:;.(]|\s-|\bworkflow)\s*\**\s*(PASS|FAIL|BLOCKED|NOT RUN)\b\**\s*(?=$|[\u2014\u2013:;.,()]|-\s)")
+    r"(?:[\u2014\u2013:;.]|\s-|\bworkflow)\s*\**\s*(PASS|FAIL|BLOCKED|NOT RUN)\b\**\s*(?=$|[.;\u2014\u2013:(]|-\s)")
 
 
 def has_evidence_packet(text):

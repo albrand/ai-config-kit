@@ -53,6 +53,9 @@ class StopHooksTests(unittest.TestCase):
         self.assertFalse(evidence.has_evidence_packet(base + "## Goals and verdicts\n- make the **FAIL** case reproducible\n"))
         self.assertFalse(evidence.has_evidence_packet(base + "Goals:\n- fix the **BLOCKED** path mentioned in issue 9\n"))
         self.assertFalse(evidence.has_evidence_packet(base + "Goals: PASS rate above 90%\n"))
+        self.assertFalse(evidence.has_evidence_packet(base + "Goals:\n- fix the (FAIL) transition\n"))
+        self.assertFalse(evidence.has_evidence_packet(base + "Goals:\n- handle status: FAIL, then retry\n"))
+        self.assertTrue(evidence.has_evidence_packet(base + "Goals and verdicts:\n- Suite passes. **PASS.** It ends in OK.\n"))
         self.assertTrue(evidence.has_evidence_packet(base + "Goals:\n- Suite passes — **PASS** (54 tests)\n"))
         self.assertTrue(evidence.has_evidence_packet(base + "Goal: deploy: FAIL — the migration crashed\n"))
         # The nudge's own wording for an unrun workflow is a verdict.
