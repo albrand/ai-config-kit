@@ -81,6 +81,8 @@ class StopHooksTests(unittest.TestCase):
                      "Before dispatch I fixed three defects in the executor prompt.",
                      "I worked in an isolated copy and touched nothing. I verified the run.",
                      "Nothing is deployed yet, but all three fixes are done.",
+                     "Could you check? Everything is done.", "If it helps, all three fixes are done.",
+                     "Should I wait? All three changes are complete.", "When can we talk? The fix is merged.",
                      "These changes are now complete.", "All requested items are finished.",
                      "The requested work is done."):
             with self.subTest(text=text[:40]):

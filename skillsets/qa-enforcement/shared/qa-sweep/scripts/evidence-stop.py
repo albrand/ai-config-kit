@@ -35,7 +35,7 @@ CLAIM_PATTERNS = (
 )
 # "Once everything is fixed, I push" is a condition; "Before handing off, all three fixes are done" reports done
 # work after the comma, and "Before dispatch I fixed three defects" is an I/we main clause, not a condition.
-TIME_CLAUSE = re.compile(r"\b(?:when|once|after|before)\s+[^.;,\n]*$", re.IGNORECASE)
+TIME_CLAUSE = re.compile(r"\b(?:when|once|after|before)\s+[^.;,!?\n]*$", re.IGNORECASE)
 NEGATED = re.compile(
     r"\b(?:not|never|cannot|can't|isn't|aren't|wasn't|weren't|didn't|"
     r"haven't|hasn't|won't|will not|not yet|unable to|nothing)\b",
@@ -44,9 +44,10 @@ NEGATED = re.compile(
 # A claim inside a condition, an instruction or an in-progress check is not a report that the work is done:
 # "when each fix is ready", "confirm the deployment is ready", "none of the items is fixed".
 NOT_A_REPORT = re.compile(
-    r"\b(?:(?:if|until|unless|whether)\s+[^.;\n]*|"
+    r"\b(?:(?:if(?!\s+(?:it|that|this)\s+helps\b|\s+useful\b|\s+needed\b|\s+you\s+(?:want|like|need|prefer)\b)|"
+    r"until|unless|whether)\s+[^.;!?\n]*|"
     r"(?:confirm(?:s|ing)?|check(?:s|ing)?|verify(?:ing)?|ensure|make sure|none of|neither|proves?|"
-    r"recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|could)\b[^.;:\n]*)$",
+    r"recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|could)\b[^.;:!?\n]*)$",
     re.IGNORECASE,
 )
 NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGNORECASE)
