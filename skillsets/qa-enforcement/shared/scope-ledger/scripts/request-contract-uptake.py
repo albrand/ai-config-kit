@@ -9,6 +9,8 @@ store) are reported separately, so an author's own probes do not count as uptake
   request-contract-uptake.py --since 2026-10-01T12:31:47Z --exclude-tree thr_x
 """
 import argparse
+import datetime as dt
+import hashlib
 import json
 import os
 import sqlite3
@@ -27,10 +29,25 @@ def event_files():
     return [Path.home() / ".local/state/agent-quality/events.jsonl", rclog.fallback_events_path()]
 
 
+def parse_ts(value):
+    """ISO 8601 with Z or an offset and optional fractions -> aware UTC datetime, or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when.astimezone(dt.timezone.utc)
+
+
 def tree(root, db_path):
     """The root thread and all of its descendants, read from bb's store without writing."""
     if not root:
         return set()
+    if not os.path.isfile(db_path):
+        raise FileNotFoundError(db_path)
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     found, frontier = {root}, [root]
     while frontier:
@@ -47,7 +64,15 @@ def main(argv=None):
     ap.add_argument("--exclude-tree", default="", help="root thread whose tree is reported separately")
     ap.add_argument("--bb-db", default=os.path.expanduser("~/.bb/bb.db"))
     args = ap.parse_args(argv)
-    excluded = tree(args.exclude_tree, args.bb_db)
+    since = parse_ts(args.since)
+    if since is None:
+        ap.error("--since must be an ISO 8601 timestamp, e.g. 2026-10-01T12:31:47Z")
+    try:
+        excluded = tree(args.exclude_tree, args.bb_db)
+    except (OSError, sqlite3.Error) as exc:
+        print(f"request-contract uptake: cannot read bb's thread store ({type(exc).__name__}); "
+              "pass --bb-db or drop --exclude-tree", file=sys.stderr)
+        return 2
     seen, rows = set(), []
     per_file = {}
     for path in event_files():
@@ -61,9 +86,11 @@ def main(argv=None):
                 event = json.loads(line)
             except ValueError:
                 continue
-            if event.get("event") != "request-contract" or event.get("ts", "") < args.since:
+            when = parse_ts(event.get("ts"))
+            if event.get("event") != "request-contract" or when is None or when < since:
                 continue
-            key = (event.get("ts"), event.get("thread_id"), event.get("row_count"))
+            # Same row in both files counts once; distinct rows in the same second count separately.
+            key = hashlib.sha256(json.dumps(event, sort_keys=True).encode("utf-8")).hexdigest()
             if key in seen:
                 continue
             seen.add(key)

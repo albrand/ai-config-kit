@@ -184,6 +184,35 @@ class RequestContractLogTests(unittest.TestCase):
         self.assertEqual(report["threads_inside_tree"], ["thr_grand"])
         self.assertEqual(sorted(report["files"].values()), [1, 1])
 
+    def test_uptake_since_is_a_time_comparison_not_a_string_one(self):
+        main = self.home / ".local/state/agent-quality/events.jsonl"
+        main.parent.mkdir(parents=True)
+        row = lambda ts, thread, rows=2: json.dumps({"schema_version": 1, "ts": ts, "event": "request-contract",
+                                                    "thread_id": thread, "row_count": rows,
+                                                    "row_status_counts": {"complete": rows, "blocked": 0}})
+        main.write_text("\n".join([
+            row("2026-10-01T12:31:46.999+00:00", "thr_before"),
+            row("2026-10-01T12:31:47+00:00", "thr_at_boundary"),
+            row("2026-10-01T12:31:47.500000+00:00", "thr_subsecond"),
+            row("2026-10-01T12:31:47.500000+00:00", "thr_subsecond", 3),
+            row("2026-10-01T12:31:47.500000+00:00", "thr_subsecond", 3),
+        ]) + "\n")
+        result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:31:47Z"],
+                                capture_output=True, text=True, env=self.env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        # at-boundary + two distinct same-second rows; the exact duplicate row counts once; the earlier row not at all
+        self.assertEqual(report["events"], 3)
+        self.assertEqual(report["threads_outside_tree"], ["thr_at_boundary", "thr_subsecond"])
+
+    def test_uptake_reports_a_missing_thread_store(self):
+        result = subprocess.run(["python3", str(UPTAKE), "--since", "2026-10-01T12:00:00Z",
+                                 "--exclude-tree", "thr_root", "--bb-db", str(self.base / "absent.db")],
+                                capture_output=True, text=True, env=self.env())
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read bb's thread store", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_shared_or_linked_fallback_dir_is_refused(self):
         self.write_contract()
         state = self.home / ".local"
