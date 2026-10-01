@@ -19,19 +19,25 @@ thread:
 - `purposes`: `{id: "P1", text, done_when, status, evidence, status_marked_at, ask}`.
   - `text` is the user's own words, verbatim.
   - `status` is `open`, `done` or `blocked-on-user`.
-  - `waiting` (optional, open purposes only): `{until, on, set_at}`. The
-    purpose can only move once a date passes or data arrives. It is a field,
-    not a status, because fleet's ledger parser rejects unknown statuses, and
-    it lapses back into ordinary open work at `until`, as soon as the required
-    `ends_when_file` (the awaited output) exists, or once the user types after
-    the wait was set. Waits on one purpose span at most 30 days from its first
-    wait. The `wait_history` survives marks, so renewing or mark-then-wait
-    can't extend that. Any `mark` clears the current wait.
-  - A wait is the agent's own claim that nothing can be done until then; it
-    is bounded, not verified. The ledger was already self-attested this way:
-    `blocked-on-user` with any ask silences a purpose with no cap. A wait is
-    narrower: it is capped, tied to a named output, logged with its reason,
-    and lifted by the user's next message.
+  - `waiting` (optional, open purposes only):
+    `{until, on, set_at, ends_when_file, producer}`. The purpose can only move
+    once a scheduled bb automation (`producer`) writes `ends_when_file`. It is
+    a field, not a status, because fleet's ledger parser rejects unknown
+    statuses. It lapses back into ordinary open work when any of these happens:
+    - `until` passes;
+    - the output exists;
+    - the producer is disabled, unscheduled, or no longer due before `until`;
+    - the user types after the wait was set.
+
+    Waits on one purpose span at most 30 days from its first wait. The
+    `wait_history` survives marks, so renewing or mark-then-wait can't extend
+    that. Any `mark` clears the current wait.
+  - The wait rests on the producer, not on the agent's word. The automation
+    must be enabled and scheduled, run before `until`, and name the output path
+    in its prompt or script. Work the agent could do itself has no such
+    producer, so it can't wait and keeps being nudged. This does not prove the
+    purpose has nothing else runnable. Compare `blocked-on-user`, which
+    silences a purpose with no cap on any ask.
 - `accepted_revisions`: `{quote, accepted_at, source}`. Each entry is a scope
   change the user approved, quoted verbatim.
 
@@ -41,7 +47,8 @@ python3 $G init <thread> --from ledger.json        # refuses to overwrite
 python3 $G add <thread> --text "<user's words>" --done-when "<observable end state>"
 python3 $G mark <thread> P2 blocked-on-user --ask "<the exact question for the user>"
 python3 $G mark <thread> P1 done --evidence "<commit / URL / measurement>"
-python3 $G wait <thread> P3 --until 2026-10-18 --on "<the data or event it needs>"
+python3 $G wait <thread> P3 --until 2026-10-18 --on "<the data it needs>" \
+  --ends-when-file /abs/path/the/automation/writes.md --producer auto_<id>
 python3 $G revise <thread> --quote "<the user's approval, verbatim>" --source <ref>
 python3 $G show <thread>
 python3 $G check <thread> "<brief text>"           # the gate's decision, no tool call
@@ -233,9 +240,10 @@ nudge at most.
   continue the next authorized step, `mark … done --evidence`,
   `mark … blocked-on-user --ask` for a decision only the user owns (money, an
   outward or irreversible effect, credentials, a genuine ambiguity), or
-  `wait … --until --on` when no step can be taken until a date passes or data
-  arrives. A status report is none of them. A waiting purpose is not nudged
-  until its date, then it is open work again.
+  `wait … --until --on --ends-when-file --producer` when no step can be taken
+  until a scheduled automation produces data. A status report is none of
+  them. A waiting purpose is not nudged until the wait lapses, then it is open
+  work again.
 - A blocked-on-user purpose counts as open again when the latest user-typed
   input in the transcript is newer than its mark. Inputs bb and hooks compose
   (`[bb …]`, `[from …]`, `[child of …]`, `[fleet …]`) don't count.

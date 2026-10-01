@@ -41,6 +41,28 @@ class CloseoutStopTests(unittest.TestCase):
             db.execute("CREATE TABLE queued_thread_messages (id TEXT, thread_id TEXT)")
         self.clock = int(time.time() * 1000) - 3600 * 1000
         self.set_state(children=[{"id": "thr_child1", "status": "idle", "archivedAt": None}])
+        self.automations = base / "automations" / "data.db"
+        (self.automations.parent / "scripts").mkdir(parents=True)
+        with sqlite3.connect(self.automations) as db:
+            db.execute("CREATE TABLE automations (id TEXT PRIMARY KEY, enabled INTEGER, trigger_type TEXT, "
+                       "next_run_at INTEGER, execution TEXT)")
+        # The daily measurement that writes the outputs the wait tests wait on.
+        self.add_producer("auto_fixture", writes=[base / "awaited-output.md", base / "remeasure.md"])
+
+    def add_producer(self, aid, writes=(), enabled=1, trigger="schedule", next_run_days=1, mode="script"):
+        """A bb automation; a script one names its outputs in its script file, an agent one in its prompt."""
+        names = " ".join(str(w) for w in writes)
+        next_run = int((time.time() + next_run_days * 86400) * 1000)
+        if mode == "script":
+            folder = self.automations.parent / "scripts" / aid
+            folder.mkdir(exist_ok=True)
+            (folder / "measure.py").write_text(f"OUT = {names!r}\n")
+            execution = {"mode": "script", "scriptFile": "measure.py", "interpreter": "python3"}
+        else:
+            execution = {"mode": "agent", "prompt": f"Run the measurement and write {names}"}
+        with sqlite3.connect(self.automations) as db:
+            db.execute("INSERT OR REPLACE INTO automations VALUES (?, ?, ?, ?, ?)",
+                       (aid, enabled, trigger, next_run, json.dumps(execution)))
 
     def event(self, thread, kind, data=None, item_id=None, item_kind=None):
         self.clock += 1000
@@ -60,7 +82,7 @@ class CloseoutStopTests(unittest.TestCase):
     def env(self):
         return dict(os.environ, HOME=str(self.home), SCOPE_LEDGER_DIR=str(self.ledgers), BB_THREAD_ID=THREAD,
                     QA_GATE_EVENTS_FILE=str(self.events), CLOSEOUT_NUDGED_FILE=str(self.nudged),
-                    CLOSEOUT_BB_DB=str(self.db))
+                    CLOSEOUT_BB_DB=str(self.db), SCOPE_AUTOMATIONS_DB=str(self.automations))
 
     def set_state(self, children=None, queued=0, background=None):
         with sqlite3.connect(self.db) as db:
@@ -190,20 +212,59 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertIn("answered since", result["reason"])
 
     def gate_cli(self, *args, awaited=True):
-        """Run scope-gate.py; a `wait` names a not-yet-present output unless the test passes its own."""
+        """Run scope-gate.py; a `wait` names the fixture producer's output unless the test passes its own."""
         gate = SHARED / "scope-ledger/scripts/scope-gate.py"
-        if args and args[0] == "wait" and awaited and "--ends-when-file" not in args:
-            args = (*args, "--ends-when-file", str(pathlib.Path(self.tmp.name) / "awaited-output.md"))
+        if args and args[0] == "wait" and awaited:
+            if "--ends-when-file" not in args:
+                args = (*args, "--ends-when-file", str(pathlib.Path(self.tmp.name) / "awaited-output.md"))
+            if "--producer" not in args:
+                args = (*args, "--producer", "auto_fixture")
         return subprocess.run(["python3", str(gate), *args], text=True, capture_output=True, env=self.env())
+
+    # Review r3: a wait rests on a scheduled automation that writes the output, not on the agent's word.
+    # Work the agent could do now has no producer, so it can't wait and is still nudged; a purpose that
+    # really waits on scheduled data stays quiet, until its producer stops qualifying.
+    def test_only_data_a_scheduled_automation_produces_can_be_waited_on(self):
+        self.write_ledger(self.purpose("P5"), self.purpose("P6", text="ship the docs"))
+        base = pathlib.Path(self.tmp.name)
+        docs = str(base / "docs-shipped.md")
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+        self.add_producer("auto_unrelated", writes=[base / "other.md"])
+        self.add_producer("auto_off", writes=[docs], enabled=0)
+        self.add_producer("auto_manual", writes=[docs], trigger="manual")
+        self.add_producer("auto_late", writes=[docs], next_run_days=9)
+        for label, producer, why in [("no producer", None, "--producer"),
+                                     ("unknown automation", "auto_missing", "no automation"),
+                                     ("does not write the output", "auto_unrelated", "does not name"),
+                                     ("disabled", "auto_off", "disabled"),
+                                     ("not scheduled", "auto_manual", "not scheduled"),
+                                     ("runs after the date", "auto_late", "after the wait ends")]:
+            args = ["wait", THREAD, "P6", "--until", soon, "--on", "the docs", "--ends-when-file", docs]
+            refused = self.gate_cli(*args, *(["--producer", producer] if producer else []), awaited=False)
+            self.assertNotEqual(refused.returncode, 0, label)
+            self.assertIn(why, refused.stderr, label)
+        # An agent-mode automation names its output in the prompt.
+        self.add_producer("auto_agent", writes=[base / "remeasure.md"], mode="agent")
+        ok = self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "the strict re-measure",
+                           "--ends-when-file", str(base / "remeasure.md"), "--producer", "auto_agent")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn('P6 "ship the docs"', nudged["reason"])
+        self.assertNotIn("P5 ", nudged["reason"])
+        # The producer is disabled after the wait was set: the purpose is open work again.
+        self.add_producer("auto_agent", writes=[base / "remeasure.md"], mode="agent", enabled=0)
+        self.assertIn("P5 ", self.closeout()["reason"])
 
     # Review r2: a wait must name the output it waits for, and holds only until the user speaks.
     def test_wait_needs_an_output_and_yields_to_the_user(self):
         self.write_ledger(self.purpose("P6", text="ship the docs"))
         soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=5)).strftime("%Y-%m-%d")
-        bare = self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "nothing really", awaited=False)
+        bare = self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "the daily measurement",
+                             "--producer", "auto_fixture", awaited=False)
         self.assertNotEqual(bare.returncode, 0)
         self.assertIn("--ends-when-file", bare.stderr)
-        self.assertEqual(self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "nothing really").returncode, 0)
+        self.assertEqual(self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "the daily measurement").returncode, 0)
         self.assertEqual(self.closeout()["decision"], "allow")
         # Through the real stop chain: the user typing after the wait puts the purpose back under the check.
         self.install_chain()
@@ -217,7 +278,7 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertIn('P6 "ship the docs"', reason)
 
     # The ledger was already self-attested: blocked-on-user with any ask silences a purpose with no cap.
-    # A wait is narrower: capped, tied to an output, and lifted by the user's next message.
+    # A wait is narrower: capped, tied to an output a scheduled automation writes, and lifted by the user's next message.
     def test_blocked_on_user_was_already_an_unbounded_self_attested_silence(self):
         self.write_ledger(self.purpose("P6", text="ship the docs"))
         self.assertEqual(self.gate_cli("mark", THREAD, "P6", "blocked-on-user", "--ask", "anything").returncode, 0)

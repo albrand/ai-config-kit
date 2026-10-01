@@ -240,9 +240,10 @@ def nudge_text(thread, purposes):
         f'2. If it is finished: {gate} mark {thread} <Pn> done --evidence "<commit, URL or measurement>"',
         f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>". '
         "Only for money, an outward or irreversible effect, credentials, or a genuine ambiguity in the request.",
-        f'4. If no step can be taken until a date or data arrives: {gate} wait {thread} <Pn> --until <YYYY-MM-DD> '
-        '--on "<what has to arrive>" --ends-when-file <absolute path of that output>. Only when there is no '
-        "authorized step left to take now; at most 30 days, and the user's next message lifts it.",
+        f'4. If no step can be taken until a scheduled bb automation produces data: {gate} wait {thread} <Pn> '
+        '--until <YYYY-MM-DD> --on "<what has to arrive>" --ends-when-file <absolute path the automation writes> '
+        "--producer <its auto_ id>. Only when there is no authorized step left to take now; at most 30 days, "
+        "and the user's next message lifts it.",
         "A status report, a summary or an offer to continue is none of these. This is a one-time nudge for this turn.",
     ]
     return "\n".join(lines)

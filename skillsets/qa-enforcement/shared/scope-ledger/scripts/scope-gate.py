@@ -34,11 +34,14 @@ Subcommands:
     init <thread> --from <ledger.json>      create a ledger (refuses to overwrite)
     add <thread> --text T --done-when D     append a purpose in the user's words
     mark <thread> <Pn> <status> [--ask Q] [--evidence E]
-    wait <thread> <Pn> --until <date> --on W --ends-when-file F
+    wait <thread> <Pn> --until <date> --on W --ends-when-file F --producer <auto_id>
                                             an open purpose that can only move after a
-                                            date or data arrives: at most 30 days from
-                                            its first wait (renewals included); ends
-                                            when F exists or the user replies; any
+                                            scheduled bb automation writes F: the
+                                            automation must be enabled, run before the
+                                            date and name F in its prompt or script; at
+                                            most 30 days from its first wait (renewals
+                                            included); ends when F exists, the producer
+                                            stops qualifying or the user replies; any
                                             mark clears it
     revise <thread> --quote Q [--source S]  record a user-approved scope change
     release <thread> <child> --evidence E   a finished child: fleet stops holding it
@@ -71,6 +74,7 @@ STATUSES = ("open", "done", "blocked-on-user")
 # A wait is a field on an open purpose, not a status: fleet's ledger parser
 # rejects unknown statuses, and a wait must expire back into plain open work.
 MAX_WAIT_DAYS = 30
+AUTOMATIONS_DB = os.environ.get("SCOPE_AUTOMATIONS_DB") or os.path.expanduser("~/.bb/plugins/automations/data.db")
 
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
@@ -136,6 +140,53 @@ def parse_until(value):
     return when if when.tzinfo else when.replace(tzinfo=datetime.timezone.utc)
 
 
+def producer_problem(automation_id, ends_file, until):
+    """Why a bb automation can't be what a wait waits on; None when it can.
+
+    A wait rests on a scheduled automation, not the agent's word (review r3): it must be enabled,
+    scheduled, due to run before the wait ends, and name the output file in its prompt or script.
+    Work the agent could do itself has no such producer, so it can't wait.
+    """
+    import sqlite3
+    if not isinstance(automation_id, str) or not re.fullmatch(r"auto_[A-Za-z0-9_-]+", automation_id):
+        return "a wait needs --producer with the id of the scheduled bb automation that writes the output"
+    try:
+        con = sqlite3.connect(f"file:{AUTOMATIONS_DB}?mode=ro", uri=True, timeout=2)
+        try:
+            row = con.execute("SELECT enabled, trigger_type, next_run_at, execution FROM automations WHERE id = ?",
+                              (automation_id,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        return f"automations unreadable ({e})"
+    if row is None:
+        return f"no automation {automation_id}"
+    enabled, trigger, next_run, execution = row
+    if not enabled:
+        return f"{automation_id} is disabled"
+    if trigger != "schedule" or not next_run:
+        return f"{automation_id} is not scheduled"
+    if until is not None and next_run / 1000 > until.timestamp():
+        return f"{automation_id} next runs after the wait ends"
+    definition = execution or ""
+    try:
+        script = (json.loads(definition) or {}).get("scriptFile")
+    except (ValueError, AttributeError):
+        script = None
+    if isinstance(script, str) and script:
+        path = os.path.join(os.path.dirname(AUTOMATIONS_DB), "scripts", automation_id, os.path.basename(script))
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                definition += fh.read()
+        except OSError:
+            pass
+    full, home = os.path.expanduser(ends_file or ""), os.path.expanduser("~")
+    names = {full, ends_file or ""} | ({"~" + full[len(home):]} if full.startswith(home + os.sep) else set())
+    if not any(n and n in definition for n in names):
+        return f"{automation_id} does not name {ends_file} in its prompt or script"
+    return None
+
+
 def waiting_until(purpose, now=None):
     """When an open purpose's wait ends, if it is still waiting; else None."""
     waiting = purpose.get("waiting")
@@ -144,9 +195,13 @@ def waiting_until(purpose, now=None):
     until = parse_until(waiting.get("until"))
     now = now or datetime.datetime.now(datetime.timezone.utc)
     ends_file = waiting.get("ends_when_file")
+    if not until or until <= now:
+        return None
     if isinstance(ends_file, str) and ends_file and os.path.exists(os.path.expanduser(ends_file)):
         return None  # what it waited for has arrived: ordinary checking resumes before the date
-    return until if until and until > now else None
+    if producer_problem(waiting.get("producer"), ends_file, until):
+        return None  # nothing outside the agent will produce it any more: open work again
+    return until
 
 
 def collapse(s):
@@ -892,7 +947,8 @@ def main(argv):
             return 0
         if cmd == "wait":
             if len(args) < 2:
-                raise LedgerError("wait <thread> <Pn> --until <YYYY-MM-DD|ISO time> --on <what has to arrive>")
+                raise LedgerError("wait <thread> <Pn> --until <YYYY-MM-DD|ISO time> --on <what has to arrive> "
+                                  "--ends-when-file <path> --producer <auto_id>")
             pid = args[1].upper()
             p = next((p for p in ledger["purposes"] if p["id"] == pid), None)
             if not p:
@@ -917,8 +973,13 @@ def main(argv):
                 raise LedgerError("wait needs --ends-when-file with the absolute path of the output it waits for")
             if os.path.exists(os.path.expanduser(ends_file)):
                 raise LedgerError(f"{ends_file} already exists: what this purpose waits for has arrived")
+            producer = arg(args, "--producer")
+            problem = producer_problem(producer, ends_file, until)
+            if problem:
+                raise LedgerError(f"{problem}. Only data a scheduled automation produces can be waited on; "
+                                  "work you can do yourself is not a wait")
             p["waiting"] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "on": on, "set_at": now_iso(),
-                            "ends_when_file": ends_file}
+                            "ends_when_file": ends_file, "producer": producer}
             history.append(dict(p["waiting"]))
             p.setdefault("evidence", []).append({"at": now_iso(), "note": f"waiting until {p['waiting']['until']} on {on}"})
             write_ledger(thread, ledger)
