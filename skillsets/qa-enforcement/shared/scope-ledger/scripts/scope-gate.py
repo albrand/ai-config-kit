@@ -1494,7 +1494,8 @@ def selftest():
               f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
-        unseen = sorted({"thread queue create", "thread draft set", "thread interactions answer", "thread interactions respond",
+        # bb removed `thread draft` (2026-09-30); its gating stays for older builds, but it can't be a probe.
+        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond",
                          "automation create", "automation update", "instructions set", "notify send"} - carries)
         failed += bool(unseen)
         print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested and plugin groups and --text/--value/--script"
