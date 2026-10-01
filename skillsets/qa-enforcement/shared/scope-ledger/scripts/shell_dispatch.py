@@ -89,9 +89,9 @@ HELP_WORDS = ("--help", "-h")
 # dispatch (#27 r2: bb-account.v1.fetch POSTs caller JSON to getbb.app, whose
 # handling can't be read here; r4: no namespace is trusted wholesale).
 RPC_EXEMPT = {
-    # provider-codex/-claude-code/-acp: input {} or {resourceId, refresh}; output usage numbers.
+    # provider-codex/-claude-code/-acp: input {}; the handler lists bb's hosts and usage providers.
+    # (getResource is not exempt: its collection path delegates to code not read here, #27 r5.)
     "provider-usage.v1.listResources": "lists this host's usage resources from local metadata",
-    "provider-usage.v1.getResource": "returns one listed resource's usage limits",
     # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
     "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
     "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status",

@@ -1477,7 +1477,7 @@ def selftest():
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
     # Exact names don't cover their siblings: a method bb adds later is flagged until it is read.
-    good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell", "bb-account.v1.status",
+    good = open_rpc(["provider-usage.v1.listResources", "fleet.v1.tell", "bb-account.v1.status",
                      "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "provider-usage.v1.tellThread"]) == [
         "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "fleet.v1.tell", "provider-usage.v1.tellThread"]
     failed += not good

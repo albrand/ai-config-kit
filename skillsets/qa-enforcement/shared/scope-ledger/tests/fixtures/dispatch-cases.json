@@ -201,7 +201,7 @@
     {"label": "#27: plugin rpc call of a method bb adds later is gated by default", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.tellThread"},
     {"label": "#27: plugin rpc call whose method is built at run time", "want": 2, "command": "bb plugin rpc call bb-account $(echo bb-account.v1.fetch)"},
     {"label": "#27: plugin rpc call of a non-exempt method with serves", "want": 0, "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
-    {"label": "#27: plugin rpc call of an exempt provider-usage read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
+    {"label": "#27 r5: provider-usage getResource is gated (its collection path was not read)", "want": 2, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
     {"label": "#27: plugin rpc call of an exempt exact read", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status"},
     {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"},
     {"label": "#27 r3: run-time words before an exempt method can pick another (call $ARGS status)", "want": 2, "command": "bb plugin rpc call $ARGS bb-account.v1.status"},
