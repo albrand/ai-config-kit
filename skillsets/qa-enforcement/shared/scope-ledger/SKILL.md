@@ -65,11 +65,11 @@ after the QA ship gate.
   command, and `bb plugin config custom-instructions set ...` (the custom
   instructions are that plugin's setting) as `instructions set`.
   `bb plugin rpc call <plugin> <method>` is a dispatch unless the method is
-  listed in `RPC_EXEMPT` (`shell_dispatch.py`) as one that hands no text to a
-  thread. A key ending in `.` covers a namespace; any other key is one exact
-  method, so a method bb adds later is gated until someone reads it. The
-  selftest fails on a discoverable method (`bb plugin rpc list`) that is
-  neither exempt nor gated. The serves line of `instructions set` is part of the
+  named exactly in `RPC_EXEMPT` (`shell_dispatch.py`) as one whose
+  implementation was read and hands no text to a thread. No namespace is
+  exempt, so a method bb adds later is gated until someone reads it. A call
+  with any word built at run time is a dispatch too. The selftest fails on a
+  discoverable method (`bb plugin rpc list`) that is neither exempt nor gated. The serves line of `instructions set` is part of the
   text every agent then receives, as with `fleet_context_set`. An answer
   that only picks offered choices (`--choice`), a
   member-add without a concern, and an automation update of other fields

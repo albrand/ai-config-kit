@@ -96,6 +96,7 @@
     {"label": "bare argument variable stays allowed on a serving dispatch", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb thread tell thr_x '$MSG serves: P1'"}, "cwd": "/tmp"}},
     {"label": "#27: plugin rpc call without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin rpc call bb-account bb-account.v1.fetch --input-file /tmp/in.json"}, "cwd": "/tmp"}},
     {"label": "#27: plugin rpc call serving P1", "want": 0, "payload": {"tool_name": "Bash", "tool_input": {"command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch"}, "cwd": "/tmp"}},
-    {"label": "#27 r3: call $ARGS status without serves (fails closed)", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin rpc call $ARGS bb-account.v1.status"}, "cwd": "/tmp"}}
+    {"label": "#27 r3: call $ARGS status without serves (fails closed)", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin rpc call $ARGS bb-account.v1.status"}, "cwd": "/tmp"}},
+    {"label": "#27 r4: unknown provider-usage method without serves", "want": 2, "payload": {"tool_name": "Bash", "tool_input": {"command": "bb plugin rpc call provider-codex provider-usage.v1.tellThread"}, "cwd": "/tmp"}}
   ]
 }

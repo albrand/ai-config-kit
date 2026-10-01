@@ -83,20 +83,24 @@ GROUPS = ("thread", "fleet", "automation", "instructions")
 # (review r2d): the plugin ids of the gated plugin groups.
 PLUGIN_GROUPS = {"automations": "automation", "custom-instructions": "instructions", "fleet": "fleet"}
 HELP_WORDS = ("--help", "-h")
-# Discoverable plugin RPC methods (`bb plugin rpc list`) that hand an agent no
-# text, with why. `bb plugin rpc call` of any other method is a dispatch (review
-# #27 r2: bb-account.v1.fetch POSTs caller JSON to getbb.app, whose handling
-# can't be read here). A key ending in "." covers its namespace; any other key
-# is one exact method.
-RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits",
-              # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
-              "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
-              "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status"}
+# Discoverable plugin RPC methods (`bb plugin rpc list`) whose implementation
+# was read and hands no text to a thread, by exact name. `bb plugin rpc call` of
+# any other method, including one bb adds later to a listed plugin, is a
+# dispatch (#27 r2: bb-account.v1.fetch POSTs caller JSON to getbb.app, whose
+# handling can't be read here; r4: no namespace is trusted wholesale).
+RPC_EXEMPT = {
+    # provider-codex/-claude-code/-acp: input {} or {resourceId, refresh}; output usage numbers.
+    "provider-usage.v1.listResources": "lists this host's usage resources from local metadata",
+    "provider-usage.v1.getResource": "returns one listed resource's usage limits",
+    # bb-account (bb 2026-10-01): both return the in-memory sign-in status.
+    "bb-account.v1.status": "returns this bb's getbb.app sign-in status",
+    "bb-account.v1.waitForStatusChange": "long-polls the same sign-in status",
+}
 RPC_CALL_ARG_OPTS = ("--input-file",)
 
 
 def rpc_exempt(method):
-    return any(method == k or (k.endswith(".") and method.startswith(k)) for k in RPC_EXEMPT)
+    return method in RPC_EXEMPT
 
 
 def _rpc_call_method(tail):

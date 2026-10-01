@@ -945,7 +945,7 @@ def rpc_methods(bb="bb"):
 
 
 def open_rpc(methods):
-    """The RPC methods no RPC_EXEMPT entry covers: a namespace key ("x.v1.") or an exact name."""
+    """The RPC methods RPC_EXEMPT does not name exactly."""
     return sorted({m for m in methods if not rpc_exempt(m)})
 
 
@@ -1476,10 +1476,10 @@ def selftest():
     unmatched = [h for h in shown if not HELP_TEXT.search(h)]
     failed += bool(unmatched)
     print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
-    # Exact names don't cover their siblings: a new bb-account method is flagged until it is read.
+    # Exact names don't cover their siblings: a method bb adds later is flagged until it is read.
     good = open_rpc(["provider-usage.v1.getResource", "fleet.v1.tell", "bb-account.v1.status",
-                     "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread"]) == [
-        "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "fleet.v1.tell"]
+                     "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "provider-usage.v1.tellThread"]) == [
+        "bb-account.v1.fetchAndTell", "bb-account.v1.tellThread", "fleet.v1.tell", "provider-usage.v1.tellThread"]
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
     # The fake bb served only the hook cases; the coverage scans read the real one.
