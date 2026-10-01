@@ -37,13 +37,19 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     os.path.expanduser("~"), ".local", "state", "agent-quality", "events.jsonl")
 # The retry after a nudge carries stop_hook_active. A probe answered the nudge with "Tests were not run" and
 # stopped with a sub-second suite unrun (2026-10-01), so one more bounded check runs on that retry.
+_NOUN = r"(?:tests?|test suite|suites?|workflows?|checks?|e2e|qa)"
+_RUN = r"(?:run|ran|executed|exercised|performed)"
 UNRUN = re.compile(
-    r"\b(?:tests?|test suite|suite|workflow|checks?|e2e|qa)\b[^.\n]{0,40}?"
-    r"\b(?:not run|were not run|was not run|weren't run|wasn't run|not executed|not exercised)\b"
-    r"|\bworkflow\s+not\s+run\b"
-    r"|\b(?:did not|didn't|have not|haven't|has not|hasn't|could not|couldn't)\s+(?:yet\s+)?(?:run|execute)\b"
-    r"[^.\n]{0,20}?\b(?:tests?|suite|workflow|checks?|e2e|qa)\b"
-    r"|\bwithout\s+running\b[^.\n]{0,20}?\b(?:tests?|suite|workflow|checks?|e2e|qa)\b",
+    # "tests were not run", "tests have not been run", "the tests weren't executed", "tests never ran"
+    r"\b" + _NOUN + r"\b[^.\n]{0,40}?(?:\bnot|n't|\bnever)\s+(?:yet\s+)?(?:been\s+|be\s+)?" + _RUN + r"\b"
+    # "no tests were run", "none of the tests ran"
+    r"|\b(?:no|none of the)\s+" + _NOUN + r"\b[^.\n]{0,25}?\b" + _RUN + r"\b"
+    # "I didn't run the tests", "haven't executed the suite"
+    r"|(?:\bnot|n't|\bnever)\s+(?:yet\s+)?(?:run|execute|exercise)\b[^.\n]{0,20}?\b" + _NOUN + r"\b"
+    # "without running the suite", "skipped the tests", "tests were skipped"
+    r"|\b(?:without\s+running|skipp(?:ed|ing))\b[^.\n]{0,20}?\b" + _NOUN + r"\b"
+    r"|\b" + _NOUN + r"\b[^.\n]{0,20}?\bskipped\b"
+    r"|\bworkflow\s+not\s+run\b",
     re.IGNORECASE,
 )
 # Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in

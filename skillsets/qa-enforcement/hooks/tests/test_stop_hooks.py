@@ -145,6 +145,15 @@ class StopHooksTests(unittest.TestCase):
                 "Nothing is missing from the change; tests were not run.",
                 "I didn't run the tests.",
                 "Shipped without running the suite.",
+                "No tests were run.",
+                "Tests have not been run.",
+                "The tests weren't executed.",
+                "None of the tests ran.",
+                "The suite was never run.",
+                "Tests: not run.",
+                "I haven't run the e2e checks yet.",
+                "I skipped the tests.",
+                "The workflow has not been exercised.",
                 "Tests were not run because the sandbox has no network to install the test runner.",
             ]):
                 self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)
@@ -157,6 +166,9 @@ class StopHooksTests(unittest.TestCase):
                 "The tests cannot be run here because the sandbox has no network; remaining: run them in CI.",
                 "Ran 12 tests, all pass. Persona: dev; Target: repo abc1234; Goal: parse; Verdict: PASS.",
                 "Here is the summary you asked for.",
+                "All 39 tests were run and pass.",
+                "The checks did not find any issue; the suite ran green.",
+                "Tests not only ran but passed on commit abc1234.",
             ]):
                 self.assertEqual(self.retry_run(temp, text, session=f"a{i}"), "none", text)
 
