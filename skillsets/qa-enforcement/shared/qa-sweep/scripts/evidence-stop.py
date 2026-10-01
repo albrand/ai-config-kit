@@ -95,6 +95,7 @@ def has_evidence_packet(text):
     label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
+    header_at = None  # line index of that table's header row
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
@@ -128,12 +129,17 @@ def has_evidence_packet(text):
         if table_row:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
+                if columns and header_at != index - 1:
+                    fields["goals"].pop()  # the row above was a glued table's header, not a goal
+                    fields["derived_verdict"].pop()
+                    columns = None
                 continue  # separator row
             heads = [cell.lower() for cell in cells]
             goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
             verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
             if goal is not None and verdict is not None and goal != verdict:
                 columns = (goal, verdict)  # a goal/verdict table, two columns or more
+                header_at = index
                 current = None
                 continue
             if columns and len(cells) > max(columns):

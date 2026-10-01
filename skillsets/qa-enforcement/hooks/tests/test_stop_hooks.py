@@ -49,6 +49,11 @@ class StopHooksTests(unittest.TestCase):
             head + "| Suite passes | pending |\n\n| Field | Value |\n|---|---|\n| Notes | PASS |\n"))
         self.assertFalse(evidence.has_evidence_packet(
             head + "| Suite passes | pending |\nSee below.\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
+        # Glued directly under the goal table, with no line between, the second table is still a separate table.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
+        self.assertTrue(evidence.has_evidence_packet(
+            head + "| Suite passes | PASS |\n| Check | Result |\n|---|---|\n| Lint | pending |\n"))
 
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
