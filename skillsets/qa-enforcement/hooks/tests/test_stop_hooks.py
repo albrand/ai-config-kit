@@ -122,82 +122,71 @@ class StopHooksTests(unittest.TestCase):
         self.assertIn("Only when it cannot be run now", reason)
         self.assertIn("name the blocker", reason)
 
-    def retry_run(self, temp, text, session="s1", retry=True):
+    FIRST_CLAIM = "I have implemented the fix."
+    UNANSWERED = [
+        # The 2026-10-01 probe's reply, then the phrasings found in review: each is neither a packet nor a
+        # named outside blocker, so none of them may close the turn.
+        "Completed all three requested items.\n`git diff --check` passed. Tests were **not run**.",
+        "Implemented; workflow NOT RUN; remaining: run the suite.",
+        "Tests were not run. The suite requires Python 3.12.", "Tests were not run in the sandbox environment.",
+        "I didn't run the tests.", "Shipped without running the suite.", "No tests were run.",
+        "Tests have not been run.", "The tests weren't executed.", "None of the tests ran.", "I skipped the tests.",
+        "Tests were not run \u2014 I can't run them here.", "Tests were not run. Blocker: none.",
+        "Tests were not run because I ran out of time, so I cannot run them: later.",
+        "Tests were not run; blocked by time.", "Tests were not run; blocked by other priorities.",
+        "Tests were not run; blocked by capacity.", "Tests were not run. Blocker: none of the above.",
+        "Tests were not run. Blocker: nothing further.",
+        "I didn't test it.", "Haven't tested yet.", "The change is untested.", "Tests remain unrun.",
+        "No testing was done.", "Testing was not performed.", "I didn't get to the tests.",
+        "Didn't verify it.", "Not verified.", "Verification is pending.", "I'll run the tests next.",
+        "Tests: pending.", "QA pending.", "Left the tests for later.", "Will test later.", "TODO: run tests.",
+        "I have not validated the workflow.", "I haven't checked it end to end.", "Not tested.",
+        "Didn't run anything.", "I did not try it in the browser.", "Here is the summary you asked for.",
+    ]
+    ANSWERED = [
+        "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\n"
+        "Verdict: PASS \u2014 completed checks.",
+        "Implemented; workflow NOT RUN. Blocker: the staging login requires the owner's credentials.",
+        "Tests were not run: blocked by the sandbox, which has no network to install the test runner.",
+        "The tests cannot be run here because the sandbox has no network; remaining: run them in CI.",
+        "Tests were not run: blocked by missing owner credentials; will tidy docs later.",
+        "Tests were not run. Blocker: no staging credentials.",
+    ]
+
+    def stop(self, temp, text, session, retry):
         env = dict(os.environ, QA_EVIDENCE_RETRY_STATE=str(pathlib.Path(temp) / "retry.json"),
                    QA_GATE_EVENTS_FILE=str(pathlib.Path(temp) / "events.jsonl"))
         payload = {"stop_hook_active": retry, "session_id": session, "last_assistant_message": text}
         out = run(["python3", str(EVIDENCE)], env=env, data=json.dumps(payload)).stdout.strip()
         return json.loads(out)["decision"] if out else "none"
 
-    def test_retry_blocks_once_when_tests_are_reported_unrun_without_a_blocker(self):
-        # The 2026-10-01 probe's final text after the nudge, verbatim in shape.
-        probe = "Completed all three requested items.\n`git diff --check` passed. Tests were **not run**."
+    def nudged_turn(self, temp, reply, session):
+        self.assertEqual(self.stop(temp, self.FIRST_CLAIM, session, False), "block")
+        return self.stop(temp, reply, session, True)
+
+    def test_retry_blocks_once_when_the_nudge_gets_no_packet_and_no_outside_blocker(self):
         with tempfile.TemporaryDirectory() as temp:
-            self.assertEqual(self.retry_run(temp, probe), "block")
-            self.assertEqual(self.retry_run(temp, probe), "none", "a second retry in the window must not loop")
-            self.assertEqual(self.retry_run(temp, probe, session="s2"), "block", "the bound is per session")
-            self.assertEqual(self.retry_run(temp, "Implemented; workflow NOT RUN; remaining: run the suite.",
-                                            session="s3"), "block")
-            # An ordinary word that only sounds like a blocker does not excuse runnable work.
-            for i, text in enumerate([
-                "Tests were not run. The suite requires Python 3.12.",
-                "Tests were not run in the sandbox environment.",
-                "Nothing is missing from the change; tests were not run.",
-                "I didn't run the tests.",
-                "Shipped without running the suite.",
-                "No tests were run.",
-                "Tests have not been run.",
-                "The tests weren't executed.",
-                "None of the tests ran.",
-                "The suite was never run.",
-                "Tests: not run.",
-                "I haven't run the e2e checks yet.",
-                "I skipped the tests.",
-                "The workflow has not been exercised.",
-                # Blocker-shaped dodges with no cause, or a cause that is only a choice.
-                "Tests were not run \u2014 I can't run them here.",
-                "Tests were not run; I cannot run them.",
-                "Tests were not run. Blocker: none.",
-                "Tests were not run because I ran out of time, so I cannot run them: later.",
-                "Tests were not run; they cannot be run now because it takes too long.",
-                "Tests were not run; blocked by time.",
-                "Tests were not run; blocked by bandwidth.",
-                "Tests were not run; blocked by other priorities.",
-                "Tests were not run. Blocker: n/a.",
-                "Tests were not run; blocked by capacity.",
-                "Tests were not run; blocked by other work.",
-                "Tests were not run; blocked by workload.",
-                "Tests were not run; blocked by prioritization.",
-                "Tests were not run. Blocker: none of the above.",
-                "Tests were not run. Blocker: n/a for this repo.",
-                "Tests were not run. Blocker: nothing further.",
-                "Tests were not run because the sandbox has no network to install the test runner.",
-            ]):
-                self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)
+            for i, reply in enumerate(self.UNANSWERED):
+                self.assertEqual(self.nudged_turn(temp, reply, f"u{i}"), "block", reply)
+            self.assertEqual(self.stop(temp, self.UNANSWERED[0], "u0", True), "none", "a third stop must not loop")
+
+    def test_retry_allows_a_packet_or_a_named_outside_blocker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for i, reply in enumerate(self.ANSWERED):
+                self.assertEqual(self.nudged_turn(temp, reply, f"a{i}"), "none", reply)
+
+    def test_retry_after_another_hooks_block_is_not_checked(self):
+        # This hook did not nudge on the first stop (no claim), so the retry belongs to another hook's block.
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(self.stop(temp, "Here is the plan; remaining: run the import.", "c1", False), "allow")
+            self.assertEqual(self.stop(temp, "Tests were not run.", "c1", True), "none")
+            self.assertEqual(self.stop(temp, "Tests were not run.", "c2", True), "none", "no first stop at all")
 
     def test_retry_nudge_returns_in_a_later_turn_of_the_same_session(self):
-        text = "Tests were not run."
         with tempfile.TemporaryDirectory() as temp:
-            self.assertEqual(self.retry_run(temp, text), "block")
-            self.assertEqual(self.retry_run(temp, text), "none", "bounded within the turn")
-            self.retry_run(temp, "Next turn's first stop.", retry=False)  # a new turn starts
-            self.assertEqual(self.retry_run(temp, text), "block", "a later turn gets its own last nudge")
-
-    def test_retry_allows_unrun_work_with_a_named_blocker_and_unrelated_text(self):
-        with tempfile.TemporaryDirectory() as temp:
-            for i, text in enumerate([
-                "Implemented; workflow NOT RUN. Blocker: the staging login requires the owner's credentials.",
-                "Tests were not run: blocked by the sandbox, which has no network to install the test runner.",
-                "The tests cannot be run here because the sandbox has no network; remaining: run them in CI.",
-                "Tests were not run: blocked by missing owner credentials; will tidy docs later.",
-                "Tests were not run. Blocker: no staging credentials.",
-                "Ran 12 tests, all pass. Persona: dev; Target: repo abc1234; Goal: parse; Verdict: PASS.",
-                "Here is the summary you asked for.",
-                "All 39 tests were run and pass.",
-                "The checks did not find any issue; the suite ran green.",
-                "Tests not only ran but passed on commit abc1234.",
-            ]):
-                self.assertEqual(self.retry_run(temp, text, session=f"a{i}"), "none", text)
+            self.assertEqual(self.nudged_turn(temp, "Tests were not run.", "s1"), "block")
+            self.assertEqual(self.stop(temp, "Tests were not run.", "s1", True), "none", "bounded within the turn")
+            self.assertEqual(self.nudged_turn(temp, "Tests were not run.", "s1"), "block", "a later turn is checked")
 
     def test_stop_hook_uses_transcript_when_last_message_is_missing(self):
         self.assert_stop_fixture("transcript fallback nudge", opted_in=False, transcript=True,

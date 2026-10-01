@@ -35,23 +35,10 @@ NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGN
 REMAINS = re.compile(r"\b(?:what remains|remaining|still needs? to|next steps?|remains? to)\b", re.IGNORECASE)
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     os.path.expanduser("~"), ".local", "state", "agent-quality", "events.jsonl")
-# The retry after a nudge carries stop_hook_active. A probe answered the nudge with "Tests were not run" and
-# stopped with a sub-second suite unrun (2026-10-01), so one more bounded check runs on that retry.
-_NOUN = r"(?:tests?|test suite|suites?|workflows?|checks?|e2e|qa)"
-_RUN = r"(?:run|ran|executed|exercised|performed)"
-UNRUN = re.compile(
-    # "tests were not run", "tests have not been run", "the tests weren't executed", "tests never ran"
-    r"\b" + _NOUN + r"\b[^.\n]{0,40}?(?:\bnot|n't|\bnever)\s+(?:yet\s+)?(?:been\s+|be\s+)?" + _RUN + r"\b"
-    # "no tests were run", "none of the tests ran"
-    r"|\b(?:no|none of the)\s+" + _NOUN + r"\b[^.\n]{0,25}?\b" + _RUN + r"\b"
-    # "I didn't run the tests", "haven't executed the suite"
-    r"|(?:\bnot|n't|\bnever)\s+(?:yet\s+)?(?:run|execute|exercise)\b[^.\n]{0,20}?\b" + _NOUN + r"\b"
-    # "without running the suite", "skipped the tests", "tests were skipped"
-    r"|\b(?:without\s+running|skipp(?:ed|ing))\b[^.\n]{0,20}?\b" + _NOUN + r"\b"
-    r"|\b" + _NOUN + r"\b[^.\n]{0,20}?\bskipped\b"
-    r"|\bworkflow\s+not\s+run\b",
-    re.IGNORECASE,
-)
+# The retry after this hook's own nudge carries stop_hook_active. A probe answered the nudge with "Tests were
+# not run" and stopped with a sub-second suite unrun (2026-10-01). Detecting every way of saying "not run" is
+# open-ended, so the retry instead checks for one of the two answers the nudge asks for: an evidence packet,
+# or a blocker that names an outside constraint. Neither present: one last nudge.
 # Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in
 # the message must not excuse runnable work (PR #36 review).
 BLOCKER = re.compile(
@@ -306,52 +293,60 @@ def retry_key(payload):
                or payload.get("transcriptPath") or payload.get("cwd") or "")
 
 
-def clear_retry(payload):
-    """A first stop starts a new turn: forget the previous turn's retry nudge for this session."""
+def _load_state():
     try:
         with open(RETRY_STATE, encoding="utf-8") as stream:
             state = json.load(stream)
-        key = retry_key(payload)
-        if not isinstance(state, dict) or key not in state:
-            return
-        del state[key]
-        tmp = RETRY_STATE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as stream:
-            json.dump(state, stream)
-        os.replace(tmp, RETRY_STATE)
+        return state if isinstance(state, dict) else {}
     except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state):
+    os.makedirs(os.path.dirname(RETRY_STATE), mode=0o700, exist_ok=True)
+    tmp = RETRY_STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as stream:
+        json.dump(state, stream)
+    os.replace(tmp, RETRY_STATE)
+
+
+def record_first_pass(payload, nudged):
+    """First stop of a turn: remember whether this hook nudged, so only its own retry is checked."""
+    now = time.time()
+    state = {k: v for k, v in _load_state().items()
+             if isinstance(v, dict) and isinstance(v.get("t"), (int, float)) and now - v["t"] < RETRY_WINDOW_S}
+    key = retry_key(payload)
+    if nudged:
+        state[key] = {"t": now, "retried": False}
+    elif key not in state:
         return
+    else:
+        del state[key]
+    try:
+        _save_state(state)
+    except OSError:
+        return  # without the record the retry is not checked: fail open
 
 
 def retry_check(payload, text):
-    """On the retry stop: one more nudge when work is reported unrun with no blocker named."""
-    plain = text.replace("**", "").replace("__", "")
-    if not UNRUN.search(plain) or names_blocker(plain):
-        return None
+    """On the retry after this hook's nudge: allow only an evidence packet or a named outside blocker, once."""
     key = retry_key(payload)
-    now = time.time()
+    state = _load_state()
+    entry = state.get(key)
+    if (not isinstance(entry, dict) or entry.get("retried") or not isinstance(entry.get("t"), (int, float))
+            or time.time() - entry["t"] >= RETRY_WINDOW_S):
+        return None  # not our nudge, already checked once, or expired: never loop
+    entry["retried"] = True
     try:
-        with open(RETRY_STATE, encoding="utf-8") as stream:
-            state = json.load(stream)
-        if not isinstance(state, dict):
-            state = {}
-    except (OSError, ValueError):
-        state = {}
-    state = {k: v for k, v in state.items() if isinstance(v, (int, float)) and now - v < RETRY_WINDOW_S}
-    if key in state:
-        return None  # already nudged on a retry in this window: never loop
-    state[key] = now
-    try:
-        os.makedirs(os.path.dirname(RETRY_STATE), mode=0o700, exist_ok=True)
-        tmp = RETRY_STATE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as stream:
-            json.dump(state, stream)
-        os.replace(tmp, RETRY_STATE)
+        _save_state(state)
     except OSError:
         return None  # without the bound, do not block
-    return ("[qa-evidence] You report the workflow or tests as not run and name no blocker. If they can run, "
-            "run them now and report the result with an evidence packet. If they cannot, name the blocker. "
-            "This is the last nudge for this turn.")
+    plain = text.replace("**", "").replace("__", "")
+    if has_evidence_packet(text) or names_blocker(plain):
+        return None
+    return ("[qa-evidence] The reply to the evidence nudge has neither an evidence packet nor a blocker that names "
+            "an outside constraint. If the workflow or tests can run, run them now and report the result with a "
+            "packet. If they cannot, name what blocks them. This is the last nudge for this turn.")
 
 
 def main():
@@ -362,22 +357,23 @@ def main():
     if not isinstance(payload, dict):
         return 0
     retry = bool(payload.get("stop_hook_active") or payload.get("stopHookActive"))
-    if not retry:
-        clear_retry(payload)
     text = payload.get("text")
     if not isinstance(text, str):
         text = payload.get("last_assistant_message") or payload.get("lastAssistantMessage") or ""
     if not isinstance(text, str) or not text:
         text = transcript_assistant_text(payload.get("transcript_path") or payload.get("transcriptPath"))
     if not isinstance(text, str) or not text:
+        if not retry:
+            record_first_pass(payload, False)
         return 0
     if retry:
         reason = retry_check(payload, text)
         if reason:
-            append_claim_event(payload, "unrun-on-retry", "block")
+            append_claim_event(payload, "unanswered-nudge", "block")
             print(json.dumps({"decision": "block", "reason": reason}))
         return 0
     result = inspect(text)
+    record_first_pass(payload, result["block"])
     if result.get("claim"):
         append_claim_event(payload, result["claim"], "block" if result["block"] else "allow")
     if result["block"]:

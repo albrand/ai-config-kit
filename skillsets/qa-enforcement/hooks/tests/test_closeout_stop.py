@@ -313,11 +313,7 @@ class CloseoutStopTests(unittest.TestCase):
         payload["stop_hook_active"] = True
         retry = subprocess.run(["sh", str(STOP)], input=json.dumps(payload), text=True,
                                capture_output=True, env=env, check=True)
-        # Runnable work still reported unrun with no blocker: the evidence retry guard nudges once more.
-        self.assertIn("[qa-evidence]", json.loads(retry.stdout)["reason"])
-        again = subprocess.run(["sh", str(STOP)], input=json.dumps(payload), text=True,
-                               capture_output=True, env=env, check=True)
-        self.assertEqual(again.stdout.strip(), "", "the retry chain stays bounded")
+        self.assertEqual(retry.stdout.strip(), "")
 
     def test_events_hold_ids_not_text(self):
         self.write_ledger(self.purpose())
