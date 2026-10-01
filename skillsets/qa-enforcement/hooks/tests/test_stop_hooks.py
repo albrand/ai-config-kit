@@ -164,6 +164,13 @@ class StopHooksTests(unittest.TestCase):
                 "Tests were not run; blocked by bandwidth.",
                 "Tests were not run; blocked by other priorities.",
                 "Tests were not run. Blocker: n/a.",
+                "Tests were not run; blocked by capacity.",
+                "Tests were not run; blocked by other work.",
+                "Tests were not run; blocked by workload.",
+                "Tests were not run; blocked by prioritization.",
+                "Tests were not run. Blocker: none of the above.",
+                "Tests were not run. Blocker: n/a for this repo.",
+                "Tests were not run. Blocker: nothing further.",
                 "Tests were not run because the sandbox has no network to install the test runner.",
             ]):
                 self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)

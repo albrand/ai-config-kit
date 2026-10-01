@@ -55,7 +55,7 @@ UNRUN = re.compile(
 # Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in
 # the message must not excuse runnable work (PR #36 review).
 BLOCKER = re.compile(
-    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]\s*(?!(?:none|n/?a|nothing)\b\s*(?:[.;,]|$))\w+"
+    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]\s*(?!(?:none|n/?a|nothing|not applicable|no blockers?)\b)\w+"
     r"|\bblocked\s+(?:by|on)\s+\w+"
     r"|\b(?:cannot|can't|can not|could not|couldn't|unable to)\s+(?:be\s+)?(?:run|execute|reach|access|start)\b"
     r"[^.\n]{0,60}?(?:\b(?:because|since|due to|without)\b|:)\s*\w+",
@@ -67,6 +67,19 @@ NOT_A_BLOCKER = re.compile(
     r"convenience|preference|for brevity|not needed|unnecessary|not worth|too slow|takes too long|later)\b",
     re.IGNORECASE,
 )
+# A blocker must name a constraint outside the agent's own choices. Anything else ("capacity", "other work")
+# gets the one bounded extra nudge; a fabricated but specific constraint still passes, by design.
+REAL_CAUSE = re.compile(
+    r"\b(?:credentials?|access|permissions?|login|log in|sign[- ]?in|auth\w*|secrets?|tokens?|api keys?|vpn|"
+    r"network|offline|internet|sandbox\w*|not installed|install\w*|missing|unavailable|down|outage|"
+    r"unreachable|timed? ?out|crash\w*|fail\w*|errors?|broken|owner|approval|approve|user|customer|"
+    r"hardware|device|phone|licen[cs]e|quota|rate[- ]limit\w*|disk|space|memory|ci|staging|production|prod|"
+    r"database|db|server|service|api|endpoint|dependenc\w*|package|toolchain|python|node|browser|"
+    r"environment|env|data|fixtures?|account|vendor|third[- ]party|external|upstream|"
+    r"not (?:allowed|permitted)|denied|forbidden)\b",
+    re.IGNORECASE,
+)
+MARKER = re.compile(r"^\s*(?:blockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]|blocked\s+(?:by|on))", re.IGNORECASE)
 CLAUSE_END = re.compile(r"[.;\n]")
 
 
@@ -75,9 +88,12 @@ def names_blocker(plain):
     for match in BLOCKER.finditer(plain):
         end = CLAUSE_END.search(plain, match.end())
         clause = plain[match.start():end.start() if end else len(plain)]
-        if not NOT_A_BLOCKER.search(clause):
+        cause = MARKER.sub("", clause, count=1)
+        if REAL_CAUSE.search(cause) and not NOT_A_BLOCKER.search(clause):
             return True
     return False
+
+
 RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
     os.path.expanduser("~"), ".local", "state", "agent-quality", "evidence-retry.json")
 RETRY_WINDOW_S = 600
