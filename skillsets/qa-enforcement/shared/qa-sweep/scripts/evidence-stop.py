@@ -55,7 +55,7 @@ UNRUN = re.compile(
 # Only an explicit blocker statement counts: an ordinary word such as "requires" or "sandbox" elsewhere in
 # the message must not excuse runnable work (PR #36 review).
 BLOCKER = re.compile(
-    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]\s*(?!(?:none|n/?a|nothing|no)\b)\w+"
+    r"\bblockers?\s*(?:is|was)?\s*[:\-\u2014\u2013]\s*(?!(?:none|n/?a|nothing)\b\s*(?:[.;,]|$))\w+"
     r"|\bblocked\s+(?:by|on)\s+\w+"
     r"|\b(?:cannot|can't|can not|could not|couldn't|unable to)\s+(?:be\s+)?(?:run|execute|reach|access|start)\b"
     r"[^.\n]{0,60}?(?:\b(?:because|since|due to|without)\b|:)\s*\w+",
@@ -63,10 +63,21 @@ BLOCKER = re.compile(
 )
 # A stated cause that is only a choice is not a blocker.
 NOT_A_BLOCKER = re.compile(
-    r"\b(?:out of time|no time|to save time|for brevity|time ?box(?:ed)?|not needed|unnecessary|"
-    r"not worth|too slow|takes too long|later)\b",
+    r"\b(?:time|timing|time ?box(?:ed)?|bandwidth|priorit(?:y|ies|ise|ize|ised|ized)|busy|effort|"
+    r"convenience|preference|for brevity|not needed|unnecessary|not worth|too slow|takes too long|later)\b",
     re.IGNORECASE,
 )
+CLAUSE_END = re.compile(r"[.;\n]")
+
+
+def names_blocker(plain):
+    """True when some blocker statement, read up to the end of its own clause, gives a cause that is not a choice."""
+    for match in BLOCKER.finditer(plain):
+        end = CLAUSE_END.search(plain, match.end())
+        clause = plain[match.start():end.start() if end else len(plain)]
+        if not NOT_A_BLOCKER.search(clause):
+            return True
+    return False
 RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
     os.path.expanduser("~"), ".local", "state", "agent-quality", "evidence-retry.json")
 RETRY_WINDOW_S = 600
@@ -299,7 +310,7 @@ def clear_retry(payload):
 def retry_check(payload, text):
     """On the retry stop: one more nudge when work is reported unrun with no blocker named."""
     plain = text.replace("**", "").replace("__", "")
-    if not UNRUN.search(plain) or (BLOCKER.search(plain) and not NOT_A_BLOCKER.search(plain)):
+    if not UNRUN.search(plain) or names_blocker(plain):
         return None
     key = retry_key(payload)
     now = time.time()

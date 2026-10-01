@@ -160,6 +160,10 @@ class StopHooksTests(unittest.TestCase):
                 "Tests were not run. Blocker: none.",
                 "Tests were not run because I ran out of time, so I cannot run them: later.",
                 "Tests were not run; they cannot be run now because it takes too long.",
+                "Tests were not run; blocked by time.",
+                "Tests were not run; blocked by bandwidth.",
+                "Tests were not run; blocked by other priorities.",
+                "Tests were not run. Blocker: n/a.",
                 "Tests were not run because the sandbox has no network to install the test runner.",
             ]):
                 self.assertEqual(self.retry_run(temp, text, session=f"w{i}"), "block", text)
@@ -178,6 +182,8 @@ class StopHooksTests(unittest.TestCase):
                 "Implemented; workflow NOT RUN. Blocker: the staging login requires the owner's credentials.",
                 "Tests were not run: blocked by the sandbox, which has no network to install the test runner.",
                 "The tests cannot be run here because the sandbox has no network; remaining: run them in CI.",
+                "Tests were not run: blocked by missing owner credentials; will tidy docs later.",
+                "Tests were not run. Blocker: no staging credentials.",
                 "Ran 12 tests, all pass. Persona: dev; Target: repo abc1234; Goal: parse; Verdict: PASS.",
                 "Here is the summary you asked for.",
                 "All 39 tests were run and pass.",
