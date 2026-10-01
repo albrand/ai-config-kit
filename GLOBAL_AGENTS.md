@@ -28,6 +28,7 @@ there, and keep procedures in named skills loaded on their task triggers.
 ## Analyze, plan, and scope
 
 - Read the request, accepted revisions, attachments, active instructions, and constraints before acting. Inspect the relevant source, entry points, callers, configs, tests, docs, schemas, and generated artifacts; trace the affected path before deciding scope.
+- For a request with two or more outcomes, write a request contract (`scope-ledger` § Request contract) before the first edit, external call, or delegation; at closeout mark each outcome complete with evidence or blocked with the blocker, then run `python3 ~/.agents/skills/scope-ledger/scripts/request-contract-log.py <contract.json> --thread-id <thread-id>`.
 - For non-code work, state the goal, deliverable, assumptions, risks, and output shape.
 - Reproduce bugs when feasible, ground root-cause claims in source or runtime evidence, and state uncertainty. Be direct: lead reviews with findings and status answers with verdicts; give paste-ready prompts when asked and ask when source-of-truth layers conflict. Prefer durable workflow fixes over reminders.
 - Before edits, heavy commands, or delegation, state a concise plan: objective, scope/non-goals, assumptions, approach, validation, and rollback/fallback. Re-plan when evidence expands the surface.
