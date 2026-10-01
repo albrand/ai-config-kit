@@ -44,13 +44,27 @@ class StopHooksTests(unittest.TestCase):
                   "- **Target:** Python, `HEAD cb0a373fb69cd6cb46b32cf2d017621b0f4c205a`, with requested changes.\n\n"
                   "**User outcomes and verdicts**\n\n1. **Compound parsing:** Expected `1h30m \u2192 5400`; observed "
                   "the assertion pass. **PASS**\n2. **README example updated:** observed the example. **PASS**")
-        for packet in (table, listed):
+        fixtures = pathlib.Path(__file__).parent / "fixtures"
+        verbatim = [(fixtures / name).read_text(encoding="utf-8")
+                    for name in ("live-probe-packet-table.md", "live-probe-packet-list.md")]
+        for packet in (table, listed, *verbatim):
             with self.subTest(packet=packet[:40]):
                 self.assertTrue(evidence.has_evidence_packet(packet))
         # Still not a packet: a table with no verdict column, an outcomes section with no verdict, no commit.
         self.assertFalse(evidence.has_evidence_packet(table.replace("| Verdict |", "| Notes |")))
         self.assertFalse(evidence.has_evidence_packet(listed.replace("**PASS**", "")))
         self.assertFalse(evidence.has_evidence_packet(table.replace("cb0a373fb69cd6cb46b32cf2d017621b0f4c205a", "latest")))
+        self.assertFalse(evidence.has_evidence_packet(table.replace("**PASS**", "pass")), "lowercase table verdict")
+        head = "Persona: scheduler engineer\nTarget: repo HEAD cb0a373\n"
+        stale = (head + "| Goal | Verdict | Notes |\n|---|---|---|\n\nUnrelated steps:\n\n"
+                 "| Step | Status | Notes |\n|---|---|---|\n| build | PASS | n/a |")
+        self.assertFalse(evidence.has_evidence_packet(stale), "a later table must not reuse stale columns")
+        command = ("Persona: scheduler engineer\nTarget: Python unittest\n- Command: git rev-parse HEAD gives abc1234f\n"
+                   "Goal: parse durations\nVerdict: PASS")
+        self.assertFalse(evidence.has_evidence_packet(command), "a Command line must not lend the target a hash")
+        prose = (head + "**User outcomes and verdicts**\n1. Parse durations: observed the assertion.\n\n"
+                 "Integration NOT RUN.")
+        self.assertFalse(evidence.has_evidence_packet(prose), "prose after the section is not a verdict")
 
     def test_empty_or_incomplete_evidence_still_blocks(self):
         base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."

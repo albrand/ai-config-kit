@@ -99,6 +99,8 @@ def has_evidence_packet(text):
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
+        if not stripped.startswith("|"):
+            columns = None  # the table ended: its goal and verdict columns do not apply to a later table
         if stripped.startswith(("```", "~~~")):
             marker = stripped[:3]
             if fence == marker:
@@ -149,9 +151,14 @@ def has_evidence_packet(text):
             fields.setdefault(current, []).append(match.group(2))
         elif table_row:
             current = None
-        elif current == "both" and line:
-            fields["goals"].append(line)
-            fields["verdict"].append(line)
+        elif current == "both":
+            if re.match(r"(?:\d+[.)]|[-*+])\s", stripped):
+                fields["goals"].append(line)
+                fields["verdict"].append(line)
+            elif line:
+                current = None  # prose after the list is not part of the section
+        elif re.match(r"^[A-Za-z][A-Za-z /()&-]{0,30}:\s", line):
+            current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
     values = {key: " ".join(parts).strip() for key, parts in fields.items()}
