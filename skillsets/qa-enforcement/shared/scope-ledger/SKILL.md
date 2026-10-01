@@ -1,6 +1,6 @@
 ---
 name: scope-ledger
-description: Keep a coordinator on what the user asked for. A per-thread ledger of the user's purposes (verbatim), a PreToolUse gate that denies spawns and tells that do not say which open purpose they serve, and the fleet idle guard that nudges a coordinator sitting idle with open purposes. Use when coordinating children, when the gate denies a dispatch, or when the fleet scope guard nudges you.
+description: Keep a coordinator on what the user asked for. A per-thread ledger of the user's purposes (verbatim), a PreToolUse gate that denies spawns and tells that do not say which open purpose they serve, a Stop check that blocks an early stop while open purposes have nothing running, and the fleet idle guard that nudges a coordinator sitting idle with open purposes. Use when coordinating children, when the gate denies a dispatch, or when the fleet scope guard or the scope-closeout check nudges you.
 ---
 
 # scope-ledger
@@ -188,6 +188,53 @@ the purpose blocked-on-user with the exact ask.
 - Each nudge is a coordinator-idle episode in `bb fleet value`.
 - `bb fleet scope` shows every ledger and what the guard would do now.
 
+## The closeout check (Stop, Claude Code and Codex)
+
+Operator complaint (2026-09-30), after a strict replay of false-done cases:
+the main real failure was coordinators stopping early with a status report,
+"remains blocked" or an offer to continue while authorized work was left. The
+user corrected each one well before the idle guard's 30 minutes; 5 of the 6
+cases were Codex. `scripts/closeout-stop.py` runs the idle guard's predicate
+when the turn ends. `~/.agent-hooks/qa-stop-hook.sh` calls it after the
+evidence nudge, and only when that nudge did not block, so a turn gets one
+nudge at most.
+
+- It blocks the stop once when the thread's ledger has an open purpose and
+  nothing carries it.
+  - A queued message carries every purpose: it is the next input and resumes
+    this thread, which runs the check again.
+  - An active or pending child carries only the purposes its brief and inputs
+    since its last completed turn name in `serves: P<n>`. One purpose's
+    worker cannot hide another purpose left unattended, and a child reused for
+    P2 no longer carries the P1 it finished. A child that serves only a
+    revision carries none.
+  - The thread's own background task carries only the purposes its
+    description names in `serves: P<n>`. An unrelated watcher that never
+    finishes hides nothing.
+- It reads bb's store (`~/.bb/bb.db`) read-only rather than the bb CLI: at load
+  ~290 each CLI call took 4-20 s, past Codex's 5 s Stop-hook budget, so the
+  check would have failed open whenever the fleet was busy. A background task
+  is running while its start (within 24 h) has no completion.
+- The nudge lists the unattended purposes and allows three outcomes:
+  continue the next authorized step, `mark … done --evidence`, or
+  `mark … blocked-on-user --ask` for a decision only the user owns (money, an
+  outward or irreversible effect, credentials, a genuine ambiguity). A status
+  report is none of them.
+- A blocked-on-user purpose counts as open again when the latest user-typed
+  input in the transcript is newer than its mark. Inputs bb and hooks compose
+  (`[bb …]`, `[from …]`, `[child of …]`, `[fleet …]`) don't count.
+- A thread with child threads and no ledger is asked once per thread
+  (`~/.local/state/agent-quality/closeout-ledger-nudged.json`) to record the
+  user's purposes with `init`.
+- `stop_hook_active` (the retry after a nudge), a missing thread id, an
+  unreadable ledger and unreadable thread state all allow the stop.
+- Each decision goes to `~/.local/state/agent-quality/events.jsonl` as a
+  `closeout-stop` event with the thread, branch, decision and purpose IDs,
+  never text.
+- Kill rule, set before shipping: after 20 blocks, read what each agent did
+  next. If more than a quarter stopped again with no new action, narrow the
+  check or remove it.
+
 ## Archive hold (fleet plugin)
 
 The following threads are never archived by fleet (orphan scan,
@@ -290,3 +337,5 @@ successor's is renumbered past every id and carries `renumbered_from`.
 including every shell case in `tests/fixtures/dispatch-cases.json`,
 against `tests/fixtures/scope-ledger.json`. The fleet plugin's
 `test/scope-guard.test.mts` uses the same fixture.
+`hooks/tests/test_closeout_stop.py` covers the closeout check alone and in
+the stop chain.
