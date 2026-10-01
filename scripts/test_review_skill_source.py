@@ -118,18 +118,14 @@ class ReviewSkillSourceTests(unittest.TestCase):
         text = CODEX_CONTRACT.read_text(encoding="utf-8")
         self.assertIn("attach both JSON and Markdown packets", text)
 
-    def test_board_precedence_matches_global_agents(self) -> None:
+    def test_board_requirements_are_proportional_and_keep_required_evidence(self) -> None:
         global_text = re.sub(r"\s+", " ", GLOBAL_AGENTS.read_text(encoding="utf-8"))
-        self.assertIn("unavailable access means `board regression gate blocked`", global_text)
+        self.assertIn("configured or linked authoritative ticket board", global_text)
+        self.assertIn("continue independent authorized work", global_text)
         for path in (CODEX_SKILL, CODEX_CONTRACT, SHARED_CONTRACT):
             text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-            # A cross-reference to a proportional rule in GLOBAL_AGENTS.md is false while that
-            # file carries the strict board rule.
-            self.assertNotRegex(text, r"proportional board rule in `GLOBAL_AGENTS\.md`", str(path))
-        for path in (CODEX_SKILL, CODEX_CONTRACT):
-            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-            if "proportional" in text.lower():
-                self.assertRegex(text, r"(?i)(?:outrank|wins over|yields to)", str(path))
+            self.assertNotIn("the kit's `GLOBAL_AGENTS.md` board regression rule does", text)
+            self.assertIn("board", text.lower())
 
 
 if __name__ == "__main__":

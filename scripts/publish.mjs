@@ -18,6 +18,7 @@
 //   node publish.mjs --check      report differences without writing
 //   node publish.mjs --remote vps also publish to a machine over ssh
 //   node publish.mjs --force      also replace copies edited in place (backed up first)
+//   node publish.mjs --lesson NAME limit rollout to a named lesson (repeatable)
 //
 // Publishing is idempotent and one-directional: the repo is the source of
 // truth. A target holding an earlier library version is updated; a target
@@ -30,7 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { collectLessons } from "./lib/lessons.mjs";
+import { collectLessons, selectLessons } from "./lib/lessons.mjs";
 import { loadOverlay, OVERLAY_PATH, substitute } from "./lib/substitute.mjs";
 
 const SCRIPTS = path.dirname(new URL(import.meta.url).pathname);
@@ -362,7 +363,13 @@ function publishRemote(list, host) {
   return changes;
 }
 
-const list = lessons();
+let list;
+try {
+  list = selectLessons(lessons(), process.argv.slice(2));
+} catch (error) {
+  console.error(`Refusing to publish: ${error.message}`);
+  process.exit(1);
+}
 if (list.length === 0) {
   console.error("No lessons found.");
   process.exit(1);

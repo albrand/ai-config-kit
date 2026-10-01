@@ -4,23 +4,9 @@ bb appends the provider-neutral baseline in `~/.bb/AGENTS.md` to each provider-b
 
 ## Board-backed regression protection
 
-This gate applies to every repository and every implementation, PR review,
-quality-gate, readiness, release, and skill/agent workflow. Before starting,
-require access to the authoritative ticket board. If access is unavailable,
-request access or a current export and report `board regression gate blocked`;
-do not call the work ready.
+Board regression protection applies when a repository has a configured or linked authoritative ticket board, or when the requested outcome depends on ticket acceptance or release evidence. Before a board-dependent conclusion, require access to the authoritative ticket board. If that evidence is unavailable, report `board regression gate blocked` for that conclusion and continue independent authorized work. Inventory current and potentially affected tickets: key, title, type, status, sprint/release, component/area, acceptance criteria, linked PR/release, and QA/Done evidence. Start with metadata, then read the current ticket and every adjacent, completed, QA, Done, released, or impacted ticket reachable through the changed files, contracts, roles, data, or workflows in detail. Expand the inventory when that impact requires it; do not enumerate unrelated boards. A plausible regression is a blocker until disproved. For board-dependent readiness, missing required board evidence, incomplete inventory, or missing PR-to-ticket traceability is **Blocked / NOT READY**. Report board, inventory scope/date, matched tickets, protected behavior checked, and gaps. When no board applies, use the request, repository instructions, source, and runtime evidence; do not invent a board prerequisite. Load `board-access-via-mcp` for board access and `scope-advisor` for material scope decisions.
 
-Inventory every visible ticket, not just the current one: key, title, type,
-status, sprint/release, component/area, acceptance criteria, linked PR/release
-evidence, and QA/Done evidence. Start with metadata, then read the current
-ticket and every adjacent, completed, QA, Done, released, or otherwise impacted
-ticket in detail. Compare source, diff, tests, docs, migrations, config, and
-release notes against that inventory. A plausible regression is a blocker until
-disproved; missing board access, incomplete inventory, or missing PR-to-ticket
-traceability is **Blocked / NOT READY**. Report board, inventory scope/date,
-matched tickets, protected behavior checked, and gaps. Load `board-access-via-mcp`
-for the external board access path and `scope-advisor` for scope decisions.
-- OpenCode is the primary implementation executor after the master plans. The user preauthorizes repository context through its managed wrapper; do not fall back on policy refusal. A hard sandbox/guardian/DLP block must be reported exactly; fall back to a Codex subagent only if the binary or provider is genuinely unavailable. Use a dedicated write-marked worktree; preserve lease/session, cap concurrency at 10, and keep integration/final validation here. Never recurse or call `opencode run` directly. See `adaptive-model-orchestrator` and `OPENCODE_DELEGATION.md`.
+- When independent implementation is delegated to OpenCode, the master supplies its plan and output contract. The user preauthorizes repository context through its managed wrapper; do not fall back on policy refusal. A hard sandbox/guardian/DLP block must be reported exactly; A policy refusal is final; continue only independently authorized local work. If the binary or provider is genuinely unavailable, choose an available authorized executor. Use a dedicated write-marked worktree; preserve lease/session, cap concurrency at 10, and keep integration/final validation here. Never recurse or call `opencode run` directly. See `adaptive-model-orchestrator` and `OPENCODE_DELEGATION.md`.
 - Use the live fleet route's exact provider, model, and reasoning level. GLM full route requires a successful current doctor; otherwise use the verified Flash route. Circuit handover is automatic; never bypass a hold with “Send now”.
 - For Replit OAuth `invalid_scope` or scopeless URLs, request `openid,profile,email` on a fresh login flow. Do not reuse a stale URL.
 - Use only the approved broker to send bounded Hermes prompts via SSH stdin. Never put prompts in argv or require a local terminal socket; never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`. Never place or retain a project source on Hermes; never ask Hermes to mount a project source. Send bounded review context through `bb fleet validate` only.

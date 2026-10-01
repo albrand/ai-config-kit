@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused fixtures for final-claim Stop behavior and Codex trust scope."""
 import ast
+import importlib.util
 import json
 import os
 import pathlib
@@ -15,6 +16,9 @@ EVIDENCE = ROOT.parent / "shared/qa-sweep/scripts/evidence-stop.py"
 SHIP = ROOT.parent / "shared/qa-sweep/scripts/ship-gate.py"
 TRUST = ROOT / "codex-hook-trust.py"
 STOP = ROOT / "qa-stop-hook.sh"
+SPEC = importlib.util.spec_from_file_location("evidence_stop_fixture", EVIDENCE)
+evidence = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(evidence)
 
 
 def run(cmd, *, env=None, cwd=None, data=None):
@@ -22,6 +26,44 @@ def run(cmd, *, env=None, cwd=None, data=None):
 
 
 class StopHooksTests(unittest.TestCase):
+    def test_compact_evidence_accepts_field_order_and_markdown(self):
+        packet = "Done.\n**Target:** Python hook stack, commit abc1234\n**Persona:** coding agent\n**Goal:** continue and run checks\n**Verdict:** PASS — checks completed."
+        self.assertFalse(evidence.inspect(packet)["block"])
+        table = "Done.\n| Field | Evidence |\n| --- | --- |\n| Persona | coding agent |\n| Target | Python hook stack, SHA abc1234 |\n| User outcome | run continuation checks |\n| Verdict | PASS — checks completed |"
+        self.assertFalse(evidence.inspect(table)["block"])
+
+    def test_empty_or_incomplete_evidence_still_blocks(self):
+        base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."
+        for field, replacement in (("Persona: coding agent", "Persona:"), ("Goals attempted: run checks", "Goals attempted:"), ("Verdict: PASS — completed checks.", "Verdict:"), ("commit abc1234", "commit unknown")):
+            with self.subTest(field=field):
+                self.assertTrue(evidence.inspect(base.replace(field, replacement))["block"])
+        quoted = "\n".join("> " + line for line in base.splitlines()[1:])
+        self.assertTrue(evidence.inspect("Done.\n" + quoted)["block"])
+        self.assertTrue(evidence.inspect("Done.\n```text\n" + base + "\n```")["block"])
+
+    def test_complete_stop_hook_rejects_heading_only_fields_and_keeps_valid_formats(self):
+        base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."
+        for field, heading in (("Persona: coding agent", "Persona:\n## Evidence"),
+                               ("Goals attempted: run checks", "Goals attempted:\n## Results"),
+                               ("Persona: coding agent", "Persona:\nEvidence\n---"),
+                               ("Goals attempted: run checks", "Goals attempted:\nResults\n---"),
+                               ("Persona: coding agent", "Persona:\nEvidence\n==="),
+                               ("Goals attempted: run checks", "Goals attempted:\nResults\n==="),
+                               ("Persona: coding agent", "Persona:\n<h2>Evidence</h2>"),
+                               ("Goals attempted: run checks", "Goals attempted:\n<h2>Results</h2>")):
+            with self.subTest(field=field):
+                self.assert_stop_fixture("heading is not evidence", opted_in=False, transcript=False,
+                                         expected="[qa-evidence]", claim=base.replace(field, heading))
+        valid = [base,
+                 "Done.\nPersona:\n  coding agent\nTarget:\n  Python stack commit abc1234\nGoal:\n- run checks\nVerdict:\n- PASS — completed checks.",
+                 "Done.\n**Target:** Python stack commit abc1234\n**Persona:** coding agent\n**Goal:** run checks\n**Verdict:** PASS — completed checks.",
+                 "Done.\n| Persona | coding agent |\n| Target | Python stack commit abc1234 |\n| Goal | run checks |\n| Verdict | PASS — completed checks |"]
+        for packet in valid:
+            with self.subTest(packet=packet):
+                output = self.assert_stop_fixture("valid evidence", opted_in=False, transcript=False,
+                                                  expected="", claim=packet)
+                self.assertEqual(output.strip(), "")
+
     def test_transcript_fallback_reads_last_assistant_entry(self):
         with tempfile.TemporaryDirectory() as temp:
             transcript = pathlib.Path(temp) / "transcript.jsonl"
@@ -105,6 +147,7 @@ class StopHooksTests(unittest.TestCase):
             self.assertIn(expected, response.stdout, label)
             if opted_in:
                 self.assertNotIn("[qa-evidence]", response.stdout, label)
+            return response.stdout
 
     def test_codex_trust_only_updates_agent_hooks_commands(self):
         with tempfile.TemporaryDirectory() as temp:

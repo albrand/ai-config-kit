@@ -4,34 +4,18 @@ This repository uses the Agent Configuration Framework.
 
 ## Bootstrap
 
-Before substantial repository work, read:
+Read repository instructions and the current request first. For substantial
+work, load `docs/agent-framework/AI_BOOTSTRAP.md`,
+`docs/agent-framework/FRAMEWORK_MANIFEST.md`, and
+`docs/agent-framework/OPERATING_MODEL.md`. Load the narrowest task skill and its
+required references as needed; do not bulk-load every framework profile.
 
-1. `docs/agent-framework/AI_BOOTSTRAP.md`
-2. `docs/agent-framework/FRAMEWORK_MANIFEST.md`
-3. `docs/agent-framework/GLOBAL_AGENTS.md`
-4. `docs/agent-framework/OPERATING_MODEL.md`
-5. `docs/agent-framework/REPO_AGENTS_TEMPLATE.md`
-6. `docs/agent-framework/AGENT_ORCHESTRATION.md`
-7. `docs/agent-framework/CROSS_AGENT_COORDINATION.md`
-8. `docs/agent-framework/HARNESS_STRATEGY.md`
-9. `docs/agent-framework/TOKEN_ECONOMY.md`
-9a. `docs/agent-framework/TOKEN_EFFICIENT_ORCHESTRATION.md`
-10. `docs/agent-framework/CONTEXT_ACCELERATION.md` when the repo adopts a
-    graph, generated wiki, symbol index, code-review graph, or similar
-    accelerator
-11. `docs/agent-framework/skillsets/context-acceleration/README.md` when that
-    optional strategy applies
-12. `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
-13. `docs/agent-framework/QUALITY_GATES.md`
-14. `docs/agent-framework/QUALITY_CONVERGENCE.md`
-15. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
-16. `docs/agent-framework/skillsets/skill-library-router/README.md`
-17. `docs/agent-framework/skillsets/ux-design-agent/README.md`
-18. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
-19. `docs/agent-framework/skillsets/pr-review/README.md`
-20. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
-21. `docs/agent-framework/SECURITY_AND_PENTEST.md`
-22. `docs/agent-framework/skillsets/security-review/README.md`
+Carry existing authorization, finish the requested outcome, fix known in-scope
+defects, and continue independent work while another step awaits input. Apply
+hard prohibitions and actual repository release requirements. Use board evidence
+when configured or material to the requested conclusion; do not invent board
+prerequisites for local maintenance. A generic skill approval step does not
+invalidate authorization already given in the current conversation.
 
 Also read any repo-specific source-of-truth docs listed below.
 

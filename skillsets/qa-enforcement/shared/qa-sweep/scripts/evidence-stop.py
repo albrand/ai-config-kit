@@ -37,15 +37,53 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
 
 
 def has_evidence_packet(text):
-    labels = (
-        re.search(r"\bpersona\s*:", text, re.IGNORECASE),
-        re.search(r"\btarget\s*:", text, re.IGNORECASE),
-        re.search(r"\bgoals? attempted\s*:", text, re.IGNORECASE),
-        re.search(r"\bverdicts?\s*:", text, re.IGNORECASE),
-    )
-    if not all(labels):
+    # Read labeled fields in any order, including bold labels and field/value
+    # tables. Formatting should not make an otherwise complete packet invalid.
+    fields = {}
+    current = None
+    fence = None
+    label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
+    lines = text.splitlines()
+    for index, raw in enumerate(lines):
+        stripped = raw.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            if fence == marker:
+                fence = None
+            elif fence is None:
+                fence = marker
+            current = None
+            continue
+        if fence is not None or stripped.startswith(">"):
+            current = None
+            continue
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        setext = bool(stripped and re.fullmatch(r"(?:=+|-+)", next_line))
+        html_heading = re.match(r"^<h[1-6](?:\s[^>]*)?>", stripped, re.I)
+        if setext or html_heading or re.match(r"^#{1,6}(?:\s|$)", stripped) or re.fullmatch(r"(?:[-*_]\s*){3,}", stripped):
+            current = None
+            continue
+        line = re.sub(r"[*_`]", "", raw).strip().lstrip("- ")
+        table_row = line.startswith("|")
+        if table_row:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == 2:
+                line = cells[0] + ": " + cells[1]
+        match = label.match(line)
+        if match:
+            key = match.group(1).lower()
+            current = "goals" if key.startswith(("goal", "user outcome")) else key.rstrip("s")
+            fields.setdefault(current, []).append(match.group(2))
+        elif table_row:
+            current = None
+        elif current and line:
+            fields[current].append(line)
+    values = {key: " ".join(parts).strip() for key, parts in fields.items()}
+    if not all(values.get(key) for key in ("persona", "target", "goals", "verdict")):
         return False
-    target = text[labels[1].end(): labels[2].start()]
+    if not re.search(r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b", values["verdict"], re.I):
+        return False
+    target = values["target"]
     has_deployment = bool(re.search(r"https?://\S+", target) and re.search(r"\bdeployment(?:\s+id)?\b", target, re.IGNORECASE))
     has_stack_sha = bool(
         re.search(r"\b(?:stack|repo|project)\b", target, re.IGNORECASE)

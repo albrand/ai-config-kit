@@ -95,12 +95,7 @@ Keep the review focused on technical correctness and delivery evidence:
 Board and ownership metadata are evidence sources, not automatic additional
 approval layers. Missing board access blocks approval only when the relevant
 technical behavior or acceptance criterion cannot be established from current
-tickets, docs, linked PRs, code, tests, or equivalent evidence. This
-proportional rule yields to current user and workspace instructions: when they
-require board access, full inventory, or readiness evidence for every review
-(the kit's `GLOBAL_AGENTS.md` board regression rule does), missing board access
-or incomplete inventory is **Blocked / NOT READY**, and delegation does not
-waive it.
+tickets, docs, linked PRs, code, tests, or equivalent evidence. Current user and repository instructions govern the applicable board and acceptance criteria. Missing required evidence blocks only conclusions that depend on it; continue independent review and report the specific gap.
 
 ## Preflight
 

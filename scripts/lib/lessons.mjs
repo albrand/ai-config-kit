@@ -66,3 +66,20 @@ export function collectLessons(repoRoot) {
 
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/** Limit a rollout to named lessons; unknown or missing names fail before writes. */
+export function selectLessons(lessons, argv) {
+  const names = new Set();
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] !== '--lesson') continue;
+    const name = argv[++i];
+    if (!name || name.startsWith('--')) throw new Error('--lesson requires a lesson name');
+    names.add(name);
+  }
+  if (!names.size) return lessons;
+  const known = new Set(lessons.map((lesson) => lesson.name));
+  for (const name of names) {
+    if (!known.has(name)) throw new Error(`Unknown lesson: ${name}`);
+  }
+  return lessons.filter((lesson) => names.has(lesson.name));
+}

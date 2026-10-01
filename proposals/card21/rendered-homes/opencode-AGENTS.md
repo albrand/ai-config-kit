@@ -37,6 +37,15 @@
 - Hermes/cmux broker delegation defaults off; concurrency/depth default 1. Model calls require explicit bounded activation. These broker limits do not restrict bb child threads.
 - Delegates may not add dependencies without a new master decision.
 
+## Delivery contract
+
+- Carry the complete user request and accepted revisions through execution and handoffs. Finish the requested outcome, including authorized checks, fixes, delivery, and installation; a patch, status report, or proposed next step does not replace that outcome.
+- Reuse authorization already given in this conversation. Ask only for a new user-owned decision, a hard prohibition's specific approval, or a material new fact that invalidates the authorization; name that fact. A skill's generic confirmation step does not require asking again.
+- Continue runnable independent work while another step awaits access, consent, or an external result. Diagnose recoverable failures, fix discovered in-scope defects, check siblings and consumers, and exercise the full requested workflow before stopping.
+- Use the narrowest relevant skills. Apply their procedures only when the actual task and available surface fit. A trigger does not require unrelated tooling, infrastructure, board access, delegation, or deployment. Honor explicit user instructions and hard prohibitions over generic skill examples.
+- Do tightly coupled work yourself. Delegate only independent work when authorized and useful; a provider preference is not a mandatory detour. Preserve ownership, security gates, and coordinator responsibility when delegating.
+- Report proposed, implemented, installed, and exercised outcomes separately. Give a verdict and evidence for each required user outcome; do not hide a failed goal behind an overall completion claim or erase completed goals because another goal is blocked.
+
 <!-- typed-decisions:begin -->
 ## Typed decisions
 
@@ -53,19 +62,7 @@ Declare the answer space first; ask one atomic question at a time against identi
 - bb appends the provider-neutral baseline in `~/.bb/AGENTS.md` to each provider-backed thread. This file adds OpenCode execution rules.
 ## Board-backed regression protection
 
-This gate applies to every repository and every implementation, review,
-quality-gate, readiness, release, or skill/agent workflow. Before starting,
-require access to the authoritative ticket board; unavailable access means
-`board regression gate blocked`.
+Board regression protection applies when a repository has a configured or linked authoritative ticket board, or when the requested outcome depends on ticket acceptance or release evidence. Before a board-dependent conclusion, require access to the authoritative ticket board. If that evidence is unavailable, report `board regression gate blocked` for that conclusion and continue independent authorized work. Inventory current and potentially affected tickets: key, title, type, status, sprint/release, component/area, acceptance criteria, linked PR/release, and QA/Done evidence. Start with metadata, then read the current ticket and every adjacent, completed, QA, Done, released, or impacted ticket reachable through the changed files, contracts, roles, data, or workflows in detail. Expand the inventory when that impact requires it; do not enumerate unrelated boards. A plausible regression is a blocker until disproved. For board-dependent readiness, missing required board evidence, incomplete inventory, or missing PR-to-ticket traceability is **Blocked / NOT READY**. Report board, inventory scope/date, matched tickets, protected behavior checked, and gaps. When no board applies, use the request, repository instructions, source, and runtime evidence; do not invent a board prerequisite. Load `board-access-via-mcp` for board access and `scope-advisor` for material scope decisions.
 
-Inventory every visible ticket: key, title, type, status, sprint/release,
-component/area, acceptance criteria, linked PR/release, and QA/Done evidence.
-Start with metadata, then read the current and every adjacent, completed, QA,
-Done, released, or impacted ticket in detail. Compare the changed surface with
-the inventory. A plausible regression is a blocker until disproved. Missing
-board access, incomplete inventory, or missing PR-to-ticket traceability is
-**Blocked / NOT READY**. Report the board, inventory scope/date, matched
-tickets, protected behavior checked, and gaps. Load `board-access-via-mcp` for
-board access and `scope-advisor` for scope decisions.
 - A delegated executor follows the supplied plan, scope, and output contract; it does not choose architecture, expand scope, weaken gates, or invoke another agent. On a gate it cannot meet, return blocked with evidence.
 - For active-session input, use verified native lifecycle and exact workspace/topic lease/adapter attestations. Never let terminal focus or prompt text establish authority. Details: `NATIVE_AGENT_SURFACES.md` and `OPENCODE_DELEGATION.md`.
