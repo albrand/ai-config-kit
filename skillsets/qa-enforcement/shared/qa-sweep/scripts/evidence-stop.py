@@ -115,9 +115,11 @@ def inspect(text):
         return {"block": False, "claim": claim, "not_run": True}
     reason = (
         "[qa-evidence] Final message contains a completion or test claim without an evidence packet. "
-        "Attach a packet with persona, target (stack plus commit SHA or deployment ID), user outcomes "
-        "attempted, and a verdict for each goal; or restate the claim as ‘implemented; workflow NOT RUN’ "
-        "and say what remains. This is a one-time nudge for this turn."
+        "If you can run the workflow or its tests now, run them first, then attach a packet with persona, "
+        "target (stack plus commit SHA or deployment ID), user outcomes attempted, and a verdict for each "
+        "goal. Only when it cannot be run now, restate the claim as ‘implemented; workflow NOT RUN’, name "
+        "the blocker, and say what remains. Relabelling a runnable check as NOT RUN is not a fix. "
+        "This is a one-time nudge for this turn."
     )
     return {"block": True, "claim": claim, "reason": reason}
 

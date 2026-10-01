@@ -27,8 +27,9 @@ tested, verified, or validated needs an evidence packet containing:
 - the user outcomes attempted;
 - a verdict for each outcome.
 
-When the workflow has not been run, say `implemented; workflow NOT RUN` and name
-what remains. The Stop nudge applies even when a repository has no `.qa/`
+Run the workflow or its tests when you can. Only when it cannot be run now, say
+`implemented; workflow NOT RUN`, name the blocker, and name what remains;
+relabelling a runnable check as NOT RUN is not a fix. The Stop nudge applies even when a repository has no `.qa/`
 configuration. Repositories without `.qa/config.json` do not receive the QA
 ship gate, and the nudge never creates `.qa/` files or denies tool calls.
 

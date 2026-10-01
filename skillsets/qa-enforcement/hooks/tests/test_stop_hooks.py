@@ -114,6 +114,14 @@ class StopHooksTests(unittest.TestCase):
         self.assert_stop_fixture("default claim nudge", opted_in=False, transcript=False,
                                  expected="[qa-evidence]", claim="Done — the workflow is fixed.")
 
+    def test_nudge_asks_to_run_before_offering_not_run(self):
+        # A Codex probe answered the nudge by relabelling a sub-second test run as NOT RUN and stopping.
+        result = run(["python3", str(EVIDENCE)], data=json.dumps({"last_assistant_message": "Done — all three changes."}))
+        reason = json.loads(result.stdout)["reason"]
+        self.assertLess(reason.index("run them first"), reason.index("workflow NOT RUN"))
+        self.assertIn("Only when it cannot be run now", reason)
+        self.assertIn("name the blocker", reason)
+
     def test_stop_hook_uses_transcript_when_last_message_is_missing(self):
         self.assert_stop_fixture("transcript fallback nudge", opted_in=False, transcript=True,
                                  expected="[qa-evidence]", claim="Done — the workflow is fixed.")
