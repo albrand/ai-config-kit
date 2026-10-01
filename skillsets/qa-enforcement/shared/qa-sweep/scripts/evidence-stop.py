@@ -128,13 +128,14 @@ def has_evidence_packet(text):
         line = re.sub(r"[*_`]", "", raw).strip().lstrip("- ")
         table_row = line.startswith("|")
         if table_row:
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip("|"))]
             if any(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
                 # A glued table's header is a row, then a separator, then that table's rows; a separator that
                 # ends the table (nothing tabular after it) does not cost the real row above it.
                 if columns and row_at == index - 1 and next_line.startswith("|"):
                     fields["goals"].pop()  # the row above was a glued table's header, not a goal
                     fields["derived_verdict"].pop()
+                    fields["table_verdicts"].pop()
                     columns = None
                 continue  # separator row
             heads = [cell.lower() for cell in cells]
@@ -145,9 +146,12 @@ def has_evidence_packet(text):
                 header_at = index
                 current = None
                 continue
+            if columns and not any(cells):
+                continue
             if columns and len(cells) > max(columns):
                 fields.setdefault("goals", []).append(cells[columns[0]])
                 fields.setdefault("derived_verdict", []).append(cells[columns[1]])
+                fields.setdefault("table_verdicts", []).append(cells[columns[1]])
                 row_at = index
                 current = None
                 continue
@@ -173,7 +177,7 @@ def has_evidence_packet(text):
             current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
-    values = {key: " ".join(parts).strip() for key, parts in fields.items()}
+    values = {key: " ".join(parts).strip() for key, parts in fields.items() if key != "table_verdicts"}
     if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
     # A "Verdict:" field may say "pass"; a verdict read from a table column or an outcomes section must be the
@@ -182,6 +186,8 @@ def has_evidence_packet(text):
     token = r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b"
     labelled = bool(re.search(token, values.get("verdict", ""), re.I))
     derived = bool(re.search(token, values.get("derived_verdict", "")))
+    if any(not re.search(token, cell) for cell in fields.get("table_verdicts", [])):
+        return False  # a goal row in a goal/verdict table has no verdict of its own
     if not (labelled or derived):
         return False
     target = values["target"]

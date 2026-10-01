@@ -54,6 +54,15 @@ class StopHooksTests(unittest.TestCase):
             head + "| Suite passes | pending |\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
         self.assertTrue(evidence.has_evidence_packet(
             head + "| Suite passes | PASS |\n| Check | Result |\n|---|---|\n| Lint | pending |\n"))
+        # Every goal row needs its own verdict: a glued table without a separator is read as more rows of the goal
+        # table, and its PASS does not cover the pending goal above it.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n| Check | Result |\n| Lint | PASS |\n"))
+        self.assertFalse(evidence.has_evidence_packet(head + "| Suite passes | PASS |\n| Deploy | pending |\n"))
+        # An escaped pipe inside a cell does not shift the verdict column.
+        self.assertTrue(evidence.has_evidence_packet(
+            head.replace("| Goal | Verdict |", "| Goal | Evidence | Verdict |").replace("|---|---|", "|---|---|---|")
+            + "| Suite passes | `Tests 1 passed \\| 3 skipped` | PASS |\n"))
         # Separator-shaped and empty rows neither crash the reader nor delete the real row above them.
         for odd in ("|---|---|\n| Suite passes | PASS |\n", "| | |\n| Suite passes | PASS |\n",
                     "| Suite passes | PASS |\n| | |\n", "| Suite passes | PASS |\n|---|---|\n"):
