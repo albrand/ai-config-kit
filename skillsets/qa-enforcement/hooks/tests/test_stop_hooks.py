@@ -80,6 +80,7 @@ class StopHooksTests(unittest.TestCase):
                      "Before handing off, all three fixes are done.", "After the sweep, the release is verified.",
                      "Before dispatch I fixed three defects in the executor prompt.",
                      "I worked in an isolated copy and touched nothing. I verified the run.",
+                     "Nothing is deployed yet, but all three fixes are done.",
                      "These changes are now complete.", "All requested items are finished.",
                      "The requested work is done."):
             with self.subTest(text=text[:40]):

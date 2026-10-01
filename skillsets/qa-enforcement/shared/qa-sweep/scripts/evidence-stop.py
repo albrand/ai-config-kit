@@ -206,7 +206,7 @@ def first_claim(text):
         line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
         quoted = (line.count("`") % 2 == 1 or text.count("```", 0, match.start()) % 2 == 1
                   or line.count('"') % 2 == 1 or line.count("\u201c") > line.count("\u201d"))
-        clause = re.split(r"[.;!?\n]", prefix)[-1]
+        clause = re.split(r"[.,;!?\n]", prefix)[-1]
         if line.lstrip().startswith(">") or quoted or NEGATED.search(clause) or NOT_A_REPORT.search(prefix):
             continue
         if TIME_CLAUSE.search(prefix) and match.re is not CLAIM_PATTERNS[0]:
