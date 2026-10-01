@@ -95,6 +95,8 @@ def has_evidence_packet(text):
     label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
+    header_at = None  # line index of that table's header row
+    row_at = None  # line index of the last goal/verdict row read from that table
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
@@ -126,18 +128,34 @@ def has_evidence_packet(text):
         line = re.sub(r"[*_`]", "", raw).strip().lstrip("- ")
         table_row = line.startswith("|")
         if table_row:
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
+            cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip("|"))]
+            if any(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
+                # A glued table's header is a row, then a separator, then that table's rows; a separator that
+                # ends the table (nothing tabular after it) does not cost the real row above it.
+                if columns and row_at == index - 1 and next_line.startswith("|"):
+                    fields["goals"].pop()  # the row above was a glued table's header, not a goal
+                    fields["derived_verdict"].pop()
+                    fields["table_verdicts"].pop()
+                    columns = None
                 continue  # separator row
+            heads = [cell.lower() for cell in cells]
+            goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
+            verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
+            if goal is not None and verdict is not None and goal != verdict:
+                columns = (goal, verdict)  # a goal/verdict table, two columns or more
+                header_at = index
+                current = None
+                continue
+            if columns and not any(cells):
+                continue
+            if columns and len(cells) > max(columns):
+                fields.setdefault("goals", []).append(cells[columns[0]])
+                fields.setdefault("derived_verdict", []).append(cells[columns[1]])
+                fields.setdefault("table_verdicts", []).append(cells[columns[1]])
+                row_at = index
+                current = None
+                continue
             if len(cells) > 2:
-                heads = [cell.lower() for cell in cells]
-                goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
-                verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
-                if goal is not None and verdict is not None:
-                    columns = (goal, verdict)
-                elif columns and len(cells) > max(columns):
-                    fields.setdefault("goals", []).append(cells[columns[0]])
-                    fields.setdefault("derived_verdict", []).append(cells[columns[1]])
                 current = None
                 continue
             if len(cells) == 2:
@@ -159,7 +177,7 @@ def has_evidence_packet(text):
             current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
-    values = {key: " ".join(parts).strip() for key, parts in fields.items()}
+    values = {key: " ".join(parts).strip() for key, parts in fields.items() if key != "table_verdicts"}
     if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
     # A "Verdict:" field may say "pass"; a verdict read from a table column or an outcomes section must be the
@@ -168,6 +186,8 @@ def has_evidence_packet(text):
     token = r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b"
     labelled = bool(re.search(token, values.get("verdict", ""), re.I))
     derived = bool(re.search(token, values.get("derived_verdict", "")))
+    if any(not re.search(token, cell) for cell in fields.get("table_verdicts", [])):
+        return False  # a goal row in a goal/verdict table has no verdict of its own
     if not (labelled or derived):
         return False
     target = values["target"]

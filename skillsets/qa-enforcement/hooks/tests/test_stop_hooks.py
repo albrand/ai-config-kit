@@ -32,6 +32,43 @@ class StopHooksTests(unittest.TestCase):
         table = "Done.\n| Field | Evidence |\n| --- | --- |\n| Persona | coding agent |\n| Target | Python hook stack, SHA abc1234 |\n| User outcome | run continuation checks |\n| Verdict | PASS — checks completed |"
         self.assertFalse(evidence.inspect(table)["block"])
 
+    def test_a_two_column_goal_verdict_table_is_a_packet(self):
+        # The coordinator's reply to a nudge (2026-10-01, links shortened) that the hook rejected: its goals sat in a two-column Goal/Verdict table.
+        packet = (pathlib.Path(__file__).parent / "fixtures" / "live-coordinator-packet-two-column.md").read_text()
+        self.assertTrue(evidence.has_evidence_packet(packet))
+        head = "Persona: operator\nTarget: repo kit, head commit c6a7107\n\n| Goal | Verdict |\n|---|---|\n"
+        self.assertTrue(evidence.has_evidence_packet(head + "| Suite passes | PASS |\n"))
+        # The verdict column still needs an explicit uppercase verdict, and field/value tables still work.
+        self.assertFalse(evidence.has_evidence_packet(head + "| Suite passes | the assertion pass |\n"))
+        self.assertTrue(evidence.has_evidence_packet(
+            "| Field | Value |\n|---|---|\n| Persona | operator |\n| Target | repo kit, head c6a7107 |\n"
+            "| Goals | suite passes |\n| Verdict | PASS |\n"))
+        # A later, unrelated two-column table does not inherit the goal/verdict columns: "| Notes | PASS |" is not a
+        # verdict for the goal above, so a goal table without a verdict stays rejected.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n\n| Field | Value |\n|---|---|\n| Notes | PASS |\n"))
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\nSee below.\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
+        # Glued directly under the goal table, with no line between, the second table is still a separate table.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
+        self.assertTrue(evidence.has_evidence_packet(
+            head + "| Suite passes | PASS |\n| Check | Result |\n|---|---|\n| Lint | pending |\n"))
+        # Every goal row needs its own verdict: a glued table without a separator is read as more rows of the goal
+        # table, and its PASS does not cover the pending goal above it.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n| Check | Result |\n| Lint | PASS |\n"))
+        self.assertFalse(evidence.has_evidence_packet(head + "| Suite passes | PASS |\n| Deploy | pending |\n"))
+        # An escaped pipe inside a cell does not shift the verdict column.
+        self.assertTrue(evidence.has_evidence_packet(
+            head.replace("| Goal | Verdict |", "| Goal | Evidence | Verdict |").replace("|---|---|", "|---|---|---|")
+            + "| Suite passes | `Tests 1 passed \\| 3 skipped` | PASS |\n"))
+        # Separator-shaped and empty rows neither crash the reader nor delete the real row above them.
+        for odd in ("|---|---|\n| Suite passes | PASS |\n", "| | |\n| Suite passes | PASS |\n",
+                    "| Suite passes | PASS |\n| | |\n", "| Suite passes | PASS |\n|---|---|\n"):
+            with self.subTest(rows=odd):
+                self.assertTrue(evidence.has_evidence_packet(head + odd))
+
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
         table = ("### QA evidence packet\n\n- **Persona:** Scheduler team engineer\n"
