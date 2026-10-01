@@ -96,6 +96,7 @@ def has_evidence_packet(text):
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
     header_at = None  # line index of that table's header row
+    row_at = None  # line index of the last goal/verdict row read from that table
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
@@ -128,8 +129,10 @@ def has_evidence_packet(text):
         table_row = line.startswith("|")
         if table_row:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
-                if columns and header_at != index - 1:
+            if any(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
+                # A glued table's header is a row, then a separator, then that table's rows; a separator that
+                # ends the table (nothing tabular after it) does not cost the real row above it.
+                if columns and row_at == index - 1 and next_line.startswith("|"):
                     fields["goals"].pop()  # the row above was a glued table's header, not a goal
                     fields["derived_verdict"].pop()
                     columns = None
@@ -145,6 +148,7 @@ def has_evidence_packet(text):
             if columns and len(cells) > max(columns):
                 fields.setdefault("goals", []).append(cells[columns[0]])
                 fields.setdefault("derived_verdict", []).append(cells[columns[1]])
+                row_at = index
                 current = None
                 continue
             if len(cells) > 2:

@@ -54,6 +54,11 @@ class StopHooksTests(unittest.TestCase):
             head + "| Suite passes | pending |\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
         self.assertTrue(evidence.has_evidence_packet(
             head + "| Suite passes | PASS |\n| Check | Result |\n|---|---|\n| Lint | pending |\n"))
+        # Separator-shaped and empty rows neither crash the reader nor delete the real row above them.
+        for odd in ("|---|---|\n| Suite passes | PASS |\n", "| | |\n| Suite passes | PASS |\n",
+                    "| Suite passes | PASS |\n| | |\n", "| Suite passes | PASS |\n|---|---|\n"):
+            with self.subTest(rows=odd):
+                self.assertTrue(evidence.has_evidence_packet(head + odd))
 
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
