@@ -262,8 +262,7 @@ Board inventory cannot expand re-review blocking scope without a **causal delta
 path** to the changed surface. A plausible regression against protected
 board-backed behavior is a blocker only when the delta can reach that behavior;
 otherwise it is a follow-up. Missing board access must not suppress concrete code
-findings, and it still marks readiness **Blocked / NOT READY** under the board
-regression rule in `GLOBAL_AGENTS.md`.
+findings, it marks board-dependent readiness **Blocked / NOT READY** when required acceptance or protected-behavior evidence cannot be established. Continue independent authorized work.
 
 ### Finding Identity
 

@@ -72,6 +72,20 @@ function main() {
     skillFrontmatter('my-user-skill', 'A normal user skill for router tests.'),
   );
 
+  // Index refresh must preserve invocation choices in every source, even names
+  // the old router forced to explicit-only mode.
+  const policyFixtures = [
+    path.join(userSkillRoot, 'ai-config-kit-core'),
+    path.join(userSkillRoot, '.system', 'skill-installer'),
+    path.join(codexHome, 'plugins', 'cache', 'fixture', 'demo', '1.0', 'skills', 'plugin-demo'),
+  ];
+  for (const [i, dir] of policyFixtures.entries()) {
+    writeFile(path.join(dir, 'SKILL.md'), skillFrontmatter(path.basename(dir), 'Policy preservation fixture.'));
+    if (i !== 1) writeFile(path.join(dir, 'agents', 'openai.yaml'), 'policy:\n  allow_implicit_invocation: true\n');
+  }
+  writeFile(path.join(codexHome, 'plugins', 'cache', 'fixture', 'demo', '1.0', '.codex-plugin', 'plugin.json'),
+    JSON.stringify({ name: 'demo', skills: './skills' }));
+
   // 2. An external agent skill with an existing openai.yaml (must stay intact).
   const externalSkillDir = path.join(agentHome, 'agent-demo-skill');
   const externalYaml = path.join(externalSkillDir, 'agents', 'openai.yaml');
@@ -119,8 +133,16 @@ function main() {
   // Run the refresh (writes the index into the temp router references dir).
   refresh.refreshIndex();
 
+  for (const [i, dir] of policyFixtures.entries()) {
+    const file = path.join(dir, 'agents', 'openai.yaml');
+    check(`invocation policy preserved: ${path.basename(dir)}`, i === 1
+      ? !fs.existsSync(file)
+      : fs.readFileSync(file, 'utf8') === 'policy:\n  allow_implicit_invocation: true\n');
+  }
+
   const index = JSON.parse(fs.readFileSync(refresh.paths.indexJsonPath, 'utf8'));
   const byName = new Map(index.skills.map((s) => [s.name, s]));
+  check('plugin fixture actually indexed with source=plugin', byName.get('plugin-demo')?.source === 'plugin');
 
   // 1. External skill indexed with source 'agent'.
   const demo = byName.get('agent-demo-skill');
@@ -155,17 +177,6 @@ function main() {
   check('normal user skill still indexed', !!userSkill);
   check('normal user skill has source=user', userSkill && userSkill.source === 'user');
   check('normal user skill is writable', userSkill && userSkill.writable === true);
-
-  // 7. The write helper itself fails closed even if called directly, so the
-  // read-only boundary does not depend only on shouldBeExplicit().
-  let rejectedExternalWrite = false;
-  try {
-    refresh.ensurePolicyFalse(demo);
-  } catch (error) {
-    rejectedExternalWrite = /refusing policy write/.test(String(error.message));
-  }
-  check('policy writer rejects external non-writable skill directly',
-    rejectedExternalWrite);
 
   // 8. Backup-name classifier unit checks (boundary cases).
   check('classifier: native-agent-surface.bak.TIMESTAMP is backup',

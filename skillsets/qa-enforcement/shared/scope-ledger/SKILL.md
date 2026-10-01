@@ -1,5 +1,7 @@
 ---
 name: scope-ledger
+verify: python3 scripts/scope-gate.py selftest
+verified: 2026-10-01
 description: Keep a coordinator on what the user asked for. A per-thread ledger of the user's purposes (verbatim), a PreToolUse gate that denies spawns and tells that do not say which open purpose they serve, a Stop check that blocks an early stop while open purposes have nothing running, and the fleet idle guard that nudges a coordinator sitting idle with open purposes. Use when coordinating children, when the gate denies a dispatch, or when the fleet scope guard or the scope-closeout check nudges you.
 ---
 

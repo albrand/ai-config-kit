@@ -150,8 +150,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
         overlay = SCRIPT.parent.parent / "proposals/card21/overlays/codex.md"
         policy = overlay.read_text(encoding="utf-8")
         rules = {
-            "board-gate-all-repositories-and-workflows",
-            "board-access-before-work-and-blocker",
+            "board-gate-configured-or-ticket-dependent",
+            "board-access-before-dependent-conclusion",
             "board-inventory-fields",
             "board-adjacent-detail-read",
             "board-incomplete-inventory-and-traceability-block",
@@ -163,14 +163,13 @@ class StandingRuleCheckerTest(unittest.TestCase):
         )
 
         mutations = {
-            "board-gate-all-repositories-and-workflows": (
-                "This gate applies to every repository and every implementation, PR review,\n"
-                "quality-gate, readiness, release, and skill/agent workflow.",
-                "This gate applies to configured-board, ticket-backed readiness workflows.",
+            "board-gate-configured-or-ticket-dependent": (
+                "applies when a repository has a configured or linked authoritative ticket board",
+                "applies to every repository regardless of its task",
             ),
-            "board-access-before-work-and-blocker": (
-                "Before starting,",
-                "When a board is configured,",
+            "board-access-before-dependent-conclusion": (
+                "continue independent authorized work",
+                "stop all work",
             ),
             "board-inventory-fields": (
                 "sprint/release",

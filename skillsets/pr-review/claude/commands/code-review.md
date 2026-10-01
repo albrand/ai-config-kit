@@ -32,11 +32,11 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - Extract the business rules the PR is trying to satisfy: user workflow, role/permission rules, data lifecycle, external contracts, acceptance criteria, non-goals, and previously working behavior that must remain intact.
    - Build a compact matrix: `business rule / source / changed code / expected behavior / validation evidence`.
    - If business rules or acceptance criteria are unclear and the gap changes the verdict, ask one targeted question or mark the PR `NEEDS DISCUSSION`.
-7. Demand authoritative ticket-board access before readiness judgment:
-   - For Jira-backed repositories, ask imperatively for Jira board access; for non-Jira repositories, ask for the configured board or a current board export.
-   - Inventory all visible board tickets, not only the PR's linked issue.
+7. Use authoritative ticket-board evidence when a board is configured or linked, or the requested judgment depends on ticket acceptance or release evidence:
+   - Reuse available board access and current ticket evidence; request access only when a required board-dependent conclusion cannot be established.
+   - Inventory the linked and potentially affected tickets. Expand when the changed surface can reach additional protected behavior.
    - Check the diff against current, adjacent, QA, Done, released, and previously working tickets that share files, routes, contracts, data, permissions, or user workflows with the PR.
-    - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY** for approval/merge-readiness — but it does not suppress validated code findings, which are still reported. Scope the inventory to all visible board tickets when a board source is available; when none exists, scope to the linked ticket plus demonstrably impacted tickets (shared files, routes, contracts, data, permissions, or user workflows) and state the narrower scope.
+   - Missing required board evidence means **Board regression gate blocked / NOT READY** for the conclusion that depends on it. Continue independent review and report concrete findings. When no board applies, use the request, repository instructions, source, and runtime evidence.
 8. Use independent agents when useful and available:
    - One or two instruction-compliance passes.
    - One business-rule coverage pass.

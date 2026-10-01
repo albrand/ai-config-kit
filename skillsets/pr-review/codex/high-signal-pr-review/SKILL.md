@@ -50,14 +50,9 @@ out of every team- or author-facing PR surface.
 6. Apply **proportional** board-backed regression checking. Board access is
    mandatory only when a board is configured or linked for the repository, or
    when risk/product/release scope makes board-backed invariants material.
-   - Current user and workspace instructions govern board access, inventory, and
-     readiness. When they require the board for every repository or review (the
-     kit's `GLOBAL_AGENTS.md` board regression rule does), that stricter rule
-     wins over the proportional wording in this step and in the guardrails.
-     Delegated technical authority does not waive it.
+   - Current user and repository instructions govern the applicable board, acceptance criteria, and release requirements. Preserve those requirements without inventing a board prerequisite for unrelated local work.
    - Treat the board as evidence for ticket intent and protected behavior, not as an extra approval hierarchy. A delegated tech-lead review must not solicit separate product-owner or CODEOWNERS sign-off; record any explicit branch/release requirement separately from the technical verdict.
-   - When a board applies, inventory all visible board tickets, not only the PR's
-     linked issue: key, title, type, status, sprint/release, component/area,
+   - When a board applies, inventory the linked and potentially affected tickets: key, title, type, status, sprint/release, component/area,
      acceptance criteria, linked PR/release evidence, and QA/Done evidence when
      present.
    - Check the delta against current, adjacent, QA, Done, released, and

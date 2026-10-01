@@ -63,6 +63,10 @@ node <CODEX_HOME>/skills/skill-library-router/scripts/refresh-skill-index.cjs
 
 If `CODEX_HOME` is unset, the script uses `~/.codex`.
 
+Refresh writes only this router's generated indexes. It preserves every skill's
+invocation policy and never creates or edits `agents/openai.yaml`. Changing
+automatic invocation is a separate, explicitly requested configuration change.
+
 To verify that the generated index matches the current skill library without
 writing files:
 

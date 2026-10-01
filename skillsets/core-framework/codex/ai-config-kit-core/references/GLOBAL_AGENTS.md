@@ -30,32 +30,32 @@ Use this as the user-level baseline for AI coding agents.
 
 ## Board-Backed Regression Protection
 
-This rule applies to every repository and every implementation, review,
-release, or skill/agent workflow.
+This rule applies when a repository has a configured or linked authoritative
+ticket board, or the requested outcome depends on ticket acceptance or release
+evidence. Do not invent a board prerequisite for unrelated local work.
 
 - Treat already working, accepted, QA-approved, Done, released, or otherwise
   board-backed behavior as protected scope. A task is incomplete if it
   implements the current change while regressing behavior that was already
   working.
-- Before implementation, PR review, quality-gate, readiness, or release
-  claims, ask imperatively for access to the authoritative ticket board. For
-  Jira-backed projects, require Jira board access; for non-Jira projects, use
-  the configured equivalent board. If access is unavailable, request access or a
-  current board export and report the work as `board regression gate blocked`.
-- Build an inventory of all visible tickets on the board, not only the current
+- Before a board-dependent conclusion, reuse available authoritative board and
+  ticket evidence. If required evidence is unavailable, report that conclusion
+  as `board regression gate blocked` and continue independent authorized work.
+- Build an inventory of current and potentially affected tickets, not only the current
   ticket: key, title, type, status, sprint/release, component/area, acceptance
   criteria, linked PR/release evidence, and QA/Done evidence when present. Use
   metadata first for scale, then open the current ticket plus every adjacent,
   completed, QA, Done, released, or otherwise impacted ticket in detail.
 - Check the code, diff, tests, docs, migrations, config, and release notes
-  against the entire ticket inventory. Identify overlaps, contradictions,
+  against the affected ticket inventory. Expand it when the changed surface
+  can reach further protected behavior. Identify overlaps, contradictions,
   duplicate scope, missing acceptance criteria, and any changed files/routes/
   contracts that can affect previously completed tickets.
 - Treat a plausible regression against protected ticket behavior as a
   **Blocker** until disproven with repo evidence and targeted validation. Treat
-  missing board access, incomplete ticket inventory, or missing PR-to-ticket
+  missing required board evidence, incomplete ticket inventory, or missing PR-to-ticket
   traceability as **Blocked / NOT READY**, never as a pass.
-- Every final implementation, review, or readiness answer must state which
+- Every applicable board-dependent implementation, review, or readiness answer must state which
   board was checked, the inventory size/scope/date, the tickets matched to the
   change, the protected behavior checked for regression, and any gaps or
   blockers.

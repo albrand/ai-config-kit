@@ -1,29 +1,14 @@
-# Live home noninstallation evidence
+# Live home fingerprints before the delivery-guidance update
 
-These SHA-256 values were observed after proposal rendering and before any
-installation attempt; no pre-edit digest was captured. The renderer's installer
-requires every target to match these recorded fingerprints before it creates
-backups or replaces any home. The homes were read only during capture and
-recheck; `--install` was not run.
+Captured read-only on 2026-10-01, before this update is installed. The user
+approved reviewing, improving, and distributing the guidance. Installation must
+use reviewed, merged sources and refuse if any target differs from these exact
+pre-installation fingerprints. Replacements preserve backups under the existing
+compare-and-swap installer. No installation claim is made by this capture.
 
-| Home | SHA-256 observed after rendering / before install |
+| Home | SHA-256 observed before install |
 |---|---|
-| Claude | `e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd` |
-| Codex | `2f7433b7928b17aacbe3988519788300760e8239c840121db5cf3b1f089d871b` |
-| OpenCode | `79ce2b7596ccf3b90f4e8d3eecde4e070f236c92e3e90e84af3aea67f39acae2` |
-| bb | `db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c` |
-
-All four homes report the same modification time: `2026-09-28 17:00:01`.
-The task's first home inventory was taken on 2026-09-28; this unchanged
-modification time and the read-only capture/recheck sequence support that no
-installation occurred.
-
-The four full-context diffs were generated with
-`scripts/render-standing-homes.py --full-context-diffs`. Reconstructing the old
-side after skipping the two file-header lines matches each live source byte for
-byte, including Claude at 45,926 bytes and SHA-256
-`e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd`. Hermes's
-earlier 45,848-byte result came from a parser that discarded any diff line
-starting `---`; that also dropped Claude's original `--topic ...` source line
-after the diff added its own leading `-`. The corrected extraction skips only
-the two headers; all four old-side hashes now match their homes.
+| Claude | `61c59efe20df8b6abc01c433692adfab90057e77556a6a76d377e645fdc4b23a` |
+| Codex | `78ba8742a15eff089fa4949805b3ddae9ba1c66072df21ee41a5ea8d0f272533` |
+| OpenCode | `8385e4e018cbb8d3c117dcc7b55f57203719061000f81ecea55744cad589d9f7` |
+| bb | `ebc5d2f042d13b30dc0ce90f9998f21b545cadf5c88b051b98089bb418840a02` |

@@ -425,16 +425,13 @@ RULES: dict[str, re.Pattern[str]] = {
     "context-gc-managed-runner-self-check": re.compile(
         r"(?is)do\s+not\s+depend\s+on\s+a\s+managed\s+runner\s+unless\s+its\s+installed\s+implementation\s+passes\s+a\s+live\s+self-check"
     ),
-    "board-gate-all-repositories-and-workflows": re.compile(
-        r"(?is)(?:applies? to|gate applies to) every repository and every"
-        r".{0,100}(?:implementation|PR review|quality[- ]gate|readiness|release)"
-        r".{0,80}(?:skill/agent workflow|skill/agent|workflow)"
+    "board-gate-configured-or-ticket-dependent": re.compile(
+        r"(?is)applies when a repository has a configured or linked authoritative ticket board"
+        r".{0,160}requested outcome depends on ticket acceptance or release evidence"
     ),
-    "board-access-before-work-and-blocker": re.compile(
-        r"(?is)(?:before (?:starting|work|implementation).{0,160}require access to the authoritative ticket board|"
-        r"before (?:implementation|PR review|quality[- ]gate|readiness|release).{0,220}"
-        r"(?:ask imperatively for access|require (?:Jira|board) access).{0,120}authoritative ticket board)"
-        r".{0,320}(?:board regression gate blocked|missing board access.{0,80}Blocked / NOT READY)"
+    "board-access-before-dependent-conclusion": re.compile(
+        r"(?is)before a board-dependent conclusion.{0,100}require access to the authoritative ticket board"
+        r".{0,160}board regression gate blocked.{0,140}continue independent authorized work"
     ),
     "board-inventory-fields": re.compile(
         r"(?is)key.{0,30}title.{0,30}type.{0,30}status.{0,60}sprint/release"
@@ -517,8 +514,8 @@ OPTIONAL_WHEN_ABSENT = {
     "typed-decisions-out-of-space-fails",
     "typed-decisions-resolve-origin",
     "typed-decisions-confidence-keeps-release-checks",
-    "board-gate-all-repositories-and-workflows",
-    "board-access-before-work-and-blocker",
+    "board-gate-configured-or-ticket-dependent",
+    "board-access-before-dependent-conclusion",
     "board-inventory-fields",
     "board-adjacent-detail-read",
     "board-incomplete-inventory-and-traceability-block",
@@ -569,8 +566,8 @@ LIVE_HOME_RULES = {
         "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
-        "board-gate-all-repositories-and-workflows",
-        "board-access-before-work-and-blocker",
+        "board-gate-configured-or-ticket-dependent",
+        "board-access-before-dependent-conclusion",
         "board-inventory-fields",
         "board-adjacent-detail-read",
         "board-incomplete-inventory-and-traceability-block",
@@ -640,8 +637,8 @@ KIT_BASELINE_RULES = {
     "typed-decisions-out-of-space-fails",
     "typed-decisions-resolve-origin",
     "typed-decisions-confidence-keeps-release-checks",
-    "board-gate-all-repositories-and-workflows",
-    "board-access-before-work-and-blocker",
+    "board-gate-configured-or-ticket-dependent",
+    "board-access-before-dependent-conclusion",
 }
 CONTEXT_GC_RULES = {
     "no-gc-user-owned-state", "context-gc-boundary", "context-gc-resume-packet",
@@ -655,8 +652,8 @@ HERMES_TRANSPORT_RULES = {
     "hermes-no-local-terminal-socket",
 }
 BOARD_RULES = {
-    "board-gate-all-repositories-and-workflows",
-    "board-access-before-work-and-blocker",
+    "board-gate-configured-or-ticket-dependent",
+    "board-access-before-dependent-conclusion",
     "board-inventory-fields",
     "board-adjacent-detail-read",
     "board-incomplete-inventory-and-traceability-block",
@@ -680,10 +677,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "61c59efe20df8b6abc01c433692adfab90057e77556a6a76d377e645fdc4b23a": "proposal-claude",
-    "04df6fb26c355e68b64a48a03229bd7f11fcb4bec3734d84d31fbd8d3f97c0f6": "proposal-codex",
-    "8385e4e018cbb8d3c117dcc7b55f57203719061000f81ecea55744cad589d9f7": "proposal-opencode",
-    "9bedaf754a5965d620f0ec1a854a6e4abda11535c4b18d7bacff83b91c961a83": "proposal-bb",
+    "47e39d6a5e545e949a7283c01521677dbfebbe69ad88ec614ea9285780774a60": "proposal-claude",
+    "83b424d810ac633763b4b66ff1dbb788acc332603a94e22f8978785328a53e08": "proposal-codex",
+    "86175d5e0cd3588d8199ea3c02331a75b8edc45f1fa5f9f1e311c6d72ad8e304": "proposal-opencode",
+    "25bfd8afbab3cfd42841c9b4a2ac6a7c5c8f20b86c41dd286edb07375dda97ed": "proposal-bb",
 }
 
 

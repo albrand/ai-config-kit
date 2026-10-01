@@ -37,6 +37,15 @@
 - Hermes/cmux broker delegation defaults off; concurrency/depth default 1. Model calls require explicit bounded activation. These broker limits do not restrict bb child threads.
 - Delegates may not add dependencies without a new master decision.
 
+## Delivery contract
+
+- Carry the complete user request and accepted revisions through execution and handoffs. Finish the requested outcome, including authorized checks, fixes, delivery, and installation; a patch, status report, or proposed next step does not replace that outcome.
+- Reuse authorization already given in this conversation. Ask only for a new user-owned decision, a hard prohibition's specific approval, or a material new fact that invalidates the authorization; name that fact. A skill's generic confirmation step does not require asking again.
+- Continue runnable independent work while another step awaits access, consent, or an external result. Diagnose recoverable failures, fix discovered in-scope defects, check siblings and consumers, and exercise the full requested workflow before stopping.
+- Use the narrowest relevant skills. Apply their procedures only when the actual task and available surface fit. A trigger does not require unrelated tooling, infrastructure, board access, delegation, or deployment. Honor explicit user instructions and hard prohibitions over generic skill examples.
+- Do tightly coupled work yourself. Delegate only independent work when authorized and useful; a provider preference is not a mandatory detour. Preserve ownership, security gates, and coordinator responsibility when delegating.
+- Report proposed, implemented, installed, and exercised outcomes separately. Give a verdict and evidence for each required user outcome; do not hide a failed goal behind an overall completion claim or erase completed goals because another goal is blocked.
+
 <!-- typed-decisions:begin -->
 ## Typed decisions
 
