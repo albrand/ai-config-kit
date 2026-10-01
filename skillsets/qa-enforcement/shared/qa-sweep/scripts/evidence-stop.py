@@ -194,7 +194,7 @@ def has_evidence_packet(text):
         elif current == "both":
             if re.match(r"(?:\d+[.)]|[-*+])\s", stripped):
                 fields["goals"].append(line)
-                fields["derived_verdict"].append(line)
+                fields["derived_verdict"].extend(GOAL_LINE_VERDICT.findall(raw))
             elif line:
                 current = None  # prose after the list is not part of the section
         elif re.match(r"^[A-Za-z][A-Za-z /()&-]{0,30}:\s", line):
