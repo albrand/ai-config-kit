@@ -255,9 +255,10 @@ correction must not hide unfinished work.
   (`~/.local/state/agent-quality/closeout-ledger-nudged.json`) to record the
   user's purposes with `init`.
 - A solo thread without a ledger also receives a continuation check when its
-  final message explicitly reports unrun workflows, unfinished implementation,
+  final message explicitly reports unrun workflows/QA/E2E, an open purpose id, unfinished implementation,
   an unperformed next step, or offers to do reversible work. Quoted and fenced
-  examples are excluded. Direct hook text and bounded Claude/Codex transcript
+  examples are excluded, Markdown bold status labels are recognized, and a
+  report beginning "Paused as requested" retains the user's stop. Direct hook text and bounded Claude/Codex transcript
   fallbacks are supported; tool output and reasoning are excluded.
 - The check asks the agent to load `finish-the-job` and `meaningful-tests`,
   continue actionable authorized work, and prepare independent steps while a

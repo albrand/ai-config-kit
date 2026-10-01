@@ -228,6 +228,22 @@ class CloseoutStopTests(unittest.TestCase):
         text = "All authorized local preparation is complete. Approve broadening OAuth read access."
         self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
 
+    def test_solo_formatted_qa_and_e2e_reports_require_a_continuation_check(self):
+        self.set_state(children=[])
+        for text in ("**Live QA NOT RUN:** The administrator save, reload and complete journey is pending.",
+                     "Current E2E remains **NOT RUN**.", "Workflows are **NOT RUN**."):
+            with self.subTest(text=text):
+                self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "block")
+
+    def test_solo_explicit_open_purpose_requires_a_continuation_check(self):
+        self.set_state(children=[])
+        self.assertEqual(self.closeout({"last_assistant_message": "P5 remains open; accepted work was not reopened."})["decision"], "block")
+
+    def test_solo_requested_pause_preserves_the_user_stop(self):
+        self.set_state(children=[])
+        text = "Paused as requested. Next step: run the pending workflow checks when you resume."
+        self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
+
     def test_solo_offer_checks_existing_authorization(self):
         self.set_state(children=[])
         for text in ("Want me to implement the fix?", "If you'd like, I can investigate it.",

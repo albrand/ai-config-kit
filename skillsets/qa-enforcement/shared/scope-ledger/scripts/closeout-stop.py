@@ -35,7 +35,8 @@ BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 MACHINE_INPUT = re.compile(r"^\s*(\[(bb |from |child of|fleet |qa-|scope-)|<)", re.I)
 GATE = os.path.join(HERE, "scope-gate.py")
 UNFINISHED = re.compile(
-    r"\b(?:workflow[s]?\s+(?:are\s+|is\s+)?not\s+run|"
+    r"\b(?:(?:workflow[s]?|qa|e2e|end[- ]to[- ]end)\s+(?:(?:are|is|remains?)\s+)?not\s+run|"
+    r"P\d+\s+(?:remains?|is|still)\s+open\b|"
     r"(?:remains?|still)\s+incomplete|"
     r"(?:remaining|next\s+steps?)\s*:\s*(?:execute|run|fix|implement|test|verify|finish|complete)\b|"
     r"still\s+need[s]?\b[^\n.!?]{0,120}\b(?:walkthrough|verification|testing|fix|implementation)|"
@@ -90,6 +91,9 @@ def admits_unfinished_work(payload):
     text = re.sub(r"```[^\n]*\n.*?```", "", final_text(payload), flags=re.S)
     text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
     text = re.sub(r'''"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`''', "", text)
+    text = re.sub(r"\*\*|__", "", text)
+    if re.match(r"\s*Paused as requested\b", text, re.I):
+        return False
     return bool(UNFINISHED.search(text))
 
 
