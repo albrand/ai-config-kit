@@ -53,9 +53,11 @@ remains unimplemented pending review. The Stop adapter runs the opted-in
 inventory gate first and preserves its block before considering the default
 evidence nudge.
 
-Events: gate_denied / gate_passed / inventory_closed / rewalk / escape and
-metadata-only `evidence-claim` decisions append to
-~/.local/state/agent-quality/events.jsonl (schema_version 1; no message text).
+Events: gate_denied / gate_passed / inventory_closed / rewalk / escape,
+`closeout-stop`, and metadata-only `evidence-claim` and `request-contract`
+records append to ~/.local/state/agent-quality/events.jsonl (schema_version 1;
+no message text). `request-contract` records contain only a timestamp, thread
+id, row count, and counts by row status.
 
 ## Install / rollback on the host
 

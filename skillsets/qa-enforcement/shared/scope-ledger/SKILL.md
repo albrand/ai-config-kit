@@ -33,6 +33,29 @@ python3 $G show <thread>
 python3 $G check <thread> "<brief text>"           # the gate's decision, no tool call
 ```
 
+## Request contract
+
+For requests with two or more outcomes, or a named target, persona, or
+constraint, keep a request contract as a review step; it is not a gate. Before
+the first edit, external call, or delegation, write:
+
+- `target`: the repository, environment, file, and persona as relevant;
+- `outcomes`: one row per requested outcome, in the user's words;
+- `constraints`: the user's limits and permissions;
+- `state_claims`: the latest state claims the work relies on.
+
+At closeout, mark every outcome `complete` with evidence or `blocked` with the
+exact blocker. Use a JSON contract with those four fields; each outcome row has
+`request`, `status`, `evidence`, and `blocker`. After closeout, record metadata:
+
+```sh
+python3 ~/.agents/skills/scope-ledger/scripts/request-contract-log.py \
+  <contract.json> --thread-id <thread-id>
+```
+
+The logger stores only the thread id, row count, and status counts. If it fails,
+note the failure and continue; this review step never blocks work.
+
 ## The gate (PreToolUse, Claude Code and Codex)
 
 `~/.agent-hooks/scope-gate-hook.sh` is chained in `coordinator-hook-pretool.sh`
