@@ -226,6 +226,39 @@ class CloseoutStopTests(unittest.TestCase):
         self.gate_cli("mark", THREAD, "P5", "open")
         self.assertNotIn("waiting", json.loads((self.ledgers / f"{THREAD}.json").read_text())["purposes"][0])
 
+    # Review r1: a wait is not a renewable snooze, and arrival ends it before the date.
+    def test_waits_cannot_be_renewed_past_the_cap(self):
+        self.write_ledger(self.purpose("P5"))
+        day = lambda n: (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=n)).strftime("%Y-%m-%d")
+        self.assertEqual(self.gate_cli("wait", THREAD, "P5", "--until", day(20), "--on", "data").returncode, 0)
+        # A renewal inside the 30-day span from the first wait is allowed; one past it is refused.
+        self.assertEqual(self.gate_cli("wait", THREAD, "P5", "--until", day(28), "--on", "data").returncode, 0)
+        renewed = self.gate_cli("wait", THREAD, "P5", "--until", day(35), "--on", "data")
+        self.assertNotEqual(renewed.returncode, 0)
+        self.assertIn("first wait", renewed.stderr)
+        # Re-opening the purpose clears the wait but not its history, so mark-then-wait can't reset the cap.
+        self.gate_cli("mark", THREAD, "P5", "open")
+        self.assertNotEqual(self.gate_cli("wait", THREAD, "P5", "--until", day(35), "--on", "data").returncode, 0)
+        self.assertEqual(self.closeout()["decision"], "block")
+
+    def test_arrival_ends_the_wait_before_its_date(self):
+        self.write_ledger(self.purpose("P5"))
+        arrival = pathlib.Path(self.tmp.name) / "remeasure.md"
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+        self.assertNotEqual(self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "data",
+                                          "--ends-when-file", "relative.md").returncode, 0)
+        self.assertEqual(self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "the strict re-measure",
+                                       "--ends-when-file", str(arrival)).returncode, 0)
+        self.assertEqual(self.closeout()["decision"], "allow")
+        arrival.write_text("results\n")
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn("P5", nudged["reason"])
+        # Waiting on something that has already arrived is refused.
+        self.gate_cli("mark", THREAD, "P5", "open")
+        self.assertNotEqual(self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "data",
+                                          "--ends-when-file", str(arrival)).returncode, 0)
+
     def test_finished_ledger_allows(self):
         self.write_ledger(self.purpose(status="done"))
         self.assertEqual(self.closeout()["decision"], "allow")

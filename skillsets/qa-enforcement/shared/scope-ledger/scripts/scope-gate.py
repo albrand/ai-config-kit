@@ -34,9 +34,11 @@ Subcommands:
     init <thread> --from <ledger.json>      create a ledger (refuses to overwrite)
     add <thread> --text T --done-when D     append a purpose in the user's words
     mark <thread> <Pn> <status> [--ask Q] [--evidence E]
-    wait <thread> <Pn> --until <date> --on W  an open purpose that can only move after a
-                                            date or data arrives (at most 30 days; any
-                                            mark clears it)
+    wait <thread> <Pn> --until <date> --on W [--ends-when-file F]
+                                            an open purpose that can only move after a
+                                            date or data arrives: at most 30 days from
+                                            its first wait (renewals included); ends
+                                            early when F exists; any mark clears it
     revise <thread> --quote Q [--source S]  record a user-approved scope change
     release <thread> <child> --evidence E   a finished child: fleet stops holding it
                                             from archive (only the child's parent
@@ -140,6 +142,9 @@ def waiting_until(purpose, now=None):
         return None
     until = parse_until(waiting.get("until"))
     now = now or datetime.datetime.now(datetime.timezone.utc)
+    ends_file = waiting.get("ends_when_file")
+    if isinstance(ends_file, str) and ends_file and os.path.exists(os.path.expanduser(ends_file)):
+        return None  # what it waited for has arrived: ordinary checking resumes before the date
     return until if until and until > now else None
 
 
@@ -182,6 +187,8 @@ def validate(ledger, thread):
         if waiting is not None and (not isinstance(waiting, dict) or parse_until(waiting.get("until")) is None
                                     or not str(waiting.get("on") or "").strip()):
             raise LedgerError(f"{p['id']} waiting must be {{until, on}}")
+        if not isinstance(p.get("wait_history", []), list):
+            raise LedgerError(f"{p['id']} wait_history must be a list")
     revisions = ledger.setdefault("accepted_revisions", [])
     if not isinstance(revisions, list) or any(not isinstance(r, dict) or not str(r.get("quote", "")).strip() for r in revisions):
         raise LedgerError("accepted_revisions must be a list of {quote}")
@@ -892,14 +899,26 @@ def main(argv):
             if p["status"] != "open":
                 raise LedgerError(f"{pid} is {p['status']}; only an open purpose can wait")
             until, on = parse_until(arg(args, "--until")), arg(args, "--on")
+            ends_file = arg(args, "--ends-when-file")
             now = datetime.datetime.now(datetime.timezone.utc)
             if until is None or until <= now:
                 raise LedgerError("wait needs --until in the future (YYYY-MM-DD or ISO time)")
-            if until > now + datetime.timedelta(days=MAX_WAIT_DAYS):
-                raise LedgerError(f"a wait can be at most {MAX_WAIT_DAYS} days; mark it blocked-on-user if the user owns it")
+            # The cap runs from the purpose's first wait and survives marks, so renewing can't snooze it forever.
+            history = p.setdefault("wait_history", [])
+            first = min([parse_until(h.get("set_at")) for h in history if parse_until(h.get("set_at"))] or [now])
+            if until > first + datetime.timedelta(days=MAX_WAIT_DAYS):
+                raise LedgerError(f"waits on {pid} can span at most {MAX_WAIT_DAYS} days from its first wait "
+                                  f"({first.strftime('%Y-%m-%d')}); do the work, or mark it blocked-on-user if the user owns it")
             if not (on and on.strip()):
                 raise LedgerError("wait needs --on with what has to arrive (data, a date, a run)")
+            if ends_file is not None and not os.path.isabs(os.path.expanduser(ends_file)):
+                raise LedgerError("--ends-when-file needs an absolute path")
+            if ends_file is not None and os.path.exists(os.path.expanduser(ends_file)):
+                raise LedgerError(f"{ends_file} already exists: what this purpose waits for has arrived")
             p["waiting"] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "on": on, "set_at": now_iso()}
+            if ends_file:
+                p["waiting"]["ends_when_file"] = ends_file
+            history.append(dict(p["waiting"]))
             p.setdefault("evidence", []).append({"at": now_iso(), "note": f"waiting until {p['waiting']['until']} on {on}"})
             write_ledger(thread, ledger)
             print(f"{pid} waits until {p['waiting']['until']} on: {on}")
