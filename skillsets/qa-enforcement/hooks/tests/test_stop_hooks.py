@@ -77,6 +77,9 @@ class StopHooksTests(unittest.TestCase):
                  "- `git diff --check` passed. Tests were **not run**. No push, messages, or spawns.")
         for text in (probe, "Both fixes are done.", "The three requested changes are complete.",
                      "All three PRs are merged.", "The fix is merged.", "After: all three changes are done.",
+                     "Before handing off, all three fixes are done.", "After the sweep, the release is verified.",
+                     "Before dispatch I fixed three defects in the executor prompt.",
+                     "I worked in an isolated copy and touched nothing. I verified the run.",
                      "These changes are now complete.", "All requested items are finished.",
                      "The requested work is done."):
             with self.subTest(text=text[:40]):
@@ -93,7 +96,9 @@ class StopHooksTests(unittest.TestCase):
                      "Merged `origin/develop` into the branch.", "I released the session lease.",
                      "I remove each builder's copy of the code once its work is merged.",
                      "Nothing in it is merged or deployed yet.",
-                     'The reviewer flagged "All three PRs are merged." as unmatched.'):
+                     'The reviewer flagged "All three PRs are merged." as unmatched.',
+                     "Once everything is fixed, I push.", "Remaining before this is done:",
+                     "When the fix is merged, I'll tell K1.", "If the suite passes, the release is ready."):
             with self.subTest(text=text):
                 self.assertFalse(evidence.inspect(text)["block"], text)
 

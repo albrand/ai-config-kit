@@ -33,6 +33,9 @@ CLAIM_PATTERNS = (
         re.IGNORECASE | re.MULTILINE,
     ),
 )
+# "Once everything is fixed, I push" is a condition; "Before handing off, all three fixes are done" reports done
+# work after the comma, and "Before dispatch I fixed three defects" is an I/we main clause, not a condition.
+TIME_CLAUSE = re.compile(r"\b(?:when|once|after|before)\s+[^.;,\n]*$", re.IGNORECASE)
 NEGATED = re.compile(
     r"\b(?:not|never|cannot|can't|isn't|aren't|wasn't|weren't|didn't|"
     r"haven't|hasn't|won't|will not|not yet|unable to|nothing)\b",
@@ -41,7 +44,7 @@ NEGATED = re.compile(
 # A claim inside a condition, an instruction or an in-progress check is not a report that the work is done:
 # "when each fix is ready", "confirm the deployment is ready", "none of the items is fixed".
 NOT_A_REPORT = re.compile(
-    r"\b(?:(?:when|once|if|until|unless|whether|after|before)\s+[^.;\n]*|"
+    r"\b(?:(?:if|until|unless|whether)\s+[^.;\n]*|"
     r"(?:confirm(?:s|ing)?|check(?:s|ing)?|verify(?:ing)?|ensure|make sure|none of|neither|proves?|"
     r"recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|could)\b[^.;:\n]*)$",
     re.IGNORECASE,
@@ -203,7 +206,10 @@ def first_claim(text):
         line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
         quoted = (line.count("`") % 2 == 1 or text.count("```", 0, match.start()) % 2 == 1
                   or line.count('"') % 2 == 1 or line.count("\u201c") > line.count("\u201d"))
-        if line.lstrip().startswith(">") or quoted or NEGATED.search(prefix) or NOT_A_REPORT.search(prefix):
+        clause = re.split(r"[.;!?\n]", prefix)[-1]
+        if line.lstrip().startswith(">") or quoted or NEGATED.search(clause) or NOT_A_REPORT.search(prefix):
+            continue
+        if TIME_CLAUSE.search(prefix) and match.re is not CLAIM_PATTERNS[0]:
             continue
         return match.group("claim").lower()
     return None
