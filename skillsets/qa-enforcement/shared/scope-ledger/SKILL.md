@@ -49,7 +49,7 @@ exact blocker. Use a JSON contract with those four fields; each outcome row has
 `request`, `status`, `evidence`, and `blocker`. After closeout, record metadata:
 
 ```sh
-python3 skillsets/qa-enforcement/shared/scope-ledger/scripts/request-contract-log.py \
+python3 ~/.agents/skills/scope-ledger/scripts/request-contract-log.py \
   <contract.json> --thread-id <thread-id>
 ```
 
