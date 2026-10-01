@@ -159,6 +159,19 @@ class ContinuationInstallTests(unittest.TestCase):
         self.assertEqual((self.home / ".agent-hooks/qa-stop-hook.sh").read_text(), "original stop wrapper\n")
         self.assertFalse(self.backup.exists())
 
+    def test_missing_native_trust_config_refuses_before_modifying_anything(self):
+        path, _ = self.native_config()
+        (self.home / ".codex/config.toml").unlink()
+        before = {file.relative_to(self.home): file.read_bytes()
+                  for file in self.home.rglob("*") if file.is_file()}
+        with self.assertRaises(FileNotFoundError):
+            installer.install(ROOT, self.home, self.backup)
+        after = {file.relative_to(self.home): file.read_bytes()
+                 for file in self.home.rglob("*") if file.is_file()}
+        self.assertEqual(after, before)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["timeout"], 5)
+
     def test_install_updates_all_copies_and_preserves_backups_and_other_gates(self):
         result = installer.install(ROOT, self.home, self.backup)
         self.assertEqual(result["installed_files"], 11)
