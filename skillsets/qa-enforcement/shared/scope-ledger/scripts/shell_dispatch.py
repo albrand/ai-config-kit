@@ -631,10 +631,11 @@ def _draft_set_has_positional_message(words_):
     return len(positional) > 1
 
 
-# An output redirection: `2>&1`, `>f`, `2>/dev/null`, `&>f`, or a bare operator
-# whose target is the next word. Input redirections and here-strings are not
-# included: they feed bb text.
-OUT_REDIRECT = re.compile(r"^\d*(>>?|&>>?|>&)(\d+|-|\S+)?$")
+# A redirection of stdout or stderr only: `2>&1`, `>f`, `2>/dev/null`, `&>f`,
+# or a bare operator whose target is the next word. The source descriptor must
+# be absent, 1 or 2: `0>&3` points stdin at fd 3 and can feed bb text (#30 r1),
+# like input redirections and here-strings, so those are never dropped.
+OUT_REDIRECT = re.compile(r"^(?:[12]?(>>?|>&)|(&>>?))(\S+)?$")
 
 
 def _drop_output_redirects(rest):
@@ -642,7 +643,7 @@ def _drop_output_redirects(rest):
     while i < len(rest):
         m = OUT_REDIRECT.match(rest[i])
         if m:
-            i += 1 if m.group(2) else 2  # a bare operator also takes its target word
+            i += 1 if m.group(3) else 2  # a bare operator also takes its target word
             continue
         out.append(rest[i])
         i += 1

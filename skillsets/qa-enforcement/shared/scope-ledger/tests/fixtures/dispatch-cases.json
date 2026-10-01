@@ -221,6 +221,13 @@
     {"label": "a real tell with 2>&1 is still a dispatch", "want": 2, "command": "bb thread tell thr_x \"also refactor it\" 2>&1"},
     {"label": "help fed a here-string is still a dispatch", "want": 2, "command": "bb thread tell --help <<< \"also refactor it\""},
     {"label": "help fed stdin from a file is still a dispatch", "want": 2, "command": "bb thread tell --help < {nobrief}"},
-    {"label": "help then a message after a redirection is still a dispatch", "want": 2, "command": "bb thread tell --help 2>&1 thr_x \"also refactor it\""}
+    {"label": "help then a message after a redirection is still a dispatch", "want": 2, "command": "bb thread tell --help 2>&1 thr_x \"also refactor it\""},
+    {"label": "#30 r1: help with stdin duplicated from fd 3 is still a dispatch", "want": 2, "command": "bb thread tell --help 0>&3"},
+    {"label": "#30 r1: help with fd 3 redirected is still a dispatch", "want": 2, "command": "bb thread tell --help 3>&1"},
+    {"label": "#30 r1: help with stdin from a duplicated fd (<&3) is still a dispatch", "want": 2, "command": "bb thread tell --help <&3"},
+    {"label": "#30 r1: help with stdin read-write (<>) is still a dispatch", "want": 2, "command": "bb thread tell --help 0<> {nobrief}"},
+    {"label": "#30 r1: help with 1>&2 is not a dispatch", "want": 0, "command": "bb thread spawn --help 1>&2"},
+    {"label": "#30 r1: help appending stdout and stderr to a file is not a dispatch", "want": 0, "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"},
+    {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"}
   ]
 }
