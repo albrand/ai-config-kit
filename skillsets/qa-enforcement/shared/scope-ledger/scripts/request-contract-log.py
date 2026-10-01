@@ -79,6 +79,37 @@ def _read_regular_contract(path):
             os.close(descriptor)
 
 
+def _append(path, payload):
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("event path is not a regular file")
+        written = os.write(descriptor, payload)
+        if written != len(payload):
+            raise OSError("short append")
+    finally:
+        os.close(descriptor)
+
+
+def _private_dir(path):
+    """Create or accept a directory only this user can enter; refuse links and shared modes."""
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise OSError("fallback directory is not private to this user")
+
+
+def fallback_events_path():
+    """Where the event goes when the agent sandbox cannot write ~/.local/state (Codex workspace-write)."""
+    base = os.environ.get("REQUEST_CONTRACT_FALLBACK_DIR") or f"/tmp/agent-quality-{os.getuid()}"
+    return Path(base) / "events.jsonl"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Append metadata only for a closed request contract")
     parser.add_argument("contract", type=Path)
@@ -101,20 +132,17 @@ def main(argv=None):
     payload = (json.dumps(_event(args.thread_id, contract), separators=(",", ":")) + "\n").encode("utf-8")
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags, 0o600)
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise OSError("event path is not a regular file")
-            written = os.write(descriptor, payload)
-            if written != len(payload):
-                raise OSError("short append")
-        finally:
-            os.close(descriptor)
+        _append(path, payload)
     except OSError:
-        print("request-contract log: could not append metadata event", file=sys.stderr)
-        return 1
+        fallback = fallback_events_path()
+        try:
+            _private_dir(fallback.parent)
+            _append(fallback, payload)
+        except OSError:
+            print("request-contract log: could not append metadata event", file=sys.stderr)
+            return 1
+        print(f"request-contract metadata recorded in the sandbox fallback {fallback}")
+        return 0
     print("request-contract metadata recorded")
     return 0
 
