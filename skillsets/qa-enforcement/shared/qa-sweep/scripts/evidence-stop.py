@@ -93,9 +93,13 @@ def has_evidence_packet(text):
     current = None
     fence = None
     label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
+    both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
+    columns = None  # (goal index, verdict index) of a multi-column table with those headers
     lines = text.splitlines()
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
+        if not stripped.startswith("|"):
+            columns = None  # the table ended: its goal and verdict columns do not apply to a later table
         if stripped.startswith(("```", "~~~")):
             marker = stripped[:3]
             if fence == marker:
@@ -108,6 +112,12 @@ def has_evidence_packet(text):
             current = None
             continue
         next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        heading_text = re.sub(r"[*_`]", "", re.sub(r"^#{1,6}\s*", "", stripped)).strip()
+        if both.match(heading_text):
+            current = "both"
+            fields.setdefault("goals", [])
+            fields.setdefault("derived_verdict", [])
+            continue
         setext = bool(stripped and re.fullmatch(r"(?:=+|-+)", next_line))
         html_heading = re.match(r"^<h[1-6](?:\s[^>]*)?>", stripped, re.I)
         if setext or html_heading or re.match(r"^#{1,6}(?:\s|$)", stripped) or re.fullmatch(r"(?:[-*_]\s*){3,}", stripped):
@@ -117,6 +127,19 @@ def has_evidence_packet(text):
         table_row = line.startswith("|")
         if table_row:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells if cell):
+                continue  # separator row
+            if len(cells) > 2:
+                heads = [cell.lower() for cell in cells]
+                goal = next((i for i, h in enumerate(heads) if re.match(r"(?:user\s+)?(?:goals?|outcomes?)\b", h)), None)
+                verdict = next((i for i, h in enumerate(heads) if re.match(r"verdicts?\b", h)), None)
+                if goal is not None and verdict is not None:
+                    columns = (goal, verdict)
+                elif columns and len(cells) > max(columns):
+                    fields.setdefault("goals", []).append(cells[columns[0]])
+                    fields.setdefault("derived_verdict", []).append(cells[columns[1]])
+                current = None
+                continue
             if len(cells) == 2:
                 line = cells[0] + ": " + cells[1]
         match = label.match(line)
@@ -126,19 +149,32 @@ def has_evidence_packet(text):
             fields.setdefault(current, []).append(match.group(2))
         elif table_row:
             current = None
+        elif current == "both":
+            if re.match(r"(?:\d+[.)]|[-*+])\s", stripped):
+                fields["goals"].append(line)
+                fields["derived_verdict"].append(line)
+            elif line:
+                current = None  # prose after the list is not part of the section
+        elif re.match(r"^[A-Za-z][A-Za-z /()&-]{0,30}:\s", line):
+            current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
     values = {key: " ".join(parts).strip() for key, parts in fields.items()}
-    if not all(values.get(key) for key in ("persona", "target", "goals", "verdict")):
+    if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
-    if not re.search(r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b", values["verdict"], re.I):
+    # A "Verdict:" field may say "pass"; a verdict read from a table column or an outcomes section must be the
+    # explicit uppercase token, so prose such as "the assertion pass" is not a verdict. Each source is judged
+    # on its own value, so an empty "Verdict:" label cannot relax the check on the other.
+    token = r"\b(?:PASS|FAIL|BLOCKED|NOT RUN)\b"
+    labelled = bool(re.search(token, values.get("verdict", ""), re.I))
+    derived = bool(re.search(token, values.get("derived_verdict", "")))
+    if not (labelled or derived):
         return False
     target = values["target"]
     has_deployment = bool(re.search(r"https?://\S+", target) and re.search(r"\bdeployment(?:\s+id)?\b", target, re.IGNORECASE))
     has_stack_sha = bool(
-        re.search(r"\b(?:stack|repo|project)\b", target, re.IGNORECASE)
-        and re.search(r"\b(?:commit|sha)\b", target, re.IGNORECASE)
-        and re.search(r"\b[0-9a-f]{7,40}\b", target, re.IGNORECASE)
+        re.search(r"\b(?:stack|repo|project|commit|sha|head|branch|worktree)\b", target, re.IGNORECASE)
+        and re.search(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", target, re.IGNORECASE)
     )
     return has_deployment or has_stack_sha
 
