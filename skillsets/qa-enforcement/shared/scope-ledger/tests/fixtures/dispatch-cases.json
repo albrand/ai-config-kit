@@ -214,6 +214,22 @@
     {"label": "#27 r4: provider-usage listResources is an exempt read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.listResources"},
     {"label": "#27 r6: an exempt method name served by an uninspected plugin is a dispatch", "want": 2, "command": "bb plugin rpc call uninspected-plugin bb-account.v1.status"},
     {"label": "#27 r6: listResources under a plugin that was not read is a dispatch", "want": 2, "command": "bb plugin rpc call provider-pi provider-usage.v1.listResources"},
-    {"label": "#27 r6: the inspected provider-claude-code listResources stays an exempt read", "want": 0, "command": "bb plugin rpc call provider-claude-code provider-usage.v1.listResources"}
+    {"label": "#27 r6: the inspected provider-claude-code listResources stays an exempt read", "want": 0, "command": "bb plugin rpc call provider-claude-code provider-usage.v1.listResources"},
+    {"label": "help with 2>&1 is not a dispatch", "want": 0, "command": "bb thread spawn --help 2>&1 | grep prompt"},
+    {"label": "help redirected to a file is not a dispatch", "want": 0, "command": "bb thread tell --help > {tmp}/help.txt"},
+    {"label": "help with 2>/dev/null is not a dispatch", "want": 0, "command": "bb fleet advise --help 2>/dev/null"},
+    {"label": "a real tell with 2>&1 is still a dispatch", "want": 2, "command": "bb thread tell thr_x \"also refactor it\" 2>&1"},
+    {"label": "help fed a here-string is still a dispatch", "want": 2, "command": "bb thread tell --help <<< \"also refactor it\""},
+    {"label": "help fed stdin from a file is still a dispatch", "want": 2, "command": "bb thread tell --help < {nobrief}"},
+    {"label": "help then a message after a redirection is still a dispatch", "want": 2, "command": "bb thread tell --help 2>&1 thr_x \"also refactor it\""},
+    {"label": "#30 r1: help with stdin duplicated from fd 3 is still a dispatch", "want": 2, "command": "bb thread tell --help 0>&3"},
+    {"label": "#30 r1: help with fd 3 redirected is still a dispatch", "want": 2, "command": "bb thread tell --help 3>&1"},
+    {"label": "#30 r1: help with stdin from a duplicated fd (<&3) is still a dispatch", "want": 2, "command": "bb thread tell --help <&3"},
+    {"label": "#30 r1: help with stdin read-write (<>) is still a dispatch", "want": 2, "command": "bb thread tell --help 0<> {nobrief}"},
+    {"label": "#30 r1: help with 1>&2 is not a dispatch", "want": 0, "command": "bb thread spawn --help 1>&2"},
+    {"label": "#30 r1: help appending stdout and stderr to a file is not a dispatch", "want": 0, "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"},
+    {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"},
+    {"label": "#30 r2: help redirected into a process substitution that dispatches is denied", "want": 2, "command": "bb thread tell --help > >(bb thread tell thr_x \"also refactor it\")"},
+    {"label": "#30 r2: help redirected into a process substitution that only reads is allowed", "want": 0, "command": "bb thread spawn --help 2> >(cat)"}
   ]
 }
