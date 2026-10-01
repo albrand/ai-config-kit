@@ -228,6 +228,8 @@
     {"label": "#30 r1: help with stdin read-write (<>) is still a dispatch", "want": 2, "command": "bb thread tell --help 0<> {nobrief}"},
     {"label": "#30 r1: help with 1>&2 is not a dispatch", "want": 0, "command": "bb thread spawn --help 1>&2"},
     {"label": "#30 r1: help appending stdout and stderr to a file is not a dispatch", "want": 0, "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"},
-    {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"}
+    {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"},
+    {"label": "#30 r2: help redirected into a process substitution that dispatches is denied", "want": 2, "command": "bb thread tell --help > >(bb thread tell thr_x \"also refactor it\")"},
+    {"label": "#30 r2: help redirected into a process substitution that only reads is allowed", "want": 0, "command": "bb thread spawn --help 2> >(cat)"}
   ]
 }
