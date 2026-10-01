@@ -345,7 +345,7 @@ def remember_nudged(thread):
         pass
 
 
-def log(thread, branch, decision, detail, open_ids=()):
+def log(thread, branch, decision, detail, open_ids=(), session_id=None):
     """Bounded metadata only; never message or purpose text."""
     try:
         event = {
@@ -359,6 +359,8 @@ def log(thread, branch, decision, detail, open_ids=()):
             "detail": detail[:120],
             "open": list(open_ids),
         }
+        if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+            event["session_id"] = session_id
         os.makedirs(os.path.dirname(EVENTS), mode=0o700, exist_ok=True)
         with open(EVENTS, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(event) + "\n")
@@ -372,6 +374,13 @@ def decide(payload, thread, gate, state_reader=thread_state):
     if payload.get("stop_hook_active") or payload.get("stopHookActive"):
         return allow("retry after a nudge")
     if not gate.THREAD_ID.match(thread or ""):
+        # Native Codex hooks inherit app-server process env, not the separate
+        # shell_environment_policy used by tools. The message check needs no
+        # BB identity and the native Stop result targets its own session.
+        if admits_unfinished_work(payload):
+            log("", "no-thread-env", "block", "final message identifies unfinished work",
+                session_id=payload.get("session_id"))
+            return {"decision": "block", "reason": solo_nudge_text()}
         return allow("no bb thread")
     try:
         ledger = gate.read_ledger(thread)

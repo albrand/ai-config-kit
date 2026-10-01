@@ -281,6 +281,22 @@ class CloseoutStopTests(unittest.TestCase):
         text = "Implemented; workflow NOT RUN; remaining: run import."
         self.assertEqual(self.closeout({"last_assistant_message": text, "stop_hook_active": True})["decision"], "allow")
 
+    def test_native_hook_without_shell_thread_env_still_checks_unfinished_work(self):
+        self.install_chain()
+        env = self.env()
+        env.pop("BB_THREAD_ID", None)
+        payload = {"cwd": str(self.repo), "session_id": "fixture-native-session",
+                   "last_assistant_message": "Workflow NOT RUN; remaining: run the continuation acceptance checks."}
+        result = subprocess.run(["sh", str(STOP)], input=json.dumps(payload), text=True,
+                                capture_output=True, env=env, check=True)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+        events = [json.loads(line) for line in self.events.read_text().splitlines()]
+        self.assertEqual(events[-1]["session_id"], "fixture-native-session")
+        payload["stop_hook_active"] = True
+        retry = subprocess.run(["sh", str(STOP)], input=json.dumps(payload), text=True,
+                               capture_output=True, env=env, check=True)
+        self.assertEqual(retry.stdout.strip(), "")
+
     def test_events_hold_ids_not_text(self):
         self.write_ledger(self.purpose())
         self.closeout()

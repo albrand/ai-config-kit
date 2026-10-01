@@ -263,8 +263,12 @@ correction must not hide unfinished work.
   continue actionable authorized work, and prepare independent steps while a
   decision is pending. It does not authorize scope or permission changes. If
   every remaining step needs the user, retain the precise approval request.
-- `stop_hook_active` (the retry after a nudge), a missing thread id, an
-  unreadable ledger and unreadable thread state all allow the stop.
+- `stop_hook_active` (the retry after a nudge), an unreadable ledger and
+  unreadable thread state allow the stop. Without a BB thread id the bounded
+  message check still runs, but no BB ledger or thread state is read. Native
+  Codex hooks can lack the shell tool's `BB_THREAD_ID`; their own Stop result
+  resumes that native session. Metadata-only audit records may include its
+  session id so a live interception can be matched to the provider session.
 - Each decision goes to `~/.local/state/agent-quality/events.jsonl` as a
   `closeout-stop` event with the thread, branch, decision and purpose IDs,
   never text.
