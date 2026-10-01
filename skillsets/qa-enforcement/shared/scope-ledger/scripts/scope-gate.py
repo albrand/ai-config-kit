@@ -993,7 +993,10 @@ MCP_EXEMPT = {
 
 # Discoverable plugin RPC methods (`bb plugin rpc list`), by prefix, with why
 # none hands an agent text; the selftest fails on any other method.
-RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits"}
+RPC_EXEMPT = {"provider-usage.v1.": "reads a provider's usage limits",
+              # bb added the bb-account plugin 2026-10-01: status and waitForStatusChange read the
+              # account; fetch calls getbb.app under /api/ai/ and its reply returns to the caller.
+              "bb-account.v1.": "reads this bb's getbb.app account or calls its /api/ai/ endpoints; no thread"}
 
 
 def rpc_methods(bb="bb"):
