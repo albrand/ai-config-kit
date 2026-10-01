@@ -82,6 +82,9 @@ class StopHooksTests(unittest.TestCase):
                      "I worked in an isolated copy and touched nothing. I verified the run.",
                      "Nothing is deployed yet, but all three fixes are done.",
                      "Could you check? Everything is done.", "If it helps, all three fixes are done.",
+                     "Could you check, everything is done.", "Please confirm, all three fixes are done.",
+                     "If that's okay, all three fixes are done.", "If you get a chance, everything is done.",
+                     "If the suite passes, the release is ready.",
                      "Should I wait? All three changes are complete.", "When can we talk? The fix is merged.",
                      "These changes are now complete.", "All requested items are finished.",
                      "The requested work is done."):
@@ -101,7 +104,7 @@ class StopHooksTests(unittest.TestCase):
                      "Nothing in it is merged or deployed yet.",
                      'The reviewer flagged "All three PRs are merged." as unmatched.',
                      "Once everything is fixed, I push.", "Remaining before this is done:",
-                     "When the fix is merged, I'll tell K1.", "If the suite passes, the release is ready."):
+                     "When the fix is merged, I'll tell K1.", "If the suite passes the release is ready."):
             with self.subTest(text=text):
                 self.assertFalse(evidence.inspect(text)["block"], text)
 

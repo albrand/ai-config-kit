@@ -44,10 +44,9 @@ NEGATED = re.compile(
 # A claim inside a condition, an instruction or an in-progress check is not a report that the work is done:
 # "when each fix is ready", "confirm the deployment is ready", "none of the items is fixed".
 NOT_A_REPORT = re.compile(
-    r"\b(?:(?:if(?!\s+(?:it|that|this)\s+helps\b|\s+useful\b|\s+needed\b|\s+you\s+(?:want|like|need|prefer)\b)|"
-    r"until|unless|whether)\s+[^.;!?\n]*|"
+    r"\b(?:(?:if|until|unless|whether)\s+[^.,;!?\n]*|"
     r"(?:confirm(?:s|ing)?|check(?:s|ing)?|verify(?:ing)?|ensure|make sure|none of|neither|proves?|"
-    r"recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|could)\b[^.;:!?\n]*)$",
+    r"recommend(?:s|ed|ation)?|approve|propose|suggest|should|would|could)\b[^.,;:!?\n]*)$",
     re.IGNORECASE,
 )
 NOT_RUN = re.compile(r"\bimplemented\s*[;—-]\s*workflow\s+not\s+run\b", re.IGNORECASE)
