@@ -44,7 +44,13 @@ class StopHooksTests(unittest.TestCase):
     def test_complete_stop_hook_rejects_heading_only_fields_and_keeps_valid_formats(self):
         base = "Done.\nPersona: coding agent\nTarget: Python stack commit abc1234\nGoals attempted: run checks\nVerdict: PASS — completed checks."
         for field, heading in (("Persona: coding agent", "Persona:\n## Evidence"),
-                               ("Goals attempted: run checks", "Goals attempted:\n## Results")):
+                               ("Goals attempted: run checks", "Goals attempted:\n## Results"),
+                               ("Persona: coding agent", "Persona:\nEvidence\n---"),
+                               ("Goals attempted: run checks", "Goals attempted:\nResults\n---"),
+                               ("Persona: coding agent", "Persona:\nEvidence\n==="),
+                               ("Goals attempted: run checks", "Goals attempted:\nResults\n==="),
+                               ("Persona: coding agent", "Persona:\n<h2>Evidence</h2>"),
+                               ("Goals attempted: run checks", "Goals attempted:\n<h2>Results</h2>")):
             with self.subTest(field=field):
                 self.assert_stop_fixture("heading is not evidence", opted_in=False, transcript=False,
                                          expected="[qa-evidence]", claim=base.replace(field, heading))

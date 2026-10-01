@@ -43,7 +43,8 @@ def has_evidence_packet(text):
     current = None
     fence = None
     label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    for index, raw in enumerate(lines):
         stripped = raw.lstrip()
         if stripped.startswith(("```", "~~~")):
             marker = stripped[:3]
@@ -56,7 +57,10 @@ def has_evidence_packet(text):
         if fence is not None or stripped.startswith(">"):
             current = None
             continue
-        if re.match(r"^#{1,6}(?:\s|$)", stripped) or re.fullmatch(r"(?:[-*_]\s*){3,}", stripped):
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        setext = bool(stripped and re.fullmatch(r"(?:=+|-+)", next_line))
+        html_heading = re.match(r"^<h[1-6](?:\s[^>]*)?>", stripped, re.I)
+        if setext or html_heading or re.match(r"^#{1,6}(?:\s|$)", stripped) or re.fullmatch(r"(?:[-*_]\s*){3,}", stripped):
             current = None
             continue
         line = re.sub(r"[*_`]", "", raw).strip().lstrip("- ")
