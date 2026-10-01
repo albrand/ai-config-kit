@@ -104,6 +104,9 @@ RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
 RETRY_WINDOW_S = 600
 
 
+GOAL_LINE_VERDICT = re.compile(r"(?:[\u2014\u2013:;.(]|\s-|\*\*|\bworkflow)\s*\**\s*(PASS|FAIL|BLOCKED|NOT RUN)\b")
+
+
 def has_evidence_packet(text):
     # Read labeled fields in any order, including bold labels and field/value
     # tables. Formatting should not make an otherwise complete packet invalid.
@@ -184,8 +187,8 @@ def has_evidence_packet(text):
             current = "goals" if key.startswith(("goal", "user outcome", "outcome")) else key.rstrip("s")
             fields.setdefault(current, []).append(match.group(2))
             if current == "goals":
-                # A verdict written on the goal's own line counts, as an explicit uppercase token only.
-                fields.setdefault("derived_verdict", []).append(match.group(2))
+                # A verdict written on the goal's own line counts only in verdict position (GOAL_LINE_VERDICT).
+                fields.setdefault("derived_verdict", []).extend(GOAL_LINE_VERDICT.findall(raw))
         elif table_row:
             current = None
         elif current == "both":
@@ -199,7 +202,7 @@ def has_evidence_packet(text):
         elif current and line:
             fields[current].append(line)
             if current == "goals":
-                fields.setdefault("derived_verdict", []).append(line)
+                fields.setdefault("derived_verdict", []).extend(GOAL_LINE_VERDICT.findall(raw))
     values = {key: " ".join(parts).strip() for key, parts in fields.items() if key != "table_verdicts"}
     if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
