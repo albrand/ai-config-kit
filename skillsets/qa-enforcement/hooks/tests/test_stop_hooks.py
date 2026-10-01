@@ -32,6 +32,18 @@ class StopHooksTests(unittest.TestCase):
         table = "Done.\n| Field | Evidence |\n| --- | --- |\n| Persona | coding agent |\n| Target | Python hook stack, SHA abc1234 |\n| User outcome | run continuation checks |\n| Verdict | PASS — checks completed |"
         self.assertFalse(evidence.inspect(table)["block"])
 
+    def test_a_named_subject_done_claim_is_caught(self):
+        # Sentence-initial named subjects were the main gap (4 of 20 blind-labelled claims caught before).
+        for text in ("ENG-1192 is merged.", "The PR #45 comparison is complete.", "All good. The login fix is now done.",
+                     "`parse_duration` is fixed and pushed.", "The checkout flow is working.",
+                     "PR #56 is merged into ours as 3387bfae2.", "The fix is ready for review.",
+                     "The branch is merged into dev.", "The walk-through of `a491b56f` is finished except for the case-map step."):
+            self.assertIsNotNone(evidence.first_claim(text), text)
+        for text in ("If the build is done, merge it.", "Nothing is implemented yet.", "The other children are working.",
+                     "The team is working on the export.", "It saves how each client was resolved.",
+                     "Confirm the deploy is ready.", "The test is not done.", "Outbound destinations are fixed HTTPS bases.", 'He wrote "the parser is fixed" in the PR.'):
+            self.assertIsNone(evidence.first_claim(text), text)
+
     def test_an_outcome_line_with_its_own_verdict_is_a_packet(self):
         # Verbatim from the post-#39/#40 live probe (thr_jnfrwc4i2r), rejected on retry although it was complete.
         packet = (pathlib.Path(__file__).parent / "fixtures" / "live-probe-packet-outcome-inline.md").read_text()

@@ -32,7 +32,27 @@ CLAIM_PATTERNS = (
         r"^\s*(?:#{1,6}\s*)?(?:\*\*)?(?P<claim>done|complete(?:d)?|finished|shipped|deployed|ready|fixed|resolved|implemented|tested|verified|validated)\b",
         re.IGNORECASE | re.MULTILINE,
     ),
+    # A named subject that opens a sentence: "ENG-1192 is merged", "The PR #45 comparison is complete".
+    re.compile(
+        r"(?:^|(?<=[.!?]\s))[ \t>*_-]*(?P<subject>[A-Z0-9#\[(`][^\n.;:!?]{0,120}?)\s+"
+        r"(?i:is|are|was|were|has been|have been)\s+(?i:(?:now|all|both|fully)\s+)*"
+        r"(?P<claim>(?i:done|complete(?:d)?|finished|shipped|merged|deployed|ready|fixed|resolved|implemented|works?\b|"
+        r"working|tested|verified|validated))\b",
+        re.MULTILINE,
+    ),
 )
+# Words in a named subject that make it a condition, a negation or advice, not the thing reported done.
+SUBJECT_NOT_A_REPORT = re.compile(
+    r"\b(?:if|unless|until|whether|none|neither|nothing|no|not|never|should|would|could|recommend\w*|propose|"
+    r"suggest|confirm\w*|verify|ensure|make sure|how|what|which|why|where)\b|\b(?:when|once|after|before|while)\s+[^,]*$",
+    re.IGNORECASE,
+)
+# After a named subject's claim word, these may follow a report ("is merged into dev", "is fixed and pushed",
+# "is ready for review"); any other word, unless an adverb, makes the claim word an adjective ("are fixed HTTPS bases").
+AFTER_CLAIM = re.compile(r"\s+(?!(?:and|or|but|in|into|on|onto|at|to|for|with|by|from|as|after|before|since|via|now|"
+                         r"except|apart|without|locally|here|there|again|too|already|yet|today|both|all|successfully|cleanly)\b|\w+ly\b)[A-Za-z]\w*")
+# "Working" said of agents, or followed by what is being worked on, is work in progress.
+IN_PROGRESS = re.compile(r"\b(?:child(?:ren)?|agents?|threads?|workers?|lanes?|team|they|we|I)\b", re.IGNORECASE)
 # "Once everything is fixed, I push" is a condition; "Before handing off, all three fixes are done" reports done
 # work after the comma, and "Before dispatch I fixed three defects" is an I/we main clause, not a condition.
 TIME_CLAUSE = re.compile(r"\b(?:when|once|after|before)\s+[^.;,!?\n]*$", re.IGNORECASE)
@@ -233,12 +253,21 @@ def first_claim(text):
     for match in sorted(found, key=lambda item: item.start()):
         prefix = text[max(0, match.start() - 36):match.start()]
         line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
-        quoted = (line.count("`") % 2 == 1 or text.count("```", 0, match.start()) % 2 == 1
-                  or line.count('"') % 2 == 1 or line.count("\u201c") > line.count("\u201d"))
+        upto = text[text.rfind("\n", 0, match.start("claim")) + 1:match.start("claim")]
+        quoted = (upto.count("`") % 2 == 1 or text.count("```", 0, match.start()) % 2 == 1
+                  or upto.count('"') % 2 == 1 or upto.count("\u201c") > upto.count("\u201d"))
         clause = re.split(r"[.,;!?\n]", prefix)[-1]
         if line.lstrip().startswith(">") or quoted or NEGATED.search(clause) or NOT_A_REPORT.search(prefix):
             continue
         if TIME_CLAUSE.search(prefix) and match.re is not CLAIM_PATTERNS[0]:
+            continue
+        subject = match.groupdict().get("subject")
+        if subject and SUBJECT_NOT_A_REPORT.search(subject):
+            continue
+        if subject and AFTER_CLAIM.match(text, match.end()):
+            continue
+        if subject and match.group("claim").lower() == "working" and (
+                IN_PROGRESS.search(subject) or re.match(r"\s+(?:on|through|in|with|towards?|to)\b", text[match.end():])):
             continue
         return match.group("claim").lower()
     return None
