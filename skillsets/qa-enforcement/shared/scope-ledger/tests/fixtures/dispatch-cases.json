@@ -203,6 +203,11 @@
     {"label": "#27: plugin rpc call of a non-exempt method with serves", "want": 0, "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
     {"label": "#27: plugin rpc call of an exempt namespace read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
     {"label": "#27: plugin rpc call of an exempt exact read", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status"},
-    {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"}
+    {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"},
+    {"label": "#27 r3: run-time words before an exempt method can pick another (call $ARGS status)", "want": 2, "command": "bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a run-time word after the method is a dispatch too", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.status $X"},
+    {"label": "#27 r3: a run-time input file on an exempt read is a dispatch (fails closed)", "want": 2, "command": "bb plugin rpc call --input-file \"$F\" bb-account bb-account.v1.status"},
+    {"label": "#27 r3: run-time words with serves are allowed", "want": 0, "command": "SCOPE=\"serves: P1 account check\" bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a literal exempt read with a literal input file stays allowed", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status --input-file {tmp}/in.json"}
   ]
 }

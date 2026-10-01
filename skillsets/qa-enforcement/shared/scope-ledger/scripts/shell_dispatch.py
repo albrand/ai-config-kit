@@ -647,10 +647,15 @@ def _dispatch_verb(rest):
             if nxt == ["config", "custom-instructions", "set"]:
                 return "instructions set"
             # `bb plugin rpc call <plugin> <method>` reaches a plugin without its
-            # CLI group: any method not known to hand no text is a dispatch.
+            # CLI group: any method not known to hand no text is a dispatch. A
+            # word built at run time anywhere in the call can change which
+            # method runs (#27 r3: `call $ARGS bb-account.v1.status`), so it is one too.
             if nxt[:2] == ["rpc", "call"]:
-                method = _rpc_call_method(rest[j + 3:])
-                if method is not None and (unreadable(method) or not rpc_exempt(method)):
+                tail = rest[j + 3:]
+                if any(unreadable(a) for a in tail):
+                    return "plugin rpc call"
+                method = _rpc_call_method(tail)
+                if method is not None and not rpc_exempt(method):
                     return "plugin rpc call"
             return None
         if a in GROUPS:
