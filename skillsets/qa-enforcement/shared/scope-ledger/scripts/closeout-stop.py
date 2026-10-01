@@ -34,6 +34,74 @@ BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(r"^\s*(\[(bb |from |child of|fleet |qa-|scope-)|<)", re.I)
 GATE = os.path.join(HERE, "scope-gate.py")
+UNFINISHED = re.compile(
+    r"\b(?:workflow[s]?\s+(?:are\s+|is\s+)?not\s+run|"
+    r"(?:remains?|still)\s+incomplete|"
+    r"(?:remaining|next\s+steps?)\s*:\s*(?:execute|run|fix|implement|test|verify|finish|complete)\b|"
+    r"still\s+need[s]?\b[^\n.!?]{0,120}\b(?:walkthrough|verification|testing|fix|implementation)|"
+    r"(?:want\s+me\s+to|if\s+you(?:'d|\s+would)\s+like[,\s]+(?:i\s+can\s+)?|"
+    r"say\s+the\s+word[,\s]+(?:and\s+)?(?:i(?:'ll|\s+will)\s+)?)"
+    r"\s*(?:fix|implement|prepare|investigate|test|verify|install|continue)\b)",
+    re.I,
+)
+
+
+def final_text(payload):
+    """Read only the latest assistant message; bound transcript reads and ignore tools."""
+    for key in ("text", "last_assistant_message", "lastAssistantMessage"):
+        if isinstance(payload.get(key), str) and payload[key]:
+            return payload[key]
+    path = payload.get("transcript_path") or payload.get("transcriptPath")
+    if not isinstance(path, str) or not path:
+        return ""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - TRANSCRIPT_TAIL))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("message") if entry.get("type") == "assistant" else entry.get("payload", entry)
+            if not isinstance(message, dict):
+                continue
+            if entry.get("type") != "assistant" and message.get("role") != "assistant":
+                continue
+            if message.get("type") not in (None, "message", "agent_message", "assistant_message"):
+                continue
+            if message.get("channel") not in (None, "final"):
+                continue
+            content = message.get("content") or message.get("message") or message.get("text")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "\n".join(p["text"] for p in content if isinstance(p, dict) and isinstance(p.get("text"), str))
+    except OSError:
+        pass
+    return ""
+
+
+def admits_unfinished_work(payload):
+    """A bounded continuation check for solo threads; not a judgment of authorization."""
+    text = re.sub(r"```[^\n]*\n.*?```", "", final_text(payload), flags=re.S)
+    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
+    return bool(UNFINISHED.search(text))
+
+
+def solo_nudge_text():
+    return (
+        "[scope-closeout] Your final message identifies unfinished implementation or workflow verification. "
+        "Load finish-the-job and meaningful-tests, then continue every actionable authorized step now, "
+        "including preparation and independent checks while an approval is pending. A permission hold "
+        "applies only to the action needing it; never apply a permission change without approval. "
+        "If every remaining step truly depends on user input, give the exact decision and the evidence "
+        "that the authorized preparation is exhausted. Do not replace remaining authorized work with a "
+        "status rewrite. This is one continuation check for this turn, not approval to expand scope."
+    )
 
 
 def load_gate():
@@ -309,6 +377,9 @@ def decide(payload, thread, gate, state_reader=thread_state):
     except gate.LedgerError as e:
         return allow(f"ledger unreadable: {e}")
     if ledger is None:
+        if admits_unfinished_work(payload):
+            log(thread, "solo", "block", "final message identifies unfinished work")
+            return {"decision": "block", "reason": solo_nudge_text()}
         if already_nudged(thread):
             return allow("no ledger; already asked")
         state = state_reader(thread, want_self=False)

@@ -209,6 +209,68 @@ class CloseoutStopTests(unittest.TestCase):
         self.set_state(children=[{"id": "thr_old", "status": "idle", "archivedAt": 1790000000000}])
         self.assertEqual(self.closeout()["decision"], "allow")
 
+    def test_solo_agent_cannot_end_with_unrun_work_and_no_ledger(self):
+        self.set_state(children=[])
+        text = "Implemented; workflow NOT RUN; remaining: execute import, sync and restore."
+        result = self.closeout({"last_assistant_message": text})
+        self.assertEqual(result["decision"], "block")
+        self.assertIn("authorized", result["reason"])
+        self.assertIn("approval", result["reason"])
+
+    def test_solo_screenshot_status_requires_continuation_check(self):
+        self.set_state(children=[])
+        text = ("Local changes are finished. M2 remains incomplete: Administrator import, sync "
+                "and restore workflows are NOT RUN. To proceed, approve changing Zendesk OAuth.")
+        self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "block")
+
+    def test_solo_clear_permission_request_does_not_require_extra_work(self):
+        self.set_state(children=[])
+        text = "All authorized local preparation is complete. Approve broadening OAuth read access."
+        self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
+
+    def test_solo_offer_checks_existing_authorization(self):
+        self.set_state(children=[])
+        for text in ("Want me to implement the fix?", "If you'd like, I can investigate it.",
+                     "Say the word and I'll continue."):
+            with self.subTest(text=text):
+                result = self.closeout({"last_assistant_message": text})
+                self.assertEqual(result["decision"], "block")
+                self.assertIn("not approval to expand scope", result["reason"])
+
+    def test_solo_fenced_examples_and_tool_output_do_not_trigger(self):
+        self.set_state(children=[])
+        text = "Example:\n```text\nImplemented; workflow NOT RUN; remaining: run import.\n```"
+        self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
+        transcript = pathlib.Path(self.tmp.name) / "mixed.jsonl"
+        transcript.write_text("\n".join(json.dumps(entry) for entry in [
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "channel": "final",
+                "content": [{"type": "output_text", "text": "Please approve the access change."}]}},
+            {"type": "response_item", "payload": {"type": "function_call_output",
+                "output": "Implemented; workflow NOT RUN; remaining: run import."}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "channel": "analysis",
+                "content": [{"type": "output_text", "text": "Import still needs a walkthrough."}]}}
+        ]) + "\n")
+        self.assertEqual(self.closeout({"transcript_path": str(transcript)})["decision"], "allow")
+
+    def test_solo_quoted_example_is_not_a_live_unfinished_task(self):
+        self.set_state(children=[])
+        text = "The old report said:\n> Implemented; workflow NOT RUN; remaining: run the import."
+        self.assertEqual(self.closeout({"last_assistant_message": text})["decision"], "allow")
+
+    def test_solo_transcript_fallback_checks_final_message(self):
+        self.set_state(children=[])
+        transcript = pathlib.Path(self.tmp.name) / "solo.jsonl"
+        transcript.write_text(json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "channel": "final", "content": [
+                {"type": "output_text", "text": "Import, sync and restore still need their live walkthrough."}
+            ]}}) + "\n")
+        self.assertEqual(self.closeout({"transcript_path": str(transcript)})["decision"], "block")
+
+    def test_solo_safety_retry_remains_bounded(self):
+        self.set_state(children=[])
+        text = "Implemented; workflow NOT RUN; remaining: run import."
+        self.assertEqual(self.closeout({"last_assistant_message": text, "stop_hook_active": True})["decision"], "allow")
+
     def test_events_hold_ids_not_text(self):
         self.write_ledger(self.purpose())
         self.closeout()
@@ -230,7 +292,7 @@ class CloseoutStopTests(unittest.TestCase):
         self.write_ledger(self.purpose())
         claim = self.stop_chain("Done — the workflow is fixed.")
         self.assertIn("[qa-evidence]", claim)
-        self.assertNotIn("[scope-closeout]", claim)
+        self.assertIn("[scope-closeout]", claim)
         status = self.stop_chain("Here is where things stand. I haven't started the next part.")
         self.assertIn("[scope-closeout]", status)
         self.assertEqual(json.loads(status)["decision"], "block")
