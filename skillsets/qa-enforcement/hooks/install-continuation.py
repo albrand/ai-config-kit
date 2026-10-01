@@ -105,7 +105,7 @@ def install(source, home, backup):
                          if str(hook.get("command", "")).rstrip().endswith("qa-stop-hook.sh")}
         for command in sorted(stop_commands):
             subprocess.run([sys.executable, str(source / "hooks/codex-hook-trust.py"),
-                            "--trust", "--only-command", command], env=env, check=True,
+                            "--trust", "--only-event", "Stop", "--only-command", command], env=env, check=True,
                            capture_output=True, text=True, timeout=30)
     return {"backup": str(backup), "installed_files": len(manifest), "parity": f"{len(manifest)}/{len(manifest)}"}
 
