@@ -110,7 +110,7 @@ def has_evidence_packet(text):
     fields = {}
     current = None
     fence = None
-    label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
+    label = re.compile(r"^(persona|target|goals?(?: attempted)?|(?:user )?outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
     header_at = None  # line index of that table's header row
@@ -181,8 +181,11 @@ def has_evidence_packet(text):
         match = label.match(line)
         if match:
             key = match.group(1).lower()
-            current = "goals" if key.startswith(("goal", "user outcome")) else key.rstrip("s")
+            current = "goals" if key.startswith(("goal", "user outcome", "outcome")) else key.rstrip("s")
             fields.setdefault(current, []).append(match.group(2))
+            if current == "goals":
+                # A verdict written on the goal's own line counts, as an explicit uppercase token only.
+                fields.setdefault("derived_verdict", []).append(match.group(2))
         elif table_row:
             current = None
         elif current == "both":
@@ -195,6 +198,8 @@ def has_evidence_packet(text):
             current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
+            if current == "goals":
+                fields.setdefault("derived_verdict", []).append(line)
     values = {key: " ".join(parts).strip() for key, parts in fields.items() if key != "table_verdicts"}
     if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
