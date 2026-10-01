@@ -34,11 +34,12 @@ Subcommands:
     init <thread> --from <ledger.json>      create a ledger (refuses to overwrite)
     add <thread> --text T --done-when D     append a purpose in the user's words
     mark <thread> <Pn> <status> [--ask Q] [--evidence E]
-    wait <thread> <Pn> --until <date> --on W [--ends-when-file F]
+    wait <thread> <Pn> --until <date> --on W --ends-when-file F
                                             an open purpose that can only move after a
                                             date or data arrives: at most 30 days from
                                             its first wait (renewals included); ends
-                                            early when F exists; any mark clears it
+                                            when F exists or the user replies; any
+                                            mark clears it
     revise <thread> --quote Q [--source S]  record a user-approved scope change
     release <thread> <child> --evidence E   a finished child: fleet stops holding it
                                             from archive (only the child's parent
@@ -911,13 +912,13 @@ def main(argv):
                                   f"({first.strftime('%Y-%m-%d')}); do the work, or mark it blocked-on-user if the user owns it")
             if not (on and on.strip()):
                 raise LedgerError("wait needs --on with what has to arrive (data, a date, a run)")
-            if ends_file is not None and not os.path.isabs(os.path.expanduser(ends_file)):
-                raise LedgerError("--ends-when-file needs an absolute path")
-            if ends_file is not None and os.path.exists(os.path.expanduser(ends_file)):
+            # A wait names the output it waits for, so its arrival always restores checking.
+            if not ends_file or not os.path.isabs(os.path.expanduser(ends_file)):
+                raise LedgerError("wait needs --ends-when-file with the absolute path of the output it waits for")
+            if os.path.exists(os.path.expanduser(ends_file)):
                 raise LedgerError(f"{ends_file} already exists: what this purpose waits for has arrived")
-            p["waiting"] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "on": on, "set_at": now_iso()}
-            if ends_file:
-                p["waiting"]["ends_when_file"] = ends_file
+            p["waiting"] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "on": on, "set_at": now_iso(),
+                            "ends_when_file": ends_file}
             history.append(dict(p["waiting"]))
             p.setdefault("evidence", []).append({"at": now_iso(), "note": f"waiting until {p['waiting']['until']} on {on}"})
             write_ledger(thread, ledger)

@@ -205,12 +205,18 @@ def parse_ts(value):
 
 
 def pending_purposes(ledger, answered_at, waiting_until=lambda p: None):
-    """Open purposes not waiting on a future date, plus blocked-on-user ones the user has answered since."""
+    """Open purposes, plus blocked-on-user ones the user has answered since they were marked.
+
+    An open purpose waiting on a date or an output is left out, unless the user has typed since the wait
+    was set: like blocked-on-user, a wait holds only until the user speaks.
+    """
     answered = parse_ts(answered_at)
     out = []
     for p in ledger["purposes"]:
         if p["status"] == "open":
-            if waiting_until(p) is None:
+            set_at = parse_ts((p.get("waiting") or {}).get("set_at"))
+            user_spoke = answered is not None and set_at is not None and answered > set_at
+            if waiting_until(p) is None or user_spoke:
                 out.append(p)
         elif p["status"] == "blocked-on-user" and answered is not None:
             marked = parse_ts(p.get("status_marked_at"))
@@ -235,7 +241,8 @@ def nudge_text(thread, purposes):
         f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>". '
         "Only for money, an outward or irreversible effect, credentials, or a genuine ambiguity in the request.",
         f'4. If no step can be taken until a date or data arrives: {gate} wait {thread} <Pn> --until <YYYY-MM-DD> '
-        '--on "<what has to arrive>". Only when there is no authorized step left to take now; at most 30 days.',
+        '--on "<what has to arrive>" --ends-when-file <absolute path of that output>. Only when there is no '
+        "authorized step left to take now; at most 30 days, and the user's next message lifts it.",
         "A status report, a summary or an offer to continue is none of these. This is a one-time nudge for this turn.",
     ]
     return "\n".join(lines)

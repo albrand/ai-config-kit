@@ -189,9 +189,39 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertEqual(result["decision"], "block")
         self.assertIn("answered since", result["reason"])
 
-    def gate_cli(self, *args):
+    def gate_cli(self, *args, awaited=True):
+        """Run scope-gate.py; a `wait` names a not-yet-present output unless the test passes its own."""
         gate = SHARED / "scope-ledger/scripts/scope-gate.py"
+        if args and args[0] == "wait" and awaited and "--ends-when-file" not in args:
+            args = (*args, "--ends-when-file", str(pathlib.Path(self.tmp.name) / "awaited-output.md"))
         return subprocess.run(["python3", str(gate), *args], text=True, capture_output=True, env=self.env())
+
+    # Review r2: a wait must name the output it waits for, and holds only until the user speaks.
+    def test_wait_needs_an_output_and_yields_to_the_user(self):
+        self.write_ledger(self.purpose("P6", text="ship the docs"))
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=5)).strftime("%Y-%m-%d")
+        bare = self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "nothing really", awaited=False)
+        self.assertNotEqual(bare.returncode, 0)
+        self.assertIn("--ends-when-file", bare.stderr)
+        self.assertEqual(self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "nothing really").returncode, 0)
+        self.assertEqual(self.closeout()["decision"], "allow")
+        # Through the real stop chain: the user typing after the wait puts the purpose back under the check.
+        self.install_chain()
+        later = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        transcript = self.transcript((later, "then handle it! why did you stop?"))
+        payload = {"cwd": str(self.repo), "last_assistant_message": "Waiting on data.", "transcript_path": transcript}
+        out = subprocess.run(["sh", str(STOP)], input=json.dumps(payload), text=True, capture_output=True,
+                             env=self.env(), check=True).stdout
+        reason = json.loads(out)["reason"]
+        self.assertIn("[scope-closeout]", reason)
+        self.assertIn('P6 "ship the docs"', reason)
+
+    # The ledger was already self-attested: blocked-on-user with any ask silences a purpose with no cap.
+    # A wait is narrower: capped, tied to an output, and lifted by the user's next message.
+    def test_blocked_on_user_was_already_an_unbounded_self_attested_silence(self):
+        self.write_ledger(self.purpose("P6", text="ship the docs"))
+        self.assertEqual(self.gate_cli("mark", THREAD, "P6", "blocked-on-user", "--ask", "anything").returncode, 0)
+        self.assertEqual(self.closeout()["decision"], "allow")
 
     # A purpose that can only move when data arrives is not nudged on every stop until then.
     def test_waiting_purpose_is_quiet_until_its_date(self):

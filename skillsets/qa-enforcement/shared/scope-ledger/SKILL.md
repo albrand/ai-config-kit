@@ -22,15 +22,16 @@ thread:
   - `waiting` (optional, open purposes only): `{until, on, set_at}`. The
     purpose can only move once a date passes or data arrives. It is a field,
     not a status, because fleet's ledger parser rejects unknown statuses, and
-    it lapses back into ordinary open work at `until`, or earlier when the
-    optional `ends_when_file` appears (the awaited output arrived). Waits on
-    one purpose span at most 30 days from its first wait. The `wait_history`
-    survives marks, so renewing or mark-then-wait can't extend that. Any
-    `mark` clears the current wait.
+    it lapses back into ordinary open work at `until`, as soon as the required
+    `ends_when_file` (the awaited output) exists, or once the user types after
+    the wait was set. Waits on one purpose span at most 30 days from its first
+    wait. The `wait_history` survives marks, so renewing or mark-then-wait
+    can't extend that. Any `mark` clears the current wait.
   - A wait is the agent's own claim that nothing can be done until then; it
-    is bounded, not verified. The cap, the logged reason, and the fleet idle
-    guard (which doesn't read waits and still nudges an idle coordinator)
-    limit what a wrong claim can hide.
+    is bounded, not verified. The ledger was already self-attested this way:
+    `blocked-on-user` with any ask silences a purpose with no cap. A wait is
+    narrower: it is capped, tied to a named output, logged with its reason,
+    and lifted by the user's next message.
 - `accepted_revisions`: `{quote, accepted_at, source}`. Each entry is a scope
   change the user approved, quoted verbatim.
 
