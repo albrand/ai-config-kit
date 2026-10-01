@@ -104,13 +104,17 @@ RETRY_STATE = os.environ.get("QA_EVIDENCE_RETRY_STATE") or os.path.join(
 RETRY_WINDOW_S = 600
 
 
+GOAL_LINE_VERDICT = re.compile(
+    r"(?:[\u2014\u2013:;.]|\s-|\bworkflow)\s*\**\s*(PASS|FAIL|BLOCKED|NOT RUN)\b\**\s*(?=$|[.;\u2014\u2013:(]|-\s)")
+
+
 def has_evidence_packet(text):
     # Read labeled fields in any order, including bold labels and field/value
     # tables. Formatting should not make an otherwise complete packet invalid.
     fields = {}
     current = None
     fence = None
-    label = re.compile(r"^(persona|target|goals?(?: attempted)?|user outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
+    label = re.compile(r"^(persona|target|goals?(?: attempted)?|(?:user )?outcomes?|verdicts?)\s*:\s*(.*)$", re.I)
     both = re.compile(r"^(?:user\s+)?(?:outcomes?|goals?)(?:\s+attempted)?\s+(?:and|&|with)\s+verdicts?\s*:?$", re.I)
     columns = None  # (goal index, verdict index) of a multi-column table with those headers
     header_at = None  # line index of that table's header row
@@ -181,20 +185,25 @@ def has_evidence_packet(text):
         match = label.match(line)
         if match:
             key = match.group(1).lower()
-            current = "goals" if key.startswith(("goal", "user outcome")) else key.rstrip("s")
+            current = "goals" if key.startswith(("goal", "user outcome", "outcome")) else key.rstrip("s")
             fields.setdefault(current, []).append(match.group(2))
+            if current == "goals":
+                # A verdict written on the goal's own line counts only in verdict position (GOAL_LINE_VERDICT).
+                fields.setdefault("derived_verdict", []).extend(GOAL_LINE_VERDICT.findall(raw))
         elif table_row:
             current = None
         elif current == "both":
             if re.match(r"(?:\d+[.)]|[-*+])\s", stripped):
                 fields["goals"].append(line)
-                fields["derived_verdict"].append(line)
+                fields["derived_verdict"].extend(GOAL_LINE_VERDICT.findall(raw))
             elif line:
                 current = None  # prose after the list is not part of the section
         elif re.match(r"^[A-Za-z][A-Za-z /()&-]{0,30}:\s", line):
             current = None  # another field, such as "Command:", ends the current one
         elif current and line:
             fields[current].append(line)
+            if current == "goals":
+                fields.setdefault("derived_verdict", []).extend(GOAL_LINE_VERDICT.findall(raw))
     values = {key: " ".join(parts).strip() for key, parts in fields.items() if key != "table_verdicts"}
     if not all(values.get(key) for key in ("persona", "target", "goals")):
         return False
