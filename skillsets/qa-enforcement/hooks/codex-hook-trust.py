@@ -61,7 +61,7 @@ def hook_entries():
     return out
 
 
-def is_agent_hook_command(command):
+def is_agent_hook_command(command, home=None):
     """Only trust command hooks whose executable script lives in agent-hooks."""
     try:
         parts = shlex.split(command)
@@ -74,6 +74,8 @@ def is_agent_hook_command(command):
         index = 1
         while index < len(parts) and (parts[index].startswith("-") or "=" in parts[index]):
             index += 1
+    if index >= len(parts):
+        return False
     executable = os.path.basename(parts[index]) if index < len(parts) else ""
     interpreters = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl"}
     target = parts[index + 1] if executable in interpreters and index + 1 < len(parts) else parts[index]
@@ -83,8 +85,24 @@ def is_agent_hook_command(command):
     if not os.path.isabs(expanded):
         expanded = shutil.which(expanded) or expanded
     resolved = os.path.realpath(expanded)
-    root = os.path.realpath(os.path.expanduser("~/.agent-hooks"))
+    root = os.path.realpath(os.path.join(home or os.path.expanduser("~"), ".agent-hooks"))
     return resolved.startswith(root + os.sep)
+
+
+def is_owned_stop_command(command, home=None):
+    """Only a direct wrapper invocation qualifies for automatic Stop repair."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if len(parts) == 2 and os.path.basename(parts[0]) in {"bash", "sh", "zsh"}:
+        target = parts[1]
+    elif len(parts) == 1:
+        target = parts[0]
+    else:
+        return False
+    root = os.path.join(home or os.path.expanduser("~"), ".agent-hooks", "qa-stop-hook.sh")
+    return os.path.realpath(os.path.expanduser(target)) == os.path.realpath(root)
 
 
 def check(scope_only=False, only_command=None, only_event=None):

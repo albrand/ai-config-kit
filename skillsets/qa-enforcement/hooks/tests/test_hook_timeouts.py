@@ -23,7 +23,7 @@ class StopTimeoutTests(unittest.TestCase):
         self.config.parent.mkdir()
         self.before = {"preserve": "unrelated", "hooks": {
             "PreToolUse": [{"hooks": [{"command": "/hooks/coordinator-hook-pretool.sh", "timeout": 20}]}],
-            "Stop": [{"hooks": [{"command": "/hooks/qa-stop-hook.sh", "timeout": 5},
+            "Stop": [{"hooks": [{"command": str(self.home / ".agent-hooks/qa-stop-hook.sh"), "timeout": 5},
                                  {"command": "/hooks/unrelated.sh", "timeout": 3}]}]}}
         self.config.write_text(json.dumps(self.before))
         self.addCleanup(patch.stopall)

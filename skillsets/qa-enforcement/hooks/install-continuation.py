@@ -2,6 +2,7 @@
 """Install the continuation check and its delivery budget with backups."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,9 @@ def replace(source, target):
 
 
 def install(source, home, backup):
+    trust_spec = importlib.util.spec_from_file_location("continuation_command_ownership", source / "hooks/codex-hook-trust.py")
+    trust = importlib.util.module_from_spec(trust_spec)
+    trust_spec.loader.exec_module(trust)
     pairs = [(source / "hooks/qa-stop-hook.sh", home / ".agent-hooks/qa-stop-hook.sh")]
     pairs.append((source / "hooks/hook-timeouts.py", home / ".agent-hooks/hook-timeouts.py"))
     pairs.append((source / "hooks/codex-hook-trust.py", home / ".agent-hooks/codex-hook-trust.py"))
@@ -102,7 +106,9 @@ def install(source, home, backup):
         stop_commands = {hook.get("command", "")
                          for group in native.get("hooks", {}).get("Stop", [])
                          for hook in group.get("hooks", [])
-                         if str(hook.get("command", "")).rstrip().endswith("qa-stop-hook.sh")}
+                         if hook.get("type", "command") == "command"
+                         and str(hook.get("command", "")).rstrip().endswith("qa-stop-hook.sh")
+                         and trust.is_owned_stop_command(hook.get("command", ""), home=str(home))}
         for command in sorted(stop_commands):
             subprocess.run([sys.executable, str(source / "hooks/codex-hook-trust.py"),
                             "--trust", "--only-event", "Stop", "--only-command", command], env=env, check=True,

@@ -95,6 +95,21 @@ class ContinuationInstallTests(unittest.TestCase):
         self.assertEqual(tomllib.loads(trust_config.read_text())["hooks"]["state"][key], original)
         self.assert_native_trust()
 
+    def test_unowned_stop_with_matching_basename_is_untouched(self):
+        path, config = self.native_config()
+        unrelated = {"type": "command", "command": "/unrelated/qa-stop-hook.sh", "timeout": 3}
+        config["hooks"]["Stop"][0]["hooks"].append(unrelated)
+        compound = {"command": str(self.home / ".agent-hooks/other-safety-hook.sh") + " && /unrelated/qa-stop-hook.sh", "timeout": 2}
+        config["hooks"]["Stop"][0]["hooks"].append(compound)
+        path.write_text(json.dumps(config))
+        installer.install(ROOT, self.home, self.backup)
+        self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][1], unrelated)
+        self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][2], compound)
+        states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
+        self.assertNotIn(f"{path}:stop:0:1", states)
+        self.assertNotIn(f"{path}:stop:0:2", states)
+        self.assert_native_trust()
+
     def test_install_updates_delivery_budget_and_native_trust(self):
         path, before = self.native_config()
         installer.install(ROOT, self.home, self.backup)

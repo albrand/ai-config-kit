@@ -26,11 +26,17 @@ only owned Stop budgets, without requiring or changing PreToolUse registration.
 """
 import copy
 import datetime
+import importlib.util
 import json
 import os
 import re
 import shutil
 import sys
+from pathlib import Path
+
+TRUST_SPEC = importlib.util.spec_from_file_location("hook_command_ownership", Path(__file__).with_name("codex-hook-trust.py"))
+TRUST = importlib.util.module_from_spec(TRUST_SPEC)
+TRUST_SPEC.loader.exec_module(TRUST)
 
 CHAIN = "coordinator-hook-pretool.sh"
 STOP_CHAIN = "qa-stop-hook.sh"
@@ -73,7 +79,11 @@ def chain_entries(cfg, event="PreToolUse", chain=CHAIN):
     """(group index, hook index, hook) for matching entries of one event."""
     for gi, group in enumerate((cfg.get("hooks") or {}).get(event) or []):
         for hi, h in enumerate(group.get("hooks") or []):
-            if str(h.get("command", "")).rstrip().endswith(chain):
+            command = str(h.get("command", ""))
+            if event == "Stop" and (h.get("type", "command") != "command"
+                                    or not TRUST.is_owned_stop_command(command, home=HOME)):
+                continue
+            if command.rstrip().endswith(chain):
                 yield gi, hi, h
 
 
