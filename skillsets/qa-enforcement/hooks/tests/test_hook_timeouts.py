@@ -59,6 +59,15 @@ class StopTimeoutTests(unittest.TestCase):
         self.config.write_text(json.dumps(self.before))
         self.assertEqual(self.call(timeouts.check), 0)
 
+    def test_narrow_stop_apply_preserves_pretool_budget_without_requiring_registration(self):
+        self.before["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 2
+        self.config.write_text(json.dumps(self.before))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(timeouts.main(["apply-stop", str(self.config)]), 0)
+        expected = copy.deepcopy(self.before)
+        expected["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 15
+        self.assertEqual(json.loads(self.config.read_text()), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

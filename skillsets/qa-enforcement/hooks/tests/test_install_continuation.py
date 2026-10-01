@@ -1,8 +1,11 @@
 """Exercise installation, backups and refusal before modifying a fixture home."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -39,6 +42,12 @@ class ContinuationInstallTests(unittest.TestCase):
         (self.home / ".codex/config.toml").write_text('model = "fixture"\n')
         return path, config
 
+    def assert_native_trust(self):
+        result = subprocess.run([sys.executable, str(ROOT / "hooks/codex-hook-trust.py"), "--check"],
+                                env=dict(os.environ, HOME=str(self.home)), capture_output=True,
+                                text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_install_updates_delivery_budget_and_native_trust(self):
         path, before = self.native_config()
         installer.install(ROOT, self.home, self.backup)
@@ -48,7 +57,31 @@ class ContinuationInstallTests(unittest.TestCase):
         states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
         self.assertEqual(len(states), 2)
         self.assertTrue(all(state["enabled"] and state["trusted_hash"].startswith("sha256:") for state in states.values()))
+        self.assert_native_trust()
         self.assertEqual((self.home / ".agent-hooks/hook-timeouts.py").read_bytes(), (ROOT / "hooks/hook-timeouts.py").read_bytes())
+
+    def test_claude_config_without_pretool_chain_does_not_leave_native_hook_untrusted(self):
+        path, _ = self.native_config()
+        claude = self.home / ".claude/settings.json"
+        unrelated = {"keep": "unchanged", "hooks": {"Stop": [{"hooks": [{"command": "/other/stop.sh", "timeout": 3}]}]}}
+        claude.write_text(json.dumps(unrelated))
+        installer.install(ROOT, self.home, self.backup)
+        self.assertEqual(json.loads(claude.read_text()), unrelated)
+        self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["timeout"], 15)
+        states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
+        self.assertTrue(all(state["enabled"] for state in states.values()))
+        self.assert_native_trust()
+
+    def test_native_stop_without_pretool_chain_is_installed_and_trusted(self):
+        path, config = self.native_config()
+        del config["hooks"]["PreToolUse"]
+        path.write_text(json.dumps(config))
+        installer.install(ROOT, self.home, self.backup)
+        self.assertEqual(json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["timeout"], 15)
+        states = tomllib.loads((self.home / ".codex/config.toml").read_text())["hooks"]["state"]
+        self.assertEqual(len(states), 1)
+        self.assertTrue(next(iter(states.values()))["enabled"])
+        self.assert_native_trust()
 
     def test_symlink_native_trust_config_refuses_before_changing_any_gate(self):
         self.native_config()

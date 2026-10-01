@@ -92,7 +92,7 @@ def install(source, home, backup):
     env = dict(os.environ, HOME=str(home), HOOK_GATES_DIR=str(home / ".agents/skills"))
     for config in configs:
         check_target(home, config)
-    subprocess.run([sys.executable, str(source / "hooks/hook-timeouts.py"), "apply",
+    subprocess.run([sys.executable, str(source / "hooks/hook-timeouts.py"), "apply-stop",
                                     *(str(config) for config in configs)], env=env, check=True,
                                    capture_output=True, text=True, timeout=30)
     if configs[1].exists():

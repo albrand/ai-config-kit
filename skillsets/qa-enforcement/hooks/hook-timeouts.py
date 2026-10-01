@@ -21,6 +21,8 @@ are read from ~/.agents/skills unless HOOK_GATES_DIR points at a skills tree.
 The Stop chain also needs margin: its repository lookup alone permits 5 s,
 before Python startup and the evidence/closeout stages. A 5 s Stop timeout
 can discard a valid continuation decision. Keep this chain at least 15 s.
+The narrow continuation installer uses apply-stop, which checks and changes
+only owned Stop budgets, without requiring or changing PreToolUse registration.
 """
 import copy
 import datetime
@@ -75,16 +77,17 @@ def chain_entries(cfg, event="PreToolUse", chain=CHAIN):
                 yield gi, hi, h
 
 
-def delivery_entries(cfg, pretool_need):
-    for gi, hi, h in chain_entries(cfg):
-        yield "PreToolUse", gi, hi, h, pretool_need
+def delivery_entries(cfg, pretool_need, stop_only=False):
+    if not stop_only:
+        for gi, hi, h in chain_entries(cfg):
+            yield "PreToolUse", gi, hi, h, pretool_need
     for gi, hi, h in chain_entries(cfg, "Stop", STOP_CHAIN):
         yield "Stop", gi, hi, h, STOP_HOST_TIMEOUT_S
 
 
-def check(configs):
+def check(configs, stop_only=False):
     problems = []
-    need = host_timeout(problems)
+    need = STOP_HOST_TIMEOUT_S if stop_only else host_timeout(problems)
     for path in configs:
         if not os.path.exists(path):
             continue
@@ -95,9 +98,9 @@ def check(configs):
             problems.append(f"{path}: unreadable ({e})")
             continue
         entries = list(chain_entries(cfg))
-        if not entries:
+        if not entries and not stop_only:
             problems.append(f"{path}: no PreToolUse entry runs {CHAIN}")
-        for event, gi, hi, h, required in delivery_entries(cfg, need):
+        for event, gi, hi, h, required in delivery_entries(cfg, need, stop_only):
             t = h.get("timeout")
             if required is None:
                 continue  # no gate to compare against: already a problem
@@ -111,9 +114,9 @@ def check(configs):
     return 1 if problems else 0
 
 
-def apply(configs):
+def apply(configs, stop_only=False):
     problems = []
-    need = host_timeout(problems)
+    need = STOP_HOST_TIMEOUT_S if stop_only else host_timeout(problems)
     if need is None:
         for p in problems:
             print(f"FAIL {p}")
@@ -127,7 +130,7 @@ def apply(configs):
             before = json.load(stream)
         after = copy.deepcopy(before)
         changed = 0
-        for event, gi, hi, h, required in delivery_entries(after, need):
+        for event, gi, hi, h, required in delivery_entries(after, need, stop_only):
             if not isinstance(h.get("timeout"), (int, float)) or h["timeout"] < required:
                 after["hooks"][event][gi]["hooks"][hi]["timeout"] = int(required)
                 changed += 1
@@ -136,7 +139,7 @@ def apply(configs):
             continue
         # Nothing but the chain entries' timeouts may differ.
         strip = copy.deepcopy(after)
-        for event, gi, hi, h, _ in delivery_entries(strip, need):
+        for event, gi, hi, h, _ in delivery_entries(strip, need, stop_only):
             original = before["hooks"][event][gi]["hooks"][hi]
             if "timeout" in original:
                 h["timeout"] = original["timeout"]
@@ -154,15 +157,15 @@ def apply(configs):
         os.chmod(tmp, os.stat(path).st_mode & 0o777)
         os.replace(tmp, path)
         print(f"set {changed} chain timeout(s) to their required budgets in {path} (backup {bk})")
-    return check(configs)
+    return check(configs, stop_only)
 
 
 def main(argv):
-    if not argv or argv[0] not in ("check", "apply"):
+    if not argv or argv[0] not in ("check", "apply", "apply-stop"):
         print(__doc__)
         return 2
     configs = argv[1:] or DEFAULT_CONFIGS
-    return check(configs) if argv[0] == "check" else apply(configs)
+    return check(configs) if argv[0] == "check" else apply(configs, stop_only=argv[0] == "apply-stop")
 
 
 if __name__ == "__main__":
