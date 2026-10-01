@@ -203,10 +203,14 @@ nudge at most.
   nothing carries it. A queued message or the thread's own background task
   carries every purpose (each resumes this thread, which runs the check
   again). An active or pending child carries only the purposes its brief and
-  tells name in `serves: P<n>` (read-only from bb's event store), so one
-  purpose's worker cannot hide another purpose left unattended; a child that
-  serves only a revision carries none. If the store can't be read, any
-  active child carries everything, as in the idle guard. The nudge lists the
+  inputs since its last completed turn name in `serves: P<n>`, so one
+  purpose's worker cannot hide another purpose left unattended, and a child
+  reused for P2 no longer carries the P1 it finished. A child that serves only
+  a revision carries none.
+- It reads bb's store (`~/.bb/bb.db`) read-only rather than the bb CLI: at load
+  ~290 each CLI call took 4-20 s, past Codex's 5 s Stop-hook budget, so the
+  check would have failed open whenever the fleet was busy. A background task
+  is running while its start (within 24 h) has no completion. The nudge lists the
   unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask` for a decision only the user owns (money, an

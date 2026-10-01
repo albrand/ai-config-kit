@@ -21,15 +21,13 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import sqlite3
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.expanduser("~/.local/state/agent-quality/events.jsonl")
 NUDGED = os.environ.get("CLOSEOUT_NUDGED_FILE") or os.path.expanduser("~/.local/state/agent-quality/closeout-ledger-nudged.json")
-BB_TIMEOUT_S = 3.0
+BACKGROUND_HORIZON_S = 24 * 3600
 TRANSCRIPT_TAIL = 4 * 1024 * 1024
 BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
@@ -44,38 +42,43 @@ def load_gate():
     return mod
 
 
-def bb_binary():
-    return (os.environ.get("BB_CLI") or shutil.which("bb")
-            or "/Applications/bb.app/Contents/Resources/app.asar.unpacked/node_modules/bb-app/host-daemon/dist/bb")
-
-
-def bb_json(procs):
-    """Run bb reads concurrently; None for any that fails or times out."""
-    out = {}
-    for key, proc in procs.items():
-        try:
-            stdout, _ = proc.communicate(timeout=BB_TIMEOUT_S)
-            out[key] = json.loads(stdout) if proc.returncode == 0 else None
-        except Exception:
-            proc.kill()
-            out[key] = None
-    return out
-
-
 def thread_state(thread, want_self=True):
-    bb = bb_binary()
-    spawn = lambda *a: subprocess.Popen([bb, *a, "--json"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    procs = {"children": spawn("thread", "list", "--parent-thread", thread)}
-    if want_self:
-        procs["self"] = spawn("thread", "show", thread)
-    return bb_json(procs)
+    """Children and own queue/background state, read-only from bb's store.
+
+    The bb CLI took 4-20 s per call at load ~290 (2026-10-01), past Codex's 5 s Stop-hook budget, so the
+    check would always fail open exactly when the fleet is busy. The store answers in milliseconds.
+    """
+    try:
+        db = sqlite3.connect(f"file:{BB_DB}?mode=ro", uri=True, timeout=1.0)
+        try:
+            children = [{"id": i, "status": s, "archivedAt": a} for i, s, a in db.execute(
+                "SELECT id, status, archived_at FROM threads WHERE parent_thread_id = ? AND deleted_at IS NULL", (thread,))]
+            state = {"children": children}
+            if want_self:
+                queued = db.execute("SELECT count(*) FROM queued_thread_messages WHERE thread_id = ?", (thread,)).fetchone()[0]
+                # A background task is running while its start has no completion; older starts are treated as lost.
+                since = int((datetime.datetime.now(datetime.timezone.utc).timestamp() - BACKGROUND_HORIZON_S) * 1000)
+                running = db.execute(
+                    "SELECT count(*) FROM events s WHERE s.thread_id = ? AND s.type = 'item/started' "
+                    "AND s.item_kind = 'backgroundTask' AND s.created_at > ? AND NOT EXISTS (SELECT 1 FROM events c "
+                    "WHERE c.thread_id = s.thread_id AND c.item_id = s.item_id "
+                    "AND c.type IN ('item/backgroundTask/completed', 'item/completed'))", (thread, since)).fetchone()[0]
+                state["self"] = {"id": thread, "queuedMessageCount": queued,
+                                 "activity": {"activeBackgroundCommandCount": running}}
+            return state
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return {"children": None, "self": None}
 
 
 def child_serves(child_ids, serves_pattern):
-    """{child: purpose ids its briefs and tells name in `serves:`}, or None when bb's event store can't be read.
+    """{child: purpose ids its outstanding inputs name in `serves:`}, or None when bb's event store can't be read.
 
     The scope gate requires every spawn and tell to name the purpose it serves, so a child's inputs say which
-    purposes it carries. bb exposes no CLI for a child's inputs; this reads its own store read-only.
+    purposes it carries. Only inputs requested after the child's last completed turn are outstanding: a child
+    reused for P2 no longer carries the P1 assignment it finished. bb exposes no CLI for a child's inputs; this
+    reads its store read-only.
     """
     if not child_ids:
         return {}
@@ -83,8 +86,10 @@ def child_serves(child_ids, serves_pattern):
         db = sqlite3.connect(f"file:{BB_DB}?mode=ro", uri=True, timeout=1.0)
         try:
             marks = ",".join("?" * len(child_ids))
-            rows = db.execute(f"SELECT thread_id, data FROM events WHERE type = 'client/turn/requested' "
-                              f"AND thread_id IN ({marks})", list(child_ids)).fetchall()
+            rows = db.execute(
+                f"SELECT r.thread_id, r.data FROM events r WHERE r.type = 'client/turn/requested' "
+                f"AND r.thread_id IN ({marks}) AND r.created_at > COALESCE((SELECT max(c.created_at) FROM events c "
+                f"WHERE c.thread_id = r.thread_id AND c.type = 'turn/completed'), 0)", list(child_ids)).fetchall()
         finally:
             db.close()
     except sqlite3.Error:

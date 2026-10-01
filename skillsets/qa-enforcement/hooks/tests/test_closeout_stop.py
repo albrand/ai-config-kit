@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -17,16 +18,6 @@ STOP = ROOT / "qa-stop-hook.sh"
 THREAD = "thr_fixturecoord"
 PURPOSE = "i ask for overall hardening on skills and directives so we can rely more on agent QAing things"
 
-FAKE_BB = """#!/usr/bin/env python3
-import json, os, sys
-d = os.environ["FAKE_BB_DIR"]
-if os.path.exists(os.path.join(d, "fail")):
-    sys.exit(1)
-name = "children.json" if "--parent-thread" in sys.argv else "self.json"
-print(open(os.path.join(d, name)).read())
-"""
-
-
 class CloseoutStopTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -35,11 +26,6 @@ class CloseoutStopTests(unittest.TestCase):
         self.home.mkdir()
         self.ledgers = base / "scope"
         self.ledgers.mkdir()
-        self.bbdir = base / "bb"
-        self.bbdir.mkdir()
-        self.bb = base / "fake-bb"
-        self.bb.write_text(FAKE_BB)
-        self.bb.chmod(0o755)
         self.events = base / "events.jsonl"
         self.nudged = base / "nudged.json"
         self.repo = base / "repo"
@@ -47,29 +33,47 @@ class CloseoutStopTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
         self.db = base / "bb.db"
         with sqlite3.connect(self.db) as db:
-            db.execute("CREATE TABLE events (thread_id TEXT, type TEXT, data TEXT)")
+            db.execute("CREATE TABLE events (thread_id TEXT, type TEXT, data TEXT, created_at INTEGER, "
+                       "item_id TEXT, item_kind TEXT)")
+            db.execute("CREATE TABLE threads (id TEXT, status TEXT, archived_at INTEGER, parent_thread_id TEXT, "
+                       "deleted_at INTEGER)")
+            db.execute("CREATE TABLE queued_thread_messages (id TEXT, thread_id TEXT)")
+        self.clock = int(time.time() * 1000) - 3600 * 1000
         self.set_state(children=[{"id": "thr_child1", "status": "idle", "archivedAt": None}])
 
-    def dispatch(self, child, text):
+    def event(self, thread, kind, data=None, item_id=None, item_kind=None):
+        self.clock += 1000
         with sqlite3.connect(self.db) as db:
-            db.execute("INSERT INTO events VALUES (?, 'client/turn/requested', ?)",
-                       (child, json.dumps({"source": "spawn", "input": [{"type": "text", "text": text}]})))
+            db.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",
+                       (thread, kind, json.dumps(data or {}), self.clock, item_id, item_kind))
+
+    def dispatch(self, child, text):
+        self.event(child, "client/turn/requested", {"source": "spawn", "input": [{"type": "text", "text": text}]})
+
+    def complete_turn(self, child):
+        self.event(child, "turn/completed")
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def env(self):
-        return dict(os.environ, HOME=str(self.home), BB_CLI=str(self.bb), FAKE_BB_DIR=str(self.bbdir),
-                    SCOPE_LEDGER_DIR=str(self.ledgers), BB_THREAD_ID=THREAD,
+        return dict(os.environ, HOME=str(self.home), SCOPE_LEDGER_DIR=str(self.ledgers), BB_THREAD_ID=THREAD,
                     QA_GATE_EVENTS_FILE=str(self.events), CLOSEOUT_NUDGED_FILE=str(self.nudged),
                     CLOSEOUT_BB_DB=str(self.db))
 
     def set_state(self, children=None, queued=0, background=0):
-        if children is not None:
-            (self.bbdir / "children.json").write_text(json.dumps(children))
-        (self.bbdir / "self.json").write_text(json.dumps({
-            "id": THREAD, "status": "active", "queuedMessageCount": queued,
-            "activity": {"activeBackgroundCommandCount": background}}))
+        with sqlite3.connect(self.db) as db:
+            if children is not None:
+                db.execute("DELETE FROM threads WHERE parent_thread_id = ?", (THREAD,))
+                for c in children:
+                    db.execute("INSERT INTO threads VALUES (?, ?, ?, ?, NULL)",
+                               (c["id"], c["status"], c.get("archivedAt"), THREAD))
+            db.execute("DELETE FROM queued_thread_messages WHERE thread_id = ?", (THREAD,))
+            for n in range(queued):
+                db.execute("INSERT INTO queued_thread_messages VALUES (?, ?)", (f"q{n}", THREAD))
+            db.execute("DELETE FROM events WHERE thread_id = ? AND item_kind = 'backgroundTask'", (THREAD,))
+        for n in range(background):
+            self.event(THREAD, "item/started", item_id=f"bg{n}", item_kind="backgroundTask")
 
     def write_ledger(self, *purposes):
         (self.ledgers / f"{THREAD}.json").write_text(json.dumps({
@@ -137,17 +141,27 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertIn("P1", resumed["reason"])
         self.assertIn("P2", resumed["reason"])
 
+    # Review r2: a child reused for P2 no longer carries the P1 assignment it finished.
+    def test_finished_assignment_does_not_carry_after_reuse(self):
+        self.write_ledger(self.purpose("P1", text="ship the fix"), self.purpose("P2", text="Finish authorized QA"))
+        self.dispatch("thr_w1", "[child of @thread:thr_fixturecoord] serves: P1 — implement the fix")
+        self.complete_turn("thr_w1")
+        self.dispatch("thr_w1", "serves: P2 — now run the QA walk")
+        self.set_state(children=[{"id": "thr_w1", "status": "active"}])
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn('P1 "ship the fix"', nudged["reason"])
+        self.assertNotIn("Finish authorized QA", nudged["reason"])
+        self.assertEqual(self.closeout({"stop_hook_active": True})["decision"], "allow")
+        # Positive control: both assignments outstanding in the running turn.
+        self.dispatch("thr_w1", "serves: P1 — and land the fix follow-up in the same pass")
+        self.assertEqual(self.closeout()["decision"], "allow")
+
     def test_child_with_no_serves_line_carries_nothing(self):
         self.write_ledger(self.purpose())
         self.dispatch("thr_c", "do some unrelated cleanup")
         self.set_state(children=[{"id": "thr_c", "status": "active"}])
         self.assertEqual(self.closeout()["decision"], "block")
-
-    def test_unreadable_event_store_falls_back_to_any_active_child(self):
-        self.write_ledger(self.purpose())
-        self.set_state(children=[{"id": "thr_c", "status": "active"}])
-        self.db.write_text("not a database")
-        self.assertEqual(self.closeout()["decision"], "allow")
 
     def test_blocked_on_user_stays_quiet_until_the_user_answers(self):
         self.write_ledger(self.purpose(status="blocked-on-user", marked="2026-09-30T20:00:00Z"))
@@ -167,7 +181,7 @@ class CloseoutStopTests(unittest.TestCase):
 
     def test_unreadable_state_allows(self):
         self.write_ledger(self.purpose())
-        (self.bbdir / "fail").write_text("")
+        self.db.write_text("not a database")
         self.assertEqual(self.closeout()["decision"], "allow")
         (self.ledgers / f"{THREAD}.json").write_text("{not json")
         self.assertEqual(self.closeout()["decision"], "allow")
