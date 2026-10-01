@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -44,7 +45,15 @@ class CloseoutStopTests(unittest.TestCase):
         self.repo = base / "repo"
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
+        self.db = base / "bb.db"
+        with sqlite3.connect(self.db) as db:
+            db.execute("CREATE TABLE events (thread_id TEXT, type TEXT, data TEXT)")
         self.set_state(children=[{"id": "thr_child1", "status": "idle", "archivedAt": None}])
+
+    def dispatch(self, child, text):
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO events VALUES (?, 'client/turn/requested', ?)",
+                       (child, json.dumps({"source": "spawn", "input": [{"type": "text", "text": text}]})))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -52,7 +61,8 @@ class CloseoutStopTests(unittest.TestCase):
     def env(self):
         return dict(os.environ, HOME=str(self.home), BB_CLI=str(self.bb), FAKE_BB_DIR=str(self.bbdir),
                     SCOPE_LEDGER_DIR=str(self.ledgers), BB_THREAD_ID=THREAD,
-                    QA_GATE_EVENTS_FILE=str(self.events), CLOSEOUT_NUDGED_FILE=str(self.nudged))
+                    QA_GATE_EVENTS_FILE=str(self.events), CLOSEOUT_NUDGED_FILE=str(self.nudged),
+                    CLOSEOUT_BB_DB=str(self.db))
 
     def set_state(self, children=None, queued=0, background=0):
         if children is not None:
@@ -94,12 +104,50 @@ class CloseoutStopTests(unittest.TestCase):
 
     def test_work_carried_elsewhere_allows(self):
         self.write_ledger(self.purpose())
-        for label, state in [("active child", dict(children=[{"id": "thr_c", "status": "active"}])),
-                             ("pending child", dict(children=[{"id": "thr_c", "status": "pending"}])),
+        self.dispatch("thr_c", "[child of @thread:thr_fixturecoord] serves: P5 — run the measurement")
+        for label, state in [("active child serving P5", dict(children=[{"id": "thr_c", "status": "active"}])),
+                             ("pending child serving P5", dict(children=[{"id": "thr_c", "status": "pending"}])),
                              ("queued message", dict(children=[], queued=1)),
                              ("background task", dict(children=[], background=2))]:
             self.set_state(**state)
             self.assertEqual(self.closeout()["decision"], "allow", label)
+
+    # Review r1: P1's active worker must not hide an unattended P2.
+    def test_child_carries_only_the_purposes_it_serves(self):
+        self.write_ledger(self.purpose("P1", text="ship the fix"), self.purpose("P2", text="Finish authorized QA"))
+        self.dispatch("thr_w1", "[child of @thread:thr_fixturecoord] serves: P1 — implement the fix")
+        self.set_state(children=[{"id": "thr_w1", "status": "active"}])
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn('P2 "Finish authorized QA"', nudged["reason"])
+        self.assertNotIn("ship the fix", nudged["reason"])
+        self.assertEqual(self.closeout({"stop_hook_active": True})["decision"], "allow")
+        # The coordinator dispatches P2: both purposes are carried, the stop is allowed.
+        self.dispatch("thr_w2", "[child of @thread:thr_fixturecoord] serves: P2 — run the QA walk")
+        self.set_state(children=[{"id": "thr_w1", "status": "active"}, {"id": "thr_w2", "status": "active"}])
+        self.assertEqual(self.closeout()["decision"], "allow")
+        # A later tell can add a purpose to a running child.
+        self.set_state(children=[{"id": "thr_w1", "status": "active"}])
+        self.dispatch("thr_w1", "serves: P2 — also run the QA walk when the fix lands")
+        self.assertEqual(self.closeout()["decision"], "allow")
+        # The workers finish (bb resumes the coordinator) with both purposes still open: the next stop is checked again.
+        self.set_state(children=[{"id": "thr_w1", "status": "idle"}, {"id": "thr_w2", "status": "idle"}])
+        resumed = self.closeout()
+        self.assertEqual(resumed["decision"], "block")
+        self.assertIn("P1", resumed["reason"])
+        self.assertIn("P2", resumed["reason"])
+
+    def test_child_with_no_serves_line_carries_nothing(self):
+        self.write_ledger(self.purpose())
+        self.dispatch("thr_c", "do some unrelated cleanup")
+        self.set_state(children=[{"id": "thr_c", "status": "active"}])
+        self.assertEqual(self.closeout()["decision"], "block")
+
+    def test_unreadable_event_store_falls_back_to_any_active_child(self):
+        self.write_ledger(self.purpose())
+        self.set_state(children=[{"id": "thr_c", "status": "active"}])
+        self.db.write_text("not a database")
+        self.assertEqual(self.closeout()["decision"], "allow")
 
     def test_blocked_on_user_stays_quiet_until_the_user_answers(self):
         self.write_ledger(self.purpose(status="blocked-on-user", marked="2026-09-30T20:00:00Z"))

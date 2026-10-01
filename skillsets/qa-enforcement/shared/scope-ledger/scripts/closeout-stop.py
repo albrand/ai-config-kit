@@ -8,8 +8,9 @@ the same predicate when the turn ends:
 
 - the ledger has an open purpose (or a blocked-on-user one the user has since
   answered in this turn), and
-- nothing carries the work: no active or pending child, no queued message, no
-  background task.
+- nothing carries it: no active or pending child whose brief or tells name that
+  purpose in `serves:`, no queued message, no background task of its own (those
+  resume this thread, which then runs the check again).
 
 Then the stop is blocked once with the open purposes and the three allowed
 outcomes. A coordinator with child threads but no ledger is asked once, per
@@ -21,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 
@@ -29,6 +31,7 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.expanduser("~/.local/s
 NUDGED = os.environ.get("CLOSEOUT_NUDGED_FILE") or os.path.expanduser("~/.local/state/agent-quality/closeout-ledger-nudged.json")
 BB_TIMEOUT_S = 3.0
 TRANSCRIPT_TAIL = 4 * 1024 * 1024
+BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(r"^\s*(\[(bb |from |child of|fleet |qa-|scope-)|<)", re.I)
 GATE = os.path.join(HERE, "scope-gate.py")
@@ -68,22 +71,64 @@ def thread_state(thread, want_self=True):
     return bb_json(procs)
 
 
-def carried_by(state):
-    """Why the work is still moving, or '' when nothing carries it. None when state is unreadable."""
+def child_serves(child_ids, serves_pattern):
+    """{child: purpose ids its briefs and tells name in `serves:`}, or None when bb's event store can't be read.
+
+    The scope gate requires every spawn and tell to name the purpose it serves, so a child's inputs say which
+    purposes it carries. bb exposes no CLI for a child's inputs; this reads its own store read-only.
+    """
+    if not child_ids:
+        return {}
+    try:
+        db = sqlite3.connect(f"file:{BB_DB}?mode=ro", uri=True, timeout=1.0)
+        try:
+            marks = ",".join("?" * len(child_ids))
+            rows = db.execute(f"SELECT thread_id, data FROM events WHERE type = 'client/turn/requested' "
+                              f"AND thread_id IN ({marks})", list(child_ids)).fetchall()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return None
+    out = {c: set() for c in child_ids}
+    for thread, data in rows:
+        try:
+            items = json.loads(data).get("input") or []
+        except (ValueError, AttributeError):
+            continue
+        for item in items:
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(text, str):
+                for group in serves_pattern.findall(text):
+                    out[thread].update(re.findall(r"P\d+", group))
+    return out
+
+
+def carried_by(state, pending_ids, serves_reader):
+    """(ids carried, why) for the pending purposes; None when thread state is unreadable.
+
+    A queued message or the thread's own background task resumes this thread, so it carries every purpose.
+    An active child carries only the purposes it was dispatched to serve.
+    """
     children, me = state.get("children"), state.get("self")
     if not isinstance(children, list) or not isinstance(me, dict):
         return None
     me = me.get("thread", me)
-    active = [c.get("id") for c in children if isinstance(c, dict) and c.get("status") in ("active", "pending")]
-    if active:
-        return "child thread(s) active: " + ", ".join(map(str, active))
+    every = set(pending_ids)
     if (me.get("queuedMessageCount") or 0) > 0:
-        return f"{me['queuedMessageCount']} message(s) queued"
+        return every, f"{me['queuedMessageCount']} message(s) queued"
     act = me.get("activity") or {}
     running = sum(act.get(k) or 0 for k in ("activeBackgroundCommandCount", "activeBackgroundAgentCount", "activeWorkflowCount"))
     if running > 0:
-        return f"{running} background task(s) running"
-    return ""
+        return every, f"{running} background task(s) running"
+    active = [c.get("id") for c in children if isinstance(c, dict) and c.get("status") in ("active", "pending")]
+    if not active:
+        return set(), ""
+    serves = serves_reader(active)
+    if serves is None:
+        # Without the link, fall back to the idle guard's rule: any active child carries the work.
+        return every, "child thread(s) active (purposes unreadable): " + ", ".join(map(str, active))
+    carried = set().union(*serves.values()) & every
+    return carried, "child thread(s) active: " + ", ".join(f"{c} serves {','.join(sorted(serves[c])) or 'none'}" for c in active)
 
 
 def entry_user_text(entry):
@@ -156,7 +201,7 @@ def pending_purposes(ledger, answered_at):
 def nudge_text(thread, purposes):
     gate = "python3 ~/.agents/skills/scope-ledger/scripts/scope-gate.py"
     lines = ["[scope-closeout] You are stopping with open purposes in your scope ledger, and nothing is carrying them "
-             "(no active child, queued message or background task):"]
+             "(no active child dispatched to serve them, no queued message, no background task):"]
     for p in purposes:
         text = p["text"] if len(p["text"]) <= 300 else p["text"][:297] + "..."
         state = " (blocked-on-user, answered since)" if p["status"] == "blocked-on-user" else ""
@@ -259,15 +304,17 @@ def decide(payload, thread, gate, state_reader=thread_state):
     if not pending:
         return allow("no open purposes")
     ids = [p["id"] for p in pending]
-    carried = carried_by(state_reader(thread))
-    if carried is None:
+    got = carried_by(state_reader(thread), ids, serves_reader=lambda c: child_serves(c, gate.SERVES_P))
+    if got is None:
         log(thread, "ledger", "allow", "state unreadable", ids)
         return allow("thread state unreadable")
-    if carried:
-        log(thread, "ledger", "allow", carried, ids)
-        return allow(carried)
-    log(thread, "ledger", "block", "nothing carries open purposes", ids)
-    return {"decision": "block", "reason": nudge_text(thread, pending)}
+    carried, why = got
+    unattended = [p for p in pending if p["id"] not in carried]
+    if not unattended:
+        log(thread, "ledger", "allow", why, ids)
+        return allow(why)
+    log(thread, "ledger", "block", why or "nothing carries open purposes", [p["id"] for p in unattended])
+    return {"decision": "block", "reason": nudge_text(thread, unattended)}
 
 
 def main():

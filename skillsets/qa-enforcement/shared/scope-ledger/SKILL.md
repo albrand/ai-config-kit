@@ -200,8 +200,14 @@ evidence nudge, and only when that nudge did not block, so a turn gets one
 nudge at most.
 
 - It blocks the stop once when the thread's ledger has an open purpose and
-  nothing carries it: no active or pending child, no queued message, no
-  background task. The nudge lists those purposes and allows three outcomes:
+  nothing carries it. A queued message or the thread's own background task
+  carries every purpose (each resumes this thread, which runs the check
+  again). An active or pending child carries only the purposes its brief and
+  tells name in `serves: P<n>` (read-only from bb's event store), so one
+  purpose's worker cannot hide another purpose left unattended; a child that
+  serves only a revision carries none. If the store can't be read, any
+  active child carries everything, as in the idle guard. The nudge lists the
+  unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask` for a decision only the user owns (money, an
   outward or irreversible effect, credentials, a genuine ambiguity). A status
