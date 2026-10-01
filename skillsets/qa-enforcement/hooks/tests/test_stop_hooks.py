@@ -43,6 +43,12 @@ class StopHooksTests(unittest.TestCase):
         self.assertTrue(evidence.has_evidence_packet(
             "| Field | Value |\n|---|---|\n| Persona | operator |\n| Target | repo kit, head c6a7107 |\n"
             "| Goals | suite passes |\n| Verdict | PASS |\n"))
+        # A later, unrelated two-column table does not inherit the goal/verdict columns: "| Notes | PASS |" is not a
+        # verdict for the goal above, so a goal table without a verdict stays rejected.
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\n\n| Field | Value |\n|---|---|\n| Notes | PASS |\n"))
+        self.assertFalse(evidence.has_evidence_packet(
+            head + "| Suite passes | pending |\nSee below.\n| Check | Result |\n|---|---|\n| Lint | PASS |\n"))
 
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
