@@ -34,6 +34,9 @@ Subcommands:
     init <thread> --from <ledger.json>      create a ledger (refuses to overwrite)
     add <thread> --text T --done-when D     append a purpose in the user's words
     mark <thread> <Pn> <status> [--ask Q] [--evidence E]
+    wait <thread> <Pn> --until <date> --on W  an open purpose that can only move after a
+                                            date or data arrives (at most 30 days; any
+                                            mark clears it)
     revise <thread> --quote Q [--source S]  record a user-approved scope change
     release <thread> <child> --evidence E   a finished child: fleet stops holding it
                                             from archive (only the child's parent
@@ -62,6 +65,9 @@ LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/
 DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
 THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
 STATUSES = ("open", "done", "blocked-on-user")
+# A wait is a field on an open purpose, not a status: fleet's ledger parser
+# rejects unknown statuses, and a wait must expire back into plain open work.
+MAX_WAIT_DAYS = 30
 
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
@@ -116,6 +122,27 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def parse_until(value):
+    """An aware datetime for an ISO date or timestamp; None when it isn't one."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=datetime.timezone.utc)
+
+
+def waiting_until(purpose, now=None):
+    """When an open purpose's wait ends, if it is still waiting; else None."""
+    waiting = purpose.get("waiting")
+    if purpose.get("status") != "open" or not isinstance(waiting, dict):
+        return None
+    until = parse_until(waiting.get("until"))
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return until if until and until > now else None
+
+
 def collapse(s):
     return re.sub(r"\s+", " ", s).strip()
 
@@ -151,6 +178,10 @@ def validate(ledger, thread):
             raise LedgerError(f"{p['id']} has no text")
         if p.get("status") not in STATUSES:
             raise LedgerError(f"{p['id']} status {p.get('status')!r}")
+        waiting = p.get("waiting")
+        if waiting is not None and (not isinstance(waiting, dict) or parse_until(waiting.get("until")) is None
+                                    or not str(waiting.get("on") or "").strip()):
+            raise LedgerError(f"{p['id']} waiting must be {{until, on}}")
     revisions = ledger.setdefault("accepted_revisions", [])
     if not isinstance(revisions, list) or any(not isinstance(r, dict) or not str(r.get("quote", "")).strip() for r in revisions):
         raise LedgerError("accepted_revisions must be a list of {quote}")
@@ -844,11 +875,34 @@ def main(argv):
                 raise LedgerError("blocked-on-user needs --ask with the exact question for the user")
             p["status"], p["status_marked_at"] = status, now_iso()
             p["ask"] = ask if status == "blocked-on-user" else None
+            p.pop("waiting", None)
             ev = arg(args, "--evidence")
             if ev:
                 p.setdefault("evidence", []).append({"at": now_iso(), "note": ev})
             write_ledger(thread, ledger)
             print(f"{pid} -> {status} at {p['status_marked_at']}")
+            return 0
+        if cmd == "wait":
+            if len(args) < 2:
+                raise LedgerError("wait <thread> <Pn> --until <YYYY-MM-DD|ISO time> --on <what has to arrive>")
+            pid = args[1].upper()
+            p = next((p for p in ledger["purposes"] if p["id"] == pid), None)
+            if not p:
+                raise LedgerError(f"no purpose {pid}")
+            if p["status"] != "open":
+                raise LedgerError(f"{pid} is {p['status']}; only an open purpose can wait")
+            until, on = parse_until(arg(args, "--until")), arg(args, "--on")
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if until is None or until <= now:
+                raise LedgerError("wait needs --until in the future (YYYY-MM-DD or ISO time)")
+            if until > now + datetime.timedelta(days=MAX_WAIT_DAYS):
+                raise LedgerError(f"a wait can be at most {MAX_WAIT_DAYS} days; mark it blocked-on-user if the user owns it")
+            if not (on and on.strip()):
+                raise LedgerError("wait needs --on with what has to arrive (data, a date, a run)")
+            p["waiting"] = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "on": on, "set_at": now_iso()}
+            p.setdefault("evidence", []).append({"at": now_iso(), "note": f"waiting until {p['waiting']['until']} on {on}"})
+            write_ledger(thread, ledger)
+            print(f"{pid} waits until {p['waiting']['until']} on: {on}")
             return 0
         if cmd == "revise":
             quote = arg(args, "--quote")

@@ -19,6 +19,11 @@ thread:
 - `purposes`: `{id: "P1", text, done_when, status, evidence, status_marked_at, ask}`.
   - `text` is the user's own words, verbatim.
   - `status` is `open`, `done` or `blocked-on-user`.
+  - `waiting` (optional, open purposes only): `{until, on, set_at}`. The
+    purpose can only move once a date passes or data arrives. It is a field,
+    not a status, because fleet's ledger parser rejects unknown statuses, and
+    it lapses back into ordinary open work at `until`. At most 30 days; any
+    `mark` clears it.
 - `accepted_revisions`: `{quote, accepted_at, source}`. Each entry is a scope
   change the user approved, quoted verbatim.
 
@@ -28,6 +33,7 @@ python3 $G init <thread> --from ledger.json        # refuses to overwrite
 python3 $G add <thread> --text "<user's words>" --done-when "<observable end state>"
 python3 $G mark <thread> P2 blocked-on-user --ask "<the exact question for the user>"
 python3 $G mark <thread> P1 done --evidence "<commit / URL / measurement>"
+python3 $G wait <thread> P3 --until 2026-10-18 --on "<the data or event it needs>"
 python3 $G revise <thread> --quote "<the user's approval, verbatim>" --source <ref>
 python3 $G show <thread>
 python3 $G check <thread> "<brief text>"           # the gate's decision, no tool call
@@ -215,11 +221,13 @@ nudge at most.
   ~290 each CLI call took 4-20 s, past Codex's 5 s Stop-hook budget, so the
   check would have failed open whenever the fleet was busy. A background task
   is running while its start (within 24 h) has no completion.
-- The nudge lists the unattended purposes and allows three outcomes:
-  continue the next authorized step, `mark … done --evidence`, or
+- The nudge lists the unattended purposes and allows four outcomes:
+  continue the next authorized step, `mark … done --evidence`,
   `mark … blocked-on-user --ask` for a decision only the user owns (money, an
-  outward or irreversible effect, credentials, a genuine ambiguity). A status
-  report is none of them.
+  outward or irreversible effect, credentials, a genuine ambiguity), or
+  `wait … --until --on` when no step can be taken until a date passes or data
+  arrives. A status report is none of them. A waiting purpose is not nudged
+  until its date, then it is open work again.
 - A blocked-on-user purpose counts as open again when the latest user-typed
   input in the transcript is newer than its mark. Inputs bb and hooks compose
   (`[bb …]`, `[from …]`, `[child of …]`, `[fleet …]`) don't count.

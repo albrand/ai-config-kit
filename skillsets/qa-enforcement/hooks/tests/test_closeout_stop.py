@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fixtures for the scope-ledger closeout check at Stop and its place in the stop chain."""
+import datetime
 import json
 import os
 import pathlib
@@ -187,6 +188,43 @@ class CloseoutStopTests(unittest.TestCase):
         result = self.closeout({"transcript_path": answered})
         self.assertEqual(result["decision"], "block")
         self.assertIn("answered since", result["reason"])
+
+    def gate_cli(self, *args):
+        gate = SHARED / "scope-ledger/scripts/scope-gate.py"
+        return subprocess.run(["python3", str(gate), *args], text=True, capture_output=True, env=self.env())
+
+    # A purpose that can only move when data arrives is not nudged on every stop until then.
+    def test_waiting_purpose_is_quiet_until_its_date(self):
+        self.write_ledger(self.purpose("P5"), self.purpose("P6", text="ship the docs"))
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=17)).strftime("%Y-%m-%d")
+        done = self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "1,700 post-gate done-claims for the strict re-measure")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        nudged = self.closeout()
+        self.assertEqual(nudged["decision"], "block")
+        self.assertIn("P6", nudged["reason"])
+        self.assertNotIn("P5 ", nudged["reason"])
+        self.gate_cli("mark", THREAD, "P6", "done", "--evidence", "fixture")
+        self.assertEqual(self.closeout()["decision"], "allow")
+        # Once the date passes the purpose is open work again.
+        ledger = json.loads((self.ledgers / f"{THREAD}.json").read_text())
+        ledger["purposes"][0]["waiting"]["until"] = "2026-01-01T00:00:00Z"
+        (self.ledgers / f"{THREAD}.json").write_text(json.dumps(ledger))
+        self.assertIn("P5", self.closeout()["reason"])
+
+    def test_wait_refuses_past_far_or_unexplained_dates(self):
+        self.write_ledger(self.purpose("P5"), self.purpose("P6", status="done"))
+        far = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=45)).strftime("%Y-%m-%d")
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+        for label, args in [("past date", ["--until", "2026-01-01", "--on", "data"]),
+                            ("beyond 30 days", ["--until", far, "--on", "data"]),
+                            ("no reason", ["--until", soon]),
+                            ("not a date", ["--until", "next week", "--on", "data"])]:
+            self.assertNotEqual(self.gate_cli("wait", THREAD, "P5", *args).returncode, 0, label)
+        self.assertNotEqual(self.gate_cli("wait", THREAD, "P6", "--until", soon, "--on", "data").returncode, 0, "done purpose")
+        # Any mark clears a wait, so a wait can't outlive a status change.
+        self.assertEqual(self.gate_cli("wait", THREAD, "P5", "--until", soon, "--on", "data").returncode, 0)
+        self.gate_cli("mark", THREAD, "P5", "open")
+        self.assertNotIn("waiting", json.loads((self.ledgers / f"{THREAD}.json").read_text())["purposes"][0])
 
     def test_finished_ledger_allows(self):
         self.write_ledger(self.purpose(status="done"))

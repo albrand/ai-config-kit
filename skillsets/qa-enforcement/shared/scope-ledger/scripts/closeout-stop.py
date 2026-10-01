@@ -204,13 +204,14 @@ def parse_ts(value):
         return None
 
 
-def pending_purposes(ledger, answered_at):
-    """Open purposes, plus blocked-on-user ones the user has answered since they were marked."""
+def pending_purposes(ledger, answered_at, waiting_until=lambda p: None):
+    """Open purposes not waiting on a future date, plus blocked-on-user ones the user has answered since."""
     answered = parse_ts(answered_at)
     out = []
     for p in ledger["purposes"]:
         if p["status"] == "open":
-            out.append(p)
+            if waiting_until(p) is None:
+                out.append(p)
         elif p["status"] == "blocked-on-user" and answered is not None:
             marked = parse_ts(p.get("status_marked_at"))
             if marked is not None and answered > marked:
@@ -233,6 +234,8 @@ def nudge_text(thread, purposes):
         f'2. If it is finished: {gate} mark {thread} <Pn> done --evidence "<commit, URL or measurement>"',
         f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>". '
         "Only for money, an outward or irreversible effect, credentials, or a genuine ambiguity in the request.",
+        f'4. If no step can be taken until a date or data arrives: {gate} wait {thread} <Pn> --until <YYYY-MM-DD> '
+        '--on "<what has to arrive>". Only when there is no authorized step left to take now; at most 30 days.',
         "A status report, a summary or an offer to continue is none of these. This is a one-time nudge for this turn.",
     ]
     return "\n".join(lines)
@@ -321,8 +324,12 @@ def decide(payload, thread, gate, state_reader=thread_state):
         log(thread, "no-ledger", "block", "coordinator without ledger")
         return {"decision": "block", "reason": ledger_nudge_text(thread)}
     answered_at = last_human_input_at(payload.get("transcript_path") or payload.get("transcriptPath"))
-    pending = pending_purposes(ledger, answered_at)
+    pending = pending_purposes(ledger, answered_at, gate.waiting_until)
     if not pending:
+        waits = [p["id"] for p in ledger["purposes"] if gate.waiting_until(p)]
+        if waits:
+            log(thread, "ledger", "allow", "waiting until a date", waits)
+            return allow("open purposes are waiting: " + ",".join(waits))
         return allow("no open purposes")
     ids = [p["id"] for p in pending]
     got = carried_by(state_reader(thread), ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
