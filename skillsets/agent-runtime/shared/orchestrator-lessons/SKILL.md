@@ -13,6 +13,36 @@ verified: 2026-10-03
 Every entry here cost real rounds. They are written as the check to run, not as
 advice, because advice does not fire and a check does.
 
+## Have the full picture before you plan or distribute anything
+
+On 2026-10-03 an orchestrator had a working reference system, the product's
+source, its schemas and production read access. It staffed more than fifteen
+cards from symptom counts before mapping anything. A proxy field made a display
+gap look like a data gap. The biggest gap went unexamined: 89% of ingested
+communications were never linked to a client, so they could not reach any
+screen. New-capability cards ran while cheap backfill and display wins waited.
+A deadline was missed with activity everywhere and the user's screens still
+thin.
+
+**Check, before the first card is cut:** produce the map, then plan from it.
+
+1. Inventory every user-facing surface in scope and every field on it, with its
+   read path: route, procedure, service, store, and field.
+2. Trace one representative record end to end through every stage, in your
+   system and in the working reference: source, ingest, attribution, processing
+   under current rules, storage, API, and rendered screen.
+3. For every surface × field × entity (each customer, account or tenant in
+   scope), count each stage. The first stage that drops to zero is the gap for
+   that cell. Classify the losses, for example why unlinked records are
+   unlinked.
+4. Give every gap a fix class (backfill, attribution, processing, display,
+   performance, source access) and an hours estimate with its basis.
+5. Only then rank by user-visible outcome per hour, cut cards, and commit to
+   times.
+
+Work that cannot point to a cell in the map is not started. When evidence
+contradicts the map, update the map before re-planning.
+
 ## Find colliding work before you write, and own it once found
 
 On 2026-09-20 a sibling thread was fixing the same product onboarding bug in
