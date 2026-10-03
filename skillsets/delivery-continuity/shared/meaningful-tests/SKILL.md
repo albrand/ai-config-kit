@@ -39,6 +39,18 @@ that actually ran and investigate empty or skipped suites. Do not invent tests
 for declarations or generated internals when a check at their consumer owns
 the behavior. Use `TEST_OWNERSHIP.md` when the repository adopts that contract.
 
+## Measure, then claim
+
+A gap claim needs the stage where it starts. Trace one representative record
+through source, storage, processing, API, and screen, in the working reference
+too when one exists. Confirm the field you count is the one the reader uses. A
+low count of a proxy field is not a located gap.
+
+A performance claim needs paired, interleaved baseline and candidate runs on the
+same data: at least three cold and three warm each, reported as ranges. Re-run
+the control. If it moved, the stored baseline is void. A single reading is never
+published as a result.
+
 ## Exercise the complete requested workflow
 
 Walk from the persona's entry point through its final outcome, including setup,
