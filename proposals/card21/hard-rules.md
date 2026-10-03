@@ -39,6 +39,7 @@
 
 ## Delivery contract
 
+- Get the full picture before planning or delegating multi-surface work. Trace one representative record end to end, here and in any working reference. Map every surface × field × entity to the first stage where it breaks, with counts. Plan and staff only from that map; a symptom count is not a gap analysis.
 - Carry the complete user request and accepted revisions through execution and handoffs. Finish the requested outcome, including authorized checks, fixes, delivery, and installation; a patch, status report, or proposed next step does not replace that outcome.
 - Reuse authorization already given in this conversation. Ask only for a new user-owned decision, a hard prohibition's specific approval, or a material new fact that invalidates the authorization; name that fact. A skill's generic confirmation step does not require asking again.
 - Continue runnable independent work while another step awaits access, consent, or an external result. Diagnose recoverable failures, fix discovered in-scope defects, check siblings and consumers, and exercise the full requested workflow before stopping.
