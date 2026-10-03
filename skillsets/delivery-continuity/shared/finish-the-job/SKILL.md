@@ -24,6 +24,21 @@ Do tightly coupled work yourself. Delegate independent work only when authorized
 and useful; do not turn provider preferences or file count into mandatory
 delegation. The coordinator still owns integration and the complete outcome.
 
+## Delivered means the outcome moved
+
+A Ready deployment, a merged PR, or an accepted job trigger proves a mechanism.
+It does not show the user's outcome changed. After shipping anything that feeds
+processing, trigger that processing, then re-measure the same per-entity table
+used for the baseline. A job that has not reported completion is a failure to
+act on now. Report deployed and delivered separately until the table moves.
+
+For any change to how data is processed, answer two questions before merge:
+- How does self-healing detect existing records that need reprocessing or
+  backfill (for example, a rule-version stamp a sweep can compare), and requeue
+  them? Never a manual database script.
+- Does the job fit its runtime limit at production volume, measured or computed
+  from real counts? Per-entity work goes on a queue, not inside one scheduled call.
+
 ## Fix the class
 
 - Reproduce when feasible and tie the diagnosis to source or runtime evidence.

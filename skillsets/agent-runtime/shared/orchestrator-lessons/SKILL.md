@@ -5,7 +5,7 @@ description: >
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
 verify: "test -n \"$HOME\""
-verified: 2026-09-21
+verified: 2026-10-03
 ---
 
 # Lessons an orchestrator keeps having to relearn
@@ -236,3 +236,127 @@ claim about reality and inflating it destroys its only value.
 
 **Check:** Done means accepted. Anything else is In Review, however finished it
 feels.
+
+## Done means the user's data moved, not that the release is Ready
+
+On 2026-10-03 two releases reached production before a noon deadline. Both were
+gated, tree-verified and Ready, with every scheduled job "accepted". The
+per-client numbers barely moved: one producer timed out after 2 of 16 accounts,
+and the improved extraction never ran over the existing backlog. "Ready" and
+"accepted" were reported as delivery for an hour before anyone measured the
+outcome.
+
+**Check:** after every release, trigger the processing it depends on, then
+measure the user-facing outcome (per customer or per entity, the same table as
+the baseline) within 30 minutes. A job that has not reported completion is a
+FAIL to act on now, not "pending". Until that table moves, the release is
+deployed, not delivered.
+
+## Find a gap by tracing one record end to end, in both systems
+
+A storage count showed 0 of 67 work items linked to their source, so the plan
+treated it as a data gap and staffed it. The count read a legacy field. The
+links existed for 70 of 76 items in the graph; the missing piece was the reader
+that displays them. The card that fixed the real gap was not made a release
+blocker.
+
+**Check:** before staffing a gap, pick one representative entity and follow it
+through every stage in BOTH the working reference and your system: source,
+ingest, storage, processing, graph, API, screen. Name the first stage where they
+diverge, and confirm the field you counted is the one the reader actually uses.
+A gap is located when you can show that stage, not when a count is low.
+
+## Use the pipeline you have on the data you have before building new
+
+The reference system looked rich because it had processed its full history. Our
+system processed forward only. The quickest per-customer gains were
+reprocessing existing data through existing code and wiring existing data to the
+screen. Instead the plan spread effort across six new-capability cards, none of
+which could finish by the deadline.
+
+**Check:** rank work by user-visible outcome per hour. Do these first:
+1. Reprocess or backfill existing data through code that already works.
+2. Display data that already exists.
+3. Fix whatever blocks those.
+
+Only after that, build new capability.
+
+## A commitment needs a measured estimate for every card on its path
+
+A noon deadline was promised while every card on the path had "ETA unmeasured".
+Each card also needed serial gate runs of 15–25 minutes, and every failure cost
+another one.
+
+**Check:** before committing a time:
+- Get each card's remaining hours with their basis: tests left, review rounds, gate runs.
+- Add the serial gate cost: number of gates times their duration, plus retries at the observed failure rate.
+- Plan backwards from the deadline.
+
+Anything that doesn't fit gets cut or escalated before the commitment, not
+after it is missed.
+
+## One reading is not a measurement
+
+A single favorable read reported a page at 5.1–5.6 s against 6.4–25.5 s
+before. A fresh paired read measured 6.6–27.1 s against 6.7–28.5 s: no change.
+The first figure had already gone into a business report.
+
+**Check:** performance claims need:
+- paired, interleaved runs of baseline and candidate against the same data;
+- at least three cold and three warm runs each;
+- ranges, not a best case.
+
+If the control has moved since the stored baseline, the stored baseline is void.
+Never publish a figure that was measured once.
+
+## Catch gate failures before the gate
+
+Nearly every PR in one wave failed its expensive gate at least once, for reasons
+that could have been caught locally:
+- three shared docs files that every change must edit;
+- a hand-edited index table with strict formatting;
+- tests that silently read a developer's `.env`;
+- a strict test fake that hung for 30 s on an unscripted read instead of failing.
+
+Each failure cost a 15–25 minute gate run plus a review round.
+
+**Check:** before requesting a gate slot, each worker runs a gate replica in its
+own worktree:
+1. Merge the newest integration branch.
+2. Run conflict detection.
+3. Run the changed directories and their consumers with a clean environment at the gate's concurrency.
+4. Run docs tests and lint.
+
+Treat any file that conflicts on most merges as a design defect. Generate it,
+or split it per area. Strict fakes must throw on unexpected calls, never wait.
+
+## Run the persona check on the PR, and ship what passed
+
+A user-facing change merged without a persona check. Two hours later its 60 s
+timeout surfaced in the release candidate and held every other passed change
+for three hours.
+
+**Check:** a change that touches what a user sees gets its persona check before
+merge, not at release. A release ships what has passed. A card that fails its
+check is pulled from the release, not waited on.
+
+## A processing change states its backfill and its run-time budget
+
+A producer was extended to do per-account generation inside one scheduled
+invocation across every tenant. It had no time budget, by an earlier decision.
+Its old worst case was about 58 s, and the change made it time out. Extraction
+rules changed with no path for existing data.
+
+**Check:** any change to processing must answer two questions in its brief and
+its PR:
+- How will self-healing detect existing data that needs reprocessing or
+  backfill, and requeue it? For example, stamp each processed record with the
+  rule version, so a sweep finds records processed under an older version. Not
+  a manual database script, and not a one-off app feature. Backfill is part of
+  the self-healing policy: reconnect, then detect what the data is missing and
+  treat it.
+- Does the job fit its runtime limit at production volume, measured or computed
+  from real counts?
+
+Per-entity work belongs on a queue with one job per entity, not inside a single
+scheduled call.
