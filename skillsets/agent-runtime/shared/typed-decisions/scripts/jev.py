@@ -15,6 +15,7 @@ Usage:
   jev.py --spec questions.json --state-file packet.json      # full TypeSafe questions map
   ... --record --point review-finding --ref "repo#123 f1"    # also write the decision ledger
   ... --record --point "triage=triage,sev=severity" --ref X  # per-question points; unmapped not recorded
+  ... --peer-answer finding named-defect                      # records comparison with Hermes
 
 Output: one JSON object {model, answers: {id: {type, answer, p|confidence, tier, ...}}}.
 Tiers use the human-set thresholds below until the ledger's outcome history for a
@@ -195,8 +196,9 @@ def agent_id():
     return f"{runtime}:{who}" if who else runtime
 
 
-def record(a, qs, model, answers, latency_ms, tokens):
+def record(a, qs, model, answers, latency_ms, tokens, spend_usd):
     pmap = points(a.point, list(answers))
+    peers = dict(a.peer_answer or [])
     for qid, out in answers.items():
         if qid not in pmap:
             continue
@@ -208,6 +210,10 @@ def record(a, qs, model, answers, latency_ms, tokens):
                "--latency-ms", str(latency_ms), "--batch", str(len(answers))]
         if tokens is not None:
             cmd += ["--tokens", str(tokens)]
+        if spend_usd is not None:
+            cmd += ["--spend-usd", str(spend_usd)]
+        if qid in peers:
+            cmd += ["--agreement", "agreed" if out["answer"] == peers[qid] else "disagreed"]
         r = subprocess.run(cmd, capture_output=True, text=True)
         out["ledger"] = r.stdout.strip() if r.returncode == 0 else f"refused: {r.stderr.strip()[:200]}"
 
@@ -223,6 +229,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=30)
     ap.add_argument("--max-chars", type=int, default=60000)
     ap.add_argument("--record", action="store_true"); ap.add_argument("--point"); ap.add_argument("--ref")
+    ap.add_argument("--peer-answer", nargs=2, action="append", metavar=("ID", "ANSWER"))
     ap.add_argument("--raw", action="store_true", help="print the service response unshaped")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
@@ -232,6 +239,13 @@ def main():
         qs = build_questions(a)
         if a.record:
             points(a.point, list(qs))          # validate the map before spending a call
+        peers = dict(a.peer_answer or [])
+        if set(peers) - set(qs):
+            raise Refused("--peer-answer maps an unknown question")
+        if any(peers[qid] not in qs[qid]["criteria"] for qid in peers if qs[qid]["type"] == "choice"):
+            raise Refused("--peer-answer must be in the question's declared choice space")
+        if any(qs[qid]["type"] != "choice" for qid in peers):
+            raise Refused("--peer-answer is supported for pick-one questions only")
         body = {"state": load_state(a), "model": a.model, "questions": qs}
     except (Refused, OSError, ValueError) as e:
         print(f"jev: refused: {e}", file=sys.stderr); return 2
@@ -249,8 +263,9 @@ def main():
     answers = {qid: shape(ans) for qid, ans in resp.get("answers", {}).items()}
     usage = resp.get("usage") or {}
     tokens = (usage.get("input_tokens", 0) + usage.get("output_tokens", 0)) if usage else None
+    spend_usd = usage.get("cost_usd", usage.get("spend_usd")) if usage else None
     if a.record:
-        record(a, qs, model, answers, latency_ms, tokens)
+        record(a, qs, model, answers, latency_ms, tokens, spend_usd)
     print(json.dumps({"model": model, "answers": answers, "usage": resp.get("usage"),
                       "latency_ms": latency_ms}, indent=1))
     return 0

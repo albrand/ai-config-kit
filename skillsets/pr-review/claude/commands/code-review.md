@@ -91,24 +91,33 @@ Use the operator close-out shape from `pr-review-output-contract.md`. Findings f
 <!-- typed-decisions:begin -->
 ## Typed decisions here
 
-Judge each candidate finding separately, against the diff and ticket, with
-two typed questions:
+The Hermes finding remains the candidate. Jev is an independent second judge,
+not a new filter and not a merge gate.
 
-1. Finding class (pick-one): `compile-or-runtime-break | wrong-changed-path-behavior
-   | broken-contract (auth/data/security/API/env) | missing-required-validation
-   | scoped-instruction-violation | none`. `none` is dropped. That is the
-   high-signal filter, applied as a fixed list rather than a mood.
-2. "Reproduces on the changed path?" (yes/no), backed by evidence. No
-   evidence → not reported.
+Compare five isolated Jev judgments with Hermes' labels: J1 kind (`named-defect
+| evidence-method | unclear`); J2 dedupe (`new | duplicate | not-applicable |
+unclear`) and cause (`delta | pre-existing | unclear`); J3 path (`changed |
+unchanged | unclear`) and severity (`critical | high | medium | low | info |
+unclear`, using the written anchors).
 
-The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
-none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole.
-
-Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
-batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
-evidence, but a Jev `no` on reproduction sends that finding back for a check
-before you report it. Keep code and ticket excerpts minimal, never secret. Contract: the `typed-decisions` skill.
+Create a packet with only `review_ref`, `hermes_verdict`, `sensitive_context`,
+`changed_paths`, and bounded `findings` fields (`id`, `kind`, `path`,
+`severity`, `cause`, `relation`, `prior_id`, `prior_summary`, `changed_path`,
+`summary`). Never send the diff, source excerpt, raw Hermes transcript, prompt,
+secret, or personal data. Mark `sensitive_context` true for patient or other
+personal-data reviews; the helper skips Jev. Give each packet a `review_ref`
+unique to this fleet review invocation (PR, head SHA, and round identifier)
+so re-reviews have separate metrics. Run
+`python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
+A disagreement, missing answer, or failed record is marked `ESCALATED` for the
+coordinator or a Claude review. Agreement never blocks or unblocks merge by
+itself; keep Hermes' verdict and the coordinator's evidence-based decision
+authoritative. When the workflow observes a finding's final adjudication,
+resolve it immediately, including after a merge: `held` if still supported,
+`overturned` if disproved. Resolve each finding separately with the helper's
+`resolve --ref <review_ref> --finding <finding_id> --outcome held|overturned
+--evidence <short-outcome>` command. Do not infer that every finding was held
+because the PR merged. Report metrics with `decision-ledger.py review-report`.
 
 Record it in the decision ledger (`--point review-finding` per finding and `--point pr-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

@@ -155,10 +155,15 @@ python3 $L record --point test-verdict --answer PASS --space "PASS|FAIL|BLOCKED|
 python3 $L resolve --ref "repo@<sha> signup" --point test-verdict \
   --outcome overturned --evidence "signup broken for the same persona on <sha>"
 python3 $L report                                  # overturn rate per point, tier, answer
+python3 $L review-report --days 30                  # Jev/Hermes agreement, spend and latency
+python3 $L resolve-review --ref "repo#123@<sha>" --finding F1 --outcome held \
+  --evidence "finding F1 remained supported after review"
 ```
 
 - **Always put a `--ref` a later agent can find**, such as the PR number,
   SHA, ticket or topic. Resolving goes by ref, since nobody remembers ids.
+- **Resolve each Hermes finding separately** with `--finding <finding_id>`;
+  only decisions carrying that finding marker are resolved.
 - **Resolve when you learn the truth, even about someone else's decision.**
   A finding later refuted, a PASS that later broke, a triage that bounced
   back, a scope verdict the user rejected: each is an `overturned`. A decision
@@ -175,6 +180,10 @@ python3 $L report                                  # overturn rate per point, ti
   `report` lists the flags. Resolve one when you know which it was.
 - The daily agent-hooks run imports, then fails `check` if the ledger is
   corrupt or nothing has been recorded for 14 days.
+- Hermes review judgments use refs beginning `jev-hermes:` and retain only
+  decision labels, bounded measurements, timing, tokens, and optional reported
+  USD cost. `review-report` groups them by review and reports agreement rate,
+  tokens per review, reported USD spend per review, and p50/p95 call latency.
 
 | Decision point | `--point` | Answer space |
 | --- | --- | --- |
