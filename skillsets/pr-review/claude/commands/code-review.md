@@ -107,7 +107,9 @@ Create a packet with only `review_ref`, `hermes_verdict`, `sensitive_context`,
 secret, or personal data. Mark `sensitive_context` true for patient or other
 personal-data reviews; the helper skips Jev. Give each packet a `review_ref`
 unique to this fleet review invocation (PR, head SHA, and round identifier)
-so re-reviews have separate metrics. Run
+so re-reviews have separate metrics. Hermes finding labels stay local to the
+helper for comparison; Jev receives only finding text, prior text, rules, and
+path labels. Run
 `python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
 A disagreement, missing answer, or failed record is marked `ESCALATED` for the
 coordinator or a Claude review. Agreement never blocks or unblocks merge by

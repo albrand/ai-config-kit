@@ -185,6 +185,8 @@ Create a packet with only `review_ref`, `hermes_verdict`, `sensitive_context`,
 secret, or personal data. Mark `sensitive_context` true for patient or other
 personal-data reviews; the helper skips Jev. It rejects unknown packet fields,
 code-like summaries, and common personal-data patterns before making a call.
+The Hermes finding labels stay local to the helper for comparison; Jev receives
+only the finding text, prior text, rules, and path labels.
 Make `review_ref` unique to this `bb fleet validate` invocation, including the
 PR, head SHA, and round identifier, so re-reviews have separate timing and
 spend measurements.

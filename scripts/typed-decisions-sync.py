@@ -110,7 +110,8 @@ severity using written anchors. Use
 Make review_ref unique to this fleet invocation (PR, head SHA, round id) so
 re-reviews have separate metrics.
 The packet contains only bounded finding summaries, rule text, and path/severity
-labels. Never pass a diff, source excerpt, transcript, prompt, secret, or personal
+labels. Keep Hermes classification labels local; Jev receives only finding text,
+prior text, rules, and path labels. Never pass a diff, source excerpt, transcript, prompt, secret, or personal
 data. Sensitive-context packets skip Jev. Agreement is reported; disagreement,
 missing answers, or an unrecorded decision is marked ESCALATED for the
 coordinator or a Claude review. Jev output never blocks or unblocks merge; the

@@ -101,16 +101,19 @@ def validate_packet(packet):
             "changed_path": finding["changed_path"],
             "summary": safe_summary(finding["summary"]),
         })
+    independent_items = [{"id": item["id"], "path": item["path"],
+                          "prior_summary": item["prior_summary"], "summary": item["summary"]}
+                         for item in clean]
     state = {
         "rules": {
-            "j1": "Classify the bounded finding as a named defect, an evidence or method objection, or unclear.",
-            "j2_duplicate": "Compare only the current and prior bounded finding summaries; decide new, duplicate, not-applicable, or unclear.",
-            "j2_cause": "Classify whether the finding is caused by this delta, pre-existing, or unclear using only the supplied labels and summaries.",
+            "j1": "Classify the bounded finding summary as a named defect, an evidence or method objection, or unclear. Do not infer a prior reviewer label.",
+            "j2_duplicate": "Compare only the current and prior bounded finding summaries; decide new, duplicate, not-applicable when prior_summary is empty, or unclear.",
+            "j2_cause": "Classify whether the described finding is caused by this delta, pre-existing, or unclear using only the supplied summaries.",
             "j3_path": "Classify whether the finding path appears in changed_paths, or unclear.",
             "j3_severity": "critical=data loss/auth bypass; high=major security/data/workflow impact; medium=material broken behavior with workaround; low=limited impact; info=non-defect observation; unclear=insufficient facts.",
         },
         "changed_paths": clean_paths,
-        "items": clean,
+        "items": independent_items,
     }
     if len(json.dumps(state, separators=(",", ":")).encode()) > MAX_PACKET_BYTES:
         raise ValueError("bounded review packet exceeds the size limit")
@@ -126,7 +129,7 @@ def build_questions(findings):
     for finding in findings:
         for key, (point, options) in POINTS.items():
             qid = f"f{finding['id']}_{key}"
-            question = f"For finding {finding['id']}, answer the {key} rule from the declared state. Use only its finding summary and labels."
+            question = f"For finding {finding['id']}, answer the {key} rule from the declared state. Do not rely on another reviewer's classification."
             questions.extend(("--pick", qid, question, options))
             points.append(f"{qid}={point}")
             peer_key = {"j1": "kind", "j2_duplicate": "relation", "j2_cause": "cause",

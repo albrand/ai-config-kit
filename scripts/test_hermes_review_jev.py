@@ -49,6 +49,7 @@ class HermesReviewJevTest(unittest.TestCase):
             " if arg == '--pick': answers[args[i+1]]={'answer':args[i+3].split('|')[0].split('=')[0],'ledger':'decision-id'}\n"
             " if arg == '--peer-answer': answers[args[i+1]]={'answer':args[i+2],'ledger':'decision-id'}\n"
             "if os.environ.get('JEV_TEST_DISAGREE') == '1': answers['fF1_j1']['answer']='evidence-method'\n"
+            "if os.environ.get('JEV_TEST_SPLIT') == '1': answers['fF1_j3_severity']['answer']='info'\n"
             "print(json.dumps({'model':'test','answers':answers,'usage':{'input_tokens':20,'output_tokens':5},'latency_ms':30}))\n",
             encoding="utf-8",
         )
@@ -61,10 +62,14 @@ class HermesReviewJevTest(unittest.TestCase):
             with patch.dict(os.environ, {"JEV_TEST_CAPTURE": str(capture)}):
                 result = review_jev.run_judge(review_jev.validate_packet(value), client)
             payload = capture.read_text(encoding="utf-8")
+            state = json.loads(payload)
             self.assertEqual(result["status"], "AGREEMENT")
             self.assertIn("Changed review handling", payload)
             self.assertNotIn("diff", payload.lower())
             self.assertNotIn("source_excerpt", payload)
+            self.assertEqual(set(state["items"][0]), {"id", "path", "prior_summary", "summary"})
+            self.assertNotIn("hermes_verdict", state)
+            self.assertFalse({"kind", "severity", "cause", "relation", "changed_path"} & set(state["items"][0]))
 
     def test_raw_diff_or_source_excerpt_fields_are_rejected(self):
         for field in ("diff", "source_excerpt", "project_source"):
@@ -100,6 +105,20 @@ class HermesReviewJevTest(unittest.TestCase):
                 result = review_jev.run_judge(review_jev.validate_packet(packet()), client)
             self.assertEqual(result["status"], "ESCALATED")
             self.assertEqual(result["hermes_verdict"], "revise")
+
+    def test_split_judgments_record_independently_and_escalate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client, capture = self.fake_client(directory)
+            with patch.dict(os.environ, {"JEV_TEST_CAPTURE": str(capture), "JEV_TEST_SPLIT": "1"}):
+                result = review_jev.run_judge(review_jev.validate_packet(packet()), client)
+            item = result["items"][0]
+            self.assertEqual(result["status"], "ESCALATED")
+            self.assertEqual(item["answers"]["j1"], "named-defect")
+            self.assertEqual(item["answers"]["j3_severity"], "info")
+            self.assertTrue(item["recorded"])
+            self.assertEqual(len(item["refs"]), 5)
+            self.assertIn("#fF1_j1", item["refs"][0])
+            self.assertIn("#fF1_j3_severity", item["refs"][-1])
 
     def test_sensitive_context_skips_jev(self):
         value = packet()
