@@ -216,6 +216,21 @@ RULES: dict[str, re.Pattern[str]] = {
         r"delegates? never.{0,200}add dependencies.{0,100}without a new master decision|"
         r"no architecture changes, new deps,.{0,180}without a new master decision)"
     ),
+    "sidecar-no-secrets-or-broad-private-context": re.compile(
+        r"(?is)never send secrets or broad private context to (?:any )?sidecars?"
+    ),
+    "provider-policy-refusal-and-sandbox-block-final": re.compile(
+        r"(?is)hard sandbox/guardian/DLP block must be reported exactly.{0,100}"
+        r"provider policy refusal is final.{0,100}continue only independently authorized local work"
+    ),
+    "opencode-workers-no-recursive-delegation": re.compile(
+        r"(?is)OpenCode workers never recursively delegate.{0,80}"
+        r"coordinator owns integration and final validation"
+    ),
+    "route-hold-no-send-now-bypass": re.compile(
+        r"(?is)never bypass an active fleet route hold with [“\"`]Send now[”\"`].{0,100}"
+        r"wait for verified handover or report the hold"
+    ),
     "hermes-broker-delegation-default-off": re.compile(
         r"(?is)(?:Hermes/cmux broker delegation|Broker(?: \(Hermes/cmux\))? lane delegation) defaults off"
     ),
@@ -499,6 +514,10 @@ OPTIONAL_WHEN_ABSENT = {
     "child-thread-cap-host-capacity",
     "child-cap-distinct-opencode-instance-cap",
     "delegate-no-unapproved-dependencies",
+    "sidecar-no-secrets-or-broad-private-context",
+    "provider-policy-refusal-and-sandbox-block-final",
+    "opencode-workers-no-recursive-delegation",
+    "route-hold-no-send-now-bypass",
     "hermes-broker-delegation-default-off",
     "hermes-broker-concurrency-depth-one",
     "hermes-broker-model-call-explicit-activation",
@@ -613,6 +632,10 @@ KIT_BASELINE_RULES = {
     "browser-enumerate-before-open", "browser-leak-readonly-only",
     "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
     "hermes-no-reverse-ssh", "delegate-no-unapproved-dependencies",
+    "sidecar-no-secrets-or-broad-private-context",
+    "provider-policy-refusal-and-sandbox-block-final",
+    "opencode-workers-no-recursive-delegation",
+    "route-hold-no-send-now-bypass",
     "hermes-no-cmux-capability-export", "hermes-broker-delegation-default-off",
     "browser-prompts-cannot-bypass-quarantine", "browser-lifecycle-ops-noncreating",
     "child-cap-distinct-opencode-instance-cap", "browser-never-access-unowned",
@@ -677,10 +700,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "dadf571ab794b9ad1044965533f1d86ba320022f2120de244375bb93b440d791": "proposal-claude",
-    "88dbf9327a772301aecc03baea87613ca8161c8f17687daf48429e8f25464093": "proposal-codex",
-    "8782ff2a2b448e5403f5c36f44059ed039958127069a1a6db0d20aedd6361f6a": "proposal-opencode",
-    "b819ae2f146f2d9336765004403f13ccebdcd4c4e168ab3d8b6e64ce0864696c": "proposal-bb",
+    "a6af822320f1bc7af0f73de5ec740861a363f5a6c0e8d312575474bc1a28b69d": "proposal-claude",
+    "6345c59c8c1db69db95d160c34bd58ffd6ac8190f01b222e1ba3d900226049f4": "proposal-codex",
+    "53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385": "proposal-opencode",
+    "4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab": "proposal-bb",
 }
 
 

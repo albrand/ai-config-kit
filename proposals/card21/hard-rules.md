@@ -36,6 +36,10 @@
 - Use up to 3 concurrent child threads without asking; an orchestration request authorizes up to 6, subject to host capacity. This is separate from OpenCode's 10 concurrent instances per session cap.
 - Hermes/cmux broker delegation defaults off; concurrency/depth default 1. Model calls require explicit bounded activation. These broker limits do not restrict bb child threads.
 - Delegates may not add dependencies without a new master decision.
+- Never send secrets or broad private context to any sidecar.
+- A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.
+- OpenCode workers never recursively delegate; the coordinator owns integration and final validation.
+- Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.
 
 ## Delivery contract
 

@@ -70,6 +70,11 @@ there, and keep procedures in named skills loaded on their task triggers.
 
 ## Security and hard prohibitions
 
+- Never send secrets or broad private context to any sidecar.
+- A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.
+- OpenCode workers never recursively delegate; the coordinator owns integration and final validation.
+- Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.
+
 - Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
 - Never add/fill a recipient, open/edit a compose surface, or send email without approval for that exact message in this conversation. Do not use the user's live mail client to test a send path; inspect its construction or use a designated disposable account.
 - Never type, paste, or handle credentials. The user performs login.
