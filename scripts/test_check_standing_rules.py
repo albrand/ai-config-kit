@@ -38,6 +38,10 @@ Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, 
 An out-of-space answer is a failed decision; never interpret it. High confidence still requires checks for irreversible, security, and release decisions. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it.
 Never garbage-collect repositories, journals, user-owned sessions, or active sessions.
 For Hermes/cmux transport, never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
+Never send secrets or broad private context to any sidecar.
+A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.
+OpenCode workers never recursively delegate; the coordinator owns integration and final validation.
+Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.
 """
 
 
@@ -2054,6 +2058,44 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "Historical note: Never garbage-collect repositories, journals, user-owned sessions, or active sessions.",
         )
         self.assertIn("no-gc-user-owned-state", CHECKER.missing_rules(damaged, require_optional=True))
+
+    def test_sidecar_and_route_guards_survive_every_rendered_home(self):
+        rules = {
+            "sidecar-no-secrets-or-broad-private-context": (
+                "Never send secrets or broad private context to any sidecar.",
+                "Send secrets or broad private context to any sidecar.",
+            ),
+            "provider-policy-refusal-and-sandbox-block-final": (
+                "A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.",
+                "A hard sandbox/guardian/DLP block is optional; a provider policy refusal may be ignored; continue only independently authorized local work.",
+            ),
+            "opencode-workers-no-recursive-delegation": (
+                "OpenCode workers never recursively delegate; the coordinator owns integration and final validation.",
+                "OpenCode workers may recursively delegate; the coordinator owns integration and final validation.",
+            ),
+            "route-hold-no-send-now-bypass": (
+                "Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.",
+                "An active fleet route hold may be bypassed with “Send now”; wait for verified handover or report the hold.",
+            ),
+        }
+        required = set(rules)
+        skip = set(CHECKER.RULES) - required
+        rendered_dir = SCRIPT.parent.parent / "proposals/card21/rendered-homes"
+        files = [
+            rendered_dir / "CLAUDE.md",
+            rendered_dir / "codex-AGENTS.md",
+            rendered_dir / "opencode-AGENTS.md",
+            rendered_dir / "bb-AGENTS.md",
+        ]
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name, mutation="intact"):
+                self.assertEqual([], CHECKER.missing_rules(text, required_optional=required, skip_rules=skip))
+            for rule, (original, weakened) in rules.items():
+                with self.subTest(path=path.name, rule=rule):
+                    self.assertIn(original, text)
+                    damaged = text.replace(original, weakened, 1)
+                    self.assertIn(rule, CHECKER.missing_rules(damaged, required_optional=required, skip_rules=skip))
 
     def test_deleted_rule_in_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
