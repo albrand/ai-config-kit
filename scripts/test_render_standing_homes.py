@@ -29,6 +29,68 @@ class CommittedSnapshotTests(unittest.TestCase):
             with self.subTest(home=name):
                 self.assertEqual((snapshots / filename).read_text(encoding="utf-8"), RENDERER.rendered(name))
 
+    def test_manifest_records_the_complete_current_render_fingerprint_profile(self) -> None:
+        manifest = RENDERER.load_expected_hash_profiles()
+        expected = {
+            key: hashlib.sha256(RENDERER.rendered(key).encode("utf-8")).hexdigest()
+            for key in RENDERER.NAMES
+        }
+
+        self.assertGreaterEqual(len(manifest), 2, "keep both the installed baseline and current render")
+        self.assertEqual(expected, manifest[-1])
+
+    def test_installer_accepts_only_a_complete_known_home_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = {key: root / key / "AGENTS.md" for key in RENDERER.TARGETS}
+            old_profile = {}
+            current_profile = {}
+            outputs = {key: f"installed {key}\n" for key in targets}
+            for key, target in targets.items():
+                target.parent.mkdir()
+                old = f"old {key}\n".encode()
+                current = f"current {key}\n".encode()
+                target.write_bytes(current)
+                old_profile[key] = hashlib.sha256(old).hexdigest()
+                current_profile[key] = hashlib.sha256(current).hexdigest()
+
+            RENDERER.install_homes(
+                targets,
+                outputs,
+                [old_profile, current_profile],
+                stamp="known-current-profile",
+            )
+
+            self.assertEqual(outputs, {key: target.read_text(encoding="utf-8") for key, target in targets.items()})
+
+    def test_installer_rejects_a_mixture_of_known_home_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = {key: root / key / "AGENTS.md" for key in RENDERER.TARGETS}
+            old_profile = {}
+            current_profile = {}
+            outputs = {key: f"installed {key}\n" for key in targets}
+            originals = {}
+            for index, (key, target) in enumerate(targets.items()):
+                target.parent.mkdir()
+                old = f"old {key}\n".encode()
+                current = f"current {key}\n".encode()
+                contents = old if index == 0 else current
+                target.write_bytes(contents)
+                originals[key] = contents
+                old_profile[key] = hashlib.sha256(old).hexdigest()
+                current_profile[key] = hashlib.sha256(current).hexdigest()
+
+            with self.assertRaisesRegex(ValueError, "complete recorded profile"):
+                RENDERER.install_homes(
+                    targets,
+                    outputs,
+                    [old_profile, current_profile],
+                    stamp="mixed-profile",
+                )
+
+            self.assertEqual(originals, {key: target.read_bytes() for key, target in targets.items()})
+
 
 class InstallPreflightTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -578,15 +640,16 @@ class InstallPreflightTests(unittest.TestCase):
     def test_fingerprint_manifest_rejects_duplicate_home_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hashes.md"
-            row = "| Claude | " + "a" * 64 + " |\n"
+            row = "| Claude | `" + "a" * 64 + "` |\n"
             path.write_text(
-                row + "| Codex | " + "b" * 64 + " |\n"
+                "### Accepted live profile: duplicate test\n"
+                + row + "| Codex | " + "b" * 64 + " |\n"
                 + "| OpenCode | " + "c" * 64 + " |\n"
                 + "| bb | " + "d" * 64 + " |\n" + row,
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ValueError, "exactly one fingerprint per home"):
+            with self.assertRaisesRegex(ValueError, "duplicate Claude fingerprint"):
                 RENDERER.load_expected_hashes(path)
 
 

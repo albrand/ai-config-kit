@@ -161,17 +161,54 @@ def write_atomic(path: Path, content: str) -> None:
     os.replace(temp_path, path)
 
 
-def parse_expected_hashes(text: str, source: str = "fingerprint manifest") -> dict[str, str]:
-    rows = re.findall(r"(?m)^\| (Claude|Codex|OpenCode|bb) \| `([0-9a-fA-F]{64})` \|$", text)
-    found = {name: digest.lower() for name, digest in rows}
+def parse_expected_hash_profiles(
+    text: str, source: str = "fingerprint manifest"
+) -> list[dict[str, str]]:
+    """Read complete, explicitly accepted home profiles from the manifest."""
+    profiles: list[dict[str, str]] = []
+    profile_rows: dict[str, str] | None = None
+    for line in text.splitlines():
+        if line.startswith("### "):
+            if profile_rows is not None:
+                profiles.append(profile_rows)
+            profile_rows = (
+                {}
+                if re.match(r"^### (?:Accepted live profile|Current rendered profile): .+$", line)
+                else None
+            )
+            continue
+        if profile_rows is None:
+            continue
+        row = re.match(r"^\| (Claude|Codex|OpenCode|bb) \| `([0-9a-fA-F]{64})` \|$", line)
+        if row:
+            name, digest = row.groups()
+            if name in profile_rows:
+                raise ValueError(f"duplicate {name} fingerprint in {source}")
+            profile_rows[name] = digest.lower()
+    if profile_rows is not None:
+        profiles.append(profile_rows)
     expected_names = set(HASH_NAMES.values())
-    if len(rows) != 4 or set(found) != expected_names:
-        raise ValueError(f"expected exactly one fingerprint per home in {source}; found {sorted(found)}")
-    return {key: found[name] for key, name in HASH_NAMES.items()}
+    if not profiles or any(set(profile) != expected_names for profile in profiles):
+        raise ValueError(f"expected complete four-home fingerprint profiles in {source}")
+    return [
+        {key: profile[name] for key, name in HASH_NAMES.items()}
+        for profile in profiles
+    ]
+
+
+def parse_expected_hashes(text: str, source: str = "fingerprint manifest") -> dict[str, str]:
+    """Compatibility helper returning the first accepted complete profile."""
+    return parse_expected_hash_profiles(text, source)[0]
 
 
 def load_expected_hashes(path: Path = ROOT / "proposals/card21/live-home-hashes.md") -> dict[str, str]:
     return parse_expected_hashes(path.read_text(encoding="utf-8"), str(path))
+
+
+def load_expected_hash_profiles(
+    path: Path = ROOT / "proposals/card21/live-home-hashes.md",
+) -> list[dict[str, str]]:
+    return parse_expected_hash_profiles(path.read_text(encoding="utf-8"), str(path))
 
 
 def _digest(data: bytes) -> str:
@@ -279,19 +316,30 @@ def _backup_paths(targets: dict[str, Path], stamp: str) -> dict[str, Path]:
 def _install_homes(
     targets: dict[str, Path],
     outputs: dict[str, str],
-    expected_hashes: dict[str, str],
+    expected_hashes: dict[str, str] | list[dict[str, str]],
     *,
     stamp: str | None = None,
 ) -> dict[str, Path]:
     """Install only when every target matches its recorded fingerprint."""
+    expected_profiles = [expected_hashes] if isinstance(expected_hashes, dict) else expected_hashes
     before: dict[str, bytes] = {}
+    actual_hashes: dict[str, str] = {}
     for key, target in targets.items():
         if not target.is_file() or target.is_symlink():
             raise ValueError(f"unsafe target: {target}")
         data = target.read_bytes()
-        if _digest(data) != expected_hashes[key]:
-            raise ValueError(f"fingerprint mismatch: {target}")
         before[key] = data
+        actual_hashes[key] = _digest(data)
+    expected_hashes = next(
+        (
+            profile
+            for profile in expected_profiles
+            if all(actual_hashes[key] == profile.get(key) for key in targets)
+        ),
+        None,
+    )
+    if expected_hashes is None:
+        raise ValueError("fingerprint mismatch: live homes do not match a complete recorded profile")
 
     backup_paths = _backup_paths(targets, stamp or datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f%z"))
     reserved: list[tuple[str, int]] = []
@@ -390,7 +438,7 @@ def install_from_sources(
         if approved_outputs != candidate_outputs:
             raise ValueError("rendered install payload differs from pinned origin/main sources")
         manifest = approved_sources["proposals/card21/live-home-hashes.md"].decode("utf-8")
-        expected_hashes = parse_expected_hashes(manifest, "pinned origin/main manifest")
+        expected_hashes = parse_expected_hash_profiles(manifest, "pinned origin/main manifest")
         return _install_homes(targets, approved_outputs, expected_hashes)
 
 
