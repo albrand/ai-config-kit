@@ -101,24 +101,21 @@ For pure classification, Jev (`typed-decisions` section 10) is faster and cheape
 delegate and returns the typed answer natively. Prefer it unless the decision
 needs reasoning or tools.""",
 
-"pr-review": """Judge each candidate finding separately, against the diff and ticket, with
-two typed questions:
-
-1. Finding class (pick-one): `compile-or-runtime-break | wrong-changed-path-behavior
-   | broken-contract (auth/data/security/API/env) | missing-required-validation
-   | scoped-instruction-violation | none`. `none` is dropped. That is the
-   high-signal filter, applied as a fixed list rather than a mood.
-2. "Reproduces on the changed path?" (yes/no), backed by evidence. No
-   evidence → not reported.
-
-The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
-none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole.
-
-Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
-batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
-evidence, but a Jev `no` on reproduction sends that finding back for a check
-before you report it. Keep code and ticket excerpts minimal, never secret.""",
+"pr-review": """After `bb fleet validate` returns, compare Hermes' finding labels with an
+independent Jev judgment. Batch five atomic questions per finding: J1 classifies
+named-defect/evidence-method/unclear; J2 checks duplicate/new/not-applicable
+and delta/pre-existing/unclear; J3 checks changed-path/unchanged/unclear and
+severity using written anchors. Use
+`~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
+Make review_ref unique to this fleet invocation (PR, head SHA, round id) so
+re-reviews have separate metrics.
+The packet contains only bounded finding summaries, rule text, and path/severity
+labels. Keep Hermes classification labels local; Jev receives only finding text,
+prior text, rules, and path labels. Never pass a diff, source excerpt, transcript, prompt, secret, or personal
+data. Sensitive-context packets skip Jev. Agreement is reported; disagreement,
+missing answers, or an unrecorded decision is marked ESCALATED for the
+coordinator or a Claude review. Jev output never blocks or unblocks merge; the
+Hermes verdict and coordinator decision remain authoritative.""",
 
 "security-sweep": """The refute pass is one separate yes/no per candidate, judged without seeing
 the other candidates: "exploitable on the target path after existing

@@ -2,8 +2,12 @@
 """Focused regression test for the Jev connector request contract."""
 
 import importlib.util
+import argparse
+import contextlib
+import io
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -57,6 +61,44 @@ class JevRequestContractTest(unittest.TestCase):
         self.assertEqual(request.headers.get("User-agent"), "TypeSafeJev/1.0")
         self.assertEqual(request.get_header("Authorization"), "Bearer synthetic-key")
         self.assertEqual(request.headers.get("Content-type"), "application/json")
+
+    def test_record_attaches_peer_agreement_and_usage_cost(self):
+        commands = []
+
+        def fake_run(command, **_):
+            commands.append(command)
+            return type("Result", (), {"returncode": 0, "stdout": "decision-id", "stderr": ""})()
+
+        args = argparse.Namespace(point="q=hermes-finding-kind", peer_answer=[("q", "named-defect")], ref="jev-hermes:pr-17:c01")
+        questions = {"q": {"type": "choice", "criteria": {"named-defect": "", "evidence-method": "", "unclear": ""}}}
+        answers = {"q": {"answer": "named-defect", "tier": "high", "confidence": 0.91}}
+        with patch.object(jev.subprocess, "run", fake_run):
+            jev.record(args, questions, "synthetic-jev", answers, 30, 25, 0.001)
+
+        self.assertIn(["--agreement", "agreed"], [commands[0][index:index + 2] for index in range(len(commands[0]) - 1)])
+        self.assertIn(["--spend-usd", "0.001"], [commands[0][index:index + 2] for index in range(len(commands[0]) - 1)])
+        self.assertIn("system-one", commands[0])
+        self.assertIn("jev-hermes:pr-17:c01", commands[0])
+
+    def test_peer_labels_are_not_sent_in_the_typesafe_request(self):
+        state = {"rules": {"j1": "classify"}, "items": [{"id": "F1", "summary": "A bounded finding."}]}
+        bodies = []
+        response = {"model": "synthetic-jev", "answers": {"fF1_j1": {
+            "type": "choice", "choice": "evidence-method", "confidence": 0.9,
+        }}}
+        argv = ["jev.py", "--state-file", "-", "--pick", "fF1_j1", "classify", "named-defect|evidence-method|unclear",
+                "--peer-answer", "fF1_j1", "named-defect"]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(sys, "stdin", io.StringIO(json.dumps(state))),
+            patch.object(jev, "call", lambda body, timeout: bodies.append(body) or response),
+            patch.object(jev, "record"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(jev.main(), 0)
+        self.assertEqual(bodies[0]["state"], state)
+        self.assertNotIn("peer_answer", bodies[0])
+        self.assertNotIn("named-defect", json.dumps(bodies[0]["state"]))
 
 
 if __name__ == "__main__":
