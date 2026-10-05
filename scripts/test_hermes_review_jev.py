@@ -101,6 +101,18 @@ class HermesReviewJevTest(unittest.TestCase):
             self.assertEqual(result["hermes_verdict"], "revise")
             self.assertTrue(result["items"][0]["recorded"])
 
+    def test_j2_dedupe_and_cause_are_separate_recorded_decisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client, capture = self.fake_client(directory)
+            with patch.dict(os.environ, {"JEV_TEST_CAPTURE": str(capture)}):
+                result = review_jev.run_judge(review_jev.validate_packet(packet()), client)
+            item = result["items"][0]
+            self.assertEqual(item["answers"]["j2_duplicate"], "new")
+            self.assertEqual(item["answers"]["j2_cause"], "delta")
+            self.assertTrue(item["recorded"])
+            self.assertTrue(any("#fF1_j2_duplicate" in ref for ref in item["refs"]))
+            self.assertTrue(any("#fF1_j2_cause" in ref for ref in item["refs"]))
+
     def test_synthetic_disagreement_escalates_without_changing_hermes_verdict(self):
         with tempfile.TemporaryDirectory() as directory:
             client, capture = self.fake_client(directory)
