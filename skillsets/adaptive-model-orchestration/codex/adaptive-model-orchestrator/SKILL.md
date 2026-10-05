@@ -22,8 +22,8 @@ Hermes's own config.
    authentication, data-loss, release, and final-review work on Claude. Do not
    send bulk work to Claude.
 4. Run Hermes PR review through `bb fleet validate` using Codex (model set in
-   Hermes's own config) once that replacement is verified there. Until then,
-   preserve Hermes's current working review route. Hermes reviews; it does not
+   Hermes's own config) once verified there. Until then, preserve Hermes's
+   current working review route. Hermes reviews; it does not
    execute changes.
 5. Do not pass a `--model` override to `acp-hermes-agent`. Never place or retain
    project source on Hermes; pass only bounded review context through the

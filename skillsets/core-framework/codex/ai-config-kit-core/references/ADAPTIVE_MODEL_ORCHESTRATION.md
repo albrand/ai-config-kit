@@ -72,7 +72,7 @@ exists.
   summarization, and mechanical checks.
 - Claude: handles architecture, security, authentication, data-loss, release,
   and final review. It does not take bulk execution work.
-- Hermes: provides an independent PR review through Codex (model set in Hermes's own config); it does not execute changes and must never receive project source. Keep its current working route until that replacement is verified.
+- Hermes: provides an independent PR review through Codex (model set in Hermes's own config); it does not execute changes and must never receive project source. Keep its current working route until Codex (model set in Hermes's own config) is verified there.
 - OpenCode: legacy and opt-in only; it is not a default route. Never select GLM.
 
 Every delegated unit needs a compact brief: the original request as a faithful

@@ -189,7 +189,7 @@ evidence. Do not invent a board prerequisite for unrelated local work.
   for architecture, security, authentication, data-loss, release, and final
   review. Never send bulk work to Claude or route ordinary tasks through GLM.
   Hermes PR reviews use Codex (model set in Hermes's own config) once verified;
-  keep its current working route until that replacement is confirmed there.
+  keep its current working route until that route is confirmed there.
   Fall back to single-agent self-critique when a required route is unavailable
   or blocked.
 - Directive, planning, architecture, or challenge/advisor briefs must print this

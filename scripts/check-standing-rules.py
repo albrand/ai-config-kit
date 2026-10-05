@@ -677,10 +677,10 @@ LIVE_HOME_SHA256 = {
     "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
 }
 INSTALLED_HOME_SHA256 = {
-    "06b07663ef10647f94ebd9b98a58bf3aa477cc573cdb2e67e7fde74481cd0ccf": "proposal-claude",
-    "3d97bfa8790fccb96f61920e8c7b67a57b07a818f13fa0749a4352ebcce791c3": "proposal-codex",
+    "dadf571ab794b9ad1044965533f1d86ba320022f2120de244375bb93b440d791": "proposal-claude",
+    "88dbf9327a772301aecc03baea87613ca8161c8f17687daf48429e8f25464093": "proposal-codex",
     "8782ff2a2b448e5403f5c36f44059ed039958127069a1a6db0d20aedd6361f6a": "proposal-opencode",
-    "8df13a9b45b28cf03e3f170f240683618ea8c347f5d458a54688b9593d464d16": "proposal-bb",
+    "b819ae2f146f2d9336765004403f13ccebdcd4c4e168ab3d8b6e64ce0864696c": "proposal-bb",
 }
 
 

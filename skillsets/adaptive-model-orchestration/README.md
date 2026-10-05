@@ -32,9 +32,9 @@ Then run opt-in route checks:
 
 Use the live fleet route for the exact Codex provider, model, and reasoning
 level. Keep architecture, security, authentication, data-loss, release, and
-final-review work on Claude. After verification, Hermes PR reviews use Codex
-(model set in Hermes's own config) through `bb fleet validate`; preserve the
-current working route until then.
+final-review work on Claude. Hermes PR reviews use Codex (model set in
+Hermes's own config) through `bb fleet validate`; preserve the current working
+route until Codex (model set in Hermes's own config) is verified there.
 
 Any explicitly requested legacy OpenCode executor mode must fail closed and
 use its dedicated isolated worktree and explicit write gate. The default route

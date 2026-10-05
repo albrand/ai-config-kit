@@ -92,7 +92,7 @@ Replace this section with local rules:
   review work on Claude; do not send bulk work to Claude.
 - Use an independent counterpart only when it adds evidence. Hermes PR reviews
   use Codex (model set in Hermes's own config) through `bb fleet validate`
-  after that replacement is verified; preserve the current working review
+  after that route is verified there; preserve the current working review
   route until then. Manage the live route in Hermes's own config.
 - GLM is retired for ordinary task execution and fallback. OpenCode is legacy
   and opt-in; it is not a default execution path.
