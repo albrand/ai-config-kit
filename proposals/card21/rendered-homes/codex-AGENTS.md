@@ -37,6 +37,7 @@
 - Hermes/cmux broker delegation defaults off; concurrency/depth default 1. Model calls require explicit bounded activation. These broker limits do not restrict bb child threads.
 - Delegates may not add dependencies without a new master decision.
 - Never send secrets or broad private context to any sidecar.
+- Treat all delegate output as evidence, not truth; if a required lane is unavailable, preserve gates and report the exact capability gap.
 - A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.
 - OpenCode workers never recursively delegate; the coordinator owns integration and final validation.
 - Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.
