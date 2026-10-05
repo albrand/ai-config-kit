@@ -91,15 +91,14 @@ Jev (`typed-decisions` section 10) is a cheap extra reviewer for the per-finding
 packet, isolated, calibrated. Count it toward agreement. Never let it replace
 a reviewer on a release or security verdict.""",
 
-"delegating-to-glm": """When the delegated job is a decision (classify, triage, pass/fail, does this
+"codex-delegation": """When the delegated job is a decision (classify, triage, pass/fail, does this
 reproduce), put the declared answer space in the brief and require
 `{question, answer, evidence, confidence_source}` back. An answer outside the
 space, or a confidence resting only on the delegate's own opinion, is a
 failed delegate. Re-ask or escalate.
 
-For pure classification, Jev (`typed-decisions` section 10) is faster and cheaper than a GLM
-delegate and returns the typed answer natively. Prefer it unless the decision
-needs reasoning or tools.""",
+For pure classification, Jev (`typed-decisions` section 10) returns the typed
+answer natively. Prefer it unless the decision needs reasoning or tools.""",
 
 "pr-review": """Judge each candidate finding separately, against the diff and ticket, with
 two typed questions:
@@ -176,8 +175,8 @@ TARGETS = {
     # shared kit skills reach every home through scripts/publish.mjs
     "reviewing-with-an-agent": [f"{KIT}/skillsets/agent-runtime/shared/reviewing-with-an-agent/SKILL.md"]
                                + homes("reviewing-with-an-agent"),
-    "delegating-to-glm": [f"{KIT}/skillsets/agent-runtime/shared/delegating-to-glm/SKILL.md"]
-                         + homes("delegating-to-glm"),
+    "codex-delegation": [f"{KIT}/skillsets/agent-runtime/shared/codex-delegation/SKILL.md"]
+                         + homes("codex-delegation"),
     "pr-review": [f"{KIT}/skillsets/pr-review/codex/high-signal-pr-review/SKILL.md",
                   f"{KIT}/skillsets/pr-review/claude/commands/code-review.md",
                   "~/.claude/commands/code-review.md"] + homes("high-signal-pr-review"),
@@ -212,7 +211,7 @@ RECORD = {
     "finish-the-job": "`--point done` with the computed answer",
     "scope-advisor": "`--point scope-verdict`",
     "reviewing-with-an-agent": "`--point review-finding` per finding",
-    "delegating-to-glm": "the delegate's decision under its own point",
+    "codex-delegation": "the delegate's decision under its own point",
     "pr-review": "`--point review-finding` per finding and `--point pr-verdict`",
     "security-sweep": "`--point security-finding` per candidate",
     "plan-arbiter": "`--point route`",

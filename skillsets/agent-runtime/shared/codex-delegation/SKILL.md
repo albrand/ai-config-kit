@@ -9,8 +9,10 @@ verified: 2026-10-05
 
 Bounded and bulk execution uses the live verified Codex route. Quality-critical
 architecture, security, authentication, data-loss, release, and final-review
-work stays on Claude; do not send bulk work to Claude. GLM is permanently
-retired and must not be selected as a worker or fallback.
+work stays on Claude; do not send bulk work to Claude. GLM is retired for
+ordinary execution and fallback. Keep Hermes's current review route working
+until Codex (model set in Hermes's own config) is verified there; manage the
+live route change in Hermes's own config.
 
 1. Resolve the current Codex provider, model, and reasoning level from the live
    route. Do not copy a stale model ID or invoke an untracked subprocess.
@@ -27,7 +29,8 @@ retired and must not be selected as a worker or fallback.
    checks, resolve disagreements against source, and keep final integration and
    validation with the coordinator.
 
-For Hermes PR review, use `bb fleet validate` on the Codex review route with
-bounded evidence. Never pass a `--model` override to `acp-hermes-agent`. Never
-place or retain project source on Hermes; send only bounded review context via
-the approved broker.
+For Hermes PR review, use `bb fleet validate` with bounded evidence. After its
+replacement is verified, the route uses Codex (model set in Hermes's own
+config). Never pass a `--model` override to `acp-hermes-agent`. Never place or
+retain project source on Hermes; send only bounded review context via the
+approved broker.

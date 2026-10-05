@@ -91,9 +91,11 @@ Replace this section with local rules:
   Keep architecture, security, authentication, data-loss, release, and final
   review work on Claude; do not send bulk work to Claude.
 - Use an independent counterpart only when it adds evidence. Hermes PR reviews
-  run on Codex through `bb fleet validate` with bounded review context.
-- Do not use GLM or a GLM-backed Hermes route. OpenCode is legacy and opt-in;
-  it is not a default execution path.
+  use Codex (model set in Hermes's own config) through `bb fleet validate`
+  after that replacement is verified; preserve the current working review
+  route until then. Manage the live route in Hermes's own config.
+- GLM is retired for ordinary task execution and fallback. OpenCode is legacy
+  and opt-in; it is not a default execution path.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer a supported limit of 16 concurrent threads unless local
   policy sets a stricter limit.

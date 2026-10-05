@@ -187,8 +187,11 @@ evidence. Do not invent a board prerequisite for unrelated local work.
   architecture critique through another model or counterpart when available and
   useful. Use the verified Codex route for bounded or bulk execution and Claude
   for architecture, security, authentication, data-loss, release, and final
-  review. Never send bulk work to Claude or route work through GLM. Fall back to
-  single-agent self-critique when a required route is unavailable or blocked.
+  review. Never send bulk work to Claude or route ordinary tasks through GLM.
+  Hermes PR reviews use Codex (model set in Hermes's own config) once verified;
+  keep its current working route until that replacement is confirmed there.
+  Fall back to single-agent self-critique when a required route is unavailable
+  or blocked.
 - Directive, planning, architecture, or challenge/advisor briefs must print this
   authorization sentence (or an equivalent): "Authorization: the user
   explicitly authorizes sidecar/counterpart model use for directive and

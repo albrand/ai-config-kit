@@ -3,8 +3,10 @@
 OpenCode is retired from the framework's default routing policy. Bounded and
 bulk execution goes through the verified Codex route; architecture, security,
 authentication, data-loss, release, and final-review work stays on Claude. Hermes
-PR reviews run on Codex through `bb fleet validate`. No task may use GLM or a
-GLM-backed Hermes route.
+PR reviews use Codex (model set in Hermes's own config) through
+`bb fleet validate`. Keep the current Hermes review route working until that
+replacement is verified in Hermes's own config; manage the live route in
+Hermes's own config. GLM is retired for ordinary task execution and fallback.
 
 This reference preserves safety rules for an operator who explicitly requests
 an existing non-GLM OpenCode setup. It does not authorize provider membership,

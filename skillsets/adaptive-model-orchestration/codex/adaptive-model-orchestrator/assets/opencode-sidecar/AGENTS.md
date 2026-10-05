@@ -3,8 +3,9 @@
 OpenCode is not a default execution route. Use this adapter only when an
 operator explicitly requests a configured non-GLM sidecar. Bounded and bulk
 work routes to Codex; architecture, security, authentication, data-loss,
-release, and final review stays on Claude. Never select GLM or a GLM-backed
-Hermes route.
+release, and final review stays on Claude. Never select GLM for OpenCode work.
+Keep Hermes's current working review route until Codex (model set in Hermes's
+own config) is verified there; manage that live route in Hermes's own config.
 
 Act only as the bounded counterpart described by the parent brief.
 

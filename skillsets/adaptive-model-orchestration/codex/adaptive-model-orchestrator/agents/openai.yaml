@@ -1,7 +1,7 @@
 interface:
   display_name: "Adaptive Model Orchestrator"
   short_description: "Route Codex and Claude work by outcome and risk"
-  default_prompt: "Use $adaptive-model-orchestrator to route bounded and bulk work to Codex, quality-critical work to Claude, and Hermes PR reviews through Codex."
+  default_prompt: "Use $adaptive-model-orchestrator to route bounded and bulk work to Codex, quality-critical work to Claude, and Hermes PR reviews through Codex (model set in Hermes's own config) after that replacement is verified."
 
 policy:
   allow_implicit_invocation: false

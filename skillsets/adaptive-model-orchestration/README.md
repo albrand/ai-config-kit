@@ -2,7 +2,8 @@
 
 Portable Codex entrypoint for the Codex/Claude routing policy in
 `ADAPTIVE_MODEL_ORCHESTRATION.md`. The bundled GLM provider profile has been
-retired and is not installed or included.
+retired and is not installed or included. Hermes's current review route stays
+working until Codex (model set in Hermes's own config) is verified there.
 
 ## Install
 
@@ -31,8 +32,9 @@ Then run opt-in route checks:
 
 Use the live fleet route for the exact Codex provider, model, and reasoning
 level. Keep architecture, security, authentication, data-loss, release, and
-final-review work on Claude. Hermes PR reviews use Codex through
-`bb fleet validate`.
+final-review work on Claude. After verification, Hermes PR reviews use Codex
+(model set in Hermes's own config) through `bb fleet validate`; preserve the
+current working route until then.
 
 Any explicitly requested legacy OpenCode executor mode must fail closed and
 use its dedicated isolated worktree and explicit write gate. The default route
@@ -41,8 +43,9 @@ does not invoke OpenCode.
 ## Adoption
 
 The portable default is the Codex/Claude route described above. Live catalog
-discovery wins over stale model names and effort labels. No GLM route is
-supported by this profile.
+discovery wins over stale model names and effort labels. This profile does not
+support GLM for ordinary execution; Hermes's independently configured review
+route remains working through its verified replacement.
 
 ## Upgrade
 

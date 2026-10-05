@@ -4,15 +4,21 @@ Use this contract when a harness exposes more than one model family, reasoning
 effort, agent, or external AI counterpart. The active thread remains the
 coordinator and final authority. Routing adds independent evidence and bounded
 execution capacity; it never transfers architecture, security, release, or
-validation truth. GLM is permanently retired from this framework.
+validation truth. GLM is permanently retired for ordinary execution and
+fallback. Hermes keeps its current working review route until Codex (model set
+in Hermes's own config) is verified there.
 
 ## Routing Policy
 
 - Bounded and bulk execution goes to the verified Codex route.
 - Architecture, security, authentication, data-loss, release, and final-review
   work stays on Claude. Do not send bulk work to Claude.
-- Hermes PR reviews run on Codex through `bb fleet validate`.
-- Do not route any work to GLM or use GLM as a Hermes fallback.
+- Hermes PR reviews use Codex (model set in Hermes's own config) through
+  `bb fleet validate`. Keep the current review route working until the Codex
+  replacement is verified in Hermes's own config; the live route change
+  belongs in Hermes's own config.
+- GLM is retired for ordinary task execution and fallback. Do not disable the
+  current Hermes review route before its replacement is verified.
 
 Use the live provider route for the exact provider, model, and reasoning level;
 do not hardcode model names. These assignments describe the user's adopted
@@ -72,8 +78,10 @@ exists.
   summarization, and mechanical checks.
 - Claude: handles architecture, security, authentication, data-loss, release,
   and final review. It does not take bulk execution work.
-- Hermes: provides an independent PR review through the Codex route; it does not
-  execute changes and must never receive project source.
+- Hermes: provides an independent PR review through Codex (model set in
+  Hermes's own config); it does not execute changes and must never receive
+  project source. Keep its current working route until that replacement is
+  verified in Hermes's own config.
 - OpenCode: legacy and opt-in only; it is not a default route. Never select GLM.
 
 Every delegated unit needs a compact brief: the original request as a faithful

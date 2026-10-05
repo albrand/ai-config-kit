@@ -1,14 +1,16 @@
 ---
 name: adaptive-model-orchestrator
-description: Route bounded and bulk work to Codex, keep architecture, security, authentication, data-loss, release, and final-review work on Claude, and run Hermes PR reviews through Codex. Use when selecting a model lane, coordinating a bounded delegate, or deciding effort and escalation.
+description: Route bounded and bulk work to Codex, keep architecture, security, authentication, data-loss, release, and final-review work on Claude, and run Hermes PR reviews through Codex (model set in Hermes's own config). Use when selecting a model lane, coordinating a bounded delegate, or deciding effort and escalation.
 ---
 
 # Adaptive Model Orchestrator
 
 Follow the adopted routing policy in
 `references/ADAPTIVE_MODEL_ORCHESTRATION.md`. Keep the active thread as
-coordinator and final authority. GLM is permanently retired; do not use it as an
-execution route or Hermes fallback.
+coordinator and final authority. GLM is retired for ordinary execution and
+fallback. Keep Hermes's current review route working until Codex (model set in
+Hermes's own config) is verified there; manage the live route change in
+Hermes's own config.
 
 ## Capability Gate
 
@@ -19,8 +21,10 @@ execution route or Hermes fallback.
 3. Send bounded and bulk execution to Codex. Keep architecture, security,
    authentication, data-loss, release, and final-review work on Claude. Do not
    send bulk work to Claude.
-4. Run Hermes PR review on Codex through `bb fleet validate` with bounded
-   evidence. Hermes reviews; it does not execute changes.
+4. Run Hermes PR review through `bb fleet validate` using Codex (model set in
+   Hermes's own config) once that replacement is verified there. Until then,
+   preserve Hermes's current working review route. Hermes reviews; it does not
+   execute changes.
 5. Do not pass a `--model` override to `acp-hermes-agent`. Never place or retain
    project source on Hermes; pass only bounded review context through the
    approved broker.
