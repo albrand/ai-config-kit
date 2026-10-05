@@ -29,7 +29,7 @@ harness.
 
 | Tier | When | Claude Code examples | Mixed-provider examples |
 |------|------|---------------------|-------------------------|
-| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | `Agent(subagent_type: "Explore")`, `Agent(model: "haiku")` | Local OpenAI-compatible sidecar, Gemini Flash Lite, Minimax M2.7 |
+| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | Codex fast peer through the verified route | Keep work on the Codex route |
 | Medium | Localized code, component implementation, test generation, doc drafting, API integration, mapping requirements to files | `Agent(model: "sonnet")`, `Agent(subagent_type: "general-purpose")`, `Agent(subagent_type: "Plan")` | Claude Sonnet, GPT-5.4 Mini |
 | Large / frontier | Architecture, ambiguous debugging, security-sensitive work, data-loss risk, multi-system planning, final pre-merge review, prompt or harness redesign | Master thread (Opus 4.7), `advisor` | Claude Opus, GPT-5.4, Hermes flagship |
 

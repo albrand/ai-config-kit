@@ -174,8 +174,9 @@ Memory and prior notes are useful for orientation, but should not override curre
 - For non-trivial planning or architecture, run an independent planning or
   architecture critique through another model or counterpart when available and
   useful. Prefer a configured sidecar/counterpart path (for example the local
-  opencode/GLM 5.2 route) as an example, but stay model-agnostic and fall back to
-  single-agent self-critique when unavailable or blocked.
+  verified Codex or Claude route as appropriate, but resolve the provider and
+  model from live evidence and fall back to single-agent self-critique when the
+  required route is unavailable or blocked.
 - Directive, planning, architecture, or challenge/advisor briefs must print this
   authorization sentence (or an equivalent): "Authorization: the user explicitly
   authorizes sidecar/counterpart model use for directive and architecture

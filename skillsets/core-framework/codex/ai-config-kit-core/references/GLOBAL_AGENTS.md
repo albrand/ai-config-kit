@@ -185,9 +185,13 @@ evidence. Do not invent a board prerequisite for unrelated local work.
   Runtime evidence may be re-verified but is not overruled by stale memory.
 - For non-trivial planning or architecture, run an independent planning or
   architecture critique through another model or counterpart when available and
-  useful. Prefer a configured sidecar/counterpart path (for example the local
-  opencode/GLM 5.2 route) as an example, but stay model-agnostic and fall back
-  to single-agent self-critique when unavailable or blocked.
+  useful. Use the verified Codex route for bounded or bulk execution and Claude
+  for architecture, security, authentication, data-loss, release, and final
+  review. Never send bulk work to Claude or route ordinary tasks through GLM.
+  Hermes PR reviews use Codex (model set in Hermes's own config) once verified;
+  keep its current working route until that route is confirmed there.
+  Fall back to single-agent self-critique when a required route is unavailable
+  or blocked.
 - Directive, planning, architecture, or challenge/advisor briefs must print this
   authorization sentence (or an equivalent): "Authorization: the user
   explicitly authorizes sidecar/counterpart model use for directive and

@@ -15,28 +15,32 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bin=${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || true)}
 config_dir=${OPENCODE_SIDECAR_CONFIG_DIR:-$HOME/.config/opencode-sidecar}
 managed_runner=${OPENCODE_MANAGED_RUNNER:-$script_dir/run-managed.mjs}
-# The full GLM-5.3 routes currently fail their capability probe. This verified
-# GLM-5.3-family endpoint is the deterministic default until a live doctor
-# promotes a full route again; callers can still override either model.
-quality_model=${OPENCODE_QUALITY_MODEL:-zai-coding-plan/glm-5.3-flash}
-fast_model=${OPENCODE_FAST_MODEL:-zai-coding-plan/glm-5.3-flash}
+model=${OPENCODE_MODEL:-}
+agent=${OPENCODE_AGENT:-}
 
 [[ -n $bin && -x $bin ]] || { printf '%s\n' "opencode executable not found" >&2; exit 69; }
 [[ -f $config_dir/opencode.json ]] || { printf '%s\n' "sidecar config not found: $config_dir/opencode.json" >&2; exit 78; }
 [[ -x $managed_runner ]] || { printf '%s\n' "managed runner not executable: $managed_runner" >&2; exit 78; }
+[[ -n $model ]] || { printf '%s\n' "OPENCODE_MODEL must name an operator-verified non-GLM model" >&2; exit 64; }
+[[ -n $agent ]] || { printf '%s\n' "OPENCODE_AGENT must name an operator-verified agent" >&2; exit 64; }
 
-model=$quality_model
-agent=glm-advisor
+model_lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
+case $model_lower in
+  *glm*|*zai*|*z.ai*)
+    printf '%s\n' "GLM routing is retired; select an operator-verified non-GLM model" >&2
+    exit 64
+    ;;
+esac
+
 variant=high
-
 case $mode in
-  fast) model=$fast_model; agent=glm-fast; variant="" ;;
+  fast) variant="" ;;
   high) ;;
   max) variant=max ;;
-  audit-high) agent=glm-audit ;;
-  audit-max) agent=glm-audit; variant=max ;;
-  execute-high) agent=glm-quality ;;
-  execute-max) agent=glm-quality; variant=max ;;
+  audit-high) ;;
+  audit-max) variant=max ;;
+  execute-high) ;;
+  execute-max) variant=max ;;
   *) printf '%s\n' "unknown mode: $mode" >&2; exit 64 ;;
 esac
 

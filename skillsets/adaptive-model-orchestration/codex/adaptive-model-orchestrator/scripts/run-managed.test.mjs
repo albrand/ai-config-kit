@@ -20,6 +20,7 @@ const descendantPidPath = path.join(temp, 'descendant.pid');
 const databasePath = path.join(temp, 'opencode.db');
 const configDir = path.join(temp, 'config');
 const worktree = path.join(temp, 'worktree');
+const invocationPath = path.join(temp, 'invocation.json');
 
 fs.mkdirSync(binDir);
 fs.mkdirSync(configDir);
@@ -45,6 +46,7 @@ if (args[0] === 'session' && args[1] === 'delete') {
   process.exit(0);
 }
 if (args[0] !== 'run') process.exit(2);
+if (process.env.FAKE_ARGS_PATH) fs.writeFileSync(process.env.FAKE_ARGS_PATH, JSON.stringify(args));
 const id = process.env.FAKE_SESSION_ID || 'ses_test123';
 fs.writeFileSync(statePath, JSON.stringify([{ id, parentID: null }]));
 const emit = (event) => process.stdout.write(JSON.stringify({ sessionID: id, ...event }) + '\\n');
@@ -145,9 +147,12 @@ function runWrapper(env = {}) {
       OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
       OPENCODE_DB_PATH: databasePath,
       OPENCODE_SIDECAR_CONFIG_DIR: configDir,
+      OPENCODE_MODEL: 'openai/test-model',
+      OPENCODE_AGENT: 'test-agent',
       FAKE_STATE_PATH: statePath,
       FAKE_DELETE_LOG: deleteLog,
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
+      FAKE_ARGS_PATH: invocationPath,
       ...env,
     },
   });
@@ -344,6 +349,17 @@ try {
   assert.equal(wrapped.status, 0, wrapped.stderr);
   assert.equal(readTelemetry(wrapped).success_contract, 'structured');
   assert.equal(readTelemetry(wrapped).deleted, true);
+  const invocation = JSON.parse(fs.readFileSync(invocationPath, 'utf8'));
+  assert.ok(invocation.includes('openai/test-model'));
+  assert.ok(invocation.includes('test-agent'));
+
+  const rejectedGlm = runWrapper({ OPENCODE_MODEL: 'zai-coding-plan/glm-5.3-flash' });
+  assert.equal(rejectedGlm.status, 64);
+  assert.match(rejectedGlm.stderr, /GLM routing is retired/);
+
+  const missingModel = runWrapper({ OPENCODE_MODEL: '' });
+  assert.equal(missingModel.status, 64);
+  assert.match(missingModel.stderr, /OPENCODE_MODEL must name an operator-verified non-GLM model/);
 
   fs.writeFileSync(statePath, JSON.stringify([{ id: 'ses_existing123', parentID: null }]));
   const resumed = runWrapper({
