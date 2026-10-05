@@ -2,11 +2,11 @@
 
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
-profiles. The accepted live profile is the #47 render, verified byte-for-byte
-against all four current homes on 2026-10-05. The current rendered profile is
-the output of this source revision; keeping it here means that after this
-revision is merged and installed, the next installer recognizes that complete
-set without weakening the live-edit guard.
+profiles. Accepted live profiles include the #47 render and the #49 render
+currently installed in all four homes. The current rendered profile is the
+output of this source revision; keeping it here means that after this revision
+is merged and installed, the next installer recognizes that complete set
+without weakening the live-edit guard.
 
 To update this manifest, render the currently accepted baseline into a
 temporary directory and require every live file to match byte-for-byte. Run
@@ -30,11 +30,11 @@ files after that comparison.
 | OpenCode | `8782ff2a2b448e5403f5c36f44059ed039958127069a1a6db0d20aedd6361f6a` |
 | bb | `b819ae2f146f2d9336765004403f13ccebdcd4c4e168ab3d8b6e64ce0864696c` |
 
-### Current rendered profile: PR candidate based on 7cb52e1a
+### Accepted live profile: #49 render at 73786e99
 
-Generated with `python3 scripts/render-standing-homes.py --output-dir
-/tmp/card59-render-current/rendered-homes`; digests below are the output of
-`shasum -a 256` on those rendered files.
+Verified byte-for-byte against all four current live homes by comparing them
+with the committed #49 render. Digests below are the command-produced SHA-256
+values for those live files.
 
 | Home | SHA-256 |
 |---|---|
@@ -42,6 +42,19 @@ Generated with `python3 scripts/render-standing-homes.py --output-dir
 | Codex | `6345c59c8c1db69db95d160c34bd58ffd6ac8190f01b222e1ba3d900226049f4` |
 | OpenCode | `53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385` |
 | bb | `4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab` |
+
+### Current rendered profile: evidence-rule PR candidate based on 73786e99
+
+Generated with `python3 scripts/render-standing-homes.py --output-dir
+/tmp/card59-render-current/rendered-homes`; digests below are the output of
+`shasum -a 256` on those rendered files.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `b3bdd0c2f423a50d0d1640c5e6c313f82cf38aee81fa86ebd797e0f3b7f309ad` |
+| Codex | `0cc932493b3b4b58c3f26831f61285bd9e60a22c997d56037ea8e53d2feeb1d4` |
+| OpenCode | `935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8` |
+| bb | `db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

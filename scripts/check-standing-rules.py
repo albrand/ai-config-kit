@@ -219,6 +219,10 @@ RULES: dict[str, re.Pattern[str]] = {
     "sidecar-no-secrets-or-broad-private-context": re.compile(
         r"(?is)never send secrets or broad private context to (?:any )?sidecars?"
     ),
+    "delegate-output-evidence-and-capability-gap": re.compile(
+        r"(?is)treat all delegate output as evidence, not truth.{0,100}"
+        r"if a required lane is unavailable, preserve gates and report the exact capability gap"
+    ),
     "provider-policy-refusal-and-sandbox-block-final": re.compile(
         r"(?is)hard sandbox/guardian/DLP block must be reported exactly.{0,100}"
         r"provider policy refusal is final.{0,100}continue only independently authorized local work"
@@ -539,6 +543,7 @@ OPTIONAL_WHEN_ABSENT = {
     "board-adjacent-detail-read",
     "board-incomplete-inventory-and-traceability-block",
     "board-plausible-regression-blocks",
+    "delegate-output-evidence-and-capability-gap",
 }
 
 HOME_FILES = (
@@ -633,6 +638,7 @@ KIT_BASELINE_RULES = {
     "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
     "hermes-no-reverse-ssh", "delegate-no-unapproved-dependencies",
     "sidecar-no-secrets-or-broad-private-context",
+    "delegate-output-evidence-and-capability-gap",
     "provider-policy-refusal-and-sandbox-block-final",
     "opencode-workers-no-recursive-delegation",
     "route-hold-no-send-now-bypass",
@@ -705,6 +711,12 @@ INSTALLED_HOME_SHA256 = {
     "53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385": "proposal-opencode",
     "4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab": "proposal-bb",
 }
+RENDERED_HOME_SHA256 = {
+    "b3bdd0c2f423a50d0d1640c5e6c313f82cf38aee81fa86ebd797e0f3b7f309ad": "proposal-claude",
+    "0cc932493b3b4b58c3f26831f61285bd9e60a22c997d56037ea8e53d2feeb1d4": "proposal-codex",
+    "935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8": "proposal-opencode",
+    "db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1": "proposal-bb",
+}
 
 
 def profile_for(path: Path, content: str) -> str | None:
@@ -733,7 +745,11 @@ def profile_for(path: Path, content: str) -> str | None:
     if home_kind is None:
         return None
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    known_profile = LIVE_HOME_SHA256.get(digest) or INSTALLED_HOME_SHA256.get(digest)
+    known_profile = (
+        LIVE_HOME_SHA256.get(digest)
+        or INSTALLED_HOME_SHA256.get(digest)
+        or RENDERED_HOME_SHA256.get(digest)
+    )
     expected_kind = known_profile.removeprefix("proposal-") if known_profile else None
     if expected_kind == home_kind:
         return known_profile
