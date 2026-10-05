@@ -168,6 +168,9 @@ def compose_result(findings, answers, base_ref):
 
 
 def client_path():
+    local = Path(__file__).with_name("jev.py")
+    if local.is_file():
+        return local
     for home in (Path.home() / ".agents", Path.home() / ".claude"):
         candidate = home / "skills/typed-decisions/scripts/jev.py"
         if candidate.is_file():

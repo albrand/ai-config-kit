@@ -36,6 +36,9 @@ def packet():
 
 
 class HermesReviewJevTest(unittest.TestCase):
+    def test_client_path_prefers_worktree_client(self):
+        self.assertEqual(review_jev.client_path(), SCRIPT.with_name("jev.py"))
+
     def fake_client(self, directory):
         capture = Path(directory) / "captured.json"
         client = Path(directory) / "fake-jev.py"
