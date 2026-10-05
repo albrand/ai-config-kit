@@ -29,7 +29,7 @@ concept quickly.
 | Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
 | Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
-| Adopt GLM plus Sol/Terra/Luna-style adaptive routing | `ADAPTIVE_MODEL_ORCHESTRATION.md`, then `skillsets/adaptive-model-orchestration/` |
+| Route bounded or bulk work to Codex and quality-critical work to Claude | `ADAPTIVE_MODEL_ORCHESTRATION.md`, then `skillsets/adaptive-model-orchestration/` |
 | Orchestrate cmux (local) + Hermes (remote router on a Tailscale-only VPS) | `CMUX_HERMES_ORCHESTRATION.md`, then `skillsets/cmux-hermes-orchestration/` |
 | Discover/use native host surfaces (cmux, tmux, zellij, generic harnesses) | `NATIVE_AGENT_SURFACES.md`, then `skillsets/native-agent-surfaces/` (install via the preference-aware `scripts/install.py`) |
 | Reuse a workspace before creating one; coordinate agent sessions; browser E2E | `skillsets/native-agent-surfaces/codex/native-agent-surface/references/PROJECT_SETUP.md`, then `AGENT_SESSION_COORDINATION.md` and `BROWSER_E2E.md` |
@@ -57,8 +57,8 @@ It provides:
   generated-wiki, symbol-index, or code-review graph tools at full useful
   capability without treating generated output as source-of-truth.
 - A cross-agent coordination addendum for tool-neutral paired work where one AI coordinates another AI, peer reviewer, or external executor.
-- An adaptive multi-model doctrine and installable Codex/OpenCode profile for
-  risk-based effort selection, cross-family critique, and max/ultra escalation.
+- A Codex/Claude routing doctrine and installable Codex skill for bounded work,
+  quality-critical work, Hermes reviews, and effort escalation.
 - Quality gates for docs, code, UI, API, data, security, deployment, and review work.
 - A delivery-quality doctrine for acceptance-first examples, useful test evidence, rendered UI verification, and honest completion claims.
 - A quality convergence loop for work that needs measured improvement across iterations.
@@ -279,7 +279,7 @@ question.
 | `CONTEXT_ACCELERATION.md` | Optional directives for using a chosen Graphify-compatible knowledge graph/context map or OpenWiki-compatible generated agent wiki as advisory orientation, including the required operator documentation package; not a default dependency or source of truth. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
-| `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, OpenCode/GLM example profile, portable wrappers, and package manifest. |
+| `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, legacy OpenCode safety boundary, portable wrappers, and package manifest. |
 | `skillsets/core-framework/` | Self-contained Codex entrypoint with bundled ai-config-kit references. |
 | `skillsets/scope-advisory/` | Portable Codex and bb scope-advisor skill bundling the canonical `SCOPE_DISCIPLINE.md` contract. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |

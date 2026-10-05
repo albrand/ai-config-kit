@@ -188,7 +188,7 @@ Recommended setup:
 - After any Codex skill or plugin add, update, or removal, run the installed router's `refresh-skill-index.cjs` script and then run it with `--check`. Treat this as mandatory verification for smart skill access.
 - Do not disable skills to save context; make specialized skills explicit-only and router-accessible.
 - For the UX Design Agent, use `UX_DESIGN_AGENT_IMPORT_PROMPT.md` when an assistant should install the Codex skill files under `<CODEX_HOME>/skills/ux-design-agent/` and verify them.
-- For adaptive GLM plus Codex-peer routing, install the complete
+- For Codex/Claude routing and Codex-peer delegation, install the complete
   `skillsets/adaptive-model-orchestration/codex/adaptive-model-orchestrator/`
   directory and follow its README. Keep provider credentials outside the kit.
 - For cmux (local UI/session transport) plus Hermes (remote provider router on a

@@ -1,7 +1,8 @@
 # Adaptive Model Orchestration Skillset
 
-Portable Codex entrypoint and optional OpenCode/GLM profile for
-`ADAPTIVE_MODEL_ORCHESTRATION.md`.
+Portable Codex entrypoint for the Codex/Claude routing policy in
+`ADAPTIVE_MODEL_ORCHESTRATION.md`. The bundled GLM provider profile has been
+retired and is not installed or included.
 
 ## Install
 
@@ -16,10 +17,9 @@ Do not copy only `SKILL.md`. The skill requires its bundled references, scripts,
 metadata, and optional config assets. `package-manifest.json` is the package
 inventory.
 
-For the GLM profile, copy `assets/opencode-sidecar/` to a local config directory
-(for example `~/.config/opencode-sidecar`) and set
-`OPENCODE_SIDECAR_CONFIG_DIR`. Review model IDs and permissions before use.
-Authentication and provider membership are intentionally not packaged.
+No provider credentials, authentication, model IDs, or OpenCode configuration
+are packaged. Resolve the live Codex route and Claude availability from the
+operator's environment. OpenCode is legacy and opt-in only; never select GLM.
 
 Run offline validation from the repository root:
 
@@ -27,33 +27,25 @@ Run offline validation from the repository root:
 node scripts/validate-codex-skills.cjs
 ```
 
-Then run opt-in health checks:
+Then run opt-in route checks:
 
-```sh
-opencode --version
-opencode auth list
-codex debug models --bundled
-```
+Use the live fleet route for the exact Codex provider, model, and reasoning
+level. Keep architecture, security, authentication, data-loss, release, and
+final-review work on Claude. Hermes PR reviews use Codex through
+`bb fleet validate`.
 
-Use a tiny no-tool probe for each configured model/effort/agent before enabling
-an always-on profile. If the skill library router is installed, refresh its
-index after installation.
-
-The bundled executor modes fail closed. They require
-`OPENCODE_ALLOW_WRITES=1` and a `.ai-config-kit-sidecar-write-scope` marker at
-the workdir root. Use that marker only in a dedicated isolated worktree whose
-entire contents are authorized for modification. The default OpenCode agent is
-read-only.
+Any explicitly requested legacy OpenCode executor mode must fail closed and
+use its dedicated isolated worktree and explicit write gate. The default route
+does not invoke OpenCode.
 
 ## Adoption
 
-The portable default is `adaptive`. Operators who explicitly authorize routine
-cross-family work may select `always-on-two-family`. The included GLM and
-Sol/Terra/Luna mappings are a verified example profile; live catalog discovery
-wins over stale names or effort labels.
+The portable default is the Codex/Claude route described above. Live catalog
+discovery wins over stale model names and effort labels. No GLM route is
+supported by this profile.
 
 ## Upgrade
 
-Replace the complete installed directory, re-run offline validation, run the
-runtime probes, and refresh the skill index. Keep local credentials and provider
-configuration outside the repository.
+Replace the complete installed directory, re-run offline validation, then run
+the repository router's `--check` against the candidate skill library. Keep
+local credentials and provider configuration outside the repository.

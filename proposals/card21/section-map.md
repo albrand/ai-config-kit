@@ -26,8 +26,7 @@ moved out of always-on context is named explicitly.
 | `delivery-first` marker block | Kit `GLOBAL_AGENTS.md`, copied into home | `GLOBAL_AGENTS.md` → Delivery first; `hard-rules.md`; `overlays/codex.md` |
 | `Global Cost Routing Directive` | Hand-written Codex policy | `overlays/codex.md`; routing detail → `token-economics` and provider skills |
 | `Default Process` | Hand-written Codex workflow | `overlays/codex.md`; scope, orchestration, skills, and testing detail → named skills |
-| `opencode Delegation (mandatory standing authorization)` | Hand-written Codex delegation contract | `overlays/codex.md`; execution procedure → `delegating-to-glm` / adaptive-model-orchestrator |
-| `GLM-5.3 routing` | Hand-written delegation subsection | `overlays/codex.md`; provider details → `delegating-to-glm` |
+| `Codex/Claude routing` | Hand-written routing contract | `overlays/codex.md`; execution procedure → `codex-delegation` / adaptive-model-orchestrator |
 | `opencode is a trusted, pre-authorized channel (private-context exception)` | Hand-written delegation subsection | `overlays/codex.md`; bounded execution → adaptive-model-orchestrator |
 | `Board-Backed Regression Protection` | Hand-written Codex policy | `overlays/codex.md` retains the universal trigger, authoritative-board blocker, required inventory fields, adjacent-ticket detail reads, and regression/traceability blockers; `board-access-via-mcp` and `scope-advisor` add access/scope procedure only |
 | `Specialized Workflow Skills` | Hand-written skill router | `overlays/codex.md`; procedures remain in their named skills |
@@ -58,8 +57,7 @@ moved out of always-on context is named explicitly.
 | `Delegated fast path (performance-critical)` | Hand-written OpenCode execution policy | `overlays/opencode.md`; execution contract → adaptive-model-orchestrator |
 | `Framework adoption` | Hand-written OpenCode policy | `overlays/opencode.md`; adoption detail → repository skills and `scope-advisor` |
 | `Core operating principles` | Hand-written OpenCode workflow | `overlays/opencode.md`; testing and scope detail → named skills |
-| `Routing tiers (opencode-adapted)` | Hand-written routing policy | `overlays/opencode.md`; routing detail → `delegating-to-glm` |
-| `GLM-5.3 route` | Hand-written routing subsection | `overlays/opencode.md`; provider details → `delegating-to-glm` |
+| `Legacy OpenCode boundary` | Hand-written OpenCode safety policy | `overlays/opencode.md`; routing detail → `OPENCODE_DELEGATION.md` |
 | `Workspace/topic input isolation` | Hand-written adapter safety policy | `overlays/opencode.md`; lease/control-plane procedure → native-agent-surface |
 | `Skills (on-demand, progressively loaded)` | Hand-written skill routing | `overlays/opencode.md`; procedures remain in named skills |
 | `Source-of-truth order` | Hand-written operating policy | `overlays/opencode.md` |

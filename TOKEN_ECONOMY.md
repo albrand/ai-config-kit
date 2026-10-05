@@ -33,7 +33,7 @@ harness.
 
 | Tier | When | Claude Code examples | Mixed-provider examples |
 |------|------|---------------------|-------------------------|
-| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | `Agent(subagent_type: "Explore")`, `Agent(model: "haiku")` | Local OpenAI-compatible sidecar, Gemini Flash Lite, Minimax M2.7 |
+| Small / local | Classification, file discovery, formatting, JSON shaping, log summary, naming, deterministic refactors | Codex fast peer through the verified route | Keep work on the Codex route |
 | Medium | Localized code, component implementation, test generation, doc drafting, API integration, mapping requirements to files | `Agent(model: "sonnet")`, `Agent(subagent_type: "general-purpose")`, `Agent(subagent_type: "Plan")` | Claude Sonnet, GPT-5.4 Mini |
 | Large / frontier | Architecture, ambiguous debugging, security-sensitive work, data-loss risk, multi-system planning, final pre-merge review, prompt or harness redesign | Master thread (Opus 4.7), `advisor` | Claude Opus, GPT-5.4, Hermes flagship |
 
@@ -111,11 +111,11 @@ decisive. Promote to `max` for the hardest single reasoning path; promote to
 `ultra` only when that difficulty also has multiple independent units. See
 `ADAPTIVE_MODEL_ORCHESTRATION.md`.
 
-For OpenCode sidecars, use a lean dedicated config that excludes unrelated
-instructions, plugins, MCPs, and watchers. Fixed prompt/tool overhead can exceed
-the value of a tiny delegation, so skip trivial calls and send compressed
-evidence packets. Treat any local benchmark as illustrative; re-measure after
-CLI, model, agent, or config changes.
+For an explicitly requested legacy OpenCode sidecar, use a lean dedicated
+config that excludes unrelated instructions, plugins, MCPs, and watchers. Fixed
+prompt/tool overhead can exceed the value of a tiny delegation, so skip trivial
+calls and send compressed evidence packets. OpenCode is not a default route;
+bounded and bulk work uses Codex.
 
 ## Swarm Authorization Phrase
 

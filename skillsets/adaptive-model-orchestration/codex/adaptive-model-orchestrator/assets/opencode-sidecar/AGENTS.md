@@ -1,10 +1,12 @@
-# Sidecar Contract
+# Legacy OpenCode Sidecar Boundary
+
+OpenCode is not a default execution route. Use this adapter only when an
+operator explicitly requests a configured non-GLM sidecar. Bounded and bulk
+work routes to Codex; architecture, security, authentication, data-loss,
+release, and final review stays on Claude. Never select GLM or a GLM-backed
+Hermes route.
 
 Act only as the bounded counterpart described by the parent brief.
-
-- GLM-5.3 work uses the verified `zai-coding-plan/glm-5.3-flash` route unless a
-  fresh live doctor has explicitly promoted a full GLM-5.3 endpoint. Never
-  silently substitute GLM-5.2.
 
 - Keep direction acyclic; never call another orchestrator or sidecar.
 - Follow scope, do-not-touch paths, checks, output cap, and stop conditions.

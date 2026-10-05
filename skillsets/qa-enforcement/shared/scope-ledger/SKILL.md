@@ -337,7 +337,7 @@ successor's is renumbered past every id and carries `renumbered_from`.
 
 ## Known limits
 
-- opencode has no PreToolUse hook, so dispatches from opencode threads (GLM)
+- opencode has no PreToolUse hook, so dispatches from opencode threads
   are not gated. Only Claude Code and Codex run the gate.
 - Kit branch `feat/qa-gate-v3` (e82faa9): its `install.sh` would overwrite the
   scope pretool hook in `~/.agent-hooks` (`coordinator-hook-pretool.sh`). Re-run

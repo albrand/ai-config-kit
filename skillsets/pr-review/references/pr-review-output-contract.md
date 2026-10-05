@@ -3,7 +3,7 @@
 Load this reference before producing final artifacts for `high-signal-pr-review`, `/code-review`, PR review comments, merge-readiness reviews, or PR bodies.
 
 This file is the normative source for public PR-review output. Codex, Claude
-Code, opencode/GLM, and any other AI agent entrypoint must load and obey this
+Code, and any other AI agent entrypoint must load and obey this
 contract before reviewing a PR or preparing a PR body. Do not fork these rules
 into tool-specific summaries; reference this contract from each entrypoint.
 
@@ -228,7 +228,7 @@ This section is the normative source for re-review behavior. A **re-review** is
 any second or later review of the same PR, a follow-up review after the author
 replied or pushed, or a queue sweep that revisits a previously reviewed head.
 Re-review is **delta-first** by default, not full-current-head. Codex, Claude
-Code, opencode/GLM, and any other AI entrypoint must load and obey this contract
+Code, and any other AI entrypoint must load and obey this contract
 before re-reviewing.
 
 ### Re-Review Inputs

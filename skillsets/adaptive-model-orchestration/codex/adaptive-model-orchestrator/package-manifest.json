@@ -12,7 +12,6 @@
     "scripts/run-opencode-sidecar.sh",
     "scripts/run-codex-peer.sh",
     "assets/opencode-sidecar/AGENTS.md",
-    "assets/opencode-sidecar/opencode.json",
     "references/SCOPE_DISCIPLINE.md"
   ],
   "executable": [

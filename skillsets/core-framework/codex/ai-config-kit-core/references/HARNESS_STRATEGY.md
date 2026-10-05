@@ -168,9 +168,9 @@ files, tests, runtime evidence, and accepted criteria outrank prior memory.
 
 For non-trivial planning or architecture, run an independent planning or
 architecture critique through another model or counterpart when available and
-useful. Prefer configured routes such as a local sidecar or opencode/GLM 5.3
-as examples, but keep the gate model-agnostic and use single-agent
-self-critique when no counterpart is available.
+useful. Use the verified Codex route for bounded or bulk work and Claude for
+quality-critical work. Keep the gate tied to live provider capability and use
+single-agent self-critique when a required counterpart route is unavailable.
 
 Directive, planning, architecture, or challenge/advisor briefs must include the
 authorization sentence or equivalent: "Authorization: the user explicitly
@@ -288,18 +288,18 @@ not provider habit or a stale model name.
 - **Deep peer.** Challenges security, data, architecture, migration, release,
   ambiguous debugging, or unresolved disagreement.
 - **External family sidecar.** Provides cross-family critique, read-only audit,
-  or bounded execution under `OPENCODE_DELEGATION.md` or another adopted
-  provider contract. Provider trust and private-context sharing require
-  explicit operator authorization.
+  or bounded execution under its adopted provider contract. OpenCode is legacy
+  and opt-in; default routing is Codex for bounded/bulk work and Claude for
+  quality-critical work. Provider trust and private-context sharing still
+  require explicit operator authorization.
 
 Cross-family rule: architecture, security, auth, data-loss, dependency strategy,
 release gates, ambiguous debugging, and final-review verdicts stay on the
 coordinator path regardless of which family executes the bounded slices. A
 family may execute a slice; it does not take over the judgment.
 
-Use `ADAPTIVE_MODEL_ORCHESTRATION.md` as the canonical matrix for adoption
-profiles, normal strong versus max/ultra effort, verified GLM and
-Sol/Terra/Luna-style examples, and reconciliation.
+Use `ADAPTIVE_MODEL_ORCHESTRATION.md` as the canonical matrix for routing,
+normal strong versus max/ultra effort, capability checks, and reconciliation.
 
 ## Security-Sensitive Routing Tier
 

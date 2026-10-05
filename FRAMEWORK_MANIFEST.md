@@ -55,7 +55,7 @@ Support files:
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/context-acceleration/`: optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability.
-- `skillsets/adaptive-model-orchestration/`: portable Codex skill, OpenCode/GLM example profile, peer wrappers, package manifest, and offline-install guidance.
+- `skillsets/adaptive-model-orchestration/`: portable Codex skill, Codex peer wrapper, legacy OpenCode safety boundary, package manifest, and offline-install guidance.
 - `skillsets/core-framework/`: self-contained explicit-only Codex entrypoint with bundled framework references.
 - `skillsets/scope-advisory/`: portable scope-advisor Codex skill bundling the canonical `SCOPE_DISCIPLINE.md` contract; see `skillsets/scope-advisory/README.md` for bb and standard client install paths.
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
@@ -69,7 +69,7 @@ Support files:
 - `skillsets/native-agent-surfaces/`: portable, capability-first skillset for discovering and using native host surfaces (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses, git, and Orca), with an explicit-only Codex skill (`native-agent-surface`), a host-neutral adapter contract, a stdlib-only detector that never serializes env values or socket capabilities, a reuse-first workspace resolver (`resolve-workspace.py`), project-setup / browser-E2E / agent-session-coordination / session-start-health references, a report-only Claude session-start hook doctor (`claude-session-hook-doctor.py`), a versioned model-neutral `bundle-manifest.json`, and a preference-aware model-agnostic global installer (`scripts/install.py`) with offline tests. Orca is detector-only here (Darwin-gated `orca`; cross-platform `orca-ide`); it is not in the installer auto-gating hosts.
 - `skillsets/orca-workflow-automation/`: explicit-only Codex skill for Orca-owned workflow automation. Orca owns the schedule, worktree/workspace lifecycle, terminal targeting, and browser/mobile/emulator surface. Provides a disabled-first, idempotent per-repository listener configurator (`configure-orca-pr-listener.py`; explicit repo/reviewer, collision refusal, no bulk activation), a read-only PR-review queue (`orca-pr-review-queue.py`; private/draft-only default, exact head-SHA dedup, self-review prevention, duplicate suppression, no auto-merge), a privacy-safe execution-productivity ledger (`execution-ledger.py`; allowlist-only JSONL, never records prompts/transcripts/env/secrets/repo URL/branch/SHA, aggregates only after a minimum sample count), and a validated forward-SSH Orca-to-Hermes terminal bridge (`orca-hermes-terminal.py`; no local shell or environment forwarding). Includes PR-review, execution-productivity, and Orca+Hermes references, plus offline unit tests. Do not vendor Orca skill bodies; resolve them at runtime with `orca skills get`.
 - `skillsets/orca-browser-safety/`: portable Codex skill for Orca-embedded-only interactive browsing, isolated workspace-scoped profiles, explicit worktree/page targeting, and ownership-safe page cleanup; install the complete `codex/orca-browser-safety/` directory.
-- `skillsets/agent-runtime/`: provider-neutral shared runtime skills published
+- `skillsets/agent-runtime/`: provider-neutral shared runtime and Codex delegation skills published
   into every configured agent directory by `scripts/publish.mjs`, including the
   reasoning-invariant `verified-qa-e2e` evidence gate and its regression
   fixtures, `typed-decisions` (typed, atomic, isolated decisions gated on
@@ -326,8 +326,8 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 
 ### Adaptive Model Orchestration Profile
 
-Use when adopting or operating adaptive/always-on cross-family routing,
-OpenCode/GLM, Codex fast/balanced/deep peers, or max/ultra effort selection:
+Use when adopting or operating Codex/Claude routing, peer selection, or
+max/ultra effort selection:
 
 1. Minimum Profile
 2. `HARNESS_STRATEGY.md`
@@ -434,9 +434,9 @@ Rules:
   not overruled by stale memory.
 - For non-trivial planning or architecture, run an independent planning or
   architecture critique through another model or counterpart when available and
-  useful. Prefer a configured sidecar/counterpart path (for example the local
-  opencode/GLM 5.3 route) as an example, but stay model-agnostic and fall back
-  to single-agent self-critique when unavailable or blocked.
+  useful. Use the verified Codex route for bounded or bulk work and Claude for
+  quality-critical work. Resolve provider and model from live evidence, and
+  fall back to single-agent self-critique when a required route is unavailable.
 - Directive, planning, architecture, or challenge/advisor briefs must print this
   authorization sentence (or an equivalent): "Authorization: the user explicitly
   authorizes sidecar/counterpart model use for directive and architecture

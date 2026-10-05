@@ -11,7 +11,7 @@ pack and project-specific rules in `.review-rules/`.
 Load this reference before producing final artifacts for `high-signal-pr-review`, `/code-review`, PR review comments, merge-readiness reviews, or PR bodies.
 
 This file is the normative source for public PR-review output. Codex, Claude
-Code, opencode/GLM, and any other AI agent entrypoint must load and obey this
+Code, and any other AI agent entrypoint must load and obey this
 contract before reviewing a PR or preparing a PR body. Do not fork these rules
 into tool-specific summaries; reference this contract from each entrypoint.
 

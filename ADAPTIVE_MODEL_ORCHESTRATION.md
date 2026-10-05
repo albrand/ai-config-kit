@@ -4,7 +4,19 @@ Use this contract when a harness exposes more than one model family, reasoning
 effort, agent, or external AI counterpart. The active thread remains the
 coordinator and final authority. Routing adds independent evidence and bounded
 execution capacity; it never transfers architecture, security, release, or
-validation truth.
+validation truth. GLM is permanently retired from this framework.
+
+## Routing Policy
+
+- Bounded and bulk execution goes to the verified Codex route.
+- Architecture, security, authentication, data-loss, release, and final-review
+  work stays on Claude. Do not send bulk work to Claude.
+- Hermes PR reviews run on Codex through `bb fleet validate`.
+- Do not route any work to GLM or use GLM as a Hermes fallback.
+
+Use the live provider route for the exact provider, model, and reasoning level;
+do not hardcode model names. These assignments describe the user's adopted
+policy and are not a portable recommendation to add providers or plans.
 
 ## Adoption Profiles
 
@@ -50,18 +62,19 @@ standard tier sufficient.
 
 ## Role Matrix
 
-Keep role assignment capability-first. Verify the live model catalog rather
-than assuming a model name or effort level exists.
+Keep role assignment capability-first within the routing policy above. Verify
+the live provider and model catalog rather than assuming a name or effort level
+exists.
 
 - Coordinator: owns intent, architecture, integration, escalation, and final
   validation truth.
-- Fast peer: handles bounded discovery, extraction, summarization, and
-  mechanical checks.
-- Balanced peer: provides a separate plan/code review, bounded exploration, or
-  implementation critique.
-- Deep peer: challenges high-risk decisions or unresolved disagreement.
-- External family sidecar: supplies cross-family critique, read-only audit, or
-  bounded execution under an architected plan.
+- Codex peer: handles bounded and bulk execution, discovery, extraction,
+  summarization, and mechanical checks.
+- Claude: handles architecture, security, authentication, data-loss, release,
+  and final review. It does not take bulk execution work.
+- Hermes: provides an independent PR review through the Codex route; it does not
+  execute changes and must never receive project source.
+- OpenCode: legacy and opt-in only; it is not a default route. Never select GLM.
 
 Every delegated unit needs a compact brief: the original request as a faithful
 excerpt that preserves the relevant requested outcomes, or a reference
@@ -77,26 +90,12 @@ rescope the delegated unit instead of treating the excerpt as sufficient.
 handoff contract behind these fields. Keep direction acyclic: a sidecar must
 not call the coordinator or recursively create another orchestration layer.
 
-## Verified Example Profile: Codex + OpenCode/GLM
+## Installed Codex Skill
 
-The installable profile in `skillsets/adaptive-model-orchestration/` maps the
-generic roles to a verified family combination:
-
-- active Codex model: coordinator;
-- OpenCode GLM fast model: discovery and extraction;
-- OpenCode GLM quality model at its normal high setting: default independent
-  plan, review, debugging, and verification pass;
-- OpenCode GLM quality model at its deepest setting: security, architecture,
-  data, migration, release, ambiguous debugging, or final high-risk review;
-- Codex Luna-like peer: high-throughput bounded checks;
-- Codex Terra-like peer: balanced xhigh plan/code review;
-- Codex Sol-like peer: hardest single-path judgment or automatic delegation
-  when the live catalog exposes those capabilities.
-
-Model names and supported effort labels are examples, not framework truths.
-The profile's doctor check must verify executable, authentication, model,
-effort, and agent availability before use. Provider-specific trust and private
-context sharing require explicit operator authorization.
+The installable skill in `skillsets/adaptive-model-orchestration/` supports
+Codex peer selection and the Codex/Claude routing policy. Its doctor checks must
+verify the live catalog before use. Do not package or install a GLM/OpenCode
+provider profile.
 
 A distinct remote-router topology is cmux + Hermes: cmux is the local UI/session
 transport and Hermes is the provider router, plan/delegation brain, fallback, and
