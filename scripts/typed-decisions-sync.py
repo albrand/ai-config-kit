@@ -6,7 +6,8 @@ Three things, all checked:
   2. a skill-specific "Typed decisions here" block in every copy of each skill
      that owns a decision point -- kit sources AND installed copies, which have
      diverged on purpose (installed ones carry machine-local text) and so
-     cannot be synced wholesale;
+     cannot be synced wholesale. The PR-review block is canonical in the
+     Codex review skill and copied exactly to its other entrypoint;
   3. the typed-decisions skill itself in every agent skill home.
 
 A rule written into one file and missing from the next is installed but
@@ -16,9 +17,12 @@ any gap; --falsify proves the check goes red when a block is removed.
 Usage:
   typed-decisions-sync.py            write missing or stale blocks
   typed-decisions-sync.py --check    report only; exit 1 on any gap
+  typed-decisions-sync.py --source-only          write kit source files only
+  typed-decisions-sync.py --check --source-only  check kit source files only
   typed-decisions-sync.py --falsify  --check, plus proof the check can fail
 """
 import argparse, os, re, shutil, sys, tempfile
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
@@ -99,22 +103,6 @@ failed delegate. Re-ask or escalate.
 
 For pure classification, Jev (`typed-decisions` section 10) returns the typed
 answer natively. Prefer it unless the decision needs reasoning or tools.""",
-
-"pr-review": """After `bb fleet validate` returns, compare Hermes' finding labels with an
-independent Jev judgment. Batch five atomic questions per finding: J1 classifies
-named-defect/evidence-method/unclear; J2 checks duplicate/new/not-applicable
-and delta/pre-existing/unclear; J3 checks changed-path/unchanged/unclear and
-severity using written anchors. Use
-`~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
-Make review_ref unique to this fleet invocation (PR, head SHA, round id) so
-re-reviews have separate metrics.
-The packet contains only bounded finding summaries, rule text, and path/severity
-labels. Keep Hermes classification labels local; Jev receives only finding text,
-prior text, rules, and path labels. Never pass a diff, source excerpt, transcript, prompt, secret, or personal
-data. Sensitive-context packets skip Jev. Agreement is reported; disagreement,
-missing answers, or an unrecorded decision is marked ESCALATED for the
-coordinator or a Claude review. Jev output never blocks or unblocks merge; the
-Hermes verdict and coordinator decision remain authoritative.""",
 
 "security-sweep": """The refute pass is one separate yes/no per candidate, judged without seeing
 the other candidates: "exploitable on the target path after existing
@@ -218,6 +206,16 @@ RECORD = {
 
 
 def skill_block(key):
+    if key == "pr-review":
+        # The PR-review source block carries the complete Jev packet boundary,
+        # privacy safeguards, escalation and resolution procedure. Reuse it
+        # verbatim so this sync cannot replace it with a shortened duplicate.
+        canonical = os.path.join(KIT, "skillsets/pr-review/codex/high-signal-pr-review/SKILL.md")
+        text = Path(canonical).read_text(encoding="utf-8")
+        blocks = PAT.findall(text)
+        if len(blocks) != 1:
+            raise ValueError(f"expected one canonical PR-review typed-decisions block in {canonical}")
+        return blocks[0]
     record = (f"\n\nRecord it in the decision ledger ({RECORD[key]}), with a `--ref` a later agent "
               "can find, and resolve it when the truth arrives.")
     return ("<!-- typed-decisions:begin -->\n## Typed decisions here\n\n"
@@ -242,9 +240,17 @@ def jobs():
             yield key, p, skill_block(key)
 
 
-def run(check, resolve=H, say=print):
+def is_kit_source(path):
+    expanded = os.path.realpath(H(path))
+    root = os.path.realpath(KIT)
+    return expanded == root or expanded.startswith(root + os.sep)
+
+
+def run(check, resolve=H, say=print, source_only=False):
     bad = 0
     for key, p, want in jobs():
+        if source_only and (p is None or not is_kit_source(p)):
+            continue
         if p is None:
             say(f"MISSING-TARGETS {key}"); bad += 1; continue
         path = resolve(p)
@@ -258,9 +264,14 @@ def run(check, resolve=H, say=print):
             say(f"STALE   {key:24} {p}"); bad += 1
         else:
             open(path, "w").write(new); say(f"written {key:24} {p}")
-    for h in HOMES:
-        if not os.path.exists(resolve(f"{h}/typed-decisions/SKILL.md")):
-            say(f"NO-SKILL {h}/typed-decisions"); bad += 1
+    if source_only:
+        source_skill = os.path.join(KIT, "skillsets/agent-runtime/shared/typed-decisions/SKILL.md")
+        if not os.path.exists(resolve(source_skill)):
+            say(f"NO-SKILL {source_skill}"); bad += 1
+    else:
+        for h in HOMES:
+            if not os.path.exists(resolve(f"{h}/typed-decisions/SKILL.md")):
+                say(f"NO-SKILL {h}/typed-decisions"); bad += 1
     return bad
 
 
@@ -320,9 +331,12 @@ def parse_args(argv):
     """Parse before touching anything: --help and unknown options must exit without writing."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="report only; exit 1 on any gap")
+    parser.add_argument("--source-only", action="store_true",
+                        help="limit reads/writes to kit-owned source targets; exclude installed homes")
     # The daily agent-hooks run passes --check --falsify together; --falsify wins, as before.
     parser.add_argument("--falsify", action="store_true", help="--check, plus proof the check can fail")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    return args
 
 
 if __name__ == "__main__":
@@ -332,7 +346,9 @@ if __name__ == "__main__":
         print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
         sys.exit(1 if (falsify() or live) else 0)
     if args.check:
-        bad = run(True)
+        bad = run(True, source_only=args.source_only)
+    elif args.source_only:
+        bad = run(False, source_only=True)
     else:
         with standing_home_lock.exclusive_home_writer():
             bad = run(False)

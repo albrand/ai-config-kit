@@ -94,32 +94,39 @@ Use the operator close-out shape from `pr-review-output-contract.md`. Findings f
 The Hermes finding remains the candidate. Jev is an independent second judge,
 not a new filter and not a merge gate.
 
-Compare five isolated Jev judgments with Hermes' labels: J1 kind (`named-defect
-| evidence-method | unclear`); J2 dedupe (`new | duplicate | not-applicable |
-unclear`) and cause (`delta | pre-existing | unclear`); J3 path (`changed |
-unchanged | unclear`) and severity (`critical | high | medium | low | info |
-unclear`, using the written anchors).
+For each Hermes finding, compare five isolated Jev judgments with Hermes'
+labels: J1 finding class (`named-defect | evidence-method | unclear`); J2
+dedupe (`new | duplicate | not-applicable | unclear`) and cause (`delta | pre-existing | unclear`); J3 changed-path scope (`changed | unchanged | unclear`)
+and severity (`critical | high | medium | low | info | unclear`, using the
+written anchors in `hermes-review-jev.py`).
 
 Create a packet with only `review_ref`, `hermes_verdict`, `sensitive_context`,
 `changed_paths`, and bounded `findings` fields (`id`, `kind`, `path`,
 `severity`, `cause`, `relation`, `prior_id`, `prior_summary`, `changed_path`,
 `summary`). Never send the diff, source excerpt, raw Hermes transcript, prompt,
 secret, or personal data. Mark `sensitive_context` true for patient or other
-personal-data reviews; the helper skips Jev. Give each packet a `review_ref`
-unique to this fleet review invocation (PR, head SHA, and round identifier)
-so re-reviews have separate metrics. Hermes finding labels stay local to the
-helper for comparison; Jev receives only finding text, prior text, rules, and
-path labels. Run
-`python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
-A disagreement, missing answer, or failed record is marked `ESCALATED` for the
-coordinator or a Claude review. Agreement never blocks or unblocks merge by
-itself; keep Hermes' verdict and the coordinator's evidence-based decision
+personal-data reviews; the helper skips Jev. It rejects unknown packet fields,
+code-like summaries, and common personal-data patterns before making a call.
+The Hermes finding labels stay local to the helper for comparison; Jev receives
+only the finding text, prior text, rules, and path labels.
+Make `review_ref` unique to this `bb fleet validate` invocation, including the
+PR, head SHA, and round identifier, so re-reviews have separate timing and
+spend measurements.
+
+Run `python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
+The helper records each answer as `system-one` with a findable ref and peer
+agreement. A disagreement, missing answer, or failed record is marked
+`ESCALATED` for the coordinator or a Claude review. Agreement permits the
+reviewer to continue considering the finding; it never blocks or unblocks merge
+by itself. Keep Hermes' verdict and the coordinator's evidence-based decision
 authoritative. When the workflow observes a finding's final adjudication,
 resolve it immediately, including after a merge: `held` if still supported,
-`overturned` if disproved. Resolve each finding separately with the helper's
-`resolve --ref <review_ref> --finding <finding_id> --outcome held|overturned
---evidence <short-outcome>` command. Do not infer that every finding was held
-because the PR merged. Report metrics with `decision-ledger.py review-report`.
+`overturned` if disproved. Resolve each finding separately with
+`python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py resolve --ref <review_ref> --finding <finding_id> --outcome held|overturned --evidence <short-outcome>`.
+Do not infer that every finding was held because the PR merged.
+Report the window metrics with
+`python3 ~/.agents/skills/typed-decisions/scripts/decision-ledger.py review-report --days 30`.
+Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (`--point review-finding` per finding and `--point pr-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->
