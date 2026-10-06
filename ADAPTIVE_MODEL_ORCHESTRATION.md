@@ -4,9 +4,8 @@ Use this contract when a harness exposes more than one model family, reasoning
 effort, agent, or external AI counterpart. The active thread remains the
 coordinator and final authority. Routing adds independent evidence and bounded
 execution capacity; it never transfers architecture, security, release, or
-validation truth. GLM is permanently retired for ordinary execution and
-fallback. Hermes keeps its current working review route until Codex (model set
-in Hermes's own config) is verified there.
+validation truth. Hermes keeps its current working review route until Codex
+(model set in Hermes's own config) is verified there.
 
 ## Routing Policy
 
@@ -17,8 +16,6 @@ in Hermes's own config) is verified there.
   `bb fleet validate`. Keep the current review route working until Codex
   (model set in Hermes's own config) is verified there; the live route change
   belongs in Hermes's own config.
-- GLM is retired for ordinary task execution and fallback. Do not disable the
-  current Hermes review route before its replacement is verified.
 
 Use the live provider route for the exact provider, model, and reasoning level;
 do not hardcode model names. These assignments describe the user's adopted
@@ -82,7 +79,7 @@ exists.
   Hermes's own config); it does not execute changes and must never receive
   project source. Keep its current working route until Codex (model set in
   Hermes's own config) is verified there.
-- OpenCode: legacy and opt-in only; it is not a default route. Never select GLM.
+- OpenCode: legacy and opt-in only; it is not a default route.
 
 Every delegated unit needs a compact brief: the original request as a faithful
 excerpt that preserves the relevant requested outcomes, or a reference
@@ -102,8 +99,7 @@ not call the coordinator or recursively create another orchestration layer.
 
 The installable skill in `skillsets/adaptive-model-orchestration/` supports
 Codex peer selection and the Codex/Claude routing policy. Its doctor checks must
-verify the live catalog before use. Do not package or install a GLM/OpenCode
-provider profile.
+verify the live catalog before use. Do not package or install provider profiles.
 
 A distinct remote-router topology is cmux + Hermes: cmux is the local UI/session
 transport and Hermes is the provider router, plan/delegation brain, fallback, and

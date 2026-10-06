@@ -12,8 +12,8 @@ there, and keep procedures in named skills loaded on their task triggers.
 - Fix known in-scope defects and runnable checks now. Ask only at a material user-owned breakpoint; close exposures immediately. A mistake is fixed, never answered with another rule or gate.
 - Do the work yourself; delegate only genuinely independent work. Reuse one worktree per task.
 - Hermes reviews every PR before merge. A named defect blocks: fix it and rerun the same topic until it is no longer named. Evidence/method objections without a defect do not block.
-- If process rules conflict with shipping, ship and state which rule you set aside. Hard prohibitions never yield. Load `meaningful-tests`, `finish-the-job`, and `pallium-ship-workflow` for applicable detail. Never bypass a safety-hook block; it is the rule working, not a defect to route around.
-- Before LLM review, run `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py`, attach its JSON/Markdown packet, and add a reusable check for each defect.
+- If process rules conflict with shipping, ship and state which rule you set aside. Hard prohibitions never yield. Load `meaningful-tests` and `finish-the-job` for applicable detail. Never bypass a safety-hook block; it is the rule working, not a defect to route around.
+- Before LLM review, run `python3 ~/.agents/skills/pr-review/scripts/pre-review.py`, attach its JSON/Markdown packet, and add a reusable check for each defect.
 <!-- delivery-first:end -->
 
 ## Follow-through
