@@ -260,7 +260,7 @@ question.
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
 | `HARNESS_STRATEGY.md` | Master/sub-agent routing, model tiers, cache rules, anti-drift rules, escalation, validation, and delivery standards. |
-| `ADAPTIVE_MODEL_ORCHESTRATION.md` | Canonical capability-first multi-model routing, effort, max/ultra, and integration contract. |
+| `ADAPTIVE_MODEL_ORCHESTRATION.md` | Capability-first Codex/Claude routing, effort selection, and integration contract. |
 | `CMUX_HERMES_ORCHESTRATION.md` | Bounded, default-off orchestration between cmux (local UI/session transport) and Hermes (remote provider router on a Tailscale-only VPS) via a local deterministic broker; hard network boundary, reuse-first workspace creation, worktree write isolation, no reverse SSH, and report-only cleanup. |
 | `NATIVE_AGENT_SURFACES.md` | Capability-first, host-neutral doctrine for discovering and using native host software an agent runs in or through (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses); never serializes env values or socket capabilities. |
 | `SECOND_MAC_BOOTSTRAP.md` | Git-based second-Mac install from the public repo with explicit copy/install commands; configures its own SSH/Tailscale and never copies credentials. |
@@ -279,7 +279,7 @@ question.
 | `CONTEXT_ACCELERATION.md` | Optional directives for using a chosen Graphify-compatible knowledge graph/context map or OpenWiki-compatible generated agent wiki as advisory orientation, including the required operator documentation package; not a default dependency or source of truth. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
-| `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, legacy OpenCode safety boundary, portable wrappers, and package manifest. |
+| `skillsets/adaptive-model-orchestration/` | Codex orchestration skill, legacy OpenCode safety boundary, and package manifest. |
 | `skillsets/core-framework/` | Self-contained Codex entrypoint with bundled ai-config-kit references. |
 | `skillsets/scope-advisory/` | Portable Codex and bb scope-advisor skill bundling the canonical `SCOPE_DISCIPLINE.md` contract. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
