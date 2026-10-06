@@ -506,8 +506,9 @@ def wait_ready(url, timeout=180):
     return False
 
 
-def run_stage(repo, name, spec, strict, paths, env, wrap=None):
-    """Run one stage. Every command the repo controls goes through `wrap` (the runner's sandbox)."""
+def run_stage(repo, name, spec, strict, paths, env, wrap=None, withheld=()):
+    """Run one stage. Every command the repo controls goes through `wrap` (the runner's sandbox).
+    `withheld`: secrets the runner keeps from PR jobs; a stage that needs one is not verified here."""
     res = {"stage": name, "started": now()}
     if spec.get("na"):
         return {**res, "status": "na", "detail": spec["na"]}
@@ -517,6 +518,10 @@ def run_stage(repo, name, spec, strict, paths, env, wrap=None):
         return {**res, "status": "untouched", "detail": "no changed path matches " + ", ".join(spec["paths"])}
     senv = stage_env(env, spec)
     missing = [k for k in spec.get("env", []) if not senv.get(k)]
+    secret = [k for k in missing if k in withheld]
+    if secret:
+        return {**res, "status": "missing", "detail": "needs values the runner keeps from PR jobs: " + ", ".join(secret)
+                + "; run it locally or on a --branch job"}
     if missing:
         if strict:
             return {**res, "status": "fail", "detail": "missing required env: " + ", ".join(missing)}
@@ -563,7 +568,7 @@ def overall(results):
     return "pass"
 
 
-def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets=(), deadline=None):
+def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets=(), deadline=None, withheld=()):
     """Run `stages` in order; return (verdict, results, posted). `post(context, state, description)` reports
     each stage; `secrets` are masked in everything returned or printed."""
     posted, results = True, []
@@ -577,7 +582,7 @@ def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets
         else:
             if left is not None:
                 spec = {**spec, "timeout": min(spec.get("timeout", 3600), left)}
-            r = run_stage(repo, name, spec, strict, paths, env, wrap)
+            r = run_stage(repo, name, spec, strict, paths, env, wrap, withheld)
         r = {k: redact(v, secrets) if isinstance(v, str) else v for k, v in r.items()}
         results.append(r)
         print(f"[verify] {name:<11} {r['status']:<10} {r.get('detail', '')}", flush=True)
@@ -641,11 +646,13 @@ def cmd_status(args):
 # - Every repo-controlled command runs in an OS sandbox (macOS sandbox-exec). It can't read /Users, /Volumes, /tmp,
 #   /var/folders or RUNNER_HOME, except its own job dir and toolchains. It can only write its job dir. It can't reach
 #   the keychain, the ssh-agent, the Docker socket, or any port that was listening on the host when the job started.
-# - The environment is an allowlist plus the owner's per-repo env file (never for forks), minus forge tokens.
+# - The environment is an allowlist plus owner env files, minus forge tokens. Network egress stays open (setup
+#   and journeys need it), so a PR job gets no secrets: only `<slug>.pr.env`, values every PR author may read.
+#   `<slug>.env` (secrets) reaches only owner-chosen branch jobs. Forks get neither.
 # - Changed paths are computed before PR code runs; afterwards the runner runs no git in the job dir. It posts
 #   statuses and writes the artifact itself, and masks env-file values in both.
 # - With no supported sandbox, the runner refuses to run jobs unless started with --unsandboxed.
-# Left open: network egress (env-file values must be test-only credentials) and processes a job daemonizes.
+# Left open: host services that start after the port snapshot, and processes a job daemonizes.
 
 
 def sbpl(p):
@@ -694,6 +701,20 @@ def sandbox_wrap(job, args):
         return None
     ports -= set(args.allow_host_port or [])
     return [SANDBOX_EXEC, "-p", sandbox_profile(job, Path.home(), RUNNER_HOME, args.allow_read or [], ports)]
+
+
+def job_env_file(slug, pr, fork):
+    """(values, withheld names) for a job. PR code can send anything it sees over the network, so a PR
+    job gets only `<slug>.pr.env`: values the owner accepts every PR author can read. Secrets in
+    `<slug>.env` reach only owner-chosen branch jobs, which run merged code. Forks get neither."""
+    base = RUNNER_HOME / "env" / slug.replace("/", "__")
+    shared = load_env_file(base.with_name(base.name + ".pr.env"))
+    secret = load_env_file(base.with_name(base.name + ".env"))
+    if fork:
+        return {}, set(shared) | set(secret)
+    if pr:
+        return shared, set(secret) - set(shared)
+    return {**shared, **secret}, set()
 
 
 def job_env(job, env_file, sha):
@@ -816,7 +837,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
             return "error"
         # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
         paths = changed_paths(work, f"origin/{base}") if base else None
-        env_file = {} if fork else load_env_file(RUNNER_HOME / "env" / (slug.replace("/", "__") + ".env"))
+        env_file, withheld = job_env_file(slug, pr=bool(base), fork=fork)
         dropped = sorted(k for k in env_file if k in FORGE_TOKENS)
         if dropped:
             print(f"[serve] {slug}: env file sets {', '.join(dropped)}; forge tokens never reach jobs", flush=True)
@@ -834,7 +855,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
         stages = list(PER_CHANGE)
         if not base and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
             stages.append("mutation")
-        verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline)
+        verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline,
+                                           withheld - set(FORGE_TOKENS))
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
         art = {"sha": sha, "at": now(), "strict": True, "base": base, "fork": fork, "sandboxed": bool(wrap),

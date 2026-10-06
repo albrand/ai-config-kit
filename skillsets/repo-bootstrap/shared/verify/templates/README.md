@@ -20,9 +20,10 @@ Each stage in `.verify/config.json` is a shell command plus a few options:
 }
 ```
 
-`env` names variables the stage needs; in strict mode a missing one fails the stage. On the runner
-they come from its env file, and forge tokens never do. `paths` limits a stage to changes that touch
-those globs (otherwise `untouched`). `na` needs a reason.
+`env` names variables the stage needs; in strict mode a missing one fails the stage. On the runner,
+PR jobs get them only from `<owner>__<name>.pr.env` (values every PR author may read), secrets in
+`<owner>__<name>.env` reach only `--branch` jobs, and forge tokens never reach any job. `paths`
+limits a stage to changes that touch those globs (otherwise `untouched`). `na` needs a reason.
 
 On the self-hosted runner, stages are sandboxed and can't reach the Docker socket or ports already
 listening on the host. So `services` that call `docker compose` work locally but not there. On the
@@ -51,8 +52,10 @@ production-shaped data before it ships. A dry run reads, computes and reports; i
    replaces each write with a recorded intent: table, key, before, after.
 2. Point it at a read-only source. Prefer, in order: a masked snapshot, a read replica with a
    read-only role, then production through a read-only role. The owner chooses the source and
-   approves masking of personal data before the first run. Credentials come from the runner's env
-   file, never the repo.
+   approves masking of personal data before the first run. Credentials come from the runner's
+   secret env file, never the repo. PR code never gets that file, so on the runner a rehearsal
+   with real credentials runs in `--branch` jobs. Before merging, the owner runs it locally from
+   the PR branch (`verify.py run --stages rehearsal --strict`).
 3. Print a summary the stage can judge: rows read, rows that would change, rows that would be
    skipped and why, errors. Exit non-zero on errors, or when the change count is outside the
    expected range stored next to the job (for example `expected.json`: `{"max_changes": 500}`).

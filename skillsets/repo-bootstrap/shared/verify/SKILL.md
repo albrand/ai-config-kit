@@ -74,10 +74,14 @@ stopping point: write the missing stage if you can, then run it.
      keychain, the ssh-agent, Docker, or any port listening on the host when the job started
      (`--allow-host-port` opens one, e.g. a test database). There is no supported sandbox
      elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines.
-   - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job. Forge tokens never
-     reach them. Secrets go in `~/.cache/verify-runner/env/<owner>__<name>.env`, never in the repo;
-     forks never get them, and their values are masked in statuses and run records. Network egress
-     stays open, so that file holds test-only credentials.
+   - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job, and forge tokens
+     never reach them. Network egress stays open (installs and journeys need it), so PR code can
+     send anything it sees. That is why PR jobs get no secrets. Values go in
+     `~/.cache/verify-runner/env/`, never in the repo:
+     - `<owner>__<name>.pr.env`: what every PR author may read, such as a throwaway local test
+       database or a seeded test persona. PR jobs get only this.
+     - `<owner>__<name>.env`: secrets. Only `--branch` jobs, which run merged code, get them.
+     - Forks get neither. Values are masked in statuses and run records.
 
 ## Hook
 
