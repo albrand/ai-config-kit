@@ -14,7 +14,7 @@
 # merge-group commit, never the walked SHA. The ref is
 # refs/heads/gh-readonly-queue/<base>/pr-<N>-<sha>, where <sha> is the BASE
 # the group was built on, not the PR head (verified 2026-09-24 on a real queue
-# run: Sea-Haven-Industries/shoc-backend run 35815603657, ref
+# run: ref
 # gh-readonly-queue/main/pr-167-b36b69df..., group commit f7db6b9f with
 # parents [b36b69df base, 5c5c01b2 = PR #167 head]). So the resolver takes the
 # PR number from the ref and asks `gh pr view` for that PR's head. The gate

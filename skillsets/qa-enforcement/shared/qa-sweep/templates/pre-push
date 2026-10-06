@@ -3,15 +3,15 @@
 # PreToolUse hooks (opencode/GLM included). Three ways to install:
 #   1. once per clone:  cp <skill-dir>/templates/pre-push .git/hooks/pre-push
 #                       && chmod +x .git/hooks/pre-push
-#   2. vendored:        .qa/hooks/pre-push with core.hooksPath (meu-psi pilot)
-#   3. husky repos (pallium-app, shoc-frontend-new): husky owns core.hooksPath,
+#   2. vendored:        .qa/hooks/pre-push with core.hooksPath
+#   3. husky repos: husky owns core.hooksPath,
 #      so do NOT set it; put the block between the qa-ship-gate markers below
 #      at the TOP of .husky/pre-push, before anything else in that file:
 #        { sed -n '/^# --- qa-ship-gate begin/,/^# --- qa-ship-gate end/p' \
 #            <skill-dir>/templates/pre-push; cat .husky/pre-push; } > /tmp/pp \
 #          && mv /tmp/pp .husky/pre-push && chmod +x .husky/pre-push
 #      TOP, not appended: git hands the pushed refs to the hook on stdin
-#      exactly once. A husky script that parses them first (pallium's does)
+#      exactly once. A husky script that parses them first (some do)
 #      drains stdin, and a gate after it would see no refs and let every push
 #      through. The block saves stdin, runs the gate on it, and hands the same
 #      ref lines back to whatever follows it, so existing husky logic still
