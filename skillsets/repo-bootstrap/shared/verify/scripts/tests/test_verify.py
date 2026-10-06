@@ -194,6 +194,18 @@ class Detection(unittest.TestCase):
                           "e2e/component/card.spec.tsx": fake_api, "e2e/button.ct.tsx": fake_api})
         self.assertEqual(verify.detect(repo)["e2e_mocking_files"], ["e2e/qa/pay.spec.ts"])
 
+    def test_every_template_doctor_points_to_exists(self):
+        import re
+        src = (HERE.parent / "verify.py").read_text()
+        refs = set(re.findall(r"\btemplates/[A-Za-z0-9_./-]+(?:#[a-z-]+)?", src))
+        self.assertTrue(refs)
+        for ref in refs:
+            path, _, anchor = ref.partition("#")
+            target = verify.TEMPLATES.parent / path
+            self.assertTrue(target.exists(), ref)
+            if anchor:
+                self.assertIn(f"## {anchor}", target.read_text(), ref)
+
     def test_plain_repo_marks_na_with_reasons(self):
         cfg = verify.proposal(verify.detect(make_repo({"README.md": "x\n"})))
         self.assertEqual(cfg["stages"]["evals"]["na"], "no LLM features detected")
@@ -270,6 +282,19 @@ class EndToEnd(unittest.TestCase):
                                capture_output=True, text=True, timeout=30)
             self.assertEqual(p.returncode, 0)
             self.assertEqual(p.stdout.strip(), "")  # not a git repo: nothing to say, never a deny
+
+    def test_hook_notes_missing_contract_after_a_deploy(self):
+        repo = make_repo({"README.md": "x\n"})
+        payload = json.dumps({"tool_input": {"command": "vercel deploy --prod"}, "cwd": str(repo)})
+        p = subprocess.run([sys.executable, str(HERE.parent / "verify.py"), "hook"], input=payload,
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(p.returncode, 0)
+        out = json.loads(p.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PostToolUse")
+        self.assertNotIn("permissionDecision", out)
+        self.assertIn("no .verify/config.json", out["additionalContext"])
+        self.assertIn("NOT VERIFIED", out["additionalContext"])
+        self.assertIn("postdeploy", out["additionalContext"])
 
 
 if __name__ == "__main__":

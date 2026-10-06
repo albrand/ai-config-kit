@@ -43,6 +43,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
 CONFIG = Path(".verify/config.json")
 RUNS = Path(".verify/runs")
 PER_CHANGE = ["static", "unit", "integration", "journeys", "evals", "rehearsal"]
@@ -386,7 +387,7 @@ def doctor(repo, online=False, ref="HEAD"):
     f = []
 
     def add(sev, area, msg, fix):
-        f.append({"severity": sev, "area": area, "finding": msg, "fix": fix})
+        f.append({"severity": sev, "area": area, "finding": msg, "fix": re.sub(r"\btemplates/", f"{TEMPLATES}/", fix)})
 
     if not cfg:
         add("high", "contract", "no .verify/config.json: nothing defines 'done' for this repo", "verify.py init --write, then fill the todo stages")
@@ -1002,8 +1003,15 @@ def cmd_hook(_args):
     st = forge_status(slug, sha, timeout=8) if slug else None
     local = read_json(Path(root) / RUNS / f"{sha}.json") or {}
     verdict = ((st or {}).get(STATUS_PREFIX) or {}).get("state") or local.get("verdict") or "none"
-    note = (f"[verify] {sha[:9]} verify result: {verdict}. This never blocks merges or deploys. Unless it is "
-            "success/pass, say NOT VERIFIED in your report and name the missing or failing stage, then keep working on it.")
+    if verdict == "none" and not (Path(root) / CONFIG).exists():
+        note = (f"[verify] {sha[:9]}: this repo has no .verify/config.json, so nothing defines or checked 'done' for "
+                "this commit. This never blocks merges or deploys. Report the change as NOT VERIFIED; "
+                f"`python3 {Path(__file__).resolve()} doctor {root}` lists what is missing.")
+    else:
+        note = (f"[verify] {sha[:9]} verify result: {verdict}. This never blocks merges or deploys. Unless it is "
+                "success/pass, say NOT VERIFIED in your report and name the missing or failing stage, then keep working on it.")
+    if re.search(r"\bvercel\b|\bdeploy\b", cmd):
+        note += " After a deploy, run the postdeploy stage: `verify.py run . --stages postdeploy --strict`."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}))
     return 0
 
