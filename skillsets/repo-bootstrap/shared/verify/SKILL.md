@@ -80,8 +80,11 @@ stopping point: write the missing stage if you can, then run it.
      `~/.cache/verify-runner/env/`, never in the repo:
      - `<owner>__<name>.pr.env`: what every PR author may read, such as a throwaway local test
        database or a seeded test persona. PR jobs get only this.
-     - `<owner>__<name>.env`: secrets. Only `--branch` jobs, which run merged code, get them.
-     - Forks get neither. Values are masked in statuses and run records.
+     - `<owner>__<name>.env`: secrets. Only `--branch` jobs, which run merged code, get them. A
+       job counts as a branch job only if its commit is, at that moment, the head of a branch the
+       owner listed. List only branches PR authors can't push to directly.
+     - Forks get neither, and a PR that doesn't say whether it is a fork counts as one. A PR whose
+       base branch is missing or unknown doesn't run. Values are masked in statuses and run records.
 
 ## Hook
 

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -372,8 +373,9 @@ class RunnerIsolation(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="verify-iso-")).resolve()
         self.runner_home = self.tmp / "runner"
         (self.runner_home / "env").mkdir(parents=True)
-        self.saved = verify.RUNNER_HOME, dict(os.environ)
+        self.saved = verify.RUNNER_HOME, dict(os.environ), verify.DISK_FLOOR_GB
         verify.RUNNER_HOME = self.runner_home
+        verify.DISK_FLOOR_GB = 0  # these jobs are a few KB; the floor is for real checkouts
         self.home_canary = Path.home() / ".cache" / f"verify-test-canary-{os.getpid()}.txt"
         self.home_canary.parent.mkdir(exist_ok=True)
         self.home_canary.write_text("HOME-CANARY\n")
@@ -412,7 +414,7 @@ class RunnerIsolation(unittest.TestCase):
         self.probe = probe
 
     def tearDown(self):
-        verify.RUNNER_HOME = self.saved[0]
+        verify.RUNNER_HOME, verify.DISK_FLOOR_GB = self.saved[0], self.saved[2]
         os.environ.clear()
         os.environ.update(self.saved[1])
         for s in (self.srv, self.exfil):
@@ -493,11 +495,96 @@ class RunnerIsolation(unittest.TestCase):
         mirror = self.tmp / "trusted.git"
         subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
         args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
-        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, None, "trusted", args, lambda c, s, d: True)
+        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, None, "trusted", args, lambda c, s, d: True, False, "branch")
         self.assertEqual(rc, "done")
         self.assertTrue("SECRET_API_KEY=canary-secret-1" in "".join(ExfilHandler.received), "branch job lacked its secret")
         art = json.loads((self.runner_home / "runs/acme__app" / f"{sha}.json").read_text())
+        self.assertEqual(art["kind"], "branch")
         self.assertEqual({s["stage"]: s["status"] for s in art["stages"]}["rehearsal"], "pass")
+
+    def test_a_job_without_a_known_base_never_gets_secrets(self):
+        # run_job defaults to a PR job; a missing, empty or unknown base is refused, never treated as a branch job.
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
+        calls = [(None, "PR #1", ()), ("", "PR #1", ()), ("nope", "PR #1", ()), ("../main", "PR #1", ()),
+                 (["main"], "PR #1", ()),
+                 (None, "main", (False, "branch")),  # a branch job whose SHA is not that branch's head
+                 ("main", "pr", (False, "branch")),  # a branch job never has a base
+                 (None, "pr", (True, "branch"))]     # nor comes from a fork
+        for base, label, extra in calls:
+            posts = []
+            rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, base, label, args,
+                            lambda c, s, d: posts.append((c, s, d)) or True, *extra)
+            self.assertEqual((rc, posts), ("error", []), f"{base!r} {label} {extra}: {out}")
+        self.assertFalse(self.marker.exists())
+        self.assertFalse((self.runner_home / "runs").exists())
+        self.assertEqual(ExfilHandler.received, [])
+
+    def serve(self, prs, branch=None):
+        """Drive the real dispatch (serve_repo -> pending_jobs -> run_job) against a fake `gh` that lists `prs`."""
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        (self.tmp / "prs.json").write_text(json.dumps(prs))
+        log = self.tmp / "gh.log"
+        log.write_text("")
+        fake = bin_dir / "gh"
+        fake.write_text(f"#!{sys.executable}\n"
+                        "import json, sys\n"
+                        f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                        f"print(open({str(self.tmp / 'prs.json')!r}).read() if sys.argv[1:3] == ['pr', 'list'] else '{{}}')\n")
+        fake.chmod(0o755)
+        mirror = self.runner_home / "mirrors/acme__app.git"
+        if not mirror.exists():
+            subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
+        os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+        args = argparse.Namespace(allow_forks=True, branch=branch, max_jobs=50, stale_hours=6, rerun=None,
+                                  unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
+        try:
+            _, out = quiet(verify.serve_repo, "acme/app", args)
+        finally:
+            os.environ["PATH"] = self.saved[1]["PATH"]
+        calls = [json.loads(l) for l in log.read_text().splitlines()]
+        return out, [c for c in calls if c[:3] == ["api", "-X", "POST"]]
+
+    def test_serve_dispatch_never_gives_a_pr_the_secrets(self):
+        sha = self.sha
+        prs = [{"number": 1, "headRefOid": sha, "baseRefName": "main", "isCrossRepository": False},
+               {"number": 2, "headRefOid": sha, "baseRefName": "", "isCrossRepository": False},
+               {"number": 3, "headRefOid": sha, "isCrossRepository": False},
+               {"number": 4, "headRefOid": sha, "baseRefName": None, "isCrossRepository": False},
+               {"number": 5, "headRefOid": sha, "baseRefName": "../main", "isCrossRepository": False},
+               {"number": 6, "headRefOid": sha, "baseRefName": "refs/heads/main", "isCrossRepository": False},
+               {"number": 7, "headRefOid": sha, "baseRefName": "nope", "isCrossRepository": False},
+               {"number": 8, "headRefOid": sha, "baseRefName": ["main"], "isCrossRepository": False},
+               {"number": 9, "headRefOid": "HEAD", "baseRefName": "main", "isCrossRepository": False},
+               {"number": 10, "headRefOid": sha, "baseRefName": "main", "isCrossRepository": True},
+               {"number": 11, "headRefOid": sha, "baseRefName": "main"},
+               "not a PR"]
+        out, posts = self.serve(prs)
+        ran = set(re.findall(r"\[serve\] acme/app (PR #\d+) \w{9} running", out))
+        self.assertEqual(ran, {"PR #1", "PR #10", "PR #11"}, out)
+        for n in range(2, 10):
+            self.assertIn(f"PR #{n}: head or base branch missing or unknown; not running", out)
+        self.assertTrue(posts, "dispatch posted nothing, so the test proves nothing")
+        sent = "".join(ExfilHandler.received)
+        self.assertTrue(sent, "no job reached the exfil server, so the test proves nothing")
+        for c in self.CANARIES:
+            self.assertFalse(c in out + json.dumps(posts) + sent, f"{c} leaked through dispatch")
+        art = json.loads((self.runner_home / "runs/acme__app" / f"{sha}.json").read_text())
+        self.assertEqual((art["kind"], art["base"]), ("pr", "main"))
+        # A PR that does not say whether it is a fork is treated as one: not even PR-visible values reach it.
+        ExfilHandler.received = []
+        out, _ = self.serve([prs[10]])
+        self.assertIn("PR #11", "".join(re.findall(r"\[serve\] acme/app (PR #\d+) \w{9} running", out)), out)
+        self.assertTrue(ExfilHandler.received)
+        self.assertNotIn("pr-visible-db-1", "".join(ExfilHandler.received))
+        # Positive control through the same dispatch: an owner-listed branch does get the secret.
+        git(self.origin, "checkout", "-q", "-b", "trusted", "main")
+        (self.origin / "probe.sh").write_text(self.probe)
+        git(self.origin, "commit", "-qam", "probe on a trusted branch")
+        ExfilHandler.received = []
+        out, _ = self.serve([], branch=["trusted"])
+        self.assertRegex(out, r"\[serve\] acme/app trusted \w{9} running")
+        self.assertTrue("canary-secret-1" in "".join(ExfilHandler.received), "branch job through dispatch lacked its secret")
 
     def test_no_sandbox_means_no_pr_code_runs(self):
         posts = []

@@ -779,16 +779,30 @@ def pending_jobs(slug, mirror, args):
         raise RuntimeError(f"cannot list PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
     jobs = []
     for p in json.loads(out or "[]"):
-        fork = bool(p.get("isCrossRepository"))
-        if fork and not args.allow_forks:
-            print(f"[serve] {slug} PR #{p['number']}: from a fork, skipped (--allow-forks to opt in; forks never get the env file)")
+        if not isinstance(p, dict):
             continue
-        jobs.append((p["headRefOid"], p["baseRefName"], f"PR #{p['number']}", fork))
+        label, head, base = f"PR #{p.get('number')}", p.get("headRefOid"), p.get("baseRefName")
+        fork = p.get("isCrossRepository") is not False  # unknown counts as a fork
+        if fork and not args.allow_forks:
+            print(f"[serve] {slug} {label}: from a fork, skipped (--allow-forks to opt in; forks never get the env file)")
+            continue
+        if not (isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head)) or not branch_head(mirror, base):
+            print(f"[serve] {slug} {label}: head or base branch missing or unknown; not running", flush=True)
+            continue
+        jobs.append((head, base, label, fork, "pr"))
     for b in args.branch or []:
-        sha = git(mirror, "rev-parse", f"refs/heads/{b}")
+        sha = branch_head(mirror, b)
         if sha:
-            jobs.append((sha, None, b, False))
+            jobs.append((sha, None, b, False, "branch"))
     return jobs
+
+
+def branch_head(mirror, name):
+    """The head SHA of branch `name` in the mirror, or "" for anything that is not a plain existing branch."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", name) or ".." in name \
+            or name.startswith(("-", "/")) or name.endswith(("/", ".lock")):
+        return ""
+    return git(mirror, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}")
 
 
 def trusted_config(mirror, sha, base):
@@ -808,14 +822,25 @@ def trusted_config(mirror, sha, base):
     return cfg, ("" if mine == cfg else f" (ran {base}'s config, not this PR's edit)")
 
 
-def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
+def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
+    """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
+    whose SHA is, right now, the head of the owner-listed branch named by `label`."""
     post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc))
     jobs = RUNNER_HOME / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     if free_gb(jobs) < DISK_FLOOR_GB:
         print(f"[serve] disk below {DISK_FLOOR_GB} GB free; not starting {label}")
         return "skipped"
-    cfg, note = trusted_config(mirror, sha, base)
+    trusted = kind == "branch" and base is None and not fork and bool(sha) and branch_head(mirror, label) == sha
+    if kind == "branch" and not trusted:
+        print(f"[serve] {slug} {label}: {sha[:9]} is not the head of an owner-listed branch; not running", flush=True)
+        return "error"
+    if not trusted and not branch_head(mirror, base):
+        print(f"[serve] {slug} {label}: PR base branch {base!r} is missing or unknown; not running", flush=True)
+        return "error"
+    if not trusted:
+        kind = "pr"
+    cfg, note = trusted_config(mirror, sha, None if trusted else base)
     if not cfg:
         post(STATUS_PREFIX, "missing", f"no .verify/config.json on {base} yet; merge one there first" if base
              else "no .verify/config.json in this commit")
@@ -836,8 +861,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
             print(f"[serve] {slug} {label}: cannot check out {sha[:9]}")
             return "error"
         # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
-        paths = changed_paths(work, f"origin/{base}") if base else None
-        env_file, withheld = job_env_file(slug, pr=bool(base), fork=fork)
+        paths = None if trusted else changed_paths(work, f"origin/{base}")
+        env_file, withheld = job_env_file(slug, pr=not trusted, fork=fork)
         dropped = sorted(k for k in env_file if k in FORGE_TOKENS)
         if dropped:
             print(f"[serve] {slug}: env file sets {', '.join(dropped)}; forge tokens never reach jobs", flush=True)
@@ -853,14 +878,14 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
                 return "done" if post(STATUS_PREFIX, "fail", f"setup failed (exit {rc}); output is in the runner log") else "error"
         print(f"[serve] {slug} {label} {sha[:9]} running", flush=True)
         stages = list(PER_CHANGE)
-        if not base and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
+        if trusted and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
             stages.append("mutation")
         verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline,
                                            withheld - set(FORGE_TOKENS))
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
-        art = {"sha": sha, "at": now(), "strict": True, "base": base, "fork": fork, "sandboxed": bool(wrap),
-               "verdict": verdict, "stages": results}
+        art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "base": base, "fork": fork,
+               "sandboxed": bool(wrap), "verdict": verdict, "stages": results}
         (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
         return "done" if posted else "error"
@@ -884,7 +909,7 @@ def serve_repo(spec, args):
     try:
         mirror = ensure_mirror(slug, url)
         errors = done = 0
-        for sha, base, label, fork in pending_jobs(slug, mirror, args):
+        for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
             st = forge_status(slug, sha)
@@ -896,7 +921,7 @@ def serve_repo(spec, args):
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):
                 continue
-            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork)
+            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork, kind=kind)
             errors += outcome == "error"
             done += outcome == "done"
         return 1 if errors else 0
