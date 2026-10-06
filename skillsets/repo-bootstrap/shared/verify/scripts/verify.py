@@ -1,0 +1,1066 @@
+#!/usr/bin/env python3
+"""verify: one command that decides whether a change works, the same way in every repo.
+
+A repo describes its checks once in `.verify/config.json` (written by `init`). Every agent, every
+human and the self-hosted runner then run the same thing:
+
+  verify.py doctor   [repo] [--online] [--json]   audit any repo (new or legacy): what is missing
+  verify.py init     [repo] [--write]             detect the stack and propose .verify/config.json
+  verify.py run      [repo] [--stages a,b] [--strict] [--base REF] [--post-status]
+  verify.py status   [repo] [--sha SHA]           last result for a commit (local artifact + forge)
+  verify.py serve    --repo PATH|OWNER/NAME [...] [--once]   self-hosted runner (no GitHub Actions)
+  verify.py weaken-check [repo] [--base REF]      fail when a change skips, deletes or loosens tests
+  verify.py mutation-targets [repo] [--base REF]  changed source files to mutate
+  verify.py eval-score --dataset D --predictions P [--thresholds T]   score non-deterministic output
+  verify.py housekeep [repo] [--apply]            list (and with --apply, do) safe repo cleanup
+  verify.py hook                                  PostToolUse note after a merge/deploy (never blocks)
+
+Stages, in order: static, unit, integration, journeys, evals, rehearsal (per change); mutation
+(scheduled); postdeploy (after a deploy). A stage is pass, fail, missing (no command and no `na`
+reason), na (declared not applicable, with a reason) or untouched (path-filtered and not touched).
+Only all-pass-or-na is green. `missing` is never green: it reports NOT VERIFIED.
+
+Strict mode (the runner always uses it): a required env var that is absent FAILS the stage instead
+of letting the suite skip itself, and a suite that reports more skipped tests than `max_skipped`
+fails. Results are advisory commit statuses; nothing here blocks a merge or a deploy.
+Python 3.9+ standard library only.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import fnmatch
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+CONFIG = Path(".verify/config.json")
+RUNS = Path(".verify/runs")
+PER_CHANGE = ["static", "unit", "integration", "journeys", "evals", "rehearsal"]
+ALL_STAGES = PER_CHANGE + ["mutation", "postdeploy"]
+DEFAULT_MAX_SKIPPED = {"integration": 0, "journeys": 0, "evals": 0}
+DISK_FLOOR_GB = 20
+STATUS_PREFIX = "verify"
+RUNNER_HOME = Path(os.environ.get("VERIFY_RUNNER_HOME", "~/.cache/verify-runner")).expanduser()
+FORGE_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+# ---------------------------------------------------------------- helpers
+
+
+def kill_group(proc):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            return
+        try:
+            proc.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+    """Run a command (list or shell string) in its own process group; return (rc, output).
+
+    A timeout kills the whole group, so dev servers and browsers started by a test die with it.
+    merge=False returns stdout only (for output that gets parsed).
+    """
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, shell=isinstance(cmd, str), stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT if merge else subprocess.PIPE, text=True,
+                             errors="replace", start_new_session=True)
+    except (FileNotFoundError, NotADirectoryError) as e:
+        return 127, str(e)
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_group(p)
+        out, _ = p.communicate()
+        return 124, (out or "") + f"\n[verify] timed out after {timeout}s"
+    return p.returncode, out or ""
+
+
+def git(repo, *args, timeout=60):
+    rc, out = sh(["git", "-C", str(repo), *args], timeout=timeout, merge=False)
+    return out.strip() if rc == 0 else ""
+
+
+def repo_root(path=".", allow_bare=False):
+    root = git(path, "rev-parse", "--show-toplevel")
+    if root:
+        return Path(root)
+    if allow_bare and git(path, "rev-parse", "--is-bare-repository") == "true":
+        return Path(path).expanduser().resolve()
+    sys.exit(f"[verify] not a git work tree: {path}")
+
+
+def slug_of(url):
+    m = re.search(r"github\.com[^:/]*[:/]([^/]+/[^/]+?)(?:\.git)?/?$", url or "")
+    return m.group(1) if m else None
+
+
+def forge_slug(repo):
+    return slug_of(git(repo, "remote", "get-url", "origin"))
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def age_hours(iso):
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - t).total_seconds() / 3600
+    except (AttributeError, ValueError):
+        return 0.0
+
+
+def free_gb(path):
+    return shutil.disk_usage(path).free / 1e9
+
+
+def read_json(path, default=None):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def tracked_files(repo, ref="HEAD"):
+    out = git(repo, "ls-tree", "-r", "--name-only", ref, timeout=120)
+    return out.splitlines() if out else []
+
+
+def read_blobs(repo, ref, paths, limit=400_000):
+    """Read many files at `ref` in one `git cat-file --batch`: works on bare repos and needs no checkout."""
+    paths = [p for p in dict.fromkeys(paths) if "\n" not in p]
+    if not paths:
+        return {}
+    p = subprocess.Popen(["git", "-C", str(repo), "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL)
+    out, _ = p.communicate("".join(f"{ref}:{x}\n" for x in paths).encode(), timeout=600)
+    res, i = {}, 0
+    for path in paths:
+        nl = out.find(b"\n", i)
+        if nl < 0:
+            break
+        header = out[i:nl].decode(errors="replace")
+        i = nl + 1
+        parts = header.split()
+        if len(parts) != 3 or not parts[2].isdigit():
+            continue  # "<name> missing" / "ambiguous"
+        size = int(parts[2])
+        if parts[1] == "blob":
+            res[path] = out[i:i + min(size, limit)].decode(errors="replace")
+        i += size + 1
+    return res
+
+
+def stage_env(base_env, spec):
+    """Stage commands never see forge tokens unless the stage asks for one by name."""
+    wanted = set(spec.get("env", []))
+    return {k: v for k, v in base_env.items() if k not in FORGE_TOKENS or k in wanted}
+
+
+# ---------------------------------------------------------------- detection
+
+TEST_RE = re.compile(r"(\.(test|spec)\.[cm]?[jt]sx?$|(^|/)test_[^/]+\.py$|_test\.(py|go)$|Tests?\.cs$|(^|/)__tests__/)")
+TEST_PATH_RE = re.compile(TEST_RE.pattern + r"|(^|/)(tests?|e2e|journeys|spec)/")
+INTEG_RE = re.compile(r"integration|\.int\.|(^|/)it/", re.I)
+E2E_RE = re.compile(r"(^|/)(e2e|playwright|journeys|cypress)/|\.e2e\.|\.journey\.", re.I)
+MOCK_RE = re.compile(r"\b(page|context)\.route\(|\bsetupServer\(|from ['\"]msw|\bnock\(|cy\.intercept\(|route\.fulfill\(")
+ENV_SKIP_RE = re.compile(
+    r"skip:\s*!|\.skipIf\(|(describe|it|test)\.skip\(\s*!|pytest\.mark\.skipif|\.skip\(\s*!?process\.env|"
+    r"if\s*\(\s*!process\.env\.[A-Z0-9_]+\s*\)\s*(return|test\.skip|this\.skip)")
+BACKGROUND_RE = re.compile(r"(^|/)(cron|crons|queue|queues|worker|workers|jobs?|backfill|pipeline|ingest\w*|processor|consumers?|outbox|sync)(/|\.|-|_)", re.I)
+LLM_DEPS = re.compile(r"^(openai|@anthropic-ai/sdk|ai|@ai-sdk/.+|langchain|@langchain/.+|anthropic|cohere-ai|@google/generative-ai|ollama|groq-sdk|@mistralai/.+)$")
+LLM_PY = re.compile(r"^\s*(from|import)\s+(openai|anthropic|langchain|litellm|google\.generativeai|cohere|mistralai)\b", re.M)
+SRC_EXT = re.compile(r"\.(ts|tsx|js|jsx|mjs|cjs|py|cs|go|rb|java|kt)$")
+NODE_PM = [("pnpm-lock.yaml", "pnpm run", "pnpm install --frozen-lockfile"),
+           ("yarn.lock", "yarn", "yarn install --frozen-lockfile"),
+           ("bun.lock", "bun run", "bun install --frozen-lockfile"),
+           ("bun.lockb", "bun run", "bun install --frozen-lockfile"),
+           ("package-lock.json", "npm run", "npm ci")]
+
+
+UI_DEPS = {"next", "react", "vue", "svelte", "@sveltejs/kit", "@angular/core", "electron", "vite", "nuxt", "astro",
+           "@remix-run/react", "solid-js", "react-native", "expo"}
+SERVICE_DEPS = {"express", "hono", "@nestjs/core", "fastify", "koa", "@hapi/hapi"}
+SERVICE_PY = re.compile(r"\b(fastapi|flask|django|starlette|aiohttp)\b", re.I)
+
+
+def detect(repo, ref="HEAD"):
+    repo = Path(repo)
+    files = tracked_files(repo, ref)
+    fset = set(files)
+    tests = [f for f in files if TEST_RE.search(f)]
+    e2e_files = [f for f in files if E2E_RE.search(f) and SRC_EXT.search(f)]
+    wf = [f for f in files if f.startswith(".github/workflows/")]
+    py = [f for f in files if f.endswith(".py")][:400]
+    manifests = [f for f in ("package.json", "pyproject.toml", "requirements.txt", str(CONFIG)) if f in fset]
+    blobs = read_blobs(repo, ref, manifests + tests + e2e_files + wf + py)
+    text = lambda rel: blobs.get(rel, "")
+    d = {"repo": str(repo), "ref": ref, "stacks": [], "commands": {}, "setup": None, "files": len(files)}
+    try:
+        pkg = json.loads(text("package.json")) if "package.json" in fset else {}
+    except ValueError:
+        pkg = {}
+    scripts = pkg.get("scripts", {}) if pkg else {}
+    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})} if pkg else {}
+    if pkg:
+        d["stacks"].append("node")
+        run, setup = next(((r, s) for lock, r, s in NODE_PM if lock in fset), ("npm run", "npm install"))
+        d["setup"] = setup
+
+        def pick(*names):
+            return next((n for n in names if n in scripts), None)
+
+        static = [n for n in ("lint", "typecheck", "type-check", "check:types", "format:check") if n in scripts]
+        if static:
+            d["commands"]["static"] = " && ".join(f"{run} {n}" for n in static)
+        if "build" in scripts:
+            d["commands"]["build"] = f"{run} build"
+        unit = pick("test:unit", "test")
+        if unit:
+            d["commands"]["unit"] = f"{run} {unit}"
+        integ = sorted(n for n in scripts if n.startswith("test:integration"))
+        if integ:
+            d["commands"]["integration"] = " && ".join(f"{run} {n}" for n in integ)
+        e2e = pick("test:journeys", "test:e2e", "e2e")
+        if e2e:
+            d["commands"]["journeys"] = f"{run} {e2e}"
+        for k in ("next", "react", "vue", "svelte", "@angular/core", "electron", "express", "hono", "@nestjs/core", "vite"):
+            if k in deps:
+                d["stacks"].append(k)
+        if "@playwright/test" in deps:
+            d["stacks"].append("playwright")
+        if any(k.startswith("@stryker-mutator/") for k in deps):
+            d["stacks"].append("stryker")
+    if fset & {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"}:
+        d["stacks"].append("python")
+        d["commands"].setdefault("static", "ruff check .")
+        d["commands"].setdefault("unit", "pytest -q")
+    if any(f.endswith((".sln", ".csproj")) for f in files):
+        d["stacks"].append("dotnet")
+        d["commands"].setdefault("static", "dotnet build --nologo -warnaserror")
+        d["commands"].setdefault("unit", "dotnet test --nologo")
+    if "go.mod" in fset:
+        d["stacks"].append("go")
+        d["commands"].setdefault("static", "go vet ./...")
+        d["commands"].setdefault("unit", "go test ./...")
+    if fset & {"vercel.json", "vercel.ts"}:
+        d["stacks"].append("vercel")
+    if "pubspec.yaml" in fset:
+        d["stacks"].append("flutter")
+    pytext = text("pyproject.toml") + text("requirements.txt")
+    d["has_ui"] = bool(UI_DEPS & set(deps)) or "pubspec.yaml" in fset or any(f.endswith((".razor", ".cshtml", ".vue", ".svelte")) for f in files)
+    d["has_service"] = bool(SERVICE_DEPS & set(deps)) or bool(SERVICE_PY.search(pytext)) \
+        or any(re.search(r"(^|/)Controllers/.+\.cs$", f) for f in files) or "next" in deps
+    d["tests"] = {
+        "total": len(tests),
+        "integration": sum(1 for f in tests if INTEG_RE.search(f)),
+        "e2e": sum(1 for f in files if E2E_RE.search(f) and re.search(r"\.(spec|test|journey)\.[cm]?[jt]sx?$", f)),
+    }
+    d["e2e_mocking_files"] = [f for f in e2e_files if MOCK_RE.search(text(f))][:20]
+    d["env_gated_skip_files"] = sum(1 for f in tests if ENV_SKIP_RE.search(text(f)))
+    d["background_paths"] = sorted({m.group(0).strip("/._-") for f in files if SRC_EXT.search(f) and not TEST_RE.search(f)
+                                     for m in [BACKGROUND_RE.search(f)] if m})[:15]
+    d["llm"] = any(LLM_DEPS.match(k) for k in deps) or any(LLM_PY.search(text(f)[:20_000]) for f in py)
+    d["evals"] = sorted({"/".join(f.split("/")[:2]) for f in files if re.search(r"(^|/)(evals?|golden)(/|\.)", f, re.I)})[:10]
+    wf_text = "\n".join(text(f) for f in wf)
+    d["ci"] = {
+        "workflows": len(wf),
+        "runs_tests": bool(re.search(r"\b(test|pytest|vitest|jest|go test|dotnet test)\b", wf_text)),
+        "runs_integration": bool(re.search(r"integration", wf_text, re.I)),
+        "runs_e2e": bool(re.search(r"playwright|e2e|cypress|journeys", wf_text, re.I)),
+    }
+    try:
+        d["config"] = json.loads(text(str(CONFIG))) if str(CONFIG) in fset else None
+    except ValueError:
+        d["config"] = None
+    d["has_config"] = d["config"] is not None
+    d["mutation_config"] = "stryker" in d["stacks"] or any(re.search(r"stryker\.(conf|config)|mutmut", f) for f in files) \
+        or "[tool.mutmut]" in pytext
+    d["agents_md"] = [f for f in ("AGENTS.md", "CLAUDE.md", ".bb/AGENTS.md") if f in fset]
+    return d
+
+
+# ---------------------------------------------------------------- init
+
+def proposal(d):
+    c = d["commands"]
+
+    def stage(cmd, todo=None, **kw):
+        s = {"run": cmd, **{k: v for k, v in kw.items() if v is not None}}
+        if not cmd and todo:
+            s["todo"] = todo
+        return s
+
+    cfg = {"version": 1}
+    if d.get("setup"):
+        cfg["setup"] = d["setup"]
+    cfg["stages"] = {
+        "static": stage(" && ".join(x for x in (c.get("static"), c.get("build")) if x) or None,
+                        todo="lint + typecheck + build"),
+        "unit": stage(c.get("unit"), todo="fast tests of the logic users depend on"),
+        "integration": stage(c.get("integration"), todo="real database/queue tests; see templates/README.md#integration",
+                             env=[], max_skipped=0),
+        "journeys": stage(c.get("journeys"), todo="users walking through the running app; see templates/journeys",
+                          max_skipped=0) if c.get("journeys") or d.get("has_ui") or d.get("has_service")
+        else {"run": None, "na": "no user interface or network service detected"},
+        "evals": stage(None, todo="LLM features found: build an eval set; see templates/evals") if d["llm"]
+        else {"run": None, "na": "no LLM features detected"},
+        "rehearsal": stage(None, todo="read-only dry run of data-moving code on production-shaped data",
+                           paths=[f"**/{p}/**" for p in d["background_paths"][:6]]) if d["background_paths"]
+        else {"run": None, "na": "no background processing detected"},
+        "mutation": stage(None, todo="see templates/mutation", schedule="nightly", min_score=60),
+        "postdeploy": stage(None, todo="health + @smoke journeys against the deployed URL; see templates/postdeploy"),
+    }
+    return cfg
+
+
+# ---------------------------------------------------------------- forge (GitHub REST; no Actions involved)
+
+def forge_status(slug, sha, timeout=20):
+    """{context: {state, at}} for the commit, or None when the forge can't be read (auth, network)."""
+    rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
+                  "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
+                 timeout=timeout, merge=False)
+    if rc != 0:
+        return None
+    try:
+        return json.loads(out or "{}") or {}
+    except ValueError:
+        return None
+
+
+GH_STATE = {"pass": "success", "na": "success", "untouched": "success", "fail": "failure",
+            "missing": "error", "not-verified": "error", "pending": "pending"}
+
+
+def post_status(slug, sha, context, state, description):
+    """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
+    rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
+                  "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=30)
+    if rc != 0:
+        print(f"[verify] could not post {context} to {slug}@{sha[:9]}: {out.strip()[-300:]}", file=sys.stderr, flush=True)
+    return rc == 0
+
+
+# ---------------------------------------------------------------- doctor
+
+def doctor(repo, online=False, ref="HEAD"):
+    d = detect(repo, ref)
+    cfg = read_json(Path(repo) / CONFIG) or d["config"]
+    f = []
+
+    def add(sev, area, msg, fix):
+        f.append({"severity": sev, "area": area, "finding": msg, "fix": fix})
+
+    if not cfg:
+        add("high", "contract", "no .verify/config.json: nothing defines 'done' for this repo", "verify.py init --write, then fill the todo stages")
+    else:
+        for name in PER_CHANGE:
+            s = cfg.get("stages", {}).get(name, {})
+            if not s.get("run") and not s.get("na"):
+                add("high" if name in ("unit", "integration", "journeys") else "medium", name,
+                    f"stage '{name}' has no command and no na reason", s.get("todo") or "add a command or an explicit na reason")
+    t = d["tests"]
+    if t["total"] == 0:
+        add("high", "unit", "no test files found", "start with tests for the most-used user flow")
+    if t["integration"] == 0 and d["background_paths"]:
+        add("high", "integration", "background processing but no integration tests", "test the processing against a real database container")
+    if t["e2e"] == 0 and d["has_ui"]:
+        add("high", "journeys", "no end-to-end journeys: nothing exercises frontend + backend together as a user", "templates/journeys")
+    elif t["e2e"] == 0 and d["has_service"]:
+        add("medium", "journeys", "no API journeys: no test drives the running service the way a client does", "templates/journeys/README.md#api")
+    if d["e2e_mocking_files"]:
+        add("high", "journeys", f"{len(d['e2e_mocking_files'])} e2e files mock the network, so they don't prove the backend works: "
+            + ", ".join(d["e2e_mocking_files"][:5]), "move mocked specs to component tests; journeys must hit the real stack")
+    if d["env_gated_skip_files"]:
+        add("medium", "integration", f"{d['env_gated_skip_files']} test files skip themselves when an env var is missing",
+            "run them in strict mode with the env provided; keep max_skipped: 0")
+    if d["llm"] and not d["evals"]:
+        add("high", "evals", "LLM features but no eval set: output quality is unmeasured", "templates/evals")
+    if d["background_paths"] and not ((cfg or {}).get("stages", {}).get("rehearsal", {}) or {}).get("run"):
+        add("medium", "rehearsal", f"data-moving code ({', '.join(d['background_paths'][:4])}) has no dry run on production-shaped data",
+            "add a read-only dry-run command; see templates/README.md#rehearsal")
+    if not d["mutation_config"]:
+        add("low", "mutation", "no mutation testing: test strength is unknown", "templates/mutation")
+    if not d["agents_md"]:
+        add("low", "standards", "no AGENTS.md: agents get no repo-specific rules", "templates/AGENTS.repo.md")
+    slug = forge_slug(repo)
+    if online and slug:
+        rc, out = sh(["gh", "run", "list", "-R", slug, "--limit", "20", "--json", "conclusion"], timeout=30, merge=False)
+        if rc == 0:
+            concl = [r.get("conclusion") for r in json.loads(out or "[]")]
+            if concl and all(c in ("failure", "startup_failure", "cancelled", "") for c in concl):
+                add("high", "ci", f"the last {len(concl)} GitHub Actions runs all failed: CI gives no signal", "use the self-hosted runner (verify.py serve)")
+        sha = git(repo, "rev-parse", ref)
+        st = forge_status(slug, sha)
+        if st is None:
+            add("medium", "ci", f"cannot read commit statuses for {slug} with the current gh auth", "check `gh auth status` for an account that can see the repo")
+        elif STATUS_PREFIX not in st:
+            add("medium", "ci", f"HEAD {sha[:9]} has no '{STATUS_PREFIX}' status from the runner", "register the repo with verify.py serve")
+    elif not slug and not d["ci"]["workflows"]:
+        add("medium", "ci", "no forge remote and no CI: only local runs decide done", "run verify.py run --strict before every handoff")
+    order = {"high": 0, "medium": 1, "low": 2}
+    f.sort(key=lambda x: order[x["severity"]])
+    return {"detected": d, "findings": f}
+
+
+# ---------------------------------------------------------------- run
+
+SKIP_PATTERNS = [r"^#\s*skip(?:ped)?\s+(\d+)", r"(\d+)\s+skipped", r"\bskipped\s+(\d+)", r"Skipped:\s+(\d+)", r"skipped[:=]\s*(\d+)"]
+
+
+def skipped_count(output):
+    n = 0
+    for pat in SKIP_PATTERNS:
+        for m in re.finditer(pat, output, re.M | re.I):
+            n = max(n, int(m.group(1)))
+    return n
+
+
+def changed_paths(repo, base):
+    if not base:
+        return None
+    mb = git(repo, "merge-base", base, "HEAD")
+    out = git(repo, "diff", "--name-only", f"{mb or base}...HEAD")
+    return out.splitlines()
+
+
+def touched(paths, globs):
+    if paths is None or not globs:
+        return True
+    return any(fnmatch.fnmatch(p, g) or fnmatch.fnmatch(p, g.replace("**/", "")) for p in paths for g in globs)
+
+
+def wait_ready(url, timeout=180):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - URL comes from the repo's own config
+                if r.status < 500:
+                    return True
+        except Exception:
+            pass
+        time.sleep(3)
+    return False
+
+
+def run_stage(repo, name, spec, strict, paths, env):
+    res = {"stage": name, "started": now()}
+    if spec.get("na"):
+        return {**res, "status": "na", "detail": spec["na"]}
+    if not spec.get("run"):
+        return {**res, "status": "missing", "detail": spec.get("todo", "no command")}
+    if not touched(paths, spec.get("paths")):
+        return {**res, "status": "untouched", "detail": "no changed path matches " + ", ".join(spec["paths"])}
+    senv = stage_env(env, spec)
+    missing = [k for k in spec.get("env", []) if not senv.get(k)]
+    if missing:
+        if strict:
+            return {**res, "status": "fail", "detail": "missing required env: " + ", ".join(missing)}
+        return {**res, "status": "missing", "detail": "env not set locally: " + ", ".join(missing)}
+    started = None
+    try:
+        if spec.get("services"):
+            rc, out = sh(spec["services"], cwd=repo, env=senv, timeout=spec.get("services_timeout", 600))
+            if rc != 0:
+                return {**res, "status": "fail", "detail": "services failed to start", "tail": out[-3000:]}
+        if spec.get("base_url"):
+            rc, out = sh(spec["base_url"], cwd=repo, env=senv, timeout=600, merge=False)
+            url = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ""
+            if not url.startswith("http"):
+                return {**res, "status": "fail", "detail": "could not resolve base_url", "tail": out[-2000:]}
+            senv["BASE_URL"] = url
+        if spec.get("start"):
+            started = subprocess.Popen(spec["start"], cwd=repo, env=senv, shell=True, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, start_new_session=True)
+        if spec.get("ready_url") and not wait_ready(spec["ready_url"], spec.get("ready_timeout", 240)):
+            return {**res, "status": "fail", "detail": f"app never became ready at {spec['ready_url']}"}
+        t0 = time.time()
+        rc, out = sh(spec["run"], cwd=repo, env=senv, timeout=spec.get("timeout", 3600))
+        skipped = skipped_count(out)
+        limit = spec.get("max_skipped", DEFAULT_MAX_SKIPPED.get(name))
+        status = "pass" if rc == 0 else "fail"
+        detail = f"exit {rc} in {int(time.time() - t0)}s"
+        if status == "pass" and strict and limit is not None and skipped > limit:
+            status, detail = "fail", f"{skipped} tests skipped (max {limit}): a skipped test proves nothing"
+        return {**res, "status": status, "detail": detail, "skipped": skipped, "tail": out[-4000:]}
+    finally:
+        if started is not None:
+            kill_group(started)
+        if spec.get("stop"):
+            sh(spec["stop"], cwd=repo, env=senv, timeout=300)
+
+
+def overall(results):
+    states = [r["status"] for r in results]
+    if "fail" in states:
+        return "fail"
+    if "missing" in states:
+        return "not-verified"
+    return "pass"
+
+
+def cmd_run(args):
+    repo = repo_root(args.repo)
+    cfg = read_json(repo / CONFIG)
+    if not cfg:
+        sys.exit("[verify] no .verify/config.json; run: verify.py init --write")
+    stages = args.stages.split(",") if args.stages else PER_CHANGE
+    sha = git(repo, "rev-parse", "HEAD")
+    paths = changed_paths(repo, args.base)
+    env = {**os.environ, "VERIFY_STRICT": "1" if args.strict else "0", "VERIFY_SHA": sha}
+    if args.strict:
+        env.setdefault("CI", "1")
+    slug = forge_slug(repo) if args.post_status else None
+    if args.post_status and not slug:
+        print("[verify] --post-status: no GitHub origin; results stay local", file=sys.stderr)
+    posted = True
+    results = []
+    for name in stages:
+        spec = cfg.get("stages", {}).get(name) or {"run": None, "todo": "stage not declared"}
+        if slug:
+            posted &= post_status(slug, sha, f"{STATUS_PREFIX}/{name}", "pending", "running")
+        r = run_stage(repo, name, spec, args.strict, paths, env)
+        results.append(r)
+        print(f"[verify] {name:<11} {r['status']:<10} {r.get('detail', '')}", flush=True)
+        if r["status"] == "fail" and r.get("tail"):
+            print("\n".join("    " + line for line in r["tail"].splitlines()[-25:]), flush=True)
+        if slug:
+            posted &= post_status(slug, sha, f"{STATUS_PREFIX}/{name}", r["status"], r.get("detail", ""))
+    verdict = overall(results)
+    art = {"sha": sha, "at": now(), "strict": args.strict, "base": args.base, "verdict": verdict, "stages": results}
+    (repo / RUNS).mkdir(parents=True, exist_ok=True)
+    (repo / RUNS / f"{sha}.json").write_text(json.dumps(art, indent=1))
+    if slug:
+        posted &= post_status(slug, sha, STATUS_PREFIX, verdict,
+                              f"{verdict}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results))
+    label = {"pass": "PASS", "fail": "FAIL", "not-verified": "NOT VERIFIED"}[verdict]
+    print(f"[verify] {label} for {sha[:9]} -> {RUNS / (sha + '.json')}")
+    if not posted:
+        return 3
+    return 0 if verdict == "pass" else 1
+
+
+def cmd_status(args):
+    repo = repo_root(args.repo)
+    sha = args.sha or git(repo, "rev-parse", "HEAD")
+    art = read_json(repo / RUNS / f"{sha}.json")
+    slug = forge_slug(repo)
+    st = forge_status(slug, sha) if slug else None
+    print(json.dumps({"sha": sha, "local": art and {"verdict": art["verdict"], "at": art["at"]},
+                      "forge": None if st is None else {k: v for k, v in st.items() if k.startswith(STATUS_PREFIX)}}, indent=1))
+    return 0
+
+
+# ---------------------------------------------------------------- serve (self-hosted runner)
+#
+# The runner owns its own mirror clone per repo under RUNNER_HOME and a throwaway clone per job.
+# It never writes to, fetches into, or adds worktrees to anyone's checkout.
+
+def load_env_file(path):
+    env = {}
+    try:
+        for line in Path(path).read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k.startswith("export "):
+                    k = k[len("export "):].strip()
+                env[k] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return env
+
+
+def resolve_target(spec):
+    """--repo accepts OWNER/NAME or a local checkout path (read only: its origin URL is all we use)."""
+    p = Path(spec).expanduser()
+    if p.exists():
+        url = git(p, "remote", "get-url", "origin")
+        return slug_of(url), url
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", spec):
+        return spec, f"https://github.com/{spec}.git"
+    return None, None
+
+
+def ensure_mirror(slug, url):
+    m = RUNNER_HOME / "mirrors" / (slug.replace("/", "__") + ".git")
+    if not m.exists():
+        m.parent.mkdir(parents=True, exist_ok=True)
+        rc, out = sh(["git", "clone", "--mirror", "--quiet", url, str(m)], timeout=3600)
+        if rc != 0:
+            raise RuntimeError(f"mirror clone failed: {out.strip()[-300:]}")
+    else:
+        rc, out = sh(["git", "-C", str(m), "fetch", "--quiet", "--prune", "origin"], timeout=1800)
+        if rc != 0:
+            raise RuntimeError(f"mirror fetch failed: {out.strip()[-300:]}")
+    return m
+
+
+def pending_jobs(slug, mirror, args):
+    rc, out = sh(["gh", "pr", "list", "-R", slug, "--state", "open", "--limit", "50",
+                  "--json", "number,headRefOid,baseRefName,isCrossRepository"], timeout=60, merge=False)
+    if rc != 0:
+        raise RuntimeError(f"cannot list PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
+    jobs = []
+    for p in json.loads(out or "[]"):
+        if p.get("isCrossRepository") and not args.allow_forks:
+            print(f"[serve] {slug} PR #{p['number']}: from a fork, skipped (runs untrusted code with host access; --allow-forks to opt in)")
+            continue
+        jobs.append((p["headRefOid"], f"origin/{p['baseRefName']}", f"PR #{p['number']}"))
+    for b in args.branch or []:
+        sha = git(mirror, "rev-parse", f"refs/heads/{b}")
+        if sha:
+            jobs.append((sha, None, b))
+    return jobs
+
+
+def run_job(slug, mirror, sha, base, label, args):
+    if free_gb(tempfile.gettempdir()) < DISK_FLOOR_GB:
+        print(f"[serve] disk below {DISK_FLOOR_GB} GB free; not starting {label}")
+        return "skipped"
+    tmp = Path(tempfile.mkdtemp(prefix=f"verify-{slug.split('/')[-1]}-{sha[:9]}-"))
+    try:
+        rc, out = sh(["git", "clone", "--quiet", "--shared", "--no-checkout", str(mirror), str(tmp)], timeout=900)
+        rc = rc or sh(["git", "-C", str(tmp), "checkout", "--quiet", "--detach", sha], timeout=900)[0]
+        if rc != 0:
+            print(f"[serve] {slug} {label}: cannot check out {sha[:9]}")
+            return "error"
+        cfg = read_json(tmp / CONFIG)
+        if not cfg:
+            post_status(slug, sha, STATUS_PREFIX, "missing", "no .verify/config.json in this commit")
+            return "done"
+        env = {**os.environ, **load_env_file(RUNNER_HOME / "env" / (slug.replace("/", "__") + ".env")), "CI": "1"}
+        if cfg.get("setup"):
+            post_status(slug, sha, STATUS_PREFIX, "pending", "setup")
+            rc, out = sh(cfg["setup"], cwd=tmp, env=stage_env(env, {}), timeout=cfg.get("setup_timeout", 1800))
+            if rc != 0:
+                last = out.strip().splitlines()[-1][:100] if out.strip() else ""
+                post_status(slug, sha, STATUS_PREFIX, "fail", f"setup failed: {last}")
+                return "done"
+        print(f"[serve] {slug} {label} {sha[:9]} running", flush=True)
+        rc, out = sh([sys.executable, str(Path(__file__).resolve()), "run", str(tmp), "--strict", "--post-status"]
+                     + (["--base", base] if base else []), cwd=tmp, env=env, timeout=cfg.get("timeout", 7200))
+        art = tmp / RUNS / f"{sha}.json"
+        if art.exists():
+            dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(art, dest / f"{sha}.json")
+        if rc == 124:
+            post_status(slug, sha, STATUS_PREFIX, "fail", f"timed out after {cfg.get('timeout', 7200)}s")
+        print(out[-1500:], flush=True)
+        return "error" if rc == 3 else "done"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def serve_repo(spec, args):
+    slug, url = resolve_target(spec)
+    if not slug:
+        print(f"[serve] {spec}: not a GitHub repo path or OWNER/NAME")
+        return 1
+    RUNNER_HOME.mkdir(parents=True, exist_ok=True)
+    lock = open(RUNNER_HOME / f"{slug.replace('/', '__')}.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"[serve] {slug}: another runner holds the lock")
+        lock.close()
+        return 0
+    try:
+        mirror = ensure_mirror(slug, url)
+        errors = done = 0
+        for sha, base, label in pending_jobs(slug, mirror, args):
+            if done >= args.max_jobs:
+                break
+            st = forge_status(slug, sha)
+            if st is None:
+                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
+                errors += 1
+                continue
+            mine = st.get(STATUS_PREFIX)
+            stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
+            if mine and not stale and sha not in (args.rerun or []):
+                continue
+            outcome = run_job(slug, mirror, sha, base, label, args)
+            errors += outcome == "error"
+            done += outcome == "done"
+        return 1 if errors else 0
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+def cmd_serve(args):
+    while True:
+        rc = 0
+        for r in args.repo:
+            try:
+                rc |= serve_repo(r, args)
+            except Exception as e:  # one broken repo must not stop the others
+                print(f"[serve] {r}: {e}", flush=True)
+                rc = 1
+        if args.once:
+            return rc
+        time.sleep(args.interval)
+
+
+# ---------------------------------------------------------------- weaken-check
+
+ADDED_SKIP = re.compile(r"\b(describe|it|test)\.(skip|only|todo|fixme)\b|\bx(it|describe)\(|\bskip:\s*(true|!)|\.skipIf\(|"
+                        r"pytest\.mark\.(skip|xfail)|@unittest\.skip|\[(Fact|Theory)\(Skip\s*=|t\.Skip\(|test\.fixme\(")
+ASSERT = re.compile(r"\b(expect\(|assert[A-Z_.(]|assert\s|Assert\.|should\.|\.toBe|\.toEqual|\.toMatch|require\.)")
+EXPECTED = re.compile(r"\.(toBe|toEqual|toStrictEqual|toMatch|toHaveLength|toContain|toHaveBeenCalledTimes)\(|"
+                      r"assert(Equal|\.equal|\.strictEqual|\.deepEqual|\.deepStrictEqual)|Assert\.(Equal|AreEqual)")
+DIFF_HDR = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+
+
+def weaken_findings(diff_text):
+    """Findings for a unified diff: added skips, deleted test files, net-removed assertions, changed expectations."""
+    findings, cur, in_hunk = [], None, False
+    removed_assert, added_assert, minus, deleted = {}, {}, {}, set()
+    for line in diff_text.splitlines():
+        m = DIFF_HDR.match(line)
+        if m:
+            cur, in_hunk = m.group(2), False
+            continue
+        if cur is None or not TEST_PATH_RE.search(cur):
+            continue
+        if not in_hunk:
+            if line.startswith("deleted file mode"):
+                deleted.add(cur)
+                findings.append(f"{cur}: deletes a test file")
+            if line.startswith("@@"):
+                in_hunk = True
+            continue
+        if line.startswith("@@"):
+            continue
+        body = line[1:]
+        if line.startswith("+"):
+            if ADDED_SKIP.search(body):
+                findings.append(f"{cur}: adds a skip/only/todo: {body.strip()[:120]}")
+            if ASSERT.search(body):
+                added_assert[cur] = added_assert.get(cur, 0) + 1
+            if EXPECTED.search(body):
+                key = EXPECTED.split(body)[0].strip()
+                old = minus.get(cur, {}).get(key)
+                if old is not None and old != body.strip():
+                    findings.append(f"{cur}: changes an expected value: '{old[:80]}' -> '{body.strip()[:80]}'")
+        elif line.startswith("-"):
+            if ASSERT.search(body):
+                removed_assert[cur] = removed_assert.get(cur, 0) + 1
+            if EXPECTED.search(body):
+                minus.setdefault(cur, {})[EXPECTED.split(body)[0].strip()] = body.strip()
+    for f, n in removed_assert.items():
+        net = n - added_assert.get(f, 0)
+        if net > 0 and f not in deleted:
+            findings.append(f"{f}: removes {net} more assertions than it adds")
+    return findings
+
+
+def cmd_weaken(args):
+    repo = repo_root(args.repo)
+    mb = git(repo, "merge-base", args.base, "HEAD") or args.base
+    diff = git(repo, "diff", "--unified=0", f"{mb}...HEAD", timeout=120)
+    findings = weaken_findings(diff)
+    log = git(repo, "log", "--format=%B", f"{mb}..HEAD")
+    m = re.search(r"^test-change-reason:\s*(.+)$", log, re.M | re.I)
+    reason = os.environ.get("VERIFY_TEST_CHANGE_REASON") or (m.group(1).strip() if m else "")
+    for x in findings:
+        print(f"[weaken-check] {x}")
+    if findings and not reason:
+        print("[weaken-check] FAIL: tests were weakened. Fix the code instead, or state why the test itself was wrong "
+              "in a commit line 'test-change-reason: <why>' (or VERIFY_TEST_CHANGE_REASON).")
+        return 1
+    print(f"[weaken-check] allowed with stated reason: {reason}" if findings
+          else "[weaken-check] PASS: no skipped, deleted or loosened tests")
+    return 0
+
+
+def cmd_mutation_targets(args):
+    repo = repo_root(args.repo)
+    paths = changed_paths(repo, args.base) or []
+    print("\n".join(p for p in paths if SRC_EXT.search(p) and not TEST_PATH_RE.search(p) and (repo / p).exists()))
+    return 0
+
+
+# ---------------------------------------------------------------- eval-score (non-deterministic output)
+
+def load_jsonl(path):
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _correct(expected, output):
+    if isinstance(expected, dict):
+        if "any_of" in expected:
+            return output in expected["any_of"]
+        if "contains" in expected:
+            return all(str(x).lower() in str(output).lower() for x in expected["contains"])
+        if "not_contains" in expected:
+            return not any(str(x).lower() in str(output).lower() for x in expected["not_contains"])
+    return output == expected
+
+
+def eval_score(dataset, predictions, thresholds=None):
+    """Score repeated predictions against a labelled dataset.
+
+    dataset rows: {id, expected, [human]}; prediction rows: {id, output, [judge]}. `expected` is an exact
+    label or {"any_of": [...]}, {"contains": [...]}, {"not_contains": [...]}. Each id may have k samples.
+    pass_at_1 = mean per-sample accuracy. pass_all_k = share of cases where every sample is correct:
+    the consistency a user sees day to day. Per-label precision/recall for label outputs.
+    `judge` (bool, from an LLM judge) vs `human` (bool label) gives the judge's TPR/TNR, so a judge is
+    trusted only after it agrees with people.
+    """
+    th = thresholds or {}
+    exp = {str(r["id"]): r for r in dataset}
+    by_id = {}
+    for p in predictions:
+        by_id.setdefault(str(p["id"]), []).append(p)
+    per_label, samples, all_ok, missing = {}, [], [], []
+    for cid, row in exp.items():
+        preds = by_id.get(cid, [])
+        if not preds:
+            missing.append(cid)
+            continue
+        oks = [_correct(row["expected"], p.get("output")) for p in preds]
+        samples.extend(oks)
+        all_ok.append(all(oks))
+        if isinstance(row["expected"], str):
+            st = per_label.setdefault(row["expected"], {"tp": 0, "fn": 0, "fp": 0})
+            st["tp"] += sum(oks)
+            st["fn"] += len(oks) - sum(oks)
+            for p, good in zip(preds, oks):
+                if not good and isinstance(p.get("output"), str):
+                    per_label.setdefault(p["output"], {"tp": 0, "fn": 0, "fp": 0})["fp"] += 1
+    labels = {}
+    for lab, st in per_label.items():
+        labels[lab] = {"precision": st["tp"] / (st["tp"] + st["fp"]) if st["tp"] + st["fp"] else None,
+                       "recall": st["tp"] / (st["tp"] + st["fn"]) if st["tp"] + st["fn"] else None,
+                       "n": st["tp"] + st["fn"]}
+    pairs = [(bool(p["judge"]), bool(exp[str(p["id"])]["human"])) for p in predictions
+             if "judge" in p and str(p["id"]) in exp and "human" in exp[str(p["id"])]]
+    judge = None
+    if pairs:
+        tp = sum(j and h for j, h in pairs)
+        fn = sum(not j and h for j, h in pairs)
+        tn = sum(not j and not h for j, h in pairs)
+        fp = sum(j and not h for j, h in pairs)
+        judge = {"n": len(pairs), "tpr": tp / (tp + fn) if tp + fn else None, "tnr": tn / (tn + fp) if tn + fp else None}
+    res = {"cases": len(exp), "missing_predictions": missing,
+           "pass_at_1": sum(samples) / len(samples) if samples else 0.0,
+           "pass_all_k": sum(all_ok) / len(all_ok) if all_ok else 0.0,
+           "labels": labels, "judge": judge}
+    fails = []
+    if missing:
+        fails.append(f"{len(missing)} cases have no prediction")
+    for key in ("pass_at_1", "pass_all_k"):
+        if key in th and res[key] < th[key]:
+            fails.append(f"{key} {res[key]:.3f} < {th[key]}")
+    for lab, lt in (th.get("labels") or {}).items():
+        got = labels.get(lab)
+        for metric in ("precision", "recall"):
+            val = None if got is None else got[metric]
+            if metric in lt and (val is None or val < lt[metric]):
+                fails.append(f"{lab} {metric} {val} < {lt[metric]}")
+    if judge and "judge_min" in th:
+        for metric in ("tpr", "tnr"):
+            if judge[metric] is not None and judge[metric] < th["judge_min"]:
+                fails.append(f"judge {metric} {judge[metric]:.2f} < {th['judge_min']}: the judge is not trustworthy yet")
+    res["failures"] = fails
+    return res
+
+
+def cmd_eval_score(args):
+    th = read_json(args.thresholds, {}) if args.thresholds else {}
+    res = eval_score(load_jsonl(args.dataset), load_jsonl(args.predictions), th)
+    print(json.dumps(res, indent=1))
+    return 1 if res["failures"] else 0
+
+
+# ---------------------------------------------------------------- housekeep
+
+PROTECTED_BRANCHES = {"main", "master", "develop", "dev", "staging", "release", "production"}
+
+
+def housekeep(repo):
+    repo = Path(repo)
+    items = []
+    default = git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or "origin/main"
+    current = git(repo, "branch", "--show-current")
+    for b in git(repo, "branch", "--merged", default, "--format=%(refname:short)").splitlines():
+        b = b.strip()
+        if b and b not in PROTECTED_BRANCHES and b != current:
+            items.append({"kind": "merged-branch", "target": b, "safe_apply": True, "why": f"fully merged into {default}"})
+    for block in git(repo, "worktree", "list", "--porcelain").split("\n\n"):
+        fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
+        path = fields.get("worktree")
+        if not path or Path(path).resolve() == repo.resolve():
+            continue
+        if not Path(path).exists():
+            items.append({"kind": "stale-worktree", "target": path, "safe_apply": True, "why": "directory is gone (git worktree prune)"})
+        else:
+            dirty = git(Path(path), "status", "--porcelain")
+            items.append({"kind": "worktree", "target": path, "safe_apply": False,
+                          "why": "uncommitted changes: keep" if dirty else "clean: its owner decides"})
+    for line in git(repo, "ls-tree", "-r", "-l", "HEAD", timeout=120).splitlines():
+        meta, _, f = line.partition("\t")
+        size = meta.split()[-1]
+        size = int(size) if size.isdigit() else 0
+        if size > 5_000_000:
+            items.append({"kind": "large-tracked-file", "target": f, "safe_apply": False, "why": f"{size / 1e6:.1f} MB in git"})
+        if re.search(r"(\.tsbuildinfo|\.eslintcache|\.cspellcache|\.DS_Store|\.log)$", f):
+            items.append({"kind": "tracked-cache", "target": f, "safe_apply": False, "why": "generated file tracked in git: untrack and gitignore it"})
+    for u in git(repo, "ls-files", "--others", "--exclude-standard", "--directory").splitlines():
+        if re.search(r"(^|/)(evidence|tmp|scratch|handoff|\.local-evidence)", u, re.I) or re.search(r"\d{4}-\d{2}-\d{2}.*\.md$", u):
+            items.append({"kind": "untracked-scratch", "target": u, "safe_apply": False, "why": "agent scratch/report in the repo: move it out or delete it"})
+    return items
+
+
+def cmd_housekeep(args):
+    repo = repo_root(args.repo)
+    items = housekeep(repo)
+    for it in items:
+        print(f"[housekeep] {it['kind']:<19} {it['target']}  ({it['why']}){'' if it['safe_apply'] else '  [manual]'}")
+    if not args.apply:
+        print(f"[housekeep] {len(items)} items; dry run. --apply only deletes merged branches (git branch -d) "
+              "and prunes records of worktrees whose directory is gone.")
+        return 0
+    for it in items:
+        if it["kind"] == "merged-branch":
+            sh(["git", "-C", str(repo), "branch", "-d", it["target"]])  # -d refuses unmerged and checked-out branches
+    if any(it["kind"] == "stale-worktree" for it in items):
+        sh(["git", "-C", str(repo), "worktree", "prune"])
+    print("[housekeep] applied the safe items; [manual] items need their owner")
+    return 0
+
+
+# ---------------------------------------------------------------- hook (PostToolUse for Claude Code and Codex; advisory)
+
+SHIP_RE = re.compile(r"\bgh\s+pr\s+merge\b|\bvercel\b[^;&|]*(--prod\b|--target[= ]production|\bpromote\b)|"
+                     r"\bgit\b[^;&|]*\bpush\b[^;&|]*\b(main|master|develop|release|production)\b")
+
+
+def cmd_hook(_args):
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if isinstance(cmd, list):
+        cmd = " ".join(map(str, cmd))
+    if not cmd or not SHIP_RE.search(cmd):
+        return 0
+    root = git(payload.get("cwd") or os.getcwd(), "rev-parse", "--show-toplevel")
+    if not root:
+        return 0
+    slug = forge_slug(root)
+    sha = None
+    m = re.search(r"gh\s+pr\s+merge\s+(\d+)", cmd)
+    if m and slug:
+        rc, out = sh(["gh", "pr", "view", m.group(1), "-R", slug, "--json", "headRefOid", "--jq", ".headRefOid"], timeout=8, merge=False)
+        sha = out.strip() if rc == 0 and out.strip() else None
+    sha = sha or git(root, "rev-parse", "HEAD")
+    st = forge_status(slug, sha, timeout=8) if slug else None
+    local = read_json(Path(root) / RUNS / f"{sha}.json") or {}
+    verdict = ((st or {}).get(STATUS_PREFIX) or {}).get("state") or local.get("verdict") or "none"
+    note = (f"[verify] {sha[:9]} verify result: {verdict}. This never blocks merges or deploys. Unless it is "
+            "success/pass, say NOT VERIFIED in your report and name the missing or failing stage, then keep working on it.")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}))
+    return 0
+
+
+# ---------------------------------------------------------------- CLI
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="verify.py", description="One definition of done for any repo.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("doctor")
+    p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--ref", default="HEAD", help="audit this commit/branch (works in bare repos)")
+    p.add_argument("--online", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("init")
+    p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--write", action="store_true")
+    p = sub.add_parser("run")
+    p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--stages")
+    p.add_argument("--strict", action="store_true")
+    p.add_argument("--base")
+    p.add_argument("--post-status", action="store_true")
+    p = sub.add_parser("status")
+    p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--sha")
+    p = sub.add_parser("serve")
+    p.add_argument("--repo", action="append", required=True, help="OWNER/NAME or a checkout path (read only)")
+    p.add_argument("--branch", action="append", help="also verify this branch head (e.g. develop)")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--interval", type=int, default=300)
+    p.add_argument("--max-jobs", type=int, default=2)
+    p.add_argument("--stale-hours", type=float, default=3.0)
+    p.add_argument("--rerun", action="append", help="SHA to run again even if it has a result")
+    p.add_argument("--allow-forks", action="store_true")
+    for name in ("weaken-check", "mutation-targets"):
+        p = sub.add_parser(name)
+        p.add_argument("repo", nargs="?", default=".")
+        p.add_argument("--base", default="origin/HEAD")
+    p = sub.add_parser("eval-score")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--predictions", required=True)
+    p.add_argument("--thresholds")
+    p = sub.add_parser("housekeep")
+    p.add_argument("repo", nargs="?", default=".")
+    p.add_argument("--apply", action="store_true")
+    sub.add_parser("hook")
+    args = ap.parse_args(argv)
+    if args.cmd == "doctor":
+        rep = doctor(repo_root(args.repo, allow_bare=True), args.online, args.ref)
+        rep["detected"].pop("config", None)
+        if args.json:
+            print(json.dumps(rep, indent=1))
+        else:
+            d = rep["detected"]
+            print(f"[doctor] {d['repo']}@{d['ref']}: stacks={','.join(d['stacks']) or '?'} tests={d['tests']} "
+                  f"ui={d['has_ui']} service={d['has_service']} llm={d['llm']} config={d['has_config']}")
+            for x in rep["findings"]:
+                print(f"  {x['severity']:<6} {x['area']:<11} {x['finding']}\n         fix: {x['fix']}")
+            print(f"[doctor] {len(rep['findings'])} findings")
+        return 1 if any(x["severity"] == "high" for x in rep["findings"]) else 0
+    if args.cmd == "init":
+        repo = repo_root(args.repo)
+        text = json.dumps(proposal(detect(repo)), indent=2) + "\n"
+        if not args.write:
+            print(text)
+            return 0
+        if (repo / CONFIG).exists():
+            sys.exit(f"[verify] {CONFIG} exists; edit it instead")
+        (repo / CONFIG).parent.mkdir(parents=True, exist_ok=True)
+        (repo / CONFIG).write_text(text)
+        (repo / ".verify" / ".gitignore").write_text("runs/\n")
+        print(f"[verify] wrote {CONFIG}; give every 'todo' stage a command or an 'na' reason")
+        return 0
+    return {"run": cmd_run, "status": cmd_status, "serve": cmd_serve, "weaken-check": cmd_weaken,
+            "mutation-targets": cmd_mutation_targets, "eval-score": cmd_eval_score, "housekeep": cmd_housekeep,
+            "hook": cmd_hook}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
