@@ -238,6 +238,9 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|0|-|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
 13|0|-|$H/plain|cd $H/optin && gh pr merge 5 -t \"git push origin main\"
 13|2|Ship denied|$H/optin|gh pr merge 5 && git push origin main
+13|0|-|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
+13|0|-|$H/optin|echo start; gh pr merge 5 -b \"git push --tags\"; echo done
+13|2|Ship denied|$H/optin|bash -c \"git push origin main\"
 13|2|Ship denied|$H/optin|gh pr merge 5 --subject \"\$(git push origin main)\"
 13|0|-|$H/plain|vercel --prod
 13|0|-|$H/plain|git push origin main
@@ -287,6 +290,9 @@ done <<EOF
 0|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
 0|$H/plain|cd $H/optin && gh pr merge 5 -t "git push origin main"
 2|$H/optin|gh pr merge 5 && git push origin main
+0|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
+0|$H/optin|echo start; gh pr merge 5 -b "git push --tags"; echo done
+2|$H/optin|bash -c "git push origin main"
 2|$H/optin|gh pr merge 5 --subject "\$(git push origin main)"
 2|$H/optin|vercel --prod
 0|$H/plain|git push origin main

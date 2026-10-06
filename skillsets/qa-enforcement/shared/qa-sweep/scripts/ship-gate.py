@@ -1183,64 +1183,131 @@ def join_continuations(command):
     return LINE_CONTINUATION.sub(lambda m: m.group(1), command)
 
 
-def pure_pr_merge(command):
-    """True when the command only merges a PR: `gh pr merge ...`, optionally after `cd DIR &&` steps
-    and NAME=value prefixes, with no other separator and no substitution, so it runs nothing else.
-    Quoted text in it is an argument: a subject or body that mentions a push or a deploy is not a
-    ship (Hermes 2026-10-06, kit-never-block-pr-merge). The shell fallback's pure_merge is the same
-    scanner in awk; test-ship-matrix.py checks that the two agree."""
-    segs, words, cur, q, i, n = [], [], None, None, 0, len(command)
+SHELL_WRAPPERS = ("env", "command", "nohup", "time", "exec", "sudo", "nice")
+WRAPPER_ARG_FLAGS = ("-C", "-u", "-n", "--chdir", "--unset")
+SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _view_segment(words, seg, subs, depth):
+    """What one segment runs, for ship_view: a `gh pr merge` keeps only its substitutions,
+    `sh -c SCRIPT` and `eval` are read as their script, anything else is kept as written."""
+    k = 0
+    while k < len(words):
+        if SHELL_ASSIGN.match(words[k]):
+            k += 1
+            continue
+        if os.path.basename(words[k]) in SHELL_WRAPPERS:
+            k += 1
+            while k < len(words) and words[k].startswith("-"):
+                k += 2 if words[k] in WRAPPER_ARG_FLAGS else 1
+            continue
+        break
+    if k >= len(words):
+        return seg
+    h = os.path.basename(words[k])
+    if h == "gh" and words[k + 1:k + 3] == ["pr", "merge"]:
+        return subs
+    if depth < 3 and h in ("sh", "bash", "zsh", "dash") and k + 2 < len(words) \
+            and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k + 1]):
+        inner = ship_view(words[k + 2], depth + 1)
+        return None if inner is None else inner + subs
+    if depth < 3 and h == "eval" and k + 1 < len(words):
+        inner = ship_view(" ".join(words[k + 1:]), depth + 1)
+        return None if inner is None else inner + subs
+    return seg
+
+
+def ship_view(command, depth=0):
+    """What a command would run, for the coarse ship check: segments split at unquoted
+    ; & | ( ) and newlines, where a `gh pr merge` keeps only the bodies of its $(...) and
+    backtick substitutions, so its quoted subject or body never reads as a ship (Hermes
+    2026-10-06, kit-never-block-pr-merge). None when the command can't be read (unbalanced
+    quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
+    test-ship-matrix.py checks that the two agree."""
+    out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
     while i < n:
-        c, d = command[i], command[i + 1:i + 2]
+        c, nx = command[i], command[i + 1:i + 2]
         if q == "'":
+            seg += c
             if c == "'":
                 q = None
             else:
                 cur += c
-        elif q == '"':
+            i += 1
+            continue
+        if c == "\\" and nx:
+            i += 2
+            if nx == "\n":
+                continue
+            seg += c + nx
+            cur = (cur or "") + (c + nx if q == '"' and nx not in '$`"\\' else nx)
+            continue
+        if c == "`" or (c == "$" and nx == "("):
+            if c == "`":
+                j = i + 1
+                while j < n and command[j] != "`":
+                    j += 2 if command[j] == "\\" else 1
+                if j >= n:
+                    return None
+                body = command[i + 1:j]
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep > 0:
+                    dep += {"(": 1, ")": -1}.get(command[j], 0)
+                    j += 1
+                if dep > 0:
+                    return None
+                j -= 1
+                body = command[i + 2:j]
+            subs += " ; " + body
+            seg += command[i:j + 1]
+            cur = (cur or "") + "$()"
+            i = j + 1
+            continue
+        if q == '"':
+            seg += c
             if c == '"':
                 q = None
-            elif c == "\\" and d and d in '$`"\\\n':
-                cur += "" if d == "\n" else d
-                i += 1
-            elif c == "`" or (c == "$" and d == "("):
-                return False
             else:
                 cur += c
-        elif c == "\\" and d:
-            if d != "\n":
-                cur = (cur or "") + d
             i += 1
+            continue
+        if c in "'\"":
+            q, cur = c, cur or ""
         elif c in " \t":
             if cur is not None:
                 words.append(cur)
                 cur = None
-        elif c == "&" and d == "&":
+        elif c == "&" and i and command[i - 1] in "<>":
+            cur = (cur or "") + c  # a descriptor copy such as 2>&1
+        elif c in ";&|()\n\r":
             if cur is not None:
                 words.append(cur)
                 cur = None
-            segs.append(words)
-            words = []
+            part = _view_segment(words, seg, subs, depth)
+            if part is None:
+                return None
+            out += part + " ; "
+            seg, subs, words = "", "", []
             i += 1
-        elif c == "&" and i and command[i - 1] in "<>":
-            cur = (cur or "") + c  # a descriptor copy such as 2>&1
-        elif c in ";&|()`\n\r":
-            return False
-        elif c in "'\"":
-            q, cur = c, cur or ""
+            continue
         else:
             cur = (cur or "") + c
+        seg += c
         i += 1
     if q:
-        return False
+        return None
     if cur is not None:
         words.append(cur)
-    if any(not (len(s) == 2 and s[0] in ("cd", "pushd")) for s in segs):
-        return False
-    k = 0
-    while k < len(words) and re.match(r"[A-Za-z_]\w*=", words[k]):
-        k += 1
-    return words[k:k + 3] == ["gh", "pr", "merge"]
+    part = _view_segment(words, seg, subs, depth)
+    return None if part is None else out + part
+
+
+def flat_words(text):
+    """ship_view's text as the shell fallback reads it: quotes and backslashes removed,
+    whitespace as single spaces."""
+    text = re.sub(r"[\t\r\n]", " ", text)
+    return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
 
 
 def command_segments(command, _depth=0):
@@ -2963,24 +3030,30 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(bool(coarse_ship("git -c core.x=y push origin main")), "coarse_ship: options between git and push")
     expect(not coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 1 \\\n --admin"}})),
            "coarse_ship: a continued PR merge is not ship-shaped")
-    # A PR merge whose quoted subject or body names a push or a deploy is still only a merge, on every
-    # path (Hermes 2026-10-06, kit-never-block-pr-merge); anything that can run more is not.
+    # A PR merge is never ship-shaped for what its quoted subject or body says, on every path, even
+    # beside other commands (Hermes 2026-10-06, kit-never-block-pr-merge); what else runs still counts.
     merge_texts = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
                    "gh pr merge 5 --body 'run vercel --prod; git push --tags'", 'cd "/x y" && gh pr merge 5 -t "git push"',
-                   'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1']
-    not_pure = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push', 'gh pr merge 5 | sh',
-                'gh pr merge 5 --subject "$(git push origin main)"', 'gh pr merge 5 --subject "`git push`"',
-                'gh pr merge 5 \ngit push', 'git push && gh pr merge 5',
-                'gh pr merge 5 --subject "unterminated', 'sh -c "gh pr merge 5"', 'gh pr merge 5 & git push']
+                   'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1',
+                   "gh pr merge 5 --subject 'git push origin main' && echo done",
+                   'echo start; gh pr merge 5 -b "git push --tags"; echo done', 'gh pr merge 5 -t "git push" | tee log',
+                   """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
+                   "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'"]
+    ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
+                  'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
+                  'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
+                  'git push origin main && gh pr merge 5', 'gh pr merge 5 --subject "x && git push origin main',
+                  'sh -c "git push origin main"', 'gh pr merge 5 & git push origin main', 'eval "git push origin main"',
+                  'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5']
     for c in merge_texts:
-        expect(pure_pr_merge(c), "pure_pr_merge: %r is a plain merge" % c)
         expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
         p = hookrun(r3, c)
         expect(p.returncode == 0, "gate: %r ALLOWED in an opted-in repo [%s]" % (c, " ".join(p.stderr.split())[:100]))
-    for c in not_pure:
-        expect(not pure_pr_merge(c), "pure_pr_merge: %r is not a plain merge" % c)
-    expect(bool(coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 5; git push origin main"}}))),
-           "coarse_ship: a merge followed by a push is ship-shaped")
+    for c in ship_texts:
+        expect(bool(coarse_ship(json.dumps({"tool_input": {"command": c}}))), "coarse_ship: %r is ship-shaped" % c)
+    expect(ship_view("gh pr merge 5 -t 'git push' && echo done") == " ;  ;  echo done",
+           "ship_view: a merge segment is dropped, the rest kept")
+    expect(ship_view('gh pr merge 5 --subject "unterminated') is None, "ship_view: unbalanced quotes can't be read")
     expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
            "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
@@ -3993,8 +4066,8 @@ def coarse_ship(text):
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose. Reads the
     payload's command when the text is a payload, with line continuations
-    joined, and allows options between git and push. A plain PR merge is
-    never ship-shaped, whatever its quoted subject or body says."""
+    joined, and allows options between git and push. It reads ship_view, so a
+    PR merge is never ship-shaped for what its quoted subject or body says."""
     try:
         d = json.loads(text)
         inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
@@ -4003,9 +4076,8 @@ def coarse_ship(text):
             text = cmd
     except Exception:
         pass
-    if pure_pr_merge(text):
-        return None
-    text = join_continuations(text)
+    view = ship_view(text)
+    text = flat_words(view) if view is not None else join_continuations(text)
     return re.search(r"\bgit\b[^;&|\n]*?\spush\b|--mirror|--tags|refs/tags/|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
