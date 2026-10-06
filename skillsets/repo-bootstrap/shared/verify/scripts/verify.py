@@ -178,7 +178,28 @@ TEST_RE = re.compile(r"(\.(test|spec)\.[cm]?[jt]sx?$|(^|/)test_[^/]+\.py$|_test\
 TEST_PATH_RE = re.compile(TEST_RE.pattern + r"|(^|/)(tests?|e2e|journeys|spec)/")
 INTEG_RE = re.compile(r"integration|\.int\.|(^|/)it/", re.I)
 E2E_RE = re.compile(r"(^|/)(e2e|playwright|journeys|cypress)/|\.e2e\.|\.journey\.", re.I)
-MOCK_RE = re.compile(r"\b(page|context)\.route\(|\bsetupServer\(|from ['\"]msw|\bnock\(|cy\.intercept\(|route\.fulfill\(")
+# A journey fakes the backend when it uses a mock server, or answers the app's own API itself (route.fulfill
+# on an /api/, tRPC or GraphQL route). Routing that only continues or aborts requests (an allow-list of
+# origins, blocking third parties) still reaches the real backend. Component tests may mock freely.
+MOCK_SERVER_RE = re.compile(r"\bsetupServer\(|from ['\"]msw|\bnock\(|cy\.intercept\([^)]*,\s*\{|cy\.intercept\([^)]*fixture")
+ROUTE_ARG_RE = re.compile(r"\.route\(\s*([^,]{1,200}),")
+OWN_API_RE = re.compile(r"/api/|trpc|graphql", re.I)
+COMPONENT_TEST_RE = re.compile(r"(^|/)component/|\.ct\.[cm]?[jt]sx?$|\.component\.(spec|test)\.", re.I)
+
+
+def fakes_backend(text):
+    if MOCK_SERVER_RE.search(text):
+        return True
+    if ".fulfill(" not in text:
+        return False
+    for m in ROUTE_ARG_RE.finditer(text):
+        arg = m.group(1).strip()
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", arg):      # a variable: read what it was set to
+            v = re.search(rf"\b(?:const|let|var)\s+{re.escape(arg)}\s*=\s*([^;]{{1,300}})", text)
+            arg = v.group(1) if v else ""
+        if OWN_API_RE.search(arg.replace("\\", "")):
+            return True
+    return False
 ENV_SKIP_RE = re.compile(
     r"skip:\s*!|\.skipIf\(|(describe|it|test)\.skip\(\s*!|pytest\.mark\.skipif|\.skip\(\s*!?process\.env|"
     r"if\s*\(\s*!process\.env\.[A-Z0-9_]+\s*\)\s*(return|test\.skip|this\.skip)")
@@ -271,7 +292,7 @@ def detect(repo, ref="HEAD"):
         "integration": sum(1 for f in tests if INTEG_RE.search(f)),
         "e2e": sum(1 for f in files if E2E_RE.search(f) and re.search(r"\.(spec|test|journey)\.[cm]?[jt]sx?$", f)),
     }
-    d["e2e_mocking_files"] = [f for f in e2e_files if MOCK_RE.search(text(f))][:20]
+    d["e2e_mocking_files"] = [f for f in e2e_files if not COMPONENT_TEST_RE.search(f) and fakes_backend(text(f))][:20]
     d["env_gated_skip_files"] = sum(1 for f in tests if ENV_SKIP_RE.search(text(f)))
     d["background_paths"] = sorted({m.group(0).strip("/._-") for f in files if SRC_EXT.search(f) and not TEST_RE.search(f)
                                      for m in [BACKGROUND_RE.search(f)] if m})[:15]
@@ -385,8 +406,8 @@ def doctor(repo, online=False, ref="HEAD"):
     elif t["e2e"] == 0 and d["has_service"]:
         add("medium", "journeys", "no API journeys: no test drives the running service the way a client does", "templates/journeys/README.md#api")
     if d["e2e_mocking_files"]:
-        add("high", "journeys", f"{len(d['e2e_mocking_files'])} e2e files mock the network, so they don't prove the backend works: "
-            + ", ".join(d["e2e_mocking_files"][:5]), "move mocked specs to component tests; journeys must hit the real stack")
+        add("high", "journeys", f"{len(d['e2e_mocking_files'])} e2e files answer the app's own API themselves, so they don't prove the backend works: "
+            + ", ".join(d["e2e_mocking_files"][:5]), "move faked-API specs to component tests; journeys must hit the real backend (blocking third parties is fine)")
     if d["env_gated_skip_files"]:
         add("medium", "integration", f"{d['env_gated_skip_files']} test files skip themselves when an env var is missing",
             "run them in strict mode with the env provided; keep max_skipped: 0")

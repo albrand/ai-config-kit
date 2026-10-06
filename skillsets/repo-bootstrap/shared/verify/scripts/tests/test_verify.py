@@ -180,6 +180,20 @@ class Detection(unittest.TestCase):
         self.assertIn(("high", "journeys"), areas)               # network-mocked e2e
         self.assertIn(("high", "evals"), areas)
 
+    def test_only_faking_the_own_backend_counts_as_mocking(self):
+        allow_list = "await page.route(/^https?:/u, r => allowed.has(new URL(r.request().url()).origin) ? r.continue() : r.abort())\n"
+        fake_api = "await page.route('**/api/trpc/payment.startCardSetup**', r => r.fulfill({ status: 200, body: '[]' }))\n"
+        fake_page = "await page.route('**/qa-ready', r => r.fulfill({ body: '<h1>ok</h1>' }))\n"
+        self.assertFalse(verify.fakes_backend(allow_list))
+        self.assertFalse(verify.fakes_backend(fake_page))
+        self.assertTrue(verify.fakes_backend(fake_api))
+        self.assertTrue(verify.fakes_backend("await page.route(/\\/api\\/trpc\\//u, async (route) => {\n  await route.fulfill({ body })\n})\n"))
+        self.assertTrue(verify.fakes_backend("const proc = /\\/api\\/trpc\\/invites\\./u;\nawait page.route(proc, (r) => r.fulfill({}))\n"))
+        self.assertTrue(verify.fakes_backend("import { http } from 'msw'\nconst s = setupServer()\n"))
+        repo = make_repo({"package.json": "{}", "e2e/qa/pay.spec.ts": fake_api, "e2e/qa/nav.spec.ts": allow_list,
+                          "e2e/component/card.spec.tsx": fake_api, "e2e/button.ct.tsx": fake_api})
+        self.assertEqual(verify.detect(repo)["e2e_mocking_files"], ["e2e/qa/pay.spec.ts"])
+
     def test_plain_repo_marks_na_with_reasons(self):
         cfg = verify.proposal(verify.detect(make_repo({"README.md": "x\n"})))
         self.assertEqual(cfg["stages"]["evals"]["na"], "no LLM features detected")
