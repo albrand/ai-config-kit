@@ -398,6 +398,7 @@ class RunnerIsolation(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.saved[1])
         self.srv.shutdown()
+        self.srv.server_close()
         self.home_canary.unlink(missing_ok=True)
         self.tmp_canary.unlink(missing_ok=True)
         shutil.rmtree(self.tmp, ignore_errors=True)
