@@ -7,10 +7,9 @@ description: Route bounded and bulk work to Codex, keep architecture, security, 
 
 Follow the adopted routing policy in
 `references/ADAPTIVE_MODEL_ORCHESTRATION.md`. Keep the active thread as
-coordinator and final authority. GLM is retired for ordinary execution and
-fallback. Keep Hermes's current review route working until Codex (model set in
-Hermes's own config) is verified there; manage the live route change in
-Hermes's own config.
+coordinator and final authority. Keep Hermes's current review route working
+until Codex (model set in Hermes's own config) is verified there; manage the
+live route change in Hermes's own config.
 
 ## Capability Gate
 
@@ -40,8 +39,8 @@ Hermes's own config.
   security or data boundaries.
 - Do not raise effort solely because a task is long. Strong deterministic
   validation may make a lower tier sufficient.
-- Do not use OpenCode as a default or alternate GLM route. Its legacy safety
-  boundary is in `references/OPENCODE_DELEGATION.md`.
+- Do not use OpenCode as a default route. Its legacy safety boundary is in
+  `references/OPENCODE_DELEGATION.md`.
 
 ## Brief
 

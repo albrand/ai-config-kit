@@ -75,7 +75,7 @@ _E2E_CANDIDATES = [
 ]
 E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDATES[0])
 
-# ---- v2 ship classification (2026-09-24, card 3 meu-psi pilot) --------------
+# ---- v2 ship classification (2026-09-24, pilot) --------------
 # v1 gated every push and every PR command, which deadlocked preview-based
 # flows: the re-walk must be at the shipped SHA, but the preview for that SHA
 # only exists after the push. v2 gates only what SHIPS: merges (gh pr merge,
@@ -88,18 +88,18 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # workflow dispatch (gh workflow run -- justification at the classifier), tag
 # pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
 # vercel redeploy, and deployments-API POSTs that target production. Preview
-# builds through the deployments API stay free (meu-psi heal).
+# builds through the deployments API stay free (a preview heal).
 
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                    "--super-prefix", "--exec-path", "--config-env"}
 PUSH_ALL_FLAGS = {"--all", "--mirror", "--branches"}
-# v4: pushing tags ships whatever they point at (seahaven-style deploys are
+# v4: pushing tags ships whatever they point at (tag-triggered deploys are
 # release/tag driven: `release: published` vX.Y.Z-staging, tag deploys).
 TAG_PUSH_FLAGS = {"--tags", "--follow-tags"}
 # v4: Vercel deployments API. Only PRODUCTION targets gate; preview builds
-# through this API must stay free -- the meu-psi pilot rebuilds seat-blocked
+# through this API must stay free -- a pilot repo rebuilds seat-blocked
 # previews via exactly `vercel api "/v13/deployments?teamId=.." -X POST
-# --input <body.json>`. The body usually sits in a file (the pallium autoheal
+# --input <body.json>`. The body usually sits in a file (an autoheal
 # posts PRODUCTION the same way), so readable body files are inspected too.
 DEPLOY_CREATE_RE = re.compile(r"/v\d+/deployments(?:[?#]|$)")
 PROMOTE_API_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/")
@@ -465,7 +465,7 @@ def check_inventory(qa, rd, fails, stats):
             if not isinstance(row["predates_change"], bool):
                 fails.append(f"inventory row {row['id']}: predates_change must be true/false")
             # A gate failure caused by another writer mutating the same data
-            # (meu-psi 2026-09-25: a CI setup and interactive walks sharing the
+            # (2026-09-25: a CI setup and interactive walks sharing the
             # CI identities) is a defect with a named writer, never a blind re-run.
             if row.get("kind") == "environment_contamination" and not str(row.get("writer") or "").strip():
                 fails.append(f"inventory row {row['id']}: environment_contamination must name the writer "
@@ -658,7 +658,7 @@ def declared_identities(auth):
 
 
 # Identity labels (review r1 D4). `E2E.patient`, `e2e.patient `,
-# `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
+# `e2e.patient@example.test` and `e2е.patient` (Cyrillic е) all name the CI
 # suite's e2e.patient, and an exact-string match let each one through as
 # unowned. One spec, implemented the same way here and in qa-e2e-gate.mjs;
 # neither side uses its language's casefold, trim or isalpha, which differ
@@ -1787,7 +1787,7 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
             return "deploy", [c] if c else [], {c} if c else set(), [why] if why else [], set()
         if seg[1] == "workflow" and seg[2] == "run":
             # ANY dispatch is shipping. Deploy workflows run exactly this way
-            # (seahaven deploy.yaml is workflow_dispatch dev/staging/prod); a
+            # (e.g. a deploy.yaml run by workflow_dispatch for dev/staging/prod); a
             # reliable workflow-name -> file -> jobs mapping needs GitHub API
             # round trips inside a hook, and a missed deploy workflow is an
             # ungated production deploy while a false positive only asks for
@@ -2198,7 +2198,7 @@ def prepush(remote="origin"):
     whose destination is protected (remote default branch + protected_branches)
     or a tag (v4: a tag ships the commit it points at). Feature-branch pushes
     and deletions pass untouched (a PR needs its
-    preview built before anyone can walk it). Ported from the meu-psi pilot's
+    preview built before anyone can walk it). Ported from a pilot repo's
     verified hook; the destination logic is ship-gate's own, so there is one
     parser (v2 template defect: the old template ran the full check on every
     push and re-created the v1 deadlock)."""
@@ -3092,11 +3092,11 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "VERCEL_ORG_ID=team_x vercel --prod", "env-prefixed vercel --prod")
     allow4(r9, "vercel deploy", "vercel deploy (preview)")
     allow4(r9, "vercel rollback", "vercel rollback (incident recovery stays free)")
-    # deployments API: production gated, previews free (meu-psi heal shape)
+    # deployments API: production gated, previews free (preview-heal shape)
     allow4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input preview-body.json --raw',
-           "vercel api POST building a PREVIEW (meu-psi heal, body file)")
+           "vercel api POST building a PREVIEW (preview heal, body file)")
     deny4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json --raw',
-          "vercel api POST, PRODUCTION body file (pallium autoheal shape)")
+          "vercel api POST, PRODUCTION body file (autoheal shape)")
     deny4(r9, "vercel api /v13/deployments -F target=production -F name=app",
           "vercel api fields imply POST, target=production")
     allow4(r9, "vercel api '/v6/deployments?target=production' -d", "vercel api GET list (-d is --debug)")
@@ -3425,7 +3425,7 @@ def selftest(v4_gate=None, v4_templates=None):
     open(resolver, "w").write("\n".join(l[ded:] for l in rlines) + "\n")
     ghbin = os.path.join(tmp, "v4bin")
     os.makedirs(ghbin, exist_ok=True)
-    real_head = "5c5c01b2e82ce9efbbc03f8945a98a5cbea86c7b"  # PR #167 head, shoc-backend run 35815603657
+    real_head = "5c5c01b2e82ce9efbbc03f8945a98a5cbea86c7b"  # PR #167 head from a real merge-queue run
     open(os.path.join(ghbin, "gh"), "w").write(
         "#!/bin/sh\ncase \"$*\" in\n  'pr view 167 --json headRefOid --jq .headRefOid') echo %s;;\n"
         "  'pr view 42 --json headRefOid --jq .headRefOid') echo %s;;\n  *) exit 1;;\nesac\n" % (real_head, shaW))
@@ -3466,7 +3466,7 @@ def selftest(v4_gate=None, v4_templates=None):
                               capture_output=True).returncode != 0
     expect(ok_head and grp_fail, "v4 merge_group: gate passes the queued PR head, would fail the group commit")
 
-    # husky: gate block at the top of .husky/pre-push, pallium-style ref parser after it
+    # husky: gate block at the top of .husky/pre-push, a husky-style ref parser after it
     tmpl_text = open(os.path.join(V4TMPL, "pre-push")).read()
     mb = re.search(r"(?ms)^# --- qa-ship-gate begin.*?^# --- qa-ship-gate end[^\n]*\n", tmpl_text)
     block = mb.group(0) if mb else tmpl_text
@@ -3521,7 +3521,7 @@ def selftest(v4_gate=None, v4_templates=None):
         expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
                "v4 %s: opted in, feature push passes and husky still sees the refs" % label)
 
-    # Identity isolation (meu-psi 2026-09-25).
+    # Identity isolation (2026-09-25).
     def reader(files):
         return {"exists": lambda rel: rel in files, "read": lambda rel: files[rel]}
     row = {"id": "R9", "step": "s", "symptom": "gate 36/38: CI setup recreated the data mid-walk", "evidence": "e",
@@ -3560,10 +3560,10 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(not any("automation_identities" in x for x in f9), "a config-listed CI identity declared owned passes the cross-check")
     # review r1 D4: however the listed label is spelled, both gates find it,
     # and the two gates agree label by label.
-    probe = ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient",
+    probe = ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@example.test", "e2е.patient",
              "е2е.раtіеnt", "e2e.pat​ient", "E2E.PATİENT", "qa.vеndor",
              # review r2a: compound labels, and U+2800 (invisible, category So)
-             "patient (e2e.patient@meupsi.test)", "e2e.patient (CI)", "@e2e.patient", "qa.veɴdor", "e2e.pat⠀ient",
+             "patient (e2e.patient@example.test)", "e2e.patient (CI)", "@e2e.patient", "qa.veɴdor", "e2e.pat⠀ient",
              "e2e.patͅient",
              # review r2a-ter: a listed label after an @, and scripts other than Latin
              "tester @e2e.patient", "x@e2e.patient", "Иван Петров", "🧪 tester", "مريم",
@@ -3652,10 +3652,10 @@ def selftest(v4_gate=None, v4_templates=None):
         py = [label_key(label), label_problem(label), list(listed_identity(label, ["e2e.patient"]) or []) or None]
         expect(label not in mjs_verdicts or mjs_verdicts[label] == py,
                "label %r: ship-gate.py and qa-e2e-gate.mjs agree (%s vs %s)" % (label, py, mjs_verdicts.get(label)))
-    # meu-psi PR #36: the suite's own CI run recorded as the walk (owner_run).
+    # A pilot PR: the suite's own CI run recorded as the walk (owner_run).
     base_or = {"label": "e2e.patient", "owned_by_automation": True, "owner": "deployed e2e gate",
                "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659,
-                          "run_url": "https://github.com/albrand/psyche-project/actions/runs/36193694659"}}
+                          "run_url": "https://github.com/example-owner/example-repo/actions/runs/36193694659"}}
     variants = {
         "valid": (base_or, ["e2e.patient"], True),
         "valid, attempt URL": ({**base_or, "walker": {**base_or["walker"], "run_url": base_or["walker"]["run_url"] + "/attempts/2"}}, ["e2e.patient"], True),
@@ -3670,7 +3670,7 @@ def selftest(v4_gate=None, v4_templates=None):
         "unowned": ({**base_or, "owned_by_automation": False}, ["e2e.patient"], False),
         "unknown kind": ({**base_or, "walker": {"kind": "borrowed"}}, ["e2e.patient"], False),
         "fullwidth digits (r2a-bis)": ({**base_or, "walker": {**base_or["walker"], "run_id": "３６１９３６９４６５９",
-                                        "run_url": "https://github.com/albrand/psyche-project/actions/runs/３６１９３６９４６５９"}},
+                                        "run_url": "https://github.com/example-owner/example-repo/actions/runs/３６１９３６９４６５９"}},
                                        ["e2e.patient"], False),
     }
     mjs_or = {}
@@ -3687,11 +3687,11 @@ def selftest(v4_gate=None, v4_templates=None):
         expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
     # r2a D5, r2a-bis: the ship gate ties the run to this repository and checks
     # the run attempt with `gh api` (stubbed here: offline, deterministic). The
-    # stub answers repos/albrand/psyche-project/actions/runs/<id>[/attempts/<n>]
+    # stub answers repos/example-owner/example-repo/actions/runs/<id>[/attempts/<n>]
     # from <dir>/<path with / as _>.json and logs every call.
     orr = os.path.join(tmp, "owner-run-repo")
     os.makedirs(orr)
-    sh("git init -q && git remote add origin git@github.com:albrand/psyche-project.git", cwd=orr)
+    sh("git init -q && git remote add origin git@github.com:example-owner/example-repo.git", cwd=orr)
     orbin = os.path.join(tmp, "owner-run-bin")
     os.makedirs(orbin)
     ghdir = os.path.join(tmp, "gh-api")
@@ -3704,7 +3704,7 @@ def selftest(v4_gate=None, v4_templates=None):
         "cat \"$f\"\n")
     os.chmod(os.path.join(orbin, "gh"), 0o755)
     walked = "a" * 40
-    runs_path = "repos/albrand/psyche-project/actions/runs/36193694659"
+    runs_path = "repos/example-owner/example-repo/actions/runs/36193694659"
     run_doc = {"head_sha": walked, "run_attempt": 1, "run_started_at": "2026-09-25T15:05:00Z",
                "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
     ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
@@ -3772,7 +3772,7 @@ def selftest(v4_gate=None, v4_templates=None):
            "owner_run: a run start with no offset -> deny")
     fullwidth = "３６１９３６９４６５９"
     expect(owner_run_id({"run_id": fullwidth}) is None
-           and not RUN_URL_RE.match("https://github.com/albrand/psyche-project/actions/runs/" + fullwidth),
+           and not RUN_URL_RE.match("https://github.com/example-owner/example-repo/actions/runs/" + fullwidth),
            "owner_run: fullwidth digits are not a run id or a run URL (ASCII, as in qa-e2e-gate.mjs)")
     shifted = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00-03:00", "end": "2026-09-25T12:40:00-03:00"}}
     expect(verify(shifted) == [], "owner_run: the same walk window at -03:00 -> pass")

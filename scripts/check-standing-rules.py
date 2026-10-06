@@ -730,7 +730,7 @@ RENDERED_HOME_SHA256 = {
     "cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5": "proposal-claude",
     "e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7": "proposal-codex",
     "ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d": "proposal-opencode",
-    "ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb": "proposal-bb",
+    "d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e": "proposal-bb",
 }
 
 
