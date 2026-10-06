@@ -18,8 +18,9 @@ pin() {
     LICENSE) echo b7a7fe370cc4c9e974528c7cea7841cf8ac886bc9ed947edb11b289441fba4a8 ;;
   esac
 }
-# Exits non-zero unless every file in directory $1 matches its pin.
+# Exits non-zero unless directory $1 holds exactly the three files and each matches its pin.
 matches() {
+  [ "$(cd "$1" && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')" = "./LICENSE ./SKILL.md ./eval.md " ] || return 1
   for f in $FILES; do
     [ -f "$1/$f" ] && [ ! -L "$1/$f" ] || return 1
     [ "$(shasum -a 256 "$1/$f" | cut -d' ' -f1)" = "$(pin "$f")" ] || return 1

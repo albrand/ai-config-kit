@@ -64,39 +64,44 @@ midrun "source changed after its check" source 0
 midrun "checked copy changed before it is installed" hashed 1
 
 # 4. A change after the last check before the move. An mv shim, on the call that moves the per-home temporary
-# directory into place, appends a line to its SKILL.md and then moves it. The installer must refuse, restore
-# the previous copy, and leave no temporary or previous-copy directory behind.
+# directory into place, first runs ACTION inside that directory, then does the real move. The installer must
+# refuse, restore the previous copy (or leave an empty home on a first install), and leave no temporary or
+# previous-copy directory behind.
 REAL_MV=$(command -v mv)
-W=$(mktemp -d); mkdir "$W/bin"
-cat > "$W/bin/mv" <<EOF
+before_mv() {
+  name=$1 home=$2 action=$3
+  W=$(mktemp -d); mkdir "$W/bin"
+  cat > "$W/bin/mv" <<EOF
 #!/bin/sh
 case "\$1" in
-  */.no-ai-slop.*) if [ ! -e "$W/done" ]; then : > "$W/done"; echo "changed before mv" >> "\$1/SKILL.md"; fi ;;
+  */.no-ai-slop.*) if [ ! -e "$W/done" ]; then : > "$W/done"; (cd "\$1" && $action); fi ;;
 esac
 exec "$REAL_MV" "\$@"
 EOF
-chmod +x "$W/bin/mv"
-HOME=$H PATH="$W/bin:$PATH" sh "$HERE/install.sh" >/dev/null 2>&1; check "changed after the last check before mv: exit" 1 $?
-check "changed after the last check before mv: the shim changed a file" yes "$([ -e "$W/done" ] && echo yes || echo no)"
-check "changed after the last check before mv: previous copy restored" "$before" "$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)"
-check "changed after the last check before mv: no extra entry installed" "./LICENSE ./SKILL.md ./eval.md " "$(installed "$H/.claude/skills")"
-check "changed after the last check before mv: nothing left behind" "" "$(cd "$H/.claude/skills" && find . -mindepth 1 -maxdepth 1 -name '.no-ai-slop*')"
-rm -rf "$W"
+  chmod +x "$W/bin/mv"
+  HOME=$home PATH="$W/bin:$PATH" sh "$HERE/install.sh" >/dev/null 2>&1; check "$name: exit" 1 $?
+  check "$name: the shim acted" yes "$([ -e "$W/done" ] && echo yes || echo no)"
+  check "$name: nothing left behind" "" "$(cd "$home/.claude/skills" && find . -mindepth 1 -maxdepth 1 -name '.no-ai-slop*')"
+  rm -rf "$W"
+}
+restored() {
+  check "$1: previous copy restored" "$before" "$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)"
+  check "$1: no extra entry installed" "./LICENSE ./SKILL.md ./eval.md " "$(installed "$H/.claude/skills")"
+}
+before_mv "SKILL.md changed before mv" "$H" 'echo changed >> SKILL.md'; restored "SKILL.md changed before mv"
+before_mv "extra file added before mv" "$H" 'echo x > UNPINNED.md'; restored "extra file added before mv"
+before_mv "extra directory added before mv" "$H" 'mkdir scripts && echo x > scripts/run.sh'
+restored "extra directory added before mv"
+before_mv "SKILL.md replaced by a link before mv" "$H" 'cp SKILL.md ../real && rm SKILL.md && ln -s ../real SKILL.md'
+restored "SKILL.md replaced by a link before mv"
 
-# 5. The same change with no copy installed before: refused, and nothing is left in the home.
-H2=$(newhome)
-W=$(mktemp -d); mkdir "$W/bin"
-cat > "$W/bin/mv" <<EOF
-#!/bin/sh
-case "\$1" in
-  */.no-ai-slop.*) if [ ! -e "$W/done" ]; then : > "$W/done"; echo "changed before mv" >> "\$1/SKILL.md"; fi ;;
-esac
-exec "$REAL_MV" "\$@"
-EOF
-chmod +x "$W/bin/mv"
-HOME=$H2 PATH="$W/bin:$PATH" sh "$HERE/install.sh" >/dev/null 2>&1; check "first install changed before mv: exit" 1 $?
-check "first install changed before mv: nothing installed or left behind" "" "$(cd "$H2/.claude/skills" && find . -mindepth 1)"
-rm -rf "$W" "$H2"
+# 5. The same changes on a first install (no previous copy): refused, and the home is left empty.
+for action in 'echo changed >> SKILL.md' 'echo x > UNPINNED.md'; do
+  H2=$(newhome)
+  before_mv "first install, before mv: $action" "$H2" "$action"
+  check "first install, before mv: $action: nothing installed" "" "$(cd "$H2/.claude/skills" && find . -mindepth 1)"
+  rm -rf "$H2"
+done
 rm -rf "$H"
 [ "$fail" = 0 ] && echo "test-install: all passed"
 exit $fail
