@@ -70,4 +70,6 @@ stopping point: write the missing stage if you can, then run it.
 ## Hook
 
 `verify.py hook` is a PostToolUse hook for Claude Code and Codex (same schema). After a merge,
-deploy or protected push it adds the commit's verify result to the agent's context. It never denies.
+deploy or protected push in a repo that has `.verify/config.json`, it adds the commit's verify result
+to the agent's context and, unless it passed, asks the agent to run verify and fix what fails. In repos
+without a config it says nothing. It never denies.

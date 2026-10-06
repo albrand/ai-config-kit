@@ -991,7 +991,9 @@ def cmd_hook(_args):
     if not cmd or not SHIP_RE.search(cmd):
         return 0
     root = git(payload.get("cwd") or os.getcwd(), "rev-parse", "--show-toplevel")
-    if not root:
+    # Only repos that adopted verify get a note; elsewhere the hook stays silent (doctor covers them),
+    # so it never adds a report-and-stop prompt to sessions in repos that have no definition of done.
+    if not root or not (Path(root) / CONFIG).exists():
         return 0
     slug = forge_slug(root)
     sha = None
@@ -1003,15 +1005,14 @@ def cmd_hook(_args):
     st = forge_status(slug, sha, timeout=8) if slug else None
     local = read_json(Path(root) / RUNS / f"{sha}.json") or {}
     verdict = ((st or {}).get(STATUS_PREFIX) or {}).get("state") or local.get("verdict") or "none"
-    if verdict == "none" and not (Path(root) / CONFIG).exists():
-        note = (f"[verify] {sha[:9]}: this repo has no .verify/config.json, so nothing defines or checked 'done' for "
-                "this commit. This never blocks merges or deploys. Report the change as NOT VERIFIED; "
-                f"`python3 {Path(__file__).resolve()} doctor {root}` lists what is missing.")
+    if verdict in ("success", "pass"):
+        note = f"[verify] {sha[:9]} verify result: pass."
     else:
-        note = (f"[verify] {sha[:9]} verify result: {verdict}. This never blocks merges or deploys. Unless it is "
-                "success/pass, say NOT VERIFIED in your report and name the missing or failing stage, then keep working on it.")
+        note = (f"[verify] {sha[:9]} verify result: {verdict}. This never blocks merges or deploys. Run "
+                f"`python3 {Path(__file__).resolve()} run {root} --strict` now, fix what fails, and report the "
+                "result per stage; a stage you could not run is NOT VERIFIED, with the reason.")
     if re.search(r"\bvercel\b|\bdeploy\b", cmd):
-        note += " After a deploy, run the postdeploy stage: `verify.py run . --stages postdeploy --strict`."
+        note += " After a deploy, also run the postdeploy stage: `verify.py run . --stages postdeploy --strict`."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}))
     return 0
 

@@ -283,17 +283,24 @@ class EndToEnd(unittest.TestCase):
             self.assertEqual(p.returncode, 0)
             self.assertEqual(p.stdout.strip(), "")  # not a git repo: nothing to say, never a deny
 
-    def test_hook_notes_missing_contract_after_a_deploy(self):
-        repo = make_repo({"README.md": "x\n"})
-        payload = json.dumps({"tool_input": {"command": "vercel deploy --prod"}, "cwd": str(repo)})
-        p = subprocess.run([sys.executable, str(HERE.parent / "verify.py"), "hook"], input=payload,
-                           capture_output=True, text=True, timeout=30)
+    def hook(self, repo, cmd):
+        payload = json.dumps({"tool_input": {"command": cmd}, "cwd": str(repo)})
+        return subprocess.run([sys.executable, str(HERE.parent / "verify.py"), "hook"], input=payload,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_hook_is_silent_in_repos_without_a_contract(self):
+        p = self.hook(make_repo({"README.md": "x\n"}), "vercel deploy --prod")
+        self.assertEqual((p.returncode, p.stdout.strip()), (0, ""))
+
+    def test_hook_asks_to_run_verify_after_a_deploy(self):
+        repo = make_repo({"README.md": "x\n"}, config={"stages": {"unit": {"run": "true"}}})
+        p = self.hook(repo, "vercel deploy --prod")
         self.assertEqual(p.returncode, 0)
         out = json.loads(p.stdout)["hookSpecificOutput"]
         self.assertEqual(out["hookEventName"], "PostToolUse")
         self.assertNotIn("permissionDecision", out)
-        self.assertIn("no .verify/config.json", out["additionalContext"])
-        self.assertIn("NOT VERIFIED", out["additionalContext"])
+        self.assertIn("run", out["additionalContext"])
+        self.assertIn("--strict", out["additionalContext"])
         self.assertIn("postdeploy", out["additionalContext"])
 
 
