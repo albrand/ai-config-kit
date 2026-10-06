@@ -63,10 +63,10 @@ output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
 
 | Home | SHA-256 |
 |---|---|
-| Claude | `6839c826f50c64bebf309f1b855e92da595d97e61f32c3a727158826e71be59b` |
-| Codex | `c4e5e4b333c6211cc8ca4cb90f822b623499d732694f8768ffe52aa268fb12bf` |
-| OpenCode | `2f3104bc2164cdfc38e1a02d4608dadf2f9378111bfde6ec2e1cd95a516d8d4c` |
-| bb | `6fbca50ca46869fd69496b38860ce2f445930f636d5b4f9c50e218844ae2eaef` |
+| Claude | `cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5` |
+| Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
+| OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
+| bb | `ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

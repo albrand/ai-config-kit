@@ -267,6 +267,12 @@ RULES: dict[str, re.Pattern[str]] = {
         r"shared remote|Get explicit approval before.{0,300}board mutations.{0,300}"
         r"PR/check automation)"
     ),
+    # A home that narrows "shared-remote push" must still cover every protected branch, not
+    # only the conventional names (Hermes 2026-10-06, topic kit-codex-follow-through).
+    # Checked only in a home that has the narrowing (see optional_present).
+    "protected-push-covers-any-protected-branch": re.compile(
+        r"(?is)shared-remote push means.{0,160}protected branch \(any branch with branch protection or rules"
+    ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
     ),
@@ -544,7 +550,10 @@ OPTIONAL_WHEN_ABSENT = {
     "board-incomplete-inventory-and-traceability-block",
     "board-plausible-regression-blocks",
     "delegate-output-evidence-and-capability-gap",
+    "protected-push-covers-any-protected-branch",
 }
+# Enforced wherever the narrowing appears, never required where it does not.
+WHEN_PRESENT_ONLY = {"protected-push-covers-any-protected-branch"}
 
 HOME_FILES = (
     Path("~/.claude/CLAUDE.md").expanduser(),
@@ -693,10 +702,10 @@ PROFILE_RULES = {
     "kit": KIT_BASELINE_RULES,
     # Rendered proposals deliberately use the full closed inventory; this is
     # what makes the mutation fixtures fail closed for newly required clauses.
-    "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES - BOARD_RULES,
-    "proposal-codex": OPTIONAL_WHEN_ABSENT,
-    "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
-    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES,
+    "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES - BOARD_RULES - WHEN_PRESENT_ONLY,
+    "proposal-codex": OPTIONAL_WHEN_ABSENT - WHEN_PRESENT_ONLY,
+    "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
+    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
 }
 
 LIVE_HOME_SHA256 = {
@@ -716,10 +725,10 @@ INSTALLED_HOME_SHA256 = {
     "db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1": "proposal-bb",
 }
 RENDERED_HOME_SHA256 = {
-    "6839c826f50c64bebf309f1b855e92da595d97e61f32c3a727158826e71be59b": "proposal-claude",
-    "c4e5e4b333c6211cc8ca4cb90f822b623499d732694f8768ffe52aa268fb12bf": "proposal-codex",
-    "2f3104bc2164cdfc38e1a02d4608dadf2f9378111bfde6ec2e1cd95a516d8d4c": "proposal-opencode",
-    "6fbca50ca46869fd69496b38860ce2f445930f636d5b4f9c50e218844ae2eaef": "proposal-bb",
+    "cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5": "proposal-claude",
+    "e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7": "proposal-codex",
+    "ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d": "proposal-opencode",
+    "ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb": "proposal-bb",
 }
 
 
@@ -1033,6 +1042,8 @@ def historical_clause(text: str, position: int) -> bool:
 
 
 def optional_present(name: str, text: str) -> bool:
+    if name == "protected-push-covers-any-protected-branch":
+        return bool(re.search(r"(?i)shared-remote push means", text))
     if name.startswith("board-"):
         return bool(RULES[name].search(text))
     if name == "no-pkill-pgrep-app-kill-path":
