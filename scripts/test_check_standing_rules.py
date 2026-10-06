@@ -139,6 +139,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
         self.assertNotIn(rule, CHECKER.missing_rules(INTACT))
         self.assertIn(rule, CHECKER.missing_rules(INTACT + names_only))
         self.assertNotIn(rule, CHECKER.missing_rules(INTACT + any_branch))
+        # Each part of the coverage is guarded: dropping any one of them fails.
+        for part in (" on the remote", ", or listed in the repo's protected branches",
+                     ", and always main, master, develop, dev, staging, release and production", " production"):
+            with self.subTest(dropped=part):
+                self.assertIn(rule, CHECKER.missing_rules(INTACT + any_branch.replace(part, "", 1)))
 
     def test_deleted_rule_fails(self):
         damaged = INTACT.replace(

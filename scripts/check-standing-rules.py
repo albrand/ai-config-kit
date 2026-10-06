@@ -272,6 +272,8 @@ RULES: dict[str, re.Pattern[str]] = {
     # Checked only in a home that has the narrowing (see optional_present).
     "protected-push-covers-any-protected-branch": re.compile(
         r"(?is)shared-remote push means.{0,160}protected branch \(any branch with branch protection or rules"
+        r" on the remote, or listed in the repo.s protected branches, and always main, master, develop, dev,"
+        r" staging, release and production\)"
     ),
     "no-new-feature-flags": re.compile(
         r"(?is)no feature flags.{0,120}explicit ask"
