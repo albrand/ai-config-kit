@@ -1,12 +1,17 @@
 """Tests for verify.py. Run: python3 -m unittest discover -s skillsets/repo-bootstrap/shared/verify/scripts/tests"""
+import argparse
 import contextlib
+import hashlib
+import http.server
 import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -141,10 +146,11 @@ class Helpers(unittest.TestCase):
         self.assertTrue(verify.touched(["jobs/sync.ts"], ["**/jobs/**"]))
         self.assertFalse(verify.touched(["src/ui/button.tsx"], ["**/jobs/**"]))
 
-    def test_stage_env_strips_forge_tokens(self):
+    def test_stage_env_never_passes_forge_tokens(self):
         env = verify.stage_env({"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "PATH": "/bin"}, {})
         self.assertEqual(env, {"PATH": "/bin"})
-        self.assertIn("GH_TOKEN", verify.stage_env({"GH_TOKEN": "x"}, {"env": ["GH_TOKEN"]}))
+        # Naming a token in a stage's `env` list (a PR can edit it) does not let it through.
+        self.assertNotIn("GH_TOKEN", verify.stage_env({"GH_TOKEN": "x"}, {"env": ["GH_TOKEN"]}))
 
     def test_slug_of(self):
         self.assertEqual(verify.slug_of("git@github.com:acme/app.git"), "acme/app")
@@ -179,6 +185,13 @@ class Detection(unittest.TestCase):
         self.assertIn(("high", "contract"), areas)
         self.assertIn(("high", "journeys"), areas)               # network-mocked e2e
         self.assertIn(("high", "evals"), areas)
+        self.assertIn("todo", cfg["stages"]["mutation"])         # no mutation tool installed
+
+    def test_installed_mutation_tool_fills_the_mutation_stage(self):
+        node = make_repo({"package.json": json.dumps({"devDependencies": {"@stryker-mutator/core": "9"}})})
+        self.assertEqual(verify.proposal(verify.detect(node))["stages"]["mutation"]["run"], "npx stryker run")
+        py = make_repo({"pyproject.toml": "[tool.mutmut]\npaths_to_mutate = ['src/']\n"})
+        self.assertEqual(verify.proposal(verify.detect(py))["stages"]["mutation"]["run"], "mutmut run")
 
     def test_only_faking_the_own_backend_counts_as_mocking(self):
         allow_list = "await page.route(/^https?:/u, r => allowed.has(new URL(r.request().url()).origin) ? r.continue() : r.abort())\n"
@@ -302,6 +315,179 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("run", out["additionalContext"])
         self.assertIn("--strict", out["additionalContext"])
         self.assertIn("postdeploy", out["additionalContext"])
+
+
+PROBE = """#!/bin/sh
+MIRROR='@MIRROR@'
+env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY|DATABASE_URL|HOME)='
+cat '@HOME_CANARY@' '@TMP_CANARY@' '@VF_CANARY@' 2>&1
+cat '@RUNNER_HOME@/env/acme__app.env' "$MIRROR/config" 2>&1
+curl -s -m 3 'http://127.0.0.1:@PORT@/' 2>&1
+printf '#!/bin/sh\\ntouch @MARKER@\\n' > "$MIRROR/hooks/reference-transaction" 2>&1 && chmod +x "$MIRROR/hooks/reference-transaction"
+git config core.fsmonitor 'touch @MARKER@' 2>&1
+mkdir -p .verify/runs && echo '{"verdict": "pass", "forged": true}' > ".verify/runs/$VERIFY_SHA.json"
+echo forged > '@MARKER@' 2>&1
+echo "PROBE-RAN-$1"
+exit 0
+"""
+
+
+class CanaryHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"PORT-CANARY")
+
+    def log_message(self, *a):
+        pass
+
+
+def tree_digest(root):
+    h = hashlib.sha256()
+    for p in sorted(Path(root).rglob("*")):
+        h.update(str(p.relative_to(root)).encode())
+        if p.is_file():
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+@unittest.skipUnless(sys.platform == "darwin" and Path(verify.SANDBOX_EXEC).exists(), "macOS sandbox-exec only")
+class RunnerIsolation(unittest.TestCase):
+    """A malicious same-repo or fork PR, run through run_job: nothing secret leaves, nothing outside its job changes,
+    and the base branch's config runs. Each probe is also run unsandboxed first, so a blocked probe means something."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="verify-iso-")).resolve()
+        self.runner_home = self.tmp / "runner"
+        (self.runner_home / "env").mkdir(parents=True)
+        self.saved = verify.RUNNER_HOME, dict(os.environ)
+        verify.RUNNER_HOME = self.runner_home
+        self.home_canary = Path.home() / ".cache" / f"verify-test-canary-{os.getpid()}.txt"
+        self.home_canary.parent.mkdir(exist_ok=True)
+        self.home_canary.write_text("HOME-CANARY\n")
+        self.tmp_canary = Path("/private/tmp") / f"verify-test-canary-{os.getpid()}.txt"
+        self.tmp_canary.write_text("TMP-CANARY\n")
+        (self.tmp / "vf-canary.txt").write_text("VF-CANARY\n")
+        self.marker = self.tmp / "marker"
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), CanaryHandler)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        os.environ.update(GH_TOKEN="canary-runner-gh-1", AWS_SECRET_ACCESS_KEY="canary-runner-aws-1")
+        (self.runner_home / "env/acme__app.env").write_text("DATABASE_URL=canary-envfile-db-1\nGH_TOKEN=canary-envfile-gh-1\n")
+        base_cfg = {"version": 1, "setup": "sh probe.sh setup", "stages": {
+            "static": {"run": "sh probe.sh static"}, "unit": {"run": "git status >/dev/null 2>&1; sh probe.sh unit"},
+            "integration": {"run": "sh probe.sh integration", "env": ["DATABASE_URL", "GH_TOKEN"]},
+            **{s: {"run": None, "na": "test"} for s in ("journeys", "evals", "rehearsal")}}}
+        origin = make_repo({"probe.sh": "echo benign\n"}, base_cfg)
+        self.mirror = self.tmp / "mirror.git"
+        git(origin, "checkout", "-q", "-b", "pr")
+        probe = PROBE
+        for k, v in {"MIRROR": self.mirror, "HOME_CANARY": self.home_canary, "TMP_CANARY": self.tmp_canary,
+                     "VF_CANARY": self.tmp / "vf-canary.txt", "RUNNER_HOME": self.runner_home,
+                     "PORT": self.srv.server_address[1], "MARKER": self.marker}.items():
+            probe = probe.replace(f"@{k}@", str(v))
+        (origin / "probe.sh").write_text(probe)
+        (origin / ".verify/config.json").write_text(json.dumps({"version": 1, "stages": {
+            s: {"run": "true"} for s in verify.PER_CHANGE}}))
+        git(origin, "commit", "-qam", "malicious")
+        self.sha = subprocess.run(["git", "-C", str(origin), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "clone", "-q", "--mirror", str(origin), str(self.mirror)], check=True)
+        self.probe = probe
+
+    def tearDown(self):
+        verify.RUNNER_HOME = self.saved[0]
+        os.environ.clear()
+        os.environ.update(self.saved[1])
+        self.srv.shutdown()
+        self.home_canary.unlink(missing_ok=True)
+        self.tmp_canary.unlink(missing_ok=True)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    CANARIES = ("HOME-CANARY", "TMP-CANARY", "VF-CANARY", "PORT-CANARY", "canary-runner-gh-1", "canary-runner-aws-1",
+                "canary-envfile-gh-1", "canary-envfile-db-1", "mirror = true")
+
+    def test_every_probe_works_without_the_sandbox(self):
+        mirror_copy = self.tmp / "mirror-copy.git"
+        shutil.copytree(self.mirror, mirror_copy)
+        clone = self.tmp / "control"
+        subprocess.run(["git", "clone", "-q", str(mirror_copy), str(clone)], check=True)
+        script = self.probe.replace(str(self.mirror), str(mirror_copy))
+        # What an unisolated job would inherit: the runner's environment (here only its canaries, never the real one).
+        env = {"PATH": os.environ["PATH"], "HOME": str(Path.home()), "VERIFY_SHA": self.sha,
+               "GH_TOKEN": "canary-runner-gh-1", "AWS_SECRET_ACCESS_KEY": "canary-runner-aws-1"}
+        rc, out = verify.sh(["/bin/sh", "-c", script, "probe", "control"], cwd=clone, env=env, timeout=60)
+        for c in self.CANARIES:
+            self.assertTrue(c in out, f"control could not reach {c}")
+        self.assertTrue(self.marker.exists())
+        self.marker.unlink()
+        verify.git(clone, "status")  # what the planted fsmonitor does to anyone running git there afterwards
+        self.assertTrue(self.marker.exists(), "fsmonitor plant did not fire in the control")
+        self.assertNotEqual(tree_digest(mirror_copy), tree_digest(self.mirror))
+
+    def run_pr(self, fork):
+        posts = []
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
+        before = tree_digest(self.mirror)
+        rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, "main", "PR #1", args,
+                        lambda c, s, d: posts.append((c, s, d)) or True, fork)
+        art = (self.runner_home / "runs/acme__app" / f"{self.sha}.json").read_text()
+        self.assertEqual(rc, "done", out)
+        self.assertEqual(tree_digest(self.mirror), before, "PR code changed the runner's mirror")
+        self.assertFalse(self.marker.exists(), "PR code wrote outside its job, or the runner ran its git plant")
+        seen = out + art + json.dumps(posts)
+        for c in self.CANARIES:
+            self.assertFalse(c in seen, f"{c} leaked")
+        self.assertIn("PROBE-RAN-static", art)  # the base branch's config ran, not the PR's `run: "true"`
+        self.assertNotIn('"forged"', art)
+        final = posts[-1]
+        self.assertEqual(final[0], "verify")
+        self.assertIn("ran main's config, not this PR's edit", final[2])
+        return json.loads(art), posts
+
+    def test_same_repo_pr_gets_the_env_file_masked_and_nothing_else(self):
+        art, _ = self.run_pr(fork=False)
+        stages = {s["stage"]: s for s in art["stages"]}
+        self.assertTrue(art["sandboxed"])
+        self.assertEqual(stages["integration"]["status"], "fail")  # GH_TOKEN is required but never passed
+        self.assertIn("missing required env: GH_TOKEN", stages["integration"]["detail"])
+        self.assertIn("DATABASE_URL=***", stages["static"]["tail"])
+
+    def test_fork_pr_gets_no_env_file(self):
+        art, _ = self.run_pr(fork=True)
+        self.assertNotIn("DATABASE_URL=", json.dumps(art))
+        self.assertIn("DATABASE_URL", {s["stage"]: s for s in art["stages"]}["integration"]["detail"])
+
+    def test_no_sandbox_means_no_pr_code_runs(self):
+        posts = []
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
+        saved, verify.SANDBOX_EXEC = verify.SANDBOX_EXEC, str(self.tmp / "no-sandbox-exec")
+        try:
+            rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, "main", "PR #1", args,
+                            lambda c, s, d: posts.append((c, s, d)) or True)
+        finally:
+            verify.SANDBOX_EXEC = saved
+        self.assertEqual(rc, "error")
+        self.assertIn("not running PR code", out)
+        self.assertEqual(posts, [])
+        self.assertFalse(self.marker.exists())
+
+    def test_base_without_a_config_runs_nothing(self):
+        posts = []
+        empty = make_repo({"probe.sh": "echo benign\n"})
+        git(empty, "checkout", "-q", "-b", "pr")
+        (empty / "probe.sh").write_text(self.probe)
+        (empty / ".verify").mkdir()
+        (empty / ".verify/config.json").write_text(json.dumps({"setup": "sh probe.sh setup", "stages": {}}))
+        git(empty, "add", "-A")
+        git(empty, "commit", "-qm", "adds a config")
+        sha = subprocess.run(["git", "-C", str(empty), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        mirror = self.tmp / "empty.git"
+        subprocess.run(["git", "clone", "-q", "--mirror", str(empty), str(mirror)], check=True)
+        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
+        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, "main", "PR #2", args,
+                      lambda c, s, d: posts.append((c, s, d)) or True)
+        self.assertEqual(rc, "done")
+        self.assertEqual(posts, [("verify", "missing", "no .verify/config.json on main yet; merge one there first")])
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == "__main__":

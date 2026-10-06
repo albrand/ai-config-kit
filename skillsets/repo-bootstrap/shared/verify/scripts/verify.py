@@ -53,6 +53,16 @@ DISK_FLOOR_GB = 20
 STATUS_PREFIX = "verify"
 RUNNER_HOME = Path(os.environ.get("VERIFY_RUNNER_HOME", "~/.cache/verify-runner")).expanduser()
 FORGE_TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+# Runner jobs run PR code. They get these variables from the runner's environment and nothing else.
+JOB_ENV_KEEP = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "USER", "LOGNAME", "SHELL", "NVM_DIR", "VOLTA_HOME",
+                "PYENV_ROOT", "BUN_INSTALL", "PNPM_HOME", "CARGO_HOME", "RUSTUP_HOME", "DOTNET_ROOT", "GOPATH",
+                "GOMODCACHE", "PLAYWRIGHT_BROWSERS_PATH")
+# Toolchains under $HOME that jobs may read (and run). Everything else under /Users stays unreadable.
+TOOLCHAIN_DIRS = (".nvm", ".volta", ".fnm", ".local/share/fnm", ".bun", ".deno", ".cargo", ".rustup", ".pyenv", ".rbenv",
+                  ".asdf", ".local/share/mise", ".local/share/pnpm", "Library/pnpm", ".dotnet", "go/pkg/mod", ".sdkman",
+                  "Library/Caches/ms-playwright", ".cache/ms-playwright")
+TOOLCHAIN_SECRETS = (".cargo/credentials", ".cargo/credentials.toml")
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 # ---------------------------------------------------------------- helpers
 
@@ -167,10 +177,22 @@ def read_blobs(repo, ref, paths, limit=400_000):
     return res
 
 
-def stage_env(base_env, spec):
-    """Stage commands never see forge tokens unless the stage asks for one by name."""
-    wanted = set(spec.get("env", []))
-    return {k: v for k, v in base_env.items() if k not in FORGE_TOKENS or k in wanted}
+def stage_env(base_env, _spec=None):
+    """Stage commands never see forge tokens. A stage's `env` list only names variables it requires."""
+    return {k: v for k, v in base_env.items() if k not in FORGE_TOKENS}
+
+
+def wrapped(cmd, wrap):
+    """`cmd` (shell string or argv) run under the `wrap` prefix (the sandbox), or as is without one."""
+    if not wrap:
+        return cmd
+    return [*wrap, "/bin/sh", "-c", cmd] if isinstance(cmd, str) else [*wrap, *cmd]
+
+
+def redact(text, secrets):
+    for s in secrets:
+        text = text.replace(s, "***")
+    return text
 
 
 # ---------------------------------------------------------------- detection
@@ -268,6 +290,7 @@ def detect(repo, ref="HEAD"):
             d["stacks"].append("playwright")
         if any(k.startswith("@stryker-mutator/") for k in deps):
             d["stacks"].append("stryker")
+            d["commands"]["mutation"] = f"{run} test:mutation" if "test:mutation" in scripts else "npx stryker run"
     if fset & {"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"}:
         d["stacks"].append("python")
         d["commands"].setdefault("static", "ruff check .")
@@ -313,6 +336,8 @@ def detect(repo, ref="HEAD"):
     d["has_config"] = d["config"] is not None
     d["mutation_config"] = "stryker" in d["stacks"] or any(re.search(r"stryker\.(conf|config)|mutmut", f) for f in files) \
         or "[tool.mutmut]" in pytext
+    if "[tool.mutmut]" in pytext or "mutmut" in pytext:
+        d["commands"].setdefault("mutation", "mutmut run")
     d["agents_md"] = [f for f in ("AGENTS.md", "CLAUDE.md", ".bb/AGENTS.md") if f in fset]
     return d
 
@@ -345,7 +370,7 @@ def proposal(d):
         "rehearsal": stage(None, todo="read-only dry run of data-moving code on production-shaped data",
                            paths=[f"**/{p}/**" for p in d["background_paths"][:6]]) if d["background_paths"]
         else {"run": None, "na": "no background processing detected"},
-        "mutation": stage(None, todo="see templates/mutation", schedule="nightly", min_score=60),
+        "mutation": stage(c.get("mutation"), todo="see templates/mutation", schedule="nightly", min_score=60),
         "postdeploy": stage(None, todo="health + @smoke journeys against the deployed URL; see templates/postdeploy"),
     }
     return cfg
@@ -481,7 +506,8 @@ def wait_ready(url, timeout=180):
     return False
 
 
-def run_stage(repo, name, spec, strict, paths, env):
+def run_stage(repo, name, spec, strict, paths, env, wrap=None):
+    """Run one stage. Every command the repo controls goes through `wrap` (the runner's sandbox)."""
     res = {"stage": name, "started": now()}
     if spec.get("na"):
         return {**res, "status": "na", "detail": spec["na"]}
@@ -498,22 +524,22 @@ def run_stage(repo, name, spec, strict, paths, env):
     started = None
     try:
         if spec.get("services"):
-            rc, out = sh(spec["services"], cwd=repo, env=senv, timeout=spec.get("services_timeout", 600))
+            rc, out = sh(wrapped(spec["services"], wrap), cwd=repo, env=senv, timeout=spec.get("services_timeout", 600))
             if rc != 0:
                 return {**res, "status": "fail", "detail": "services failed to start", "tail": out[-3000:]}
         if spec.get("base_url"):
-            rc, out = sh(spec["base_url"], cwd=repo, env=senv, timeout=600, merge=False)
+            rc, out = sh(wrapped(spec["base_url"], wrap), cwd=repo, env=senv, timeout=600, merge=False)
             url = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ""
             if not url.startswith("http"):
                 return {**res, "status": "fail", "detail": "could not resolve base_url", "tail": out[-2000:]}
             senv["BASE_URL"] = url
         if spec.get("start"):
-            started = subprocess.Popen(spec["start"], cwd=repo, env=senv, shell=True, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, start_new_session=True)
+            started = subprocess.Popen(wrapped(spec["start"], wrap), cwd=repo, env=senv, shell=not wrap,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         if spec.get("ready_url") and not wait_ready(spec["ready_url"], spec.get("ready_timeout", 240)):
             return {**res, "status": "fail", "detail": f"app never became ready at {spec['ready_url']}"}
         t0 = time.time()
-        rc, out = sh(spec["run"], cwd=repo, env=senv, timeout=spec.get("timeout", 3600))
+        rc, out = sh(wrapped(spec["run"], wrap), cwd=repo, env=senv, timeout=spec.get("timeout", 3600))
         skipped = skipped_count(out)
         limit = spec.get("max_skipped", DEFAULT_MAX_SKIPPED.get(name))
         status = "pass" if rc == 0 else "fail"
@@ -525,7 +551,7 @@ def run_stage(repo, name, spec, strict, paths, env):
         if started is not None:
             kill_group(started)
         if spec.get("stop"):
-            sh(spec["stop"], cwd=repo, env=senv, timeout=300)
+            sh(wrapped(spec["stop"], wrap), cwd=repo, env=senv, timeout=300)
 
 
 def overall(results):
@@ -535,6 +561,35 @@ def overall(results):
     if "missing" in states:
         return "not-verified"
     return "pass"
+
+
+def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets=(), deadline=None):
+    """Run `stages` in order; return (verdict, results, posted). `post(context, state, description)` reports
+    each stage; `secrets` are masked in everything returned or printed."""
+    posted, results = True, []
+    for name in stages:
+        spec = cfg.get("stages", {}).get(name) or {"run": None, "todo": "stage not declared"}
+        if post:
+            posted &= post(f"{STATUS_PREFIX}/{name}", "pending", "running")
+        left = int(deadline - time.time()) if deadline else None
+        if left is not None and left <= 0:
+            r = {"stage": name, "started": now(), "status": "fail", "detail": "job time limit reached before this stage"}
+        else:
+            if left is not None:
+                spec = {**spec, "timeout": min(spec.get("timeout", 3600), left)}
+            r = run_stage(repo, name, spec, strict, paths, env, wrap)
+        r = {k: redact(v, secrets) if isinstance(v, str) else v for k, v in r.items()}
+        results.append(r)
+        print(f"[verify] {name:<11} {r['status']:<10} {r.get('detail', '')}", flush=True)
+        if r["status"] == "fail" and r.get("tail"):
+            print("\n".join("    " + line for line in r["tail"].splitlines()[-25:]), flush=True)
+        if post:
+            posted &= post(f"{STATUS_PREFIX}/{name}", r["status"], r.get("detail", ""))
+    return overall(results), results, posted
+
+
+def summary(verdict, results, note=""):
+    return f"{verdict}{note}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results)
 
 
 def cmd_run(args):
@@ -551,26 +606,13 @@ def cmd_run(args):
     slug = forge_slug(repo) if args.post_status else None
     if args.post_status and not slug:
         print("[verify] --post-status: no GitHub origin; results stay local", file=sys.stderr)
-    posted = True
-    results = []
-    for name in stages:
-        spec = cfg.get("stages", {}).get(name) or {"run": None, "todo": "stage not declared"}
-        if slug:
-            posted &= post_status(slug, sha, f"{STATUS_PREFIX}/{name}", "pending", "running")
-        r = run_stage(repo, name, spec, args.strict, paths, env)
-        results.append(r)
-        print(f"[verify] {name:<11} {r['status']:<10} {r.get('detail', '')}", flush=True)
-        if r["status"] == "fail" and r.get("tail"):
-            print("\n".join("    " + line for line in r["tail"].splitlines()[-25:]), flush=True)
-        if slug:
-            posted &= post_status(slug, sha, f"{STATUS_PREFIX}/{name}", r["status"], r.get("detail", ""))
-    verdict = overall(results)
+    post = (lambda context, state, desc: post_status(slug, sha, context, state, desc)) if slug else None
+    verdict, results, posted = execute(repo, cfg, stages, args.strict, paths, env, post)
     art = {"sha": sha, "at": now(), "strict": args.strict, "base": args.base, "verdict": verdict, "stages": results}
     (repo / RUNS).mkdir(parents=True, exist_ok=True)
     (repo / RUNS / f"{sha}.json").write_text(json.dumps(art, indent=1))
-    if slug:
-        posted &= post_status(slug, sha, STATUS_PREFIX, verdict,
-                              f"{verdict}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results))
+    if post:
+        posted &= post(STATUS_PREFIX, verdict, summary(verdict, results))
     label = {"pass": "PASS", "fail": "FAIL", "not-verified": "NOT VERIFIED"}[verdict]
     print(f"[verify] {label} for {sha[:9]} -> {RUNS / (sha + '.json')}")
     if not posted:
@@ -593,6 +635,80 @@ def cmd_status(args):
 #
 # The runner owns its own mirror clone per repo under RUNNER_HOME and a throwaway clone per job.
 # It never writes to, fetches into, or adds worktrees to anyone's checkout.
+#
+# A job runs code from a PR, so the PR is untrusted:
+# - What runs comes from the base branch's .verify/config.json, read from the mirror before any PR code exists on disk.
+# - Every repo-controlled command runs in an OS sandbox (macOS sandbox-exec). It can't read /Users, /Volumes, /tmp,
+#   /var/folders or RUNNER_HOME, except its own job dir and toolchains. It can only write its job dir. It can't reach
+#   the keychain, the ssh-agent, the Docker socket, or any port that was listening on the host when the job started.
+# - The environment is an allowlist plus the owner's per-repo env file (never for forks), minus forge tokens.
+# - Changed paths are computed before PR code runs; afterwards the runner runs no git in the job dir. It posts
+#   statuses and writes the artifact itself, and masks env-file values in both.
+# - With no supported sandbox, the runner refuses to run jobs unless started with --unsandboxed.
+# Left open: network egress (env-file values must be test-only credentials) and processes a job daemonizes.
+
+
+def sbpl(p):
+    return '"' + str(p).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def sandbox_profile(job, home, runner_home, allow_read=(), deny_ports=()):
+    """macOS sandbox profile for one job. Later rules win, so each allow-back follows the deny it narrows."""
+    home, job, runner_home = (Path(x).resolve() for x in (home, job, runner_home))
+    reads = [home / d for d in TOOLCHAIN_DIRS if (home / d).exists()] + [Path(p).expanduser().resolve() for p in allow_read]
+    rules = ["(version 1)", "(allow default)",
+             "(deny file-read-data (subpath \"/Users\") (subpath \"/Volumes\") (subpath \"/private/tmp\")"
+             f" (subpath \"/private/var/folders\") (subpath {sbpl(home)}) (subpath {sbpl(runner_home)}))"]
+    if reads:
+        rules.append("(allow file-read-data " + " ".join(f"(subpath {sbpl(p)})" for p in reads) + ")")
+    rules += ["(deny file-read-data " + " ".join(f"(literal {sbpl(home / s)})" for s in TOOLCHAIN_SECRETS) + ")",
+              f"(allow file-read-data (subpath {sbpl(job)}))",
+              "(deny file-write* (subpath \"/\"))",
+              f"(allow file-write* (subpath {sbpl(job)}) (subpath \"/dev\"))",
+              "(deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd.xpc\"))",
+              "(deny network-outbound (remote unix-socket (subpath \"/Users\")) (remote unix-socket (subpath \"/private/tmp\"))"
+              " (remote unix-socket (subpath \"/private/var/folders\")) (remote unix-socket (subpath \"/private/var/run\")))",
+              "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))"
+              f" (remote unix-socket (subpath {sbpl(job)})))"]
+    if deny_ports:
+        rules.append("(deny network-outbound " + " ".join(f"(remote ip \"*:{p}\")" for p in sorted(deny_ports)) + ")")
+    return "\n".join(rules) + "\n"
+
+
+def host_listen_ports():
+    """TCP ports listening on this host right now (bb, browsers' debug ports, databases...); None if unknown."""
+    rc, out = sh(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fn"], timeout=60, merge=False)
+    if rc not in (0, 1):
+        return None
+    return {int(m.group(1)) for m in re.finditer(r"^n.*:(\d+)$", out, re.M)}
+
+
+def sandbox_wrap(job, args):
+    """argv prefix that sandboxes a job's commands, [] when --unsandboxed, None when no sandbox is available."""
+    if args.unsandboxed:
+        return []
+    if sys.platform != "darwin" or not Path(SANDBOX_EXEC).exists():
+        return None
+    ports = host_listen_ports()
+    if ports is None:
+        return None
+    ports -= set(args.allow_host_port or [])
+    return [SANDBOX_EXEC, "-p", sandbox_profile(job, Path.home(), RUNNER_HOME, args.allow_read or [], ports)]
+
+
+def job_env(job, env_file, sha):
+    env = {k: v for k, v in os.environ.items() if k in JOB_ENV_KEEP}
+    if "PLAYWRIGHT_BROWSERS_PATH" not in env:
+        for d in ("Library/Caches/ms-playwright", ".cache/ms-playwright"):
+            if (Path.home() / d).is_dir():
+                env["PLAYWRIGHT_BROWSERS_PATH"] = str(Path.home() / d)
+                break
+    home = job / "home"
+    env.update({k: v for k, v in env_file.items() if k not in FORGE_TOKENS})
+    env.update({"HOME": str(home), "TMPDIR": str(job / "tmp"), "XDG_CONFIG_HOME": str(home / ".config"),
+                "XDG_CACHE_HOME": str(home / ".cache"), "XDG_DATA_HOME": str(home / ".local/share"),
+                "CI": "1", "VERIFY_STRICT": "1", "VERIFY_SHA": sha})
+    return env
 
 def load_env_file(path):
     env = {}
@@ -642,54 +758,92 @@ def pending_jobs(slug, mirror, args):
         raise RuntimeError(f"cannot list PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
     jobs = []
     for p in json.loads(out or "[]"):
-        if p.get("isCrossRepository") and not args.allow_forks:
-            print(f"[serve] {slug} PR #{p['number']}: from a fork, skipped (runs untrusted code with host access; --allow-forks to opt in)")
+        fork = bool(p.get("isCrossRepository"))
+        if fork and not args.allow_forks:
+            print(f"[serve] {slug} PR #{p['number']}: from a fork, skipped (--allow-forks to opt in; forks never get the env file)")
             continue
-        jobs.append((p["headRefOid"], f"origin/{p['baseRefName']}", f"PR #{p['number']}"))
+        jobs.append((p["headRefOid"], p["baseRefName"], f"PR #{p['number']}", fork))
     for b in args.branch or []:
         sha = git(mirror, "rev-parse", f"refs/heads/{b}")
         if sha:
-            jobs.append((sha, None, b))
+            jobs.append((sha, None, b, False))
     return jobs
 
 
-def run_job(slug, mirror, sha, base, label, args):
-    if free_gb(tempfile.gettempdir()) < DISK_FLOOR_GB:
+def trusted_config(mirror, sha, base):
+    """(config, note): a PR runs its base branch's config, so it can't change what is checked. A branch job
+    (an owner-chosen branch, no base) runs its own."""
+    ref = f"refs/heads/{base}" if base else sha
+    try:
+        cfg = json.loads(git(mirror, "show", f"{ref}:{CONFIG}") or "null")
+    except ValueError:
+        cfg = None
+    if not base or not cfg:
+        return cfg, ""
+    try:
+        mine = json.loads(git(mirror, "show", f"{sha}:{CONFIG}") or "null")
+    except ValueError:
+        mine = "unreadable"
+    return cfg, ("" if mine == cfg else f" (ran {base}'s config, not this PR's edit)")
+
+
+def run_job(slug, mirror, sha, base, label, args, post=None, fork=False):
+    post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc))
+    jobs = RUNNER_HOME / "jobs"
+    jobs.mkdir(parents=True, exist_ok=True)
+    if free_gb(jobs) < DISK_FLOOR_GB:
         print(f"[serve] disk below {DISK_FLOOR_GB} GB free; not starting {label}")
         return "skipped"
-    tmp = Path(tempfile.mkdtemp(prefix=f"verify-{slug.split('/')[-1]}-{sha[:9]}-"))
+    cfg, note = trusted_config(mirror, sha, base)
+    if not cfg:
+        post(STATUS_PREFIX, "missing", f"no .verify/config.json on {base} yet; merge one there first" if base
+             else "no .verify/config.json in this commit")
+        return "done"
+    job = Path(tempfile.mkdtemp(prefix=f"{slug.split('/')[-1]}-{sha[:9]}-", dir=jobs)).resolve()
+    work = job / "repo"
     try:
-        rc, out = sh(["git", "clone", "--quiet", "--shared", "--no-checkout", str(mirror), str(tmp)], timeout=900)
-        rc = rc or sh(["git", "-C", str(tmp), "checkout", "--quiet", "--detach", sha], timeout=900)[0]
+        wrap = sandbox_wrap(job, args)
+        if wrap is None:
+            print(f"[serve] {slug} {label}: no OS sandbox here (macOS sandbox-exec, plus lsof for the port snapshot);"
+                  " not running PR code. Use a disposable machine with --unsandboxed to accept host access.", flush=True)
+            return "error"
+        (job / "home").mkdir()
+        (job / "tmp").mkdir()
+        rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], timeout=900)
+        rc = rc or sh(["git", "-C", str(work), "checkout", "--quiet", "--detach", sha], timeout=900)[0]
         if rc != 0:
             print(f"[serve] {slug} {label}: cannot check out {sha[:9]}")
             return "error"
-        cfg = read_json(tmp / CONFIG)
-        if not cfg:
-            post_status(slug, sha, STATUS_PREFIX, "missing", "no .verify/config.json in this commit")
-            return "done"
-        env = {**os.environ, **load_env_file(RUNNER_HOME / "env" / (slug.replace("/", "__") + ".env")), "CI": "1"}
+        # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
+        paths = changed_paths(work, f"origin/{base}") if base else None
+        env_file = {} if fork else load_env_file(RUNNER_HOME / "env" / (slug.replace("/", "__") + ".env"))
+        dropped = sorted(k for k in env_file if k in FORGE_TOKENS)
+        if dropped:
+            print(f"[serve] {slug}: env file sets {', '.join(dropped)}; forge tokens never reach jobs", flush=True)
+        secrets = sorted({v for v in env_file.values() if len(v) >= 4}, key=len, reverse=True)
+        env = job_env(job, env_file, sha)
+        deadline = time.time() + cfg.get("timeout", 7200)
         if cfg.get("setup"):
-            post_status(slug, sha, STATUS_PREFIX, "pending", "setup")
-            rc, out = sh(cfg["setup"], cwd=tmp, env=stage_env(env, {}), timeout=cfg.get("setup_timeout", 1800))
+            post(STATUS_PREFIX, "pending", "setup")
+            rc, out = sh(wrapped(cfg["setup"], wrap), cwd=work, env=stage_env(env),
+                         timeout=cfg.get("setup_timeout", 1800))
             if rc != 0:
-                last = out.strip().splitlines()[-1][:100] if out.strip() else ""
-                post_status(slug, sha, STATUS_PREFIX, "fail", f"setup failed: {last}")
-                return "done"
+                print(f"[serve] {slug} {label} setup failed (exit {rc}):\n{redact(out[-3000:], secrets)}", flush=True)
+                return "done" if post(STATUS_PREFIX, "fail", f"setup failed (exit {rc}); output is in the runner log") else "error"
         print(f"[serve] {slug} {label} {sha[:9]} running", flush=True)
-        rc, out = sh([sys.executable, str(Path(__file__).resolve()), "run", str(tmp), "--strict", "--post-status"]
-                     + (["--base", base] if base else []), cwd=tmp, env=env, timeout=cfg.get("timeout", 7200))
-        art = tmp / RUNS / f"{sha}.json"
-        if art.exists():
-            dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
-            dest.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(art, dest / f"{sha}.json")
-        if rc == 124:
-            post_status(slug, sha, STATUS_PREFIX, "fail", f"timed out after {cfg.get('timeout', 7200)}s")
-        print(out[-1500:], flush=True)
-        return "error" if rc == 3 else "done"
+        stages = list(PER_CHANGE)
+        if not base and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
+            stages.append("mutation")
+        verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline)
+        dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
+        dest.mkdir(parents=True, exist_ok=True)
+        art = {"sha": sha, "at": now(), "strict": True, "base": base, "fork": fork, "sandboxed": bool(wrap),
+               "verdict": verdict, "stages": results}
+        (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
+        posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
+        return "done" if posted else "error"
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(job, ignore_errors=True)
 
 
 def serve_repo(spec, args):
@@ -708,7 +862,7 @@ def serve_repo(spec, args):
     try:
         mirror = ensure_mirror(slug, url)
         errors = done = 0
-        for sha, base, label in pending_jobs(slug, mirror, args):
+        for sha, base, label, fork in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
             st = forge_status(slug, sha)
@@ -720,7 +874,7 @@ def serve_repo(spec, args):
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):
                 continue
-            outcome = run_job(slug, mirror, sha, base, label, args)
+            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork)
             errors += outcome == "error"
             done += outcome == "done"
         return 1 if errors else 0
@@ -1048,6 +1202,11 @@ def main(argv=None):
     p.add_argument("--stale-hours", type=float, default=3.0)
     p.add_argument("--rerun", action="append", help="SHA to run again even if it has a result")
     p.add_argument("--allow-forks", action="store_true")
+    p.add_argument("--allow-read", action="append", help="extra path jobs may read (a shared toolchain or browser cache)")
+    p.add_argument("--allow-host-port", action="append", type=int,
+                   help="host port jobs may reach (a test database the owner runs); all others listening are denied")
+    p.add_argument("--unsandboxed", action="store_true",
+                   help="no OS sandbox: PR code gets host access. Only on a disposable machine")
     for name in ("weaken-check", "mutation-targets"):
         p = sub.add_parser(name)
         p.add_argument("repo", nargs="?", default=".")

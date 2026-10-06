@@ -20,8 +20,14 @@ Each stage in `.verify/config.json` is a shell command plus a few options:
 }
 ```
 
-`env` names variables the stage needs; in strict mode a missing one fails the stage. `paths`
-limits a stage to changes that touch those globs (otherwise `untouched`). `na` needs a reason.
+`env` names variables the stage needs; in strict mode a missing one fails the stage. On the runner
+they come from its env file, and forge tokens never do. `paths` limits a stage to changes that touch
+those globs (otherwise `untouched`). `na` needs a reason.
+
+On the self-hosted runner, stages are sandboxed and can't reach the Docker socket or ports already
+listening on the host. So `services` that call `docker compose` work locally but not there. On the
+runner machine, keep the test database running yourself and pass `serve --allow-host-port <port>`.
+Services the stage starts as its own processes work in both places.
 
 ## integration
 

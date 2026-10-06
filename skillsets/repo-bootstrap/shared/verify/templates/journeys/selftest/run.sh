@@ -3,7 +3,7 @@
 # Usage: run.sh <a repo whose node_modules has @playwright/test and its browsers>
 here=$(cd "$(dirname "$0")" && pwd)
 src=$(dirname "$here") nm=${1:?repo with node_modules}/node_modules
-work=$(mktemp -d)
+work=$(mktemp -d "${TMPDIR:-/tmp}/journeys-selftest.XXXXXX")  # macOS mktemp ignores TMPDIR without a template
 cp "$src/journey.fixture.ts" "$here/cases.selftest.ts" "$work/"
 cat > "$work/playwright.config.ts" <<'EOF'
 import { defineConfig } from '@playwright/test';

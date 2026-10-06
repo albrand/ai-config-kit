@@ -65,7 +65,19 @@ stopping point: write the missing stage if you can, then run it.
 4. Copy [templates/AGENTS.repo.md](templates/AGENTS.repo.md) to the repo's `AGENTS.md` and fill it in.
 5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME` (add `--once` to a cron
    or bb automation). It runs open PR heads in throwaway clones and posts `verify/<stage>` statuses.
-   Secrets for a repo go in `~/.cache/verify-runner/env/<owner>__<name>.env`, never in the repo.
+   Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
+   - PR code is untrusted. A PR runs its base branch's `.verify/config.json`, so it can't change what
+     is checked. A PR that adds the first config gets `missing` until that config is merged.
+   - Every command a repo controls runs in a macOS `sandbox-exec` profile. It can't read `/Users`,
+     `/Volumes`, `/tmp` or `/var/folders`, apart from its job dir and toolchains (`--allow-read`
+     adds one, e.g. a shared `node_modules`). It writes only its job dir. It can't reach the
+     keychain, the ssh-agent, Docker, or any port listening on the host when the job started
+     (`--allow-host-port` opens one, e.g. a test database). There is no supported sandbox
+     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines.
+   - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job. Forge tokens never
+     reach them. Secrets go in `~/.cache/verify-runner/env/<owner>__<name>.env`, never in the repo;
+     forks never get them, and their values are masked in statuses and run records. Network egress
+     stays open, so that file holds test-only credentials.
 
 ## Hook
 
