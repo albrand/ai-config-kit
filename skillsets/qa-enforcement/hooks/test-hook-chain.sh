@@ -231,9 +231,11 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|0|-|$H/plain|git push origin main
 13|2|Ship denied|$H/plain|cd $H/optin && git push origin main
 13|2|Ship denied|$H/plain|GIT_DIR=$H/optin/.git git push origin HEAD:main
-13|2|Ship denied|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
+13|0|-|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
+13|0|-|$H/plain|git --work-tree=$H/optin push origin main
 13|2|Ship denied|$H/plain|git --git-dir=$H/optin/.git push origin main
-13|0|-|$H/plain|GIT_DIR=$H/optin/.git gh pr merge 1 --admin"
+13|0|-|$H/plain|GIT_DIR=$H/optin/.git gh pr merge 1 --admin
+13|0|-|$H/plain|GIT_WORK_TREE=$H/optin gh pr merge 1 --admin"
 for mode in plain slowpy; do
   path="$PATH"
   [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"
@@ -271,6 +273,8 @@ done <<EOF
 2|$H/plain|cd $H/optin && git push origin main
 2|$H/plain|GIT_DIR=$H/optin/.git git push origin HEAD:main
 0|$H/plain|GIT_DIR=$H/optin/.git gh pr merge 1 --admin
+0|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
+0|$H/plain|GIT_WORK_TREE=$H/optin gh pr merge 1 --admin
 0|$H/optin|ls -la
 EOF
 echo "hook chain test: $([ $fails = 0 ] && echo "all pass" || echo "$fails FAIL") (config $CFG, timeout ${T}s, load $(sysctl -n vm.loadavg 2>/dev/null))"

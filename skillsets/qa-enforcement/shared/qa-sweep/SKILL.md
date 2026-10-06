@@ -338,8 +338,12 @@ one `.qa`-only commit on top). A commit that one command ships both as a tag
 and to a protected branch is checked strictly.
 
 The local gate (PreToolUse hook, git pre-push template) checks consistency; the
-CI job reports the result on the commit. Do not make it a required check: PR
-merges are never restricted (owner decision 2026-10-06). The CI
+CI job reports the result on the commit. Whether it is a required check is the
+owner's decision per repo. Where it is required, keep admin bypass on
+(enforcement for non-admins only) so an admin can always merge a prod fix, and
+keep what it checks to people walking the real app: a persona's journey through
+frontend and backend, not mocks. The hooks never restrict a PR merge (owner
+decision 2026-10-06). The CI
 template handles merge queues (`merge_group` trigger; a queue run checks the
 queued PR's head, taken from the PR number in the
 `gh-readonly-queue/<base>/pr-<N>-<base-sha>` ref, never the group commit). In

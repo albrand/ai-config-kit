@@ -1071,12 +1071,14 @@ def _shell_arg_at(s, i):
     n = len(s)
     while i < n and s[i] in " \t":
         i += 1
-    if i >= n or s[i] in ";&|\n":
+    if i >= n or s[i] in ";&|\n()":
         return None, i
     out = []
     while i < n:
         c = s[i]
-        if c in " \t;&|\n":  # v4: a newline ends the word (multi-line commands)
+        # v4: a newline ends the word (multi-line commands); unquoted ( and ) are
+        # shell metacharacters too, so `(cd x && git push origin main)` splits right
+        if c in " \t;&|\n()":
             break
         if c == "\\":
             if i + 1 < n:
@@ -1120,13 +1122,14 @@ def _shell_arg_at(s, i):
 
 def ship_target_roots(command, cwd):
     """Every local repo a ship command can target: the payload cwd's repo plus
-    any `git -C path`, `cd path &&`, or --work-tree path inside the command,
+    any `git -C path` or `cd path &&` inside the command,
     with quoting honoured (paths with spaces included). Hermes review
     2026-09-24, topic qa-ship-gate: two rounds - first only the payload cwd
     was resolved, then whitespace-split regexes truncated quoted paths.
-    `pushd`, `--git-dir` and the GIT_DIR / GIT_WORK_TREE env prefixes name a
-    target too (Hermes 2026-10-06, topic kit-never-block-pr-merge); a .git
-    path resolves to the repo that holds it."""
+    `pushd`, `--git-dir` and the GIT_DIR env prefix name a target too; a .git
+    path resolves to the repo that holds it. A work tree alone (`--work-tree`,
+    GIT_WORK_TREE) does not choose the repository git pushes from, so it is not
+    a target (Hermes 2026-10-06, topic kit-never-block-pr-merge, rounds 1-2)."""
     roots = []
 
     def add(p):
@@ -1137,8 +1140,7 @@ def ship_target_roots(command, cwd):
                 roots.append(r)
 
     add(cwd)
-    for pattern in (r"(?<![\w-])-C\s", r"\b(?:cd|pushd)\s", r"--(?:work-tree|git-dir)[=\s]",
-                    r"\bGIT_(?:DIR|WORK_TREE)="):
+    for pattern in (r"(?<![\w-])-C\s", r"\b(?:cd|pushd)\s", r"--git-dir[=\s]", r"\bGIT_DIR=", r"--chdir[=\s]"):
         pos = 0
         while True:
             m = re.compile(pattern).search(command, pos)
@@ -1153,18 +1155,38 @@ def ship_target_roots(command, cwd):
     return roots
 
 
-def command_segments(command):
-    """Top-level shell segments as token lists, split on ; | && and newlines,
-    tokenized with the same POSIX word parser the target resolver uses."""
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+COMPOUND_HEADS = {"{", "}", "!", "if", "then", "elif", "else", "while", "until", "do"}
+
+
+def _inline_script(seg):
+    """The script a segment hands to a shell: `sh|bash|zsh -c '<script>'`
+    (combined flags like -lc included) or `eval <words>`; None otherwise."""
+    if not seg:
+        return None
+    if seg[0] == "eval":
+        return " ".join(seg[1:]) or None
+    if os.path.basename(seg[0]) in SHELLS:
+        for k, a in enumerate(seg[1:], 1):
+            if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                return seg[k + 1] if k + 1 < len(seg) else None
+    return None
+
+
+def command_segments(command, _depth=0):
+    """Top-level shell segments as token lists, split on ; | && ( ) and
+    newlines, tokenized with the same POSIX word parser the target resolver
+    uses. Scripts run through `sh -c` or `eval` are split the same way and
+    their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge)."""
     segments, cur, i, n = [], [], 0, len(command)
     while i < n:
         c = command[i]
         if c in " \t":
             i += 1
             continue
-        if c in ";|&\n":
+        if c in ";|&\n()":
             j = i
-            while j < n and command[j] in ";|&\n":
+            while j < n and command[j] in ";|&\n()":
                 j += 1
             if cur:
                 segments.append(cur)
@@ -1178,7 +1200,15 @@ def command_segments(command):
         i = endpos
     if cur:
         segments.append(cur)
-    return [s for s in (unwrap_segment(s) for s in segments) if s]
+    out = []
+    for s in (unwrap_segment(s) for s in segments):
+        if not s:
+            continue
+        out.append(s)
+        script = _inline_script(s)
+        if script and _depth < 3:
+            out.extend(command_segments(script, _depth + 1))
+    return out
 
 
 def unwrap_segment(seg):
@@ -1191,7 +1221,7 @@ def unwrap_segment(seg):
     sha selection) sees the same words."""
     s = list(seg)
     while s:
-        if ASSIGN_RE.match(s[0]):
+        if ASSIGN_RE.match(s[0]) or s[0] in COMPOUND_HEADS:
             s.pop(0)
             continue
         h = os.path.basename(s[0])
@@ -2382,11 +2412,19 @@ def selftest(v4_gate=None, v4_templates=None):
                 'pushd "%s" && git push origin main' % spaced):
         p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
             {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": foreign}))
-        expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "%s denied from foreign cwd" % cmd.split(" git")[0])
+        expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "%s denied from foreign cwd" % cmd.replace(spaced, "<opted repo>"))
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",
          "tool_input": {"command": 'GIT_DIR="%s/.git" gh pr merge 5 --admin' % spaced}, "cwd": foreign}))
     expect(p.returncode == 0, "GIT_DIR-prefixed PR merge into an opted-in repo allowed")
+    # Round 2: a work tree alone does not pick the pushed repository; from a plain
+    # checkout these push the plain repo and stay allowed.
+    for cmd in ('GIT_WORK_TREE="%s" git push origin main' % spaced,
+                'git --work-tree="%s" push origin main' % spaced,
+                'GIT_WORK_TREE="%s" gh pr merge 5 --admin' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=spaced_plain, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": spaced_plain}))
+        expect(p.returncode == 0, "%s from a plain checkout allowed" % cmd.replace(spaced, "<opted repo>"))
     esc_plain = spaced_plain.replace(" ", "\\ ")
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",

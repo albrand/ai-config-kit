@@ -32,8 +32,8 @@ crashes allow except on ship commands in opted-in repos (fail closed).
 
 Layers: host PreToolUse (Claude Code + Codex via coordinator-hook-pretool.sh,
 which keeps its coordinator block unchanged), git pre-push template, CI
-required-check template (the unforgeable layer; agents self-attest the .qa
-files), and a Stop hook that keeps a turn alive while inventory rows are open
+check template (the layer agents cannot edit, since they self-attest the .qa
+files; required or advisory per repo, admin bypass kept), and a Stop hook that keeps a turn alive while inventory rows are open
 (Claude honors stop_hook_active + 8-block cap; Codex trust recorded 2026-09-24).
 
 The final-claim evidence nudge is default-on at Stop for every repository. It
@@ -76,8 +76,8 @@ for h in ~/.agents ~/.bb ~/.claude ~/.codex; do rm -rf "$h/skills/qa-sweep"; don
 1. `mkdir .qa && cp <config.example.json> .qa/config.json` (edit personas,
    workflows, deployed_check) and `cp <skill>/scripts/ship-gate.py .qa/bin/ship-gate.py`.
 2. Commit both; the gate is now on for everyone.
-3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`
-   as a required check).
+3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`;
+   required or not is the owner's call, and a required one keeps admin bypass on).
 4. `.qa/` task artifacts (workflow, inventory, clusters, plan, rewalk,
    evidence) are COMMITTED with each task branch: reviewers see the inventory
    and CI re-checks it at the pushed SHA; staleness is impossible to carry
