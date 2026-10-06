@@ -3,8 +3,9 @@
 #   sh skillsets/writing/install.sh
 # Installs exactly the three pinned files. It copies them once into a private staging directory and checks
 # the digests recorded in README.md (the pinned upstream copy) on those copies, refusing before touching any
-# home; each home then gets the staged copies, checked again in place before they replace the old copy. The
-# source is never read after it is staged, so a change to it during the run cannot reach a home.
+# home. Each home then gets the staged copies, checked before and again after they are moved into place; if
+# the installed copy fails that last check, the previous copy is restored and the run exits 1. The source is
+# never read after it is staged, so a change to it during the run cannot reach a home.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC="$HERE/shared/no-ai-slop"
@@ -43,7 +44,16 @@ for h in "$HOME/.agents/skills" "$HOME/.bb/skills" "$HOME/.claude/skills" "$HOME
   chmod 755 "$tmp"
   for f in $FILES; do cp "$STAGE/$f" "$tmp/$f"; done
   matches "$tmp" || { rm -rf "$tmp"; refuse "the copy staged for $h does not match its pinned digest"; }
-  rm -rf "$h/no-ai-slop"
+  prev="$h/.no-ai-slop-previous.$$"
+  rm -rf "$prev"
+  [ ! -e "$h/no-ai-slop" ] || mv "$h/no-ai-slop" "$prev"
   mv "$tmp" "$h/no-ai-slop"
+  # The last check runs on the installed path itself, after the move, so no installer step follows it.
+  if ! matches "$h/no-ai-slop"; then
+    rm -rf "$h/no-ai-slop"
+    [ ! -e "$prev" ] || mv "$prev" "$h/no-ai-slop"
+    refuse "the copy installed in $h changed before its final check; the previous copy is restored"
+  fi
+  rm -rf "$prev"
 done
 echo "installed no-ai-slop"

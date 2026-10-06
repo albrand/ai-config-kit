@@ -62,6 +62,41 @@ EOF
 }
 midrun "source changed after its check" source 0
 midrun "checked copy changed before it is installed" hashed 1
+
+# 4. A change after the last check before the move. An mv shim, on the call that moves the per-home temporary
+# directory into place, appends a line to its SKILL.md and then moves it. The installer must refuse, restore
+# the previous copy, and leave no temporary or previous-copy directory behind.
+REAL_MV=$(command -v mv)
+W=$(mktemp -d); mkdir "$W/bin"
+cat > "$W/bin/mv" <<EOF
+#!/bin/sh
+case "\$1" in
+  */.no-ai-slop.*) if [ ! -e "$W/done" ]; then : > "$W/done"; echo "changed before mv" >> "\$1/SKILL.md"; fi ;;
+esac
+exec "$REAL_MV" "\$@"
+EOF
+chmod +x "$W/bin/mv"
+HOME=$H PATH="$W/bin:$PATH" sh "$HERE/install.sh" >/dev/null 2>&1; check "changed after the last check before mv: exit" 1 $?
+check "changed after the last check before mv: the shim changed a file" yes "$([ -e "$W/done" ] && echo yes || echo no)"
+check "changed after the last check before mv: previous copy restored" "$before" "$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)"
+check "changed after the last check before mv: no extra entry installed" "./LICENSE ./SKILL.md ./eval.md " "$(installed "$H/.claude/skills")"
+check "changed after the last check before mv: nothing left behind" "" "$(cd "$H/.claude/skills" && find . -mindepth 1 -maxdepth 1 -name '.no-ai-slop*')"
+rm -rf "$W"
+
+# 5. The same change with no copy installed before: refused, and nothing is left in the home.
+H2=$(newhome)
+W=$(mktemp -d); mkdir "$W/bin"
+cat > "$W/bin/mv" <<EOF
+#!/bin/sh
+case "\$1" in
+  */.no-ai-slop.*) if [ ! -e "$W/done" ]; then : > "$W/done"; echo "changed before mv" >> "\$1/SKILL.md"; fi ;;
+esac
+exec "$REAL_MV" "\$@"
+EOF
+chmod +x "$W/bin/mv"
+HOME=$H2 PATH="$W/bin:$PATH" sh "$HERE/install.sh" >/dev/null 2>&1; check "first install changed before mv: exit" 1 $?
+check "first install changed before mv: nothing installed or left behind" "" "$(cd "$H2/.claude/skills" && find . -mindepth 1)"
+rm -rf "$W" "$H2"
 rm -rf "$H"
 [ "$fail" = 0 ] && echo "test-install: all passed"
 exit $fail
