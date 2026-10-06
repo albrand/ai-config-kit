@@ -176,6 +176,31 @@ class HermesReviewJevTest(unittest.TestCase):
                 self.assertEqual(result["status"], "ESCALATED")
                 self.assertEqual(result["hermes_verdict"], "revise")
 
+    def test_empty_prior_duplicate_and_unclear_do_not_normalize_to_not_applicable(self):
+        for relation in ("duplicate", "unclear"):
+            with self.subTest(relation=relation), tempfile.TemporaryDirectory() as directory:
+                client, capture = self.fake_client(directory)
+                args_capture = Path(directory) / "args.json"
+                with patch.dict(os.environ, {
+                    "JEV_TEST_CAPTURE": str(capture),
+                    "JEV_TEST_ARGS_CAPTURE": str(args_capture),
+                    "JEV_TEST_J2_DUPLICATE_ANSWER": "not-applicable",
+                }):
+                    result = review_jev.run_judge(
+                        review_jev.validate_packet(packet("", relation)),
+                        client,
+                    )
+                args = json.loads(args_capture.read_text(encoding="utf-8"))
+                peer_index = args.index("--peer-answer", args.index("--peer-answer") + 1)
+                with self.subTest(relation=relation, outcome="peer label"):
+                    self.assertEqual(args[peer_index + 1:peer_index + 3],
+                                     ["fF1_j2_duplicate", relation])
+                with self.subTest(relation=relation, outcome="composed result"):
+                    self.assertEqual(result["items"][0]["answers"]["j2_duplicate"],
+                                     "not-applicable")
+                    self.assertEqual(result["status"], "ESCALATED")
+                    self.assertEqual(result["hermes_verdict"], "revise")
+
     def test_synthetic_disagreement_escalates_without_changing_hermes_verdict(self):
         with tempfile.TemporaryDirectory() as directory:
             client, capture = self.fake_client(directory)

@@ -137,7 +137,8 @@ def build_questions(findings):
 
 
 def expected_peer_answer(finding, key):
-    if key == "j2_duplicate" and not finding["prior_summary"]:
+    if (key == "j2_duplicate" and finding["relation"] == "new"
+            and not finding["prior_summary"]):
         return "not-applicable"
     peer_key = {"j1": "kind", "j2_duplicate": "relation", "j2_cause": "cause",
                 "j3_path": "changed_path", "j3_severity": "severity"}[key]
