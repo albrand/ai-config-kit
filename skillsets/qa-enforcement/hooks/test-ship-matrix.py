@@ -69,6 +69,11 @@ ALLOW = [
 ]
 # A relative GIT_DIR only means the opted repo from the plain checkout (a sibling dir).
 REL = '../"opted repo"/.git'
+# From inside the opted repo: any shell whitespace between words (a line continuation, a run of
+# spaces, a tab) still spells a push, and still is not a PR merge.
+LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push origin main", "git\tpush origin main",
+              "git \\\n  -c core.x=y \\\n  push origin main", "git pu\\\nsh origin main"]
+LOCAL_ALLOW = ["gh pr merge 5 --admin", "gh pr merge 5 \\\n  --admin --squash", "git \\\n  status"]
 
 
 def run(mode, cmd, cwd):
@@ -80,8 +85,10 @@ def run(mode, cmd, cwd):
 
 
 rows, bad = [], 0
-for cwd_name, cwd in (("plain checkout", P), ("non-repo dir", N)):
+for cwd_name, cwd in (("opted repo", O), ("plain checkout", P), ("non-repo dir", N)):
     cases = [(c, 2) for c in DENY] + [(c, 0) for c in ALLOW]
+    if cwd is O:
+        cases = [(c, 2) for c in LOCAL_DENY] + [(c, 0) for c in LOCAL_ALLOW]
     if cwd is P:
         cases.append((f"GIT_DIR={REL} git push origin main", 2))
     for cmd, want in cases:
@@ -89,7 +96,8 @@ for cwd_name, cwd in (("plain checkout", P), ("non-repo dir", N)):
             got = run(mode, cmd, cwd)
             ok = got == want
             bad += not ok
-            rows.append((cmd.replace(O, "<opted>"), cwd_name, mode, "deny" if want == 2 else "allow",
+            rows.append((cmd.replace(O, "<opted>").replace("\n", "\\n").replace("\t", "\\t"), cwd_name, mode,
+                         "deny" if want == 2 else "allow",
                          {0: "allow", 2: "deny"}.get(got, f"rc {got}"), ok))
 if md:
     print("| command | cwd | path | expected | observed |\n|---|---|---|---|---|")

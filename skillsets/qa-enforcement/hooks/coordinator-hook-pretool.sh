@@ -148,11 +148,16 @@ scope_dispatch_denied() {
 # moves to another directory first, which there was no time to resolve.
 # --- opted-in shape (identical in coordinator-hook-pretool.sh and
 # qa-ship-gate-hook.sh; test-hook-chain.sh checks the two copies match) ---
+# The command as one line of words, read from the JSON payload. A line
+# continuation (backslash-newline) is removed, as /bin/sh does. Other newline,
+# tab and CR escapes become spaces, quotes and backslashes go, and runs of
+# spaces squeeze to one.
+ship_flat() { printf '%s' "$input" | sed -e 's/\\\\\\n//g' -e 's/\\[ntr]/ /g' | tr -d '\\"'"'" | tr -s ' '; }
 # Ship shape: the gate's coarse classes, read with quotes and backslashes
 # removed so a quoted path cannot hide the command. PR merges are not in it:
 # no gate ever denies a PR merge (owner decision 2026-10-06).
 ship_shape() {
-  scope_flat | grep -qE 'git( [^ ;&|]+)* push|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef'
+  ship_flat | grep -qE 'git( [^ ;&|]+)* push|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef'
 }
 qa_opted_in() {
   _d=${input#*\"cwd\"}
@@ -167,7 +172,7 @@ qa_opted_in() {
 # a subshell or sh -c), git -C, env -C/--chdir, --git-dir, GIT_DIR. A work
 # tree alone (--work-tree, GIT_WORK_TREE) does not pick the repository.
 moves_dir() {
-  scope_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |env( [^ ;&|]+)* (-C |--chdir)|--git-dir|GIT_DIR='
+  ship_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |env( [^ ;&|]+)* (-C |--chdir)|--git-dir|GIT_DIR='
 }
 # --- end opted-in shape ---
 # The scope shape decision is made now, while there is time: after a stage

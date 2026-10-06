@@ -94,7 +94,11 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hoo
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
 # No jq (or no answer from it): the grep fallback denies every case the jq
 # shape denies (it is broader: any dispatch word, fails closed).
-bash_payload() { jq -nc --arg c "$1" --arg d "${2:-/tmp}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+# @NL@ in a case stands for a backslash-newline (a shell line continuation): cases are one per line.
+bash_payload() {
+  _c=$(python3 -c 'import sys; print(sys.argv[1].replace("@NL@", "\\\n"), end="")' "$1")
+  jq -nc --arg c "$_c" --arg d "${2:-/tmp}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'
+}
 mkdir -p "$H/nojq"
 printf '#!/bin/sh\nexit 1\n' > "$H/nojq/jq"
 chmod +x "$H/nojq/jq"
@@ -227,6 +231,9 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|0|-|$H/optin|gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}
 13|2|Ship denied|$H/optin|vercel --prod
 13|2|Ship denied|$H/optin/sub|git push origin main
+13|2|Ship denied|$H/optin|git @NL@push origin main
+13|2|Ship denied|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
+13|0|-|$H/optin|gh pr merge 1 @NL@  --admin
 13|0|-|$H/plain|vercel --prod
 13|0|-|$H/plain|git push origin main
 13|2|Ship denied|$H/plain|cd $H/optin && git push origin main
@@ -268,6 +275,9 @@ done <<EOF
 0|$H/optin|gh pr merge 1 --admin
 0|$H/optin|gh pr ready 1
 2|$H/optin|git push origin main
+2|$H/optin|git @NL@push origin main
+2|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
+0|$H/optin|gh pr merge 1 @NL@  --admin
 2|$H/optin|vercel --prod
 0|$H/plain|git push origin main
 2|$H/plain|cd $H/optin && git push origin main

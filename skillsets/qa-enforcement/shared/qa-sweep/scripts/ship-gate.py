@@ -1173,6 +1173,16 @@ def _inline_script(seg):
     return None
 
 
+LINE_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\r?\n")
+
+
+def join_continuations(command):
+    """Remove each backslash-newline, as /bin/sh does: a line continuation joins the lines, it does not
+    end the command. An escaped backslash before a newline is not one (Hermes 2026-10-06,
+    kit-never-block-pr-merge)."""
+    return LINE_CONTINUATION.sub(lambda m: m.group(1), command)
+
+
 def command_segments(command, _depth=0):
     """Top-level shell segments as token lists, split on ; | && ( ) and
     newlines, tokenized with the same POSIX word parser the target resolver
@@ -1972,6 +1982,7 @@ def _hook(raw=None):
     command = inp.get("command") or inp.get("cmd") or ""
     if not isinstance(command, str) or not command:
         return 0
+    command = join_continuations(command)
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
     cwd = payload.get("cwd") or payload.get("working_directory") or os.getcwd()
@@ -2841,6 +2852,22 @@ def selftest(v4_gate=None, v4_templates=None):
         and segment_ship_kind(segs('git commit -m "pre-push hook"')[0], r3, cfgs_of(r3)) is None
     )
     expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
+
+    # A backslash-newline is whitespace, not the end of a command; an escaped backslash before a
+    # newline still ends it (Hermes 2026-10-06, kit-never-block-pr-merge).
+    expect(join_continuations("git \\\n  -c core.x=y \\\n  push origin main") == "git   -c core.x=y   push origin main",
+           "continuation: backslash-newline joins the lines")
+    expect(join_continuations("git pu\\\nsh origin main") == "git push origin main",
+           "continuation: inside a word it joins the word, as /bin/sh does")
+    expect(join_continuations("echo a\\\\\ngit push") == "echo a\\\\\ngit push",
+           "continuation: an escaped backslash before a newline is not a continuation")
+    expect([s[0] for s in segs(join_continuations("echo a\\\\\ngit push"))] == ["echo", "git"],
+           "continuation: the command after an escaped backslash and newline is its own segment")
+    cont_payload = json.dumps({"tool_input": {"command": "git \\\n  -c core.x=y \\\n  push origin main"}})
+    expect(bool(coarse_ship(cont_payload)), "coarse_ship: a continued push in a payload is ship-shaped")
+    expect(bool(coarse_ship("git -c core.x=y push origin main")), "coarse_ship: options between git and push")
+    expect(not coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 1 \\\n --admin"}})),
+           "coarse_ship: a continued PR merge is not ship-shaped")
 
     # ---------------- v3: per-run namespacing (change request) ----------------
     # Contract: evidence ships as .qa-only artifacts commits over the walked
@@ -3843,8 +3870,19 @@ _LAST_INPUT = None
 def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
-    closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|"
+    closed), never allow. Coarser than the classifier on purpose. Reads the
+    payload's command when the text is a payload, with line continuations
+    joined, and allows options between git and push."""
+    try:
+        d = json.loads(text)
+        inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
+        cmd = (inp.get("command") or inp.get("cmd")) if isinstance(inp, dict) else None
+        if isinstance(cmd, str) and cmd:
+            text = cmd
+    except Exception:
+        pass
+    text = join_continuations(text)
+    return re.search(r"\bgit\b[^;&|\n]*?\spush\b|--mirror|--tags|refs/tags/|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
                      r"repos/\S+/(merges|releases|git/refs|dispatches|contents/|deployments)|"
