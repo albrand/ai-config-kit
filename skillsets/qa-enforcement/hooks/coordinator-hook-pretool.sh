@@ -162,7 +162,7 @@ qa_opted_in() {
   return 1
 }
 moves_dir() {
-  scope_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |--git-dir|--work-tree'
+  scope_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |--git-dir|--work-tree|GIT_(DIR|WORK_TREE)='
 }
 # --- end opted-in shape ---
 # The scope shape decision is made now, while there is time: after a stage

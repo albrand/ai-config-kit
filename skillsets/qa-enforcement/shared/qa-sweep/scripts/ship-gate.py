@@ -1123,7 +1123,10 @@ def ship_target_roots(command, cwd):
     any `git -C path`, `cd path &&`, or --work-tree path inside the command,
     with quoting honoured (paths with spaces included). Hermes review
     2026-09-24, topic qa-ship-gate: two rounds - first only the payload cwd
-    was resolved, then whitespace-split regexes truncated quoted paths."""
+    was resolved, then whitespace-split regexes truncated quoted paths.
+    `pushd`, `--git-dir` and the GIT_DIR / GIT_WORK_TREE env prefixes name a
+    target too (Hermes 2026-10-06, topic kit-never-block-pr-merge); a .git
+    path resolves to the repo that holds it."""
     roots = []
 
     def add(p):
@@ -1134,7 +1137,8 @@ def ship_target_roots(command, cwd):
                 roots.append(r)
 
     add(cwd)
-    for pattern in (r"(?<![\w-])-C\s", r"\bcd\s", r"--work-tree[=\s]"):
+    for pattern in (r"(?<![\w-])-C\s", r"\b(?:cd|pushd)\s", r"--(?:work-tree|git-dir)[=\s]",
+                    r"\bGIT_(?:DIR|WORK_TREE)="):
         pos = 0
         while True:
             m = re.compile(pattern).search(command, pos)
@@ -2371,6 +2375,18 @@ def selftest(v4_gate=None, v4_templates=None):
          "tool_input": {"command": 'git --work-tree="%s" -C "%s" push origin main' % (spaced, spaced)}, "cwd": foreign}))
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
            "git --work-tree quoted-space denied")
+    # Hermes 2026-10-06, topic kit-never-block-pr-merge: env-named and --git-dir targets
+    for cmd in ('GIT_DIR="%s/.git" git push origin HEAD:main' % spaced,
+                'GIT_WORK_TREE="%s" GIT_DIR="%s/.git" git push origin main' % (spaced, spaced),
+                'git --git-dir="%s/.git" push origin main' % spaced,
+                'pushd "%s" && git push origin main' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": foreign}))
+        expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "%s denied from foreign cwd" % cmd.split(" git")[0])
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'GIT_DIR="%s/.git" gh pr merge 5 --admin' % spaced}, "cwd": foreign}))
+    expect(p.returncode == 0, "GIT_DIR-prefixed PR merge into an opted-in repo allowed")
     esc_plain = spaced_plain.replace(" ", "\\ ")
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",
