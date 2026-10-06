@@ -24,4 +24,4 @@ The files are unmodified. To update, fetch the new commit's files, read the diff
 sh skillsets/writing/install.sh
 ```
 
-It copies `shared/no-ai-slop` into each skill home that exists (`~/.agents`, `~/.bb`, `~/.claude`, `~/.codex`), after checking the digests above.
+It installs exactly the three files above into each skill home that exists (`~/.agents`, `~/.bb`, `~/.claude`, `~/.codex`). Before touching any home, it refuses if the vendored directory holds any other entry, or if a file is missing, is a link, or differs from its digest. `sh skillsets/writing/test-install.sh` exercises each of those cases in a throwaway HOME.
