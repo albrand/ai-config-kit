@@ -143,18 +143,24 @@ Every PR review attempts one. The local reviewer stays responsible for evidence,
 - the pre-review JSON and Markdown packets;
 - focused test or probe output.
 
-Never mount or register a project source on Hermes. Never send credentials, tokens, cookies, environment blocks or personal data. Ask for a verdict from `accept | revise | reject` with per-finding evidence; any other shape counts as no verdict.
+Never mount or register a project source on Hermes. Never send credentials, tokens, cookies, environment blocks or personal data.
+
+Ask Hermes to challenge business-rule coverage, changed-path correctness, auth, security, data and API contracts, regression risk, validation sufficiency, and each candidate finding. Ask it to name false positives, missing evidence and overlooked defects, and for a verdict from `accept | revise | reject` with per-finding evidence; any other shape counts as no verdict. Agreement between Hermes and your own separate judgment is a confidence source; Hermes saying it is sure is not.
 
 **Two acts, two rules.**
 - **Reviewing someone else's PR:** Hermes is an advisor, mandatory to attempt and never a publish blocker.
   - If it does not answer (transport fault, capacity, timeout), post your independently evidenced verdict unchanged. Do not downgrade `REQUEST_CHANGES` to `COMMENT` or soften a finding.
   - Record `Hermes gate: BLOCKED` in the operator close-out only, and say there that the verdict is unadvised.
   - Do not claim the pass happened, and do not silently replace Hermes with another model.
+  - Acknowledge queued automation work normally once the review is confirmed posted. Hermes being down is not a reason to leave an item unacknowledged; only failing to post is.
+  - Skipping the attempt while Hermes is reachable leaves the review incomplete.
   - An earlier rule that made the advisor's answer a condition for posting suppressed real findings: a reviewer held back two located defects because two advisor calls timed out.
 - **Merging our own PR:** Hermes reviews every one of our PRs before merge.
   - A defect it names blocks the merge until it is fixed and Hermes, on the same topic, no longer names it.
   - An objection about evidence or method that names no defect does not block.
   - When Hermes cannot be reached, fix the transport and resend rather than merging unreviewed.
+
+**Fresh head.** Hermes advice is about the head it reviewed. Re-fetch the live head and review state just before you post, acknowledge, or merge. If the head changed after that review, discard the advice as stale and run a fresh same-topic review of the delta first. Never let advice about an older head support a post or a merge.
 
 **Packet discipline** (measured):
 - **Never put a length budget on the answer.** With the same evidence, "at most 8 lines" returned two defects where the unbounded prompt returned six, and one of the four it dropped was a race.
@@ -171,7 +177,8 @@ Never mount or register a project source on Hermes. Never send credentials, toke
 - the Hermes topic and verdict, or `Hermes gate: BLOCKED`;
 - which Hermes claims were confirmed, rejected or left open;
 - your final verdict and posting status;
-- the live-head freshness check.
+- the live-head freshness check;
+- the queue acknowledgement status, when the review came from a queue.
 
 ## Guardrails
 

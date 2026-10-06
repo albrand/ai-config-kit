@@ -115,6 +115,15 @@ class ReviewSkillSourceTests(unittest.TestCase):
         self.assertIn("bb fleet validate", text)
         self.assertIn("A defect it names blocks the merge until it is fixed", text)
         self.assertIn("does not block", text)
+        # Stale advice: the retired skill's rule, kept (Hermes 2026-10-06, kit-review-skill-merge r1).
+        self.assertIn("Re-fetch the live head and review state just before you post, acknowledge, or merge", text)
+        self.assertIn("discard the advice as stale and run a fresh same-topic review of the delta", text)
+        self.assertIn("Never let advice about an older head support a post or a merge", text)
+        # The rest of the retired skill's rules that still apply.
+        self.assertIn("Ask Hermes to challenge business-rule coverage", text)
+        self.assertIn("Acknowledge queued automation work normally once the review is confirmed posted", text)
+        self.assertIn("Skipping the attempt while Hermes is reachable leaves the review incomplete", text)
+        self.assertIn("Hermes saying it is sure is not", text)
         # The folded-in skill is retired; nothing may send an agent to it.
         self.assertNotIn("hermes-assisted-pr-review", text)
 
