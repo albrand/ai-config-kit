@@ -6,10 +6,10 @@ authentication, data-loss, release, and final-review work stays on Claude. Herme
 PR reviews use Codex (model set in Hermes's own config) through
 `bb fleet validate`. Keep the current Hermes review route working until that
 replacement is verified in Hermes's own config; manage the live route in
-Hermes's own config.
+Hermes's own config. GLM is retired for ordinary task execution and fallback.
 
 This reference preserves safety rules for an operator who explicitly requests
-an existing OpenCode setup. It does not authorize provider membership,
+an existing non-GLM OpenCode setup. It does not authorize provider membership,
 authentication, model choice, or private-context sharing. Without explicit
 request and live verification, keep execution on the default Codex and Claude
 routes. See `skillsets/agent-runtime/shared/codex-delegation/SKILL.md` for the
@@ -20,7 +20,7 @@ default bounded-work handoff.
 Before any explicitly requested OpenCode call:
 
 1. Verify the executable version, configured provider, model, agent, and effort
-   with a small no-tool probe.
+   with a small no-tool probe. Never select GLM.
 2. Keep package checks offline. Runtime authentication belongs to an explicit
    operator-run doctor; do not inspect or handle credentials.
 3. Confirm repository-context authorization, minimize the evidence packet, and
