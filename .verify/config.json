@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "stages": {
+    "static": {
+      "run": "sh scripts/verify-static.sh"
+    },
+    "unit": {
+      "run": "sh scripts/verify-unit.sh"
+    },
+    "integration": {
+      "run": null,
+      "na": "no database, queue or service; skillsets/qa-enforcement/hooks/test-hook-chain.sh exercises the hooks installed on a host, not the checkout"
+    },
+    "journeys": {
+      "run": null,
+      "na": "no user interface or network service; the kit ships instructions, skills and hooks"
+    },
+    "evals": {
+      "run": null,
+      "na": "no LLM features in the kit itself"
+    },
+    "rehearsal": {
+      "run": null,
+      "na": "no background processing or data migration"
+    },
+    "mutation": {
+      "run": null,
+      "na": "no mutation tool is installed for this Python and shell repo; each gate fix carries a focused mutation check in its review"
+    },
+    "postdeploy": {
+      "run": null,
+      "na": "nothing is deployed; homes are installed locally by each skillset's install script"
+    }
+  }
+}
