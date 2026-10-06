@@ -81,7 +81,10 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               'echo "$(git push origin main)"', "echo `git push origin main`", 'echo "`git push origin main`"',
               "echo $(git push origin main)", 'echo "x $(echo "$(git push origin main)")"',
               'git push origin main && gh pr merge 5', 'gh pr merge 5 | sh -c "git push origin main"',
-              'bash -c "git push origin main"', "eval git push origin main", 'X=$(git push origin main) gh pr merge 5']
+              'bash -c "git push origin main"', "eval git push origin main", 'X=$(git push origin main) gh pr merge 5',
+              # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
+              "gh pr merge 5 #x\ngit push origin main", "echo a#b && git push origin main",
+              "echo \\# && git push origin main", 'echo "#" && git push origin main']
 # A PR merge whose quoted subject or body names a push or a deploy is still only a merge.
 MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
               "gh pr merge 5 --body 'run vercel --prod; git push --tags'",
@@ -92,7 +95,9 @@ MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin -
               "gh pr merge 5 --subject 'git push origin main' && echo done",
               'echo start; gh pr merge 5 -b "git push --tags"; echo done', 'gh pr merge 5 -t "git push" | tee log',
               """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
-              "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'"]
+              "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
+              # a comment never runs (Hermes 2026-10-06 r6)
+              "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`"]
 LOCAL_ALLOW = ["gh pr merge 5 --admin", "gh pr merge 5 \\\n  --admin --squash", "git \\\n  status"] + MERGE_TEXT
 
 

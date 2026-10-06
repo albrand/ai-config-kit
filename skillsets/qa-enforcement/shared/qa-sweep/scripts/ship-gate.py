@@ -1219,7 +1219,7 @@ def _view_segment(words, seg, subs, depth):
 
 def ship_view(command, depth=0):
     """What a command would run, for the coarse ship check: segments split at unquoted
-    ; & | ( ) and newlines, where a `gh pr merge` keeps only the bodies of its $(...) and
+    ; & | ( ) and newlines, comments dropped, where a `gh pr merge` keeps only the bodies of its $(...) and
     backtick substitutions, so its quoted subject or body never reads as a ship (Hermes
     2026-10-06, kit-never-block-pr-merge). None when the command can't be read (unbalanced
     quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
@@ -1280,6 +1280,10 @@ def ship_view(command, depth=0):
                 cur = None
         elif c == "&" and i and command[i - 1] in "<>":
             cur = (cur or "") + c  # a descriptor copy such as 2>&1
+        elif c == "#" and cur is None:
+            j = command.find("\n", i)  # a comment runs to the end of the line and never runs
+            i = n if j < 0 else j
+            continue
         elif c in ";&|()\n\r":
             if cur is not None:
                 words.append(cur)
@@ -1321,6 +1325,12 @@ def command_segments(command, _depth=0):
         if c in " \t":
             i += 1
             continue
+        if c == "#":
+            # A word that starts with # starts a comment, which runs to the end of the line
+            # (Hermes 2026-10-06, kit-never-block-pr-merge: `gh pr merge 5 # && git push`).
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
         if c in ";|&\n()":
             j = i
             while j < n and command[j] in ";|&\n()":
@@ -1354,10 +1364,15 @@ def command_segments(command, _depth=0):
 def _substitutions(command):
     """Bodies of the command substitutions the shell would run that the split above keeps inside a
     word: `$(...)` and backticks within double quotes, and backticks anywhere outside single quotes.
-    An unquoted `$(` is already split on its parenthesis."""
+    An unquoted `$(` is already split on its parenthesis. A comment holds none."""
     bodies, q, i, n = [], None, 0, len(command)
     while i < n:
         c = command[i]
+        if q is None and c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()") \
+                and not (i >= 2 and command[i - 2] == "\\" and command[i - 1] in " \t"):
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
         if q == "'":
             q = None if c == "'" else q
         elif c == "\\":
@@ -3038,13 +3053,19 @@ def selftest(v4_gate=None, v4_templates=None):
                    "gh pr merge 5 --subject 'git push origin main' && echo done",
                    'echo start; gh pr merge 5 -b "git push --tags"; echo done', 'gh pr merge 5 -t "git push" | tee log',
                    """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
-                   "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'"]
+                   "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
+                   # a comment never runs (Hermes 2026-10-06 r6)
+                   "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`",
+                   "gh pr merge 5 #; vercel --prod"]
     ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
                   'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
                   'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
                   'git push origin main && gh pr merge 5', 'gh pr merge 5 --subject "x && git push origin main',
                   'sh -c "git push origin main"', 'gh pr merge 5 & git push origin main', 'eval "git push origin main"',
-                  'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5']
+                  'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5',
+                  # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
+                  'gh pr merge 5 #x\ngit push origin main', 'echo a#b && git push origin main',
+                  'echo \\# && git push origin main', 'echo "#" && git push origin main']
     for c in merge_texts:
         expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
         p = hookrun(r3, c)
@@ -3054,6 +3075,10 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(ship_view("gh pr merge 5 -t 'git push' && echo done") == " ;  ;  echo done",
            "ship_view: a merge segment is dropped, the rest kept")
     expect(ship_view('gh pr merge 5 --subject "unterminated') is None, "ship_view: unbalanced quotes can't be read")
+    expect(ship_view("gh pr merge 5 # && git push origin main") == "", "ship_view: a comment is dropped")
+    expect(command_segments("gh pr merge 5 # && git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a comment is not a segment")
+    expect(_substitutions("echo x # `git push`") == [], "substitutions: none inside a comment")
     expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
            "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
@@ -3290,6 +3315,8 @@ def selftest(v4_gate=None, v4_templates=None):
         deny4(r9, c, "a push in a substitution: %s" % c)
     allow4(r9, "echo '$(git push origin vbad)'", "a substitution inside single quotes is text")
     allow4(r9, 'gh pr merge 5 --subject "git push origin vbad"', "a merge whose subject names a push")
+    allow4(r9, "gh pr merge 5 # && git push origin vbad", "a push inside a comment never runs")
+    deny4(r9, "gh pr merge 5 #x\ngit push origin vbad", "a push on the line after a comment")
     allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
     deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
     # releases and dispatches check the commit they publish
