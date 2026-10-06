@@ -12,7 +12,7 @@ signatures.
 
 ## Entry Points
 
-- Codex: `skillsets/pr-review/codex/high-signal-pr-review/SKILL.md`
+- Every agent (published to each skill home): `skillsets/pr-review/shared/high-signal-pr-review/SKILL.md`
 - Claude Code: `skillsets/pr-review/claude/commands/code-review.md`
 - Shared output contract: `skillsets/pr-review/references/pr-review-output-contract.md`
 

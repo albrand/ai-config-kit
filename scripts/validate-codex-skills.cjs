@@ -13,7 +13,9 @@ function walk(dir, out = []) {
     if (entry.name === '__pycache__') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
-    else if (entry.isFile() && entry.name === 'SKILL.md' && full.includes(`${path.sep}codex${path.sep}`)) out.push(full);
+    // shared/ skills are published to every home, ~/.codex/skills included.
+    else if (entry.isFile() && entry.name === 'SKILL.md'
+      && (full.includes(`${path.sep}codex${path.sep}`) || full.includes(`${path.sep}shared${path.sep}`))) out.push(full);
   }
   return out;
 }
@@ -136,7 +138,10 @@ for (const absolute of files) {
   if (!meta.description) errors.push(`${relative}: missing description`);
   else if (meta.description.length > 1024) errors.push(`${relative}: description is ${meta.description.length} characters; maximum is 1024`);
   for (const key of Object.keys(meta)) {
-    if (!['name', 'description'].includes(key)) errors.push(`${relative}: unsupported frontmatter key ${key}`);
+    // shared/ skills also carry the publisher's lesson keys (scripts/publish.mjs, scripts/verify.mjs).
+    const allowed = relative.includes(`${path.sep}shared${path.sep}`)
+      ? ['name', 'description', 'verify', 'verify_timeout', 'verified'] : ['name', 'description'];
+    if (!allowed.includes(key)) errors.push(`${relative}: unsupported frontmatter key ${key}`);
   }
 
   const skillDir = path.dirname(absolute);

@@ -33,7 +33,7 @@ Use this workflow when reviewing a GitHub PR or equivalent diff where comments m
 
 Executable entrypoints:
 
-- Codex skill: `skillsets/pr-review/codex/high-signal-pr-review/SKILL.md`
+- Codex skill: `skillsets/pr-review/shared/high-signal-pr-review/SKILL.md`
 - Claude Code command: `skillsets/pr-review/claude/commands/code-review.md`
 - Output contract: `skillsets/pr-review/references/pr-review-output-contract.md`
 

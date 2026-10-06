@@ -10,13 +10,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILLSETS = ROOT / "skillsets"
-CODEX_SKILL = SKILLSETS / "pr-review/codex/high-signal-pr-review/SKILL.md"
-CODEX_CONTRACT = SKILLSETS / "pr-review/codex/high-signal-pr-review/references/pr-review-output-contract.md"
+CODEX_SKILL = SKILLSETS / "pr-review/shared/high-signal-pr-review/SKILL.md"
+CODEX_CONTRACT = SKILLSETS / "pr-review/shared/high-signal-pr-review/references/pr-review-output-contract.md"
 SHARED_CONTRACT = SKILLSETS / "pr-review/references/pr-review-output-contract.md"
 GLOBAL_AGENTS = ROOT / "GLOBAL_AGENTS.md"
 
-# Hermes help is mandatory to attempt and never a publish blocker (hermes-assisted-pr-review,
-# "Failure behavior"). Calling it a completion/publish gate once suppressed real findings.
+# Hermes help is mandatory to attempt and never a publish blocker (high-signal-pr-review,
+# "Hermes advisor pass"). Calling it a completion/publish gate once suppressed real findings.
 HERMES_AS_GATE = re.compile(
     r"(?is)(?:hermes[^.]{0,200}?(?:completion gate|publish(?:ing)? gate|must succeed before (?:posting|publishing))"
     r"|not complete (?:when|if|until|without)[^.]{0,80}?hermes (?:result|answer|pass|review|verdict)"
@@ -107,12 +107,16 @@ class ReviewSkillSourceTests(unittest.TestCase):
                 offenders.append(f"{path}: {sentence[:160]}")
         self.assertEqual(offenders, [])
 
-    def test_codex_skill_points_to_hermes_skill_with_attempt_semantics(self) -> None:
+    def test_review_skill_carries_the_hermes_pass_for_both_acts(self) -> None:
         text = re.sub(r"\s+", " ", CODEX_SKILL.read_text(encoding="utf-8"))
-        self.assertIn("`hermes-assisted-pr-review`", text)
+        self.assertIn("## Hermes advisor pass", text)
         self.assertIn("mandatory to attempt", text)
         self.assertIn("never a publish blocker", text)
-        self.assertNotIn("/.bb/skills/hermes-assisted-pr-review", text)
+        self.assertIn("bb fleet validate", text)
+        self.assertIn("A defect it names blocks the merge until it is fixed", text)
+        self.assertIn("does not block", text)
+        # The folded-in skill is retired; nothing may send an agent to it.
+        self.assertNotIn("hermes-assisted-pr-review", text)
 
     def test_codex_contract_carries_the_pre_review_packet_rule(self) -> None:
         text = CODEX_CONTRACT.read_text(encoding="utf-8")
