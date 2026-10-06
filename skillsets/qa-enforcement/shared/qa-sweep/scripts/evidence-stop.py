@@ -282,10 +282,11 @@ def inspect(text):
         return {"block": False, "claim": claim, "not_run": True}
     reason = (
         "[qa-evidence] Final message contains a completion or test claim without an evidence packet. "
-        "If you can run the workflow or its tests now, run them first, then attach a packet with persona, "
-        "target (stack plus commit SHA or deployment ID), user outcomes attempted, and a verdict for each "
-        "goal. Only when it cannot be run now, restate the claim as ‘implemented; workflow NOT RUN’, name "
-        "the blocker, and say what remains. Relabelling a runnable check as NOT RUN is not a fix. "
+        "Keep working: anything you can still run, fix or finish, do now. Run the workflow or its tests "
+        "first, then attach a packet with persona, target (stack plus commit SHA or deployment ID), user "
+        "outcomes attempted, and a verdict for each goal. Only when it cannot be run now, restate the claim "
+        "as ‘implemented; workflow NOT RUN’, name the blocker and what you need from whom. Relabelling a "
+        "runnable check as NOT RUN is not a fix, and a check you can make runnable is work to do. "
         "If you then report it unrun without naming a blocker, one last nudge follows."
     )
     return {"block": True, "claim": claim, "reason": reason}
@@ -463,7 +464,8 @@ def retry_check(payload, text):
         return None
     return ("[qa-evidence] The reply to the evidence nudge has neither an evidence packet nor a blocker that names "
             "an outside constraint. If the workflow or tests can run, run them now and report the result with a "
-            "packet. If they cannot, name what blocks them. This is the last nudge for this turn.")
+            "packet; if you can make them runnable, do that first. If they cannot, name what blocks them and what "
+            "you need from whom. This is the last nudge for this turn.")
 
 
 def main():

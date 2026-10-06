@@ -273,9 +273,11 @@ class StopHooksTests(unittest.TestCase):
         # A Codex probe answered the nudge by relabelling a sub-second test run as NOT RUN and stopping.
         result = run(["python3", str(EVIDENCE)], data=json.dumps({"last_assistant_message": "Done — all three changes."}))
         reason = json.loads(result.stdout)["reason"]
-        self.assertLess(reason.index("run them first"), reason.index("workflow NOT RUN"))
+        self.assertLess(reason.index("Keep working"), reason.index("tests first"))
+        self.assertLess(reason.index("tests first"), reason.index("workflow NOT RUN"))
         self.assertIn("Only when it cannot be run now", reason)
-        self.assertIn("name the blocker", reason)
+        self.assertIn("name the blocker and what you need from whom", reason)
+        self.assertIn("a check you can make runnable is work to do", reason)
 
     FIRST_CLAIM = "I have implemented the fix."
     UNANSWERED = [

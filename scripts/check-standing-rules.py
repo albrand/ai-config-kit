@@ -710,12 +710,16 @@ INSTALLED_HOME_SHA256 = {
     "6345c59c8c1db69db95d160c34bd58ffd6ac8190f01b222e1ba3d900226049f4": "proposal-codex",
     "53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385": "proposal-opencode",
     "4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab": "proposal-bb",
-}
-RENDERED_HOME_SHA256 = {
     "b3bdd0c2f423a50d0d1640c5e6c313f82cf38aee81fa86ebd797e0f3b7f309ad": "proposal-claude",
     "0cc932493b3b4b58c3f26831f61285bd9e60a22c997d56037ea8e53d2feeb1d4": "proposal-codex",
     "935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8": "proposal-opencode",
     "db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1": "proposal-bb",
+}
+RENDERED_HOME_SHA256 = {
+    "6839c826f50c64bebf309f1b855e92da595d97e61f32c3a727158826e71be59b": "proposal-claude",
+    "c4e5e4b333c6211cc8ca4cb90f822b623499d732694f8768ffe52aa268fb12bf": "proposal-codex",
+    "2f3104bc2164cdfc38e1a02d4608dadf2f9378111bfde6ec2e1cd95a516d8d4c": "proposal-opencode",
+    "6fbca50ca46869fd69496b38860ce2f445930f636d5b4f9c50e218844ae2eaef": "proposal-bb",
 }
 
 
