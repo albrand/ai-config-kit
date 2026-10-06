@@ -34,6 +34,34 @@ tamper "an extra hidden file" 'echo x > .hidden'
 tamper "an extra directory" 'mkdir scripts && echo x > scripts/run.sh'
 tamper "a missing eval.md" 'rm eval.md'
 tamper "SKILL.md replaced by a link" 'mv SKILL.md real && ln -s real SKILL.md && mv real ../real-skill'
+
+# 3. A change between the digest check and the copy cannot reach a home. A shasum shim on the installer's
+# PATH hashes as usual, then on its first call appends a line to a file: either the vendored SKILL.md (a
+# source change after it was checked) or the file it just hashed.
+REAL_SHASUM=$(command -v shasum)
+midrun() {
+  name=$1 target=$2 want_rc=$3
+  W=$(mktemp -d); cp -R "$HERE" "$W/writing"; mkdir "$W/bin"
+  cat > "$W/bin/shasum" <<EOF
+#!/bin/sh
+"$REAL_SHASUM" "\$@"; rc=\$?
+if [ ! -e "$W/done" ]; then
+  : > "$W/done"
+  for last in "\$@"; do :; done
+  if [ "$target" = source ]; then f="$W/writing/shared/no-ai-slop/SKILL.md"; else f=\$last; fi
+  echo "changed mid-run" >> "\$f"
+fi
+exit \$rc
+EOF
+  chmod +x "$W/bin/shasum"
+  HOME=$H PATH="$W/bin:$PATH" sh "$W/writing/install.sh" >/dev/null 2>&1; check "$name: exit" "$want_rc" $?
+  check "$name: the shim changed a file" yes "$([ -e "$W/done" ] && echo yes || echo no)"
+  check "$name: installed copy is still the pinned one" "$before" "$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)"
+  check "$name: no extra entry installed" "./LICENSE ./SKILL.md ./eval.md " "$(installed "$H/.claude/skills")"
+  rm -rf "$W"
+}
+midrun "source changed after its check" source 0
+midrun "checked copy changed before it is installed" hashed 1
 rm -rf "$H"
 [ "$fail" = 0 ] && echo "test-install: all passed"
 exit $fail
