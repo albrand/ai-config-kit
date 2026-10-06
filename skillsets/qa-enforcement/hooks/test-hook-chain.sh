@@ -94,9 +94,10 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hoo
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
 # No jq (or no answer from it): the grep fallback denies every case the jq
 # shape denies (it is broader: any dispatch word, fails closed).
-# @NL@ in a case stands for a backslash-newline (a shell line continuation): cases are one per line.
+# @NL@ in a case stands for a backslash-newline (a shell line continuation), @LF@ for a plain
+# newline: cases are one per line.
 bash_payload() {
-  _c=$(python3 -c 'import sys; print(sys.argv[1].replace("@NL@", "\\\n"), end="")' "$1")
+  _c=$(python3 -c 'import sys; print(sys.argv[1].replace("@NL@", "\\\n").replace("@LF@", "\n"), end="")' "$1")
   jq -nc --arg c "$_c" --arg d "${2:-/tmp}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'
 }
 mkdir -p "$H/nojq"
@@ -239,6 +240,9 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|0|-|$H/plain|cd $H/optin && gh pr merge 5 -t \"git push origin main\"
 13|2|Ship denied|$H/optin|gh pr merge 5 && git push origin main
 13|0|-|$H/optin|gh pr merge 5 # && git push origin main
+13|0|-|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+13|2|Ship denied|$H/optin|gh pr merge 5 # comment@LF@git push origin main
+13|2|Ship denied|$H/optin|gh pr merge 5 @NL@&& git push origin main
 13|0|-|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
 13|0|-|$H/optin|echo start; gh pr merge 5 -b \"git push --tags\"; echo done
 13|2|Ship denied|$H/optin|bash -c \"git push origin main\"
@@ -292,6 +296,9 @@ done <<EOF
 0|$H/plain|cd $H/optin && gh pr merge 5 -t "git push origin main"
 2|$H/optin|gh pr merge 5 && git push origin main
 0|$H/optin|gh pr merge 5 # && git push origin main
+0|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+2|$H/optin|gh pr merge 5 # comment@LF@git push origin main
+2|$H/optin|gh pr merge 5 @NL@&& git push origin main
 0|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
 0|$H/optin|echo start; gh pr merge 5 -b "git push --tags"; echo done
 2|$H/optin|bash -c "git push origin main"

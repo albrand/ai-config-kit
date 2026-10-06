@@ -28,7 +28,9 @@ scope_flat() { printf '%s' "$input" | tr -d '\\"'"'"; }
 # qa-ship-gate-hook.sh; test-hook-chain.sh checks the two copies match) ---
 # What the command would run, as one line of words, read from the JSON
 # payload in one awk pass. The command string is decoded, then split into
-# segments at unquoted ; & | ( ) and newlines, comments dropped. A `gh pr
+# segments at unquoted ; & | ( ) and newlines, comments dropped; a line that
+# starts with && || or | is a syntax error, so nothing after it runs (unless
+# the command has a heredoc). A `gh pr
 # merge` segment (after
 # NAME=value prefixes and env/command/nohup/time/exec/sudo/nice) keeps only
 # the bodies of its $(...) and backtick substitutions: its quoted subject or
@@ -86,8 +88,9 @@ ship_scan() {
     }
     return seg
   }
-  function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body) {
+  function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body, ls, hd) {
     out = ""; seg = ""; subs = ""; nw = 0; cur = ""; has = 0; q = ""; n = length(cmd)
+    ls = 1; hd = index(cmd, "<<")
     for (i = 1; i <= n; i++) {
       c = substr(cmd, i, 1); nx = substr(cmd, i + 1, 1)
       if (q == sq) { seg = seg c; if (c == sq) q = ""; else cur = cur c; continue }
@@ -118,7 +121,9 @@ ship_scan() {
       if (c == " " || c == "\t") { if (has) { W[d, ++nw] = cur; cur = ""; has = 0 }; seg = seg c; continue }
       if (c == "&" && i > 1 && index("<>", substr(cmd, i - 1, 1))) { cur = cur c; has = 1; seg = seg c; continue }
       if (c == "#" && !has) { for (j = i; j <= n && substr(cmd, j, 1) != "\n"; j++); i = j - 1; continue }
+      if ((c == "&" || c == "|") && ls && !has && nw == 0 && !hd) return out
       if (index(";&|()\n\r", c)) {
+        ls = (c == "\n")
         if (has) { W[d, ++nw] = cur; cur = ""; has = 0 }
         out = out emit(d, nw, seg, subs) " ; "; seg = ""; subs = ""; nw = 0
         continue

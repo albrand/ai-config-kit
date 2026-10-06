@@ -84,7 +84,10 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               'bash -c "git push origin main"', "eval git push origin main", 'X=$(git push origin main) gh pr merge 5',
               # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
               "gh pr merge 5 #x\ngit push origin main", "echo a#b && git push origin main",
-              "echo \\# && git push origin main", 'echo "#" && git push origin main']
+              "echo \\# && git push origin main", 'echo "#" && git push origin main',
+              # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
+              "gh pr merge 5 # comment\ngit push origin main", "gh pr merge 5 \\\n&& git push origin main",
+              "gh pr merge 5 &&\ngit push origin main", "cat <<EOF\n&& x\nEOF\ngit push origin main"]
 # A PR merge whose quoted subject or body names a push or a deploy is still only a merge.
 MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
               "gh pr merge 5 --body 'run vercel --prod; git push --tags'",
@@ -97,7 +100,10 @@ MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin -
               """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
               "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
               # a comment never runs (Hermes 2026-10-06 r6)
-              "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`"]
+              "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`",
+              # a line that starts with && || or | is a syntax error: nothing after it runs (Hermes r7)
+              "gh pr merge 5 # comment \\\n&& git push origin main", "gh pr merge 5\n&& git push origin main",
+              "gh pr merge 5\n  || git push origin main"]
 LOCAL_ALLOW = ["gh pr merge 5 --admin", "gh pr merge 5 \\\n  --admin --squash", "git \\\n  status"] + MERGE_TEXT
 
 

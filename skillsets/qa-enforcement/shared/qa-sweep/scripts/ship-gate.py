@@ -1225,6 +1225,9 @@ def ship_view(command, depth=0):
     quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
     test-ship-matrix.py checks that the two agree."""
     out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
+    # A line that starts with && || or | is a syntax error: the shell stops there and runs nothing
+    # after it. Not with a heredoc, whose body lines are text and may start with anything.
+    line_start, heredoc = True, "<<" in command
     while i < n:
         c, nx = command[i], command[i + 1:i + 2]
         if q == "'":
@@ -1284,7 +1287,10 @@ def ship_view(command, depth=0):
             j = command.find("\n", i)  # a comment runs to the end of the line and never runs
             i = n if j < 0 else j
             continue
+        elif c in "&|" and line_start and cur is None and not words and not heredoc:
+            return out  # a syntax error (Hermes 2026-10-06 r7: `gh pr merge 5 # c \` then `&& git push`)
         elif c in ";&|()\n\r":
+            line_start = c == "\n"
             if cur is not None:
                 words.append(cur)
                 cur = None
@@ -1320,6 +1326,8 @@ def command_segments(command, _depth=0):
     uses. Scripts run through `sh -c` or `eval` are split the same way and
     their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge)."""
     segments, cur, i, n = [], [], 0, len(command)
+    # As in ship_view: a line that starts with && || or | stops the shell (no heredoc).
+    line_start, heredoc, stop = True, "<<" in command, n
     while i < n:
         c = command[i]
         if c in " \t":
@@ -1334,19 +1342,30 @@ def command_segments(command, _depth=0):
         if c in ";|&\n()":
             j = i
             while j < n and command[j] in ";|&\n()":
+                if command[j] == "\n":
+                    line_start = True
+                elif command[j] in "&|" and line_start and not heredoc:
+                    stop = j
+                    break
+                else:
+                    line_start = False
                 j += 1
             if cur:
                 segments.append(cur)
                 cur = []
+            if stop < n:
+                break
             i = j
             continue
         word, endpos = _shell_arg_at(command, i)
         if word is None:
             break
         cur.append(word)
+        line_start = False
         i = endpos
     if cur:
         segments.append(cur)
+    command = command[:stop]
     out = []
     for s in (unwrap_segment(s) for s in segments):
         if not s:
@@ -3056,7 +3075,11 @@ def selftest(v4_gate=None, v4_templates=None):
                    "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
                    # a comment never runs (Hermes 2026-10-06 r6)
                    "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`",
-                   "gh pr merge 5 #; vercel --prod"]
+                   "gh pr merge 5 #; vercel --prod",
+                   # a line that starts with && || or | is a syntax error: nothing after it runs (Hermes r7);
+                   # a backslash inside a comment is part of the comment, not a continuation
+                   "gh pr merge 5 # comment \\\n&& git push origin main", "gh pr merge 5\n&& git push origin main",
+                   "gh pr merge 5\n  || git push origin main", "gh pr merge 5 # c \\\n&& echo \"$(git push origin main)\""]
     ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
                   'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
                   'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
@@ -3065,7 +3088,10 @@ def selftest(v4_gate=None, v4_templates=None):
                   'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5',
                   # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
                   'gh pr merge 5 #x\ngit push origin main', 'echo a#b && git push origin main',
-                  'echo \\# && git push origin main', 'echo "#" && git push origin main']
+                  'echo \\# && git push origin main', 'echo "#" && git push origin main',
+                  # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
+                  'gh pr merge 5 # comment\ngit push origin main', 'gh pr merge 5 \\\n&& git push origin main',
+                  'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main']
     for c in merge_texts:
         expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
         p = hookrun(r3, c)
@@ -3079,6 +3105,12 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(command_segments("gh pr merge 5 # && git push origin main") == [["gh", "pr", "merge", "5"]],
            "command_segments: a comment is not a segment")
     expect(_substitutions("echo x # `git push`") == [], "substitutions: none inside a comment")
+    expect("push" not in (ship_view("gh pr merge 5 # c \\\n&& git push origin main") or "push"),
+           "ship_view: nothing after a line that starts with && runs")
+    expect(command_segments("gh pr merge 5 # c \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: nothing after a line that starts with && runs")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat <<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc body line that starts with && does not hide what follows")
     expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
            "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
@@ -3317,6 +3349,8 @@ def selftest(v4_gate=None, v4_templates=None):
     allow4(r9, 'gh pr merge 5 --subject "git push origin vbad"', "a merge whose subject names a push")
     allow4(r9, "gh pr merge 5 # && git push origin vbad", "a push inside a comment never runs")
     deny4(r9, "gh pr merge 5 #x\ngit push origin vbad", "a push on the line after a comment")
+    allow4(r9, "gh pr merge 5 # c \\\n&& git push origin vbad", "a comment's backslash is no continuation")
+    deny4(r9, "gh pr merge 5 \\\n&& git push origin vbad", "a real continuation before && still pushes")
     allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
     deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
     # releases and dispatches check the commit they publish
