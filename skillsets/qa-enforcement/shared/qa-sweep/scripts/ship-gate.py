@@ -3655,7 +3655,7 @@ def selftest(v4_gate=None, v4_templates=None):
     # A pilot PR: the suite's own CI run recorded as the walk (owner_run).
     base_or = {"label": "e2e.patient", "owned_by_automation": True, "owner": "deployed e2e gate",
                "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659,
-                          "run_url": "https://github.com/albrand/psyche-project/actions/runs/36193694659"}}
+                          "run_url": "https://github.com/example-owner/example-repo/actions/runs/36193694659"}}
     variants = {
         "valid": (base_or, ["e2e.patient"], True),
         "valid, attempt URL": ({**base_or, "walker": {**base_or["walker"], "run_url": base_or["walker"]["run_url"] + "/attempts/2"}}, ["e2e.patient"], True),
@@ -3670,7 +3670,7 @@ def selftest(v4_gate=None, v4_templates=None):
         "unowned": ({**base_or, "owned_by_automation": False}, ["e2e.patient"], False),
         "unknown kind": ({**base_or, "walker": {"kind": "borrowed"}}, ["e2e.patient"], False),
         "fullwidth digits (r2a-bis)": ({**base_or, "walker": {**base_or["walker"], "run_id": "３６１９３６９４６５９",
-                                        "run_url": "https://github.com/albrand/psyche-project/actions/runs/３６１９３６９４６５９"}},
+                                        "run_url": "https://github.com/example-owner/example-repo/actions/runs/３６１９３６９４６５９"}},
                                        ["e2e.patient"], False),
     }
     mjs_or = {}
@@ -3687,11 +3687,11 @@ def selftest(v4_gate=None, v4_templates=None):
         expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
     # r2a D5, r2a-bis: the ship gate ties the run to this repository and checks
     # the run attempt with `gh api` (stubbed here: offline, deterministic). The
-    # stub answers repos/albrand/psyche-project/actions/runs/<id>[/attempts/<n>]
+    # stub answers repos/example-owner/example-repo/actions/runs/<id>[/attempts/<n>]
     # from <dir>/<path with / as _>.json and logs every call.
     orr = os.path.join(tmp, "owner-run-repo")
     os.makedirs(orr)
-    sh("git init -q && git remote add origin git@github.com:albrand/psyche-project.git", cwd=orr)
+    sh("git init -q && git remote add origin git@github.com:example-owner/example-repo.git", cwd=orr)
     orbin = os.path.join(tmp, "owner-run-bin")
     os.makedirs(orbin)
     ghdir = os.path.join(tmp, "gh-api")
@@ -3704,7 +3704,7 @@ def selftest(v4_gate=None, v4_templates=None):
         "cat \"$f\"\n")
     os.chmod(os.path.join(orbin, "gh"), 0o755)
     walked = "a" * 40
-    runs_path = "repos/albrand/psyche-project/actions/runs/36193694659"
+    runs_path = "repos/example-owner/example-repo/actions/runs/36193694659"
     run_doc = {"head_sha": walked, "run_attempt": 1, "run_started_at": "2026-09-25T15:05:00Z",
                "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
     ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
@@ -3772,7 +3772,7 @@ def selftest(v4_gate=None, v4_templates=None):
            "owner_run: a run start with no offset -> deny")
     fullwidth = "３６１９３６９４６５９"
     expect(owner_run_id({"run_id": fullwidth}) is None
-           and not RUN_URL_RE.match("https://github.com/albrand/psyche-project/actions/runs/" + fullwidth),
+           and not RUN_URL_RE.match("https://github.com/example-owner/example-repo/actions/runs/" + fullwidth),
            "owner_run: fullwidth digits are not a run id or a run URL (ASCII, as in qa-e2e-gate.mjs)")
     shifted = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00-03:00", "end": "2026-09-25T12:40:00-03:00"}}
     expect(verify(shifted) == [], "owner_run: the same walk window at -03:00 -> pass")
