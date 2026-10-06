@@ -132,10 +132,16 @@ def build_questions(findings):
             question = f"For finding {finding['id']}, answer the {key} rule from the declared state. Do not rely on another reviewer's classification."
             questions.extend(("--pick", qid, question, options))
             points.append(f"{qid}={point}")
-            peer_key = {"j1": "kind", "j2_duplicate": "relation", "j2_cause": "cause",
-                        "j3_path": "changed_path", "j3_severity": "severity"}[key]
-            peers.extend(("--peer-answer", qid, finding[peer_key]))
+            peers.extend(("--peer-answer", qid, expected_peer_answer(finding, key)))
     return questions, ",".join(points), peers
+
+
+def expected_peer_answer(finding, key):
+    if key == "j2_duplicate" and not finding["prior_summary"]:
+        return "not-applicable"
+    peer_key = {"j1": "kind", "j2_duplicate": "relation", "j2_cause": "cause",
+                "j3_path": "changed_path", "j3_severity": "severity"}[key]
+    return finding[peer_key]
 
 
 def compose_result(findings, answers, base_ref):
@@ -153,9 +159,7 @@ def compose_result(findings, answers, base_ref):
                 missing.append(qid)
                 continue
             item["answers"][key] = answer["answer"]
-            expected = {"j1": finding["kind"], "j2_duplicate": finding["relation"],
-                        "j2_cause": finding["cause"], "j3_path": finding["changed_path"],
-                        "j3_severity": finding["severity"]}[key]
+            expected = expected_peer_answer(finding, key)
             comparisons.append(answer["answer"] == expected)
             comparisons_for_item.append(answer["answer"] == expected)
             recorded.append(bool(answer.get("ledger")) and not answer["ledger"].startswith("refused:"))
