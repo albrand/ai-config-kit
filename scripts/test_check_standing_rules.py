@@ -128,6 +128,23 @@ class StandingRuleCheckerTest(unittest.TestCase):
     def test_intact_fixture_passes(self):
         self.assertEqual(CHECKER.missing_rules(INTACT), [])
 
+    def test_push_narrowing_must_cover_any_protected_branch(self):
+        rule = "protected-push-covers-any-protected-branch"
+        names_only = ("\nHere a shared-remote push means a force-push, a direct push to a protected branch "
+                      "(main, master, develop, dev, staging, release, production) or deleting a remote branch.\n")
+        any_branch = ("\nHere a shared-remote push means a force-push, a direct push to a protected branch "
+                      "(any branch with branch protection or rules on the remote, or listed in the repo's "
+                      "protected branches, and always main, master, develop, dev, staging, release and "
+                      "production) or deleting a remote branch.\n")
+        self.assertNotIn(rule, CHECKER.missing_rules(INTACT))
+        self.assertIn(rule, CHECKER.missing_rules(INTACT + names_only))
+        self.assertNotIn(rule, CHECKER.missing_rules(INTACT + any_branch))
+        # Each part of the coverage is guarded: dropping any one of them fails.
+        for part in (" on the remote", ", or listed in the repo's protected branches",
+                     ", and always main, master, develop, dev, staging, release and production", " production"):
+            with self.subTest(dropped=part):
+                self.assertIn(rule, CHECKER.missing_rules(INTACT + any_branch.replace(part, "", 1)))
+
     def test_deleted_rule_fails(self):
         damaged = INTACT.replace(
             "Never type, paste, or handle credentials.\n", ""

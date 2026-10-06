@@ -2,8 +2,8 @@
 
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
-profiles. Accepted live profiles include the #47 render and the #49 render
-currently installed in all four homes. The current rendered profile is the
+profiles. Accepted live profiles include the #47 render, the #49 render and
+the #50 render currently installed in all four homes. The current rendered profile is the
 output of this source revision; keeping it here means that after this revision
 is merged and installed, the next installer recognizes that complete set
 without weakening the live-edit guard.
@@ -43,11 +43,11 @@ values for those live files.
 | OpenCode | `53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385` |
 | bb | `4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab` |
 
-### Current rendered profile: evidence-rule PR candidate based on 73786e99
+### Accepted live profile: #50 render at 192f652a
 
-Generated with `python3 scripts/render-standing-homes.py --output-dir
-/tmp/card59-render-current/rendered-homes`; digests below are the output of
-`shasum -a 256` on those rendered files.
+Verified byte-for-byte against all four current live homes on 2026-10-06 by
+comparing them with the committed #50 render. Digests below are the
+command-produced SHA-256 values for those live files.
 
 | Home | SHA-256 |
 |---|---|
@@ -55,6 +55,18 @@ Generated with `python3 scripts/render-standing-homes.py --output-dir
 | Codex | `0cc932493b3b4b58c3f26831f61285bd9e60a22c997d56037ea8e53d2feeb1d4` |
 | OpenCode | `935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8` |
 | bb | `db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1` |
+
+### Current rendered profile: follow-through PR candidate based on 192f652a
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5` |
+| Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
+| OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
+| bb | `ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
