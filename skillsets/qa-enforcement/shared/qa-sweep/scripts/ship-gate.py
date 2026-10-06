@@ -2,9 +2,9 @@
 """QA ship gate: fail-closed push/PR/deploy gate for repos that opted in.
 
 A repo opts in by committing `.qa/config.json`. From that moment the gate is
-ALWAYS ON for that repo for ship commands (gh pr ready, pushes to protected
-branches, production deploys, releases, tag pushes, workflow dispatch -- see
-segment_ship_kind). PR merges are never gated (2026-10-06). It denies unless the whole
+ALWAYS ON for that repo for ship commands (pushes to protected branches,
+production deploys, releases, tag pushes, workflow dispatch -- see
+segment_ship_kind). PR commands (merge, ready) are never gated (2026-10-06). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
@@ -85,9 +85,9 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # pushes, gh pr create and bb fleet validate are free: that is how previews,
 # CI and review get produced. No dead patterns: every class below is exercised
 # by selftest against a canonical sample.
-# 2026-10-06 (owner decision): PR merges (gh pr merge, the REST and GraphQL
-# merge calls) are never gated, so production fixes and admin merges are never
-# blocked. gh pr ready, protected pushes, releases and deploys stay gated.
+# 2026-10-06 (owner decision): PR commands (gh pr merge, gh pr ready, the
+# REST and GraphQL merge calls) are never gated, so production fixes and admin
+# merges are never blocked. Protected pushes, releases and deploys stay gated.
 # v4 (card 6): "what ships" also covers releases (gh release create), any
 # workflow dispatch (gh workflow run -- justification at the classifier), tag
 # pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
@@ -180,7 +180,6 @@ HOOK_HOST_TIMEOUT_S = 15.0
 HOOK_HARD_S = 10.0
 HOOK_BUDGET_S = HOOK_HARD_S - 1.0
 _HOOK_DEADLINE = None
-PR_VIEW_CACHE = {}
 # None until _hook() knows whether the command targets an opted-in repo. At
 # the hard deadline, unknown counts as opted in: a deadline that fires before
 # the opt-in check (a chain that spent its budget before this process
@@ -1719,7 +1718,7 @@ def _vercel_prod_flag(seg):
 
 def segment_ship(seg, root, cfg, command="", cwd=None):
     """(kind, shas, equiv, problems, prov) for one unwrapped shell segment.
-    kind: "merge" | "push" | "deploy" | None. shas: the commits this segment
+    kind: "push" | "deploy" | None. shas: the commits this segment
     ships, resolved locally, so a tag pointing at an unwalked commit cannot
     pass on a walked HEAD. equiv: the subset whose walk may sit on a
     tree-identical commit (tree_equiv_outside_qa): tags, releases,
@@ -1773,16 +1772,12 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
                 equiv.add(c)
         return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
     if head == "gh" and len(seg) > 2:
-        if seg[1] == "pr" and seg[2] == "merge":
-            # PR merges are never gated (owner decision 2026-10-06: production
-            # fixes must keep shipping; admin merges stay available). Protected
-            # pushes, gh pr ready, releases and deploys stay gated.
+        if seg[1] == "pr":
+            # No PR command is gated (owner decision 2026-10-06: production
+            # fixes must keep shipping; admin merges stay available). That
+            # includes gh pr ready, since GitHub cannot merge a draft.
+            # Protected pushes, releases and deploys stay gated.
             return None, [], set()
-        if seg[1] == "pr" and seg[2] == "ready":
-            base = pr_base_branch(root, seg)
-            if base is not None and normalize_ref(base) not in protected_refs(root, cfg):
-                return None, [], set()
-            return "merge", [], set()
         if seg[1] == "release" and seg[2] == "create":
             c = release_commit(root, seg[3:])
             return "deploy", [c], {c}
@@ -1849,7 +1844,7 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
 
 
 def segment_ship_kind(seg, root, cfg):
-    """"merge" | "push" | "deploy" for one shell segment, else None."""
+    """"push" | "deploy" for one shell segment, else None."""
     return segment_ship(seg, root, cfg)[0]
 
 
@@ -1883,8 +1878,6 @@ def ship_plan(command, root, cfg, cwd=None):
         pass
     eq -= strict
     prov -= strict
-    if "merge" in kinds:
-        return "merge", shas, eq, problems, prov   # needs PR-head freshness, the stricter sha rule
     if "push" in kinds:
         return "push", shas, eq, problems, prov
     return (kinds[0] if kinds else None), shas, eq, problems, prov
@@ -1893,69 +1886,6 @@ def ship_plan(command, root, cfg, cwd=None):
 def ship_kind(command, root, cfg):
     """Highest-stakes ship kind anywhere in the command, for this root."""
     return ship_plan(command, root, cfg)[0]
-
-
-def pr_merge_args(command):
-    """Token list of the first `gh pr merge`/`gh pr ready` segment, if any."""
-    for seg in command_segments(command):
-        if len(seg) > 2 and seg[0] == "gh" and seg[1] == "pr" and seg[2] in ("merge", "ready"):
-            return seg
-    return None
-
-
-def pr_selector(args):
-    """PR selector from `gh pr merge|ready`, ignoring option values."""
-    value_flags = {"-R", "--repo", "--match-head-commit"}
-    skip_value = False
-    for token in args[3:]:
-        if skip_value:
-            skip_value = False
-            continue
-        if token in value_flags:
-            skip_value = True
-        elif token == "--":
-            break
-        elif token.startswith("-"):
-            continue
-        else:
-            return token
-    return None
-
-
-def pr_view(root, args):
-    """Return (base branch, head SHA) from one bounded `gh pr view` lookup."""
-    if os.environ.get("QA_GATE_NO_GH"):
-        return None, None
-    selector = pr_selector(args)
-    key = (root, selector)
-    if key in PR_VIEW_CACHE:
-        return PR_VIEW_CACHE[key]
-    cmd = (["gh", "pr", "view"] + ([selector] if selector else [])
-           + ["--json", "baseRefName,headRefOid", "-q", "[.baseRefName, .headRefOid] | @tsv"])
-    result_info = (None, None)
-    try:
-        result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
-        if result.returncode == 0:
-            values = result.stdout.rstrip("\r\n").split("\t", 1)
-            if len(values) == 2:
-                branch, sha = values
-                if branch and not any(ch.isspace() for ch in branch):
-                    result_info = (branch, sha if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None)
-    except Exception:
-        pass
-    PR_VIEW_CACHE[key] = result_info
-    return result_info
-
-
-def pr_base_branch(root, args):
-    """Base branch; an unresolved destination remains gated fail-closed."""
-    return pr_view(root, args)[0]
-
-
-def pr_head_sha(root, args):
-    """PR head sha for `gh pr merge [n]`: `gh pr view [n] --json headRefOid`.
-    None on any failure (caller falls back to the local HEAD)."""
-    return pr_view(root, args)[1]
 
 
 def _hard_deadline(signum, frame):
@@ -1995,7 +1925,6 @@ def hook(raw=None):
 def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     global _LAST_INPUT, _HOOK_OPTED
-    PR_VIEW_CACHE.clear()
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -2029,15 +1958,13 @@ def _hook(raw=None):
     if not any(kinds.values()):
         return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
     prov = derive_provider(payload)
-    merge_args = pr_merge_args(command)
     sections, denied = [], []
     for root in targets:
         kind = kinds[root]
         if not kind:
             continue
-        # Walk freshness: a merge needs the walk at the PR head SHA being
-        # merged (gh pr view), falling back to the local HEAD; pushes and
-        # deploys check the local HEAD (with the .qa-only-parent allowance).
+        # Walk freshness: pushes and deploys check the local HEAD (with the
+        # .qa-only-parent allowance).
         # v3: with a sha resolved, artifacts are read from that commit's tree.
         # v4: every segment contributes the commits it ships (ship_plan): a
         # tag push or release checks the TAGGED commit, a protected refspec
@@ -2050,8 +1977,6 @@ def _hook(raw=None):
         # freshness still judged against the deployment's commit. Anything
         # that could not be resolved (plans[root][3]) denies outright.
         shas, problems, prov_shas = list(plans[root][1]), plans[root][3], plans[root][4]
-        if kind == "merge" and merge_args is not None:
-            shas.insert(0, pr_head_sha(root, merge_args) or head_commit(root))
         if not shas and not problems:
             shas = [head_commit(root)]
         ok, fails, stats = not problems, list(problems), {"rows_total": 0, "clusters": 0, "open_rows": 0}
@@ -2747,20 +2672,22 @@ def selftest(v4_gate=None, v4_templates=None):
     open_head = sh("git rev-parse HEAD", cwd=r3).stdout.strip()
     open(base_file, "w").write("qa/batch-card16\n")
     open(head_file, "w").write(open_head + "\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:qa/batch-card16")
     expect(p.returncode == 0,
-           "card16: ready into non-protected batch base with open inventory ALLOWED")
+           "card16: push to non-protected batch base with open inventory ALLOWED")
     open(base_file, "w").write("main\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: ready into default protected base with open inventory DENIED")
+           "card16: push to default protected base with open inventory DENIED")
     open(base_file, "w").write("dev\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:dev")
     expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: ready into configured protected dev base with open inventory DENIED")
+           "card16: push to configured protected dev base with open inventory DENIED")
     p = hookrun(r3, "gh pr merge 22 --admin")
     expect(p.returncode == 0,
            "2026-10-06: gh pr merge --admin into a protected base with open inventory ALLOWED (merges are never gated)")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 0, "2026-10-06: gh pr ready with open inventory ALLOWED (a draft cannot be merged)")
 
     # Close the batch inventory and automate the one whole-workflow rewalk.
     lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
@@ -2800,19 +2727,19 @@ def selftest(v4_gate=None, v4_templates=None):
            "card16: Playwright first-attempt pass records report and attachments")
     pass_head = commit_qa(r3)
     open(head_file, "w").write(pass_head + "\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(p.returncode == 0,
-           "card16: protected default-base ready with closed inventory and fresh rewalk ALLOWED [%s]"
+           "card16: protected default-base push with closed inventory and fresh rewalk ALLOWED [%s]"
            % p.stderr.strip()[:140])
 
     failing = generate_rewalk("failed", True, pass_head)
     fail_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
     fail_head = commit_qa(r3)
     open(head_file, "w").write(fail_head + "\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(failing.returncode == 0 and fail_doc["steps"][0]["verdict"] == "FAIL"
            and p.returncode == 2 and "verdict 'FAIL'" in p.stderr,
-           "card16: failing annotated Playwright test emits FAIL and protected ready is DENIED")
+           "card16: failing annotated Playwright test emits FAIL and protected push is DENIED")
     p = hookrun(r3, "gh pr merge 22 --admin")
     expect(p.returncode == 0, "2026-10-06: gh pr merge with a FAIL rewalk ALLOWED (merges are never gated)")
 
@@ -2820,7 +2747,7 @@ def selftest(v4_gate=None, v4_templates=None):
     no_auto = json.load(open(os.path.join(qa3, "rewalk.json")))
     no_auto_head = commit_qa(r3)
     open(head_file, "w").write(no_auto_head + "\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(unmapped.returncode == 0 and no_auto["steps"][0]["verdict"] == "NOT_AUTOMATED"
            and p.returncode == 2 and "matching manual workflow_step evidence is required" in p.stderr,
            "card16: unmapped step emits NOT_AUTOMATED and denies without manual evidence")
@@ -2835,7 +2762,7 @@ def selftest(v4_gate=None, v4_templates=None):
     json.dump(manual_rewalk, open(os.path.join(qa3, "rewalk.json"), "w"))
     manual_head = commit_qa(r3)
     open(head_file, "w").write(manual_head + "\n")
-    p = hookrun(r3, "gh pr ready 22")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(p.returncode == 0,
            "card16: NOT_AUTOMATED clears with matching verified manual workflow evidence [%s]"
            % p.stderr.strip()[:140])
@@ -2852,7 +2779,7 @@ def selftest(v4_gate=None, v4_templates=None):
     ok_classes = (
         segment_ship_kind(segs("git push origin main")[0], r3, cfgs_of(r3)) == "push"
         and segment_ship_kind(segs("gh pr merge 22 --admin")[0], r3, cfgs_of(r3)) is None
-        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) is None
         and segment_ship_kind(segs("vercel deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("netlify deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("fly deploy")[0], r3, cfgs_of(r3)) == "deploy"
@@ -3132,7 +3059,8 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin feat:main", "feat:main ships the unwalked source")
     deny4(r9, "git push origin +feat:dev", "forced refspec +feat:dev")
     deny4(r9, "git status\ngit push origin HEAD:dev", "ship on the second line of a multi-line command")
-    deny4(r9, "GH_TOKEN=x gh pr ready 5", "env-prefixed gh pr ready")
+    deny4(r9, "GH_TOKEN=x git push origin HEAD:main", "env-prefixed protected push")
+    allow4(r9, "GH_TOKEN=x gh pr ready 5", "env-prefixed gh pr ready (PR commands are never gated)")
     allow4(r9, "GH_TOKEN=x gh pr merge 5 --admin", "env-prefixed gh pr merge (merges are never gated)")
     sh("git checkout -q -b dev", cwd=r9)
     deny4(r9, "git push origin HEAD", "git push origin HEAD while on a protected branch")
@@ -3862,7 +3790,7 @@ def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+ready|"
+    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
                      r"repos/\S+/(merges|releases|git/refs|dispatches|contents/|deployments)|"

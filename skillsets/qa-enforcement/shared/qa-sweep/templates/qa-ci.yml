@@ -1,5 +1,6 @@
-# QA ship gate as the CI layer (GitHub Actions template). v2: this is where
-# MERGES are truly enforced (the repo keeps admin bypass on branch protection).
+# QA ship gate as the CI layer (GitHub Actions template). It reports the
+# pipeline result on each PR head; it is not a required check, because PR
+# merges are never restricted (owner decision 2026-10-06).
 # Copy to .github/workflows/qa-ship-gate.yml in an opted-in repo.
 #
 # Card-3 defect (c) fixed here: checkout the PR HEAD, not GitHub's merge

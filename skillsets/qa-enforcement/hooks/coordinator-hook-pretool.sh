@@ -1,9 +1,9 @@
 #!/bin/sh
 # pretool adapter for coordinator-mode (no argv: Codex runs hook commands as a path).
 # Since 2026-09-24 the QA ship gate runs first: it denies ship commands
-# (protected pushes, gh pr ready, releases, deploys) in repos that opted in
+# (protected pushes, releases, deploys) in repos that opted in
 # with a committed .qa/config.json, and allows everything else. PR merges are
-# always allowed (2026-10-06).
+# always allowed, gh pr ready included (2026-10-06).
 # Since 2026-09-25 the scope gate runs second: from a thread with a scope
 # ledger, a spawn or tell must say which open purpose it serves.
 # Non-ship behaviour is unchanged: it falls through to coordinator-hook.sh,
@@ -147,7 +147,7 @@ scope_dispatch_denied() {
 # opted in (a .qa/config.json at or above the payload cwd), or a command that
 # moves to another directory first, which there was no time to resolve.
 ship_shape() {
-  scope_flat | grep -qE 'git( [^ ;&|]+)* push|gh pr ready|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef'
+  scope_flat | grep -qE 'git( [^ ;&|]+)* push|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef'
 }
 # --- opted-in shape (identical in coordinator-hook-pretool.sh and
 # qa-ship-gate-hook.sh; test-hook-chain.sh checks the two copies match) ---

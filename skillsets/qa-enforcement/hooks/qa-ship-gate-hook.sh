@@ -45,7 +45,7 @@ moves_dir() {
 # posts join the coarse shapes (any git push already covers tags/--tags/--mirror); the shapes match
 # anywhere in the command (`cd x && git push` included), and fly(ctl) is a
 # real alternation (the old `flyctl\?` only matched a literal "?").
-if printf '%s' "$input" | grep -qE '"command"[^:]*:[^"]*"[^"]*(git [^"]*push|gh pr ready|gh (release (create|edit)|workflow run)|vercel[^"]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^"]*deploy[^"]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^"]*/promote/|repos/[^"]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef)' \
+if printf '%s' "$input" | grep -qE '"command"[^:]*:[^"]*"[^"]*(git [^"]*push|gh (release (create|edit)|workflow run)|vercel[^"]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^"]*deploy[^"]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^"]*/promote/|repos/[^"]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef)' \
   && { qa_opted_in || moves_dir; }; then
   echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[qa-ship-gate] gate could not run but a ship command was attempted in a QA opted-in repo; treat as denied and complete the .qa pipeline"}}'
   echo "[qa-ship-gate] gate could not run; ship treated as denied" >&2

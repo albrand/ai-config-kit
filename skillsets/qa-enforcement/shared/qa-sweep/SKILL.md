@@ -1,8 +1,8 @@
 ---
 name: qa-sweep
 description: >
-  Use in repos with a committed .qa/config.json before shipping (git push,
-  gh pr create/merge, bb fleet validate, any deploy), and whenever a workflow
+  Use in repos with a committed .qa/config.json before shipping (a protected
+  push, a release, any production deploy), and whenever a workflow
   walk finds defects. Covers the full pipeline the ship-gate enforces: scope
   the workflow (P0), walk it end to end and inventory EVERY defect without
   fixing anything (P1, including defects that predate your change), cluster
@@ -175,8 +175,9 @@ Treat every defect found in one P1 walk as one batch. Do not run another full
 QA walk after each fix PR. Fixes can land in parallel or sequentially on a
 batch branch such as `qa/batch-<run>`; run the cluster repro and focused tests
 for each fix, then close the corresponding inventory rows. A PR whose base is
-not protected can merge while the batch inventory is open. The protected
-batch merge and production deploy stay gated.
+not protected can merge while the batch inventory is open. PR merges are
+never gated (owner decision 2026-10-06); a protected push and a production
+deploy stay gated.
 
 When the batch inventory has no open rows, run P5 once against the aggregate
 batch head. Use Playwright coverage for as much of the workflow as is
@@ -215,9 +216,9 @@ The converter records the report path plus trace and screenshot attachment
 paths on each covered step, along with the preview target and deployment id.
 Commit the generated re-walk with the closed inventory and the batch head's
 QA artifacts. The gate accepts that QA-only evidence commit immediately on
-top of the walked batch head. Fix PRs into the batch remain free; only a merge
-to a protected branch (the default branch or `.qa/config.json`
-`protected_branches`) requires the closed inventory and one current re-walk.
+top of the walked batch head. PR merges are free; a push to a protected branch
+(the default branch or `.qa/config.json` `protected_branches`) requires the
+closed inventory and one current re-walk.
 
 ## P5 Re-walk: `.qa/rewalk.json` + `.qa/evidence.json`
 
@@ -239,8 +240,7 @@ python3 <skill-dir>/scripts/ship-gate.py record escape --source sentry --ref <id
 
 ## P6 Ship
 
-Only what SHIPS is gated (v2 + v4): **merges** (`gh pr merge` with any flags, `gh pr ready`),
-**pushes whose destination is protected** — the repo's default branch plus
+Only what SHIPS is gated (v2 + v4): **pushes whose destination is protected** — the repo's default branch plus
 `protected_branches` in `.qa/config.json` (resolved from the refspec, `HEAD:dev`,
 `+dev` and bare `HEAD` forms, the current branch's upstream when there is no
 refspec; `--all`/`--mirror` count as protected) — **tag pushes** (`git push origin
@@ -259,11 +259,12 @@ plus a POST to the promote API. Env prefixes and runners (`FOO=1 …`, `env`,
 `npx`, `bunx`, `pnpm dlx`, …) and multi-line commands classify like the bare
 command.
 
-Free on purpose: **feature-branch pushes** (that is how previews and CI get
+Free on purpose: **every PR command** (`gh pr merge` with any flags, admin included,
+`gh pr ready`, and the REST/GraphQL merge calls; owner decision 2026-10-06: production
+fixes keep shipping), **feature-branch pushes** (that is how previews and CI get
 built), **`gh pr create`** (that is how the preview and the PR are produced),
 **`bb fleet validate`** (review should see the work before the merge, not
-after), **merges into non-protected base branches** (for example, fix PRs into
-`qa/batch-<run>`), **preview deploys** (`vercel deploy` without a production target, and
+after), **preview deploys** (`vercel deploy` without a production target, and
 a `vercel api`/curl POST to `/vN/deployments` whose target is a preview — the
 meu-psi pilot heals seat-blocked previews through exactly that call, and
 blocking it would deadlock the pilot again), and **`vercel rollback`**
@@ -272,12 +273,10 @@ whose body cannot be seen at hook time (built by a script or piped on stdin)
 and carries no production marker anywhere in the command is allowed: the hook
 gates on evidence of production. The deadlock v1 had — the re-walk must be at
 the shipped SHA but the preview for that SHA only exists after the push — is
-resolved: walk against the preview of your feature-branch push, then merge.
+resolved: walk against the preview of your feature-branch push, then ship.
 
 Walk freshness is checked at **every commit the command ships** (v4): for a
-MERGE, `rewalk.json` must sit at the PR head SHA being merged (`gh pr view
---json headRefOid`), or one `.qa/`-only commit on top of it; for a protected
-push, the pushed source commit (`feat:main` checks `feat`); for a tag push or
+protected push, the pushed source commit (or one `.qa/`-only commit on top of it) (`feat:main` checks `feat`); for a tag push or
 release, the tagged commit (else `--target`, else the remote default branch);
 for a workflow dispatch, its `--ref` (else the default branch) as origin knows
 it; for other deploys, the local HEAD — each with the same `.qa`-only
@@ -299,12 +298,12 @@ its commit is not in the clone (`git fetch`). A production deployments-API
 create whose body names a `gitSource` is checked at that commit, not HEAD. An
 upload deploy (`vercel --prod`, `netlify deploy --prod`, `fly deploy`) ships the
 working tree, so uncommitted changes outside `.qa/` deny it. GitHub API writes
-that ship (`gh api` or curl to api.github.com: a PR merge, `merges`, release
+that ship (`gh api` or curl to api.github.com: `merges`, release
 create/publish, ref create/update, contents commits, workflow/repository
-dispatch, deployments, and the GraphQL merge/ref/commit mutations) deny
-outright: use the gated CLI form (`gh pr merge`, `gh release create|edit`,
-`git push`, `gh workflow run`) so the shipped commit is checked. Reads and
-deletes stay free.
+dispatch, deployments, and the GraphQL branch-merge/ref/commit mutations) deny
+outright: use the gated CLI form (`gh release create|edit`, `git push`,
+`gh workflow run`) so the shipped commit is checked. PR merge calls
+(`pulls/N/merge`, `mergePullRequest`), reads and deletes stay free.
 
 **Deadline.** A PreToolUse hook the host times out does not block: the command
 runs (Claude Code 2.1.282, probed live; Codex 0.157.0, `pre_tool_use.rs`). So
@@ -333,13 +332,14 @@ sha, which must be present in the clone). Squash-merging an up-to-date branch
 therefore ships without a second walk. If any path outside `.qa/` differs
 (the base moved, or a merge brought in other changes), the combined code was
 never walked. Walk the merged commit, commit the evidence as one `.qa/`-only
-commit on top, and tag or dispatch that. Protected-branch pushes, merges,
+commit on top, and tag or dispatch that. Protected-branch pushes,
 non-default dispatches and other deploys keep the strict rule (walked sha or
 one `.qa`-only commit on top). A commit that one command ships both as a tag
 and to a protected branch is checked strictly.
 
 The local gate (PreToolUse hook, git pre-push template) checks consistency; the
-CI job is where merges are truly enforced — make it a required check. The CI
+CI job reports the result on the commit. Do not make it a required check: PR
+merges are never restricted (owner decision 2026-10-06). The CI
 template handles merge queues (`merge_group` trigger; a queue run checks the
 queued PR's head, taken from the PR number in the
 `gh-readonly-queue/<base>/pr-<N>-<base-sha>` ref, never the group commit). In

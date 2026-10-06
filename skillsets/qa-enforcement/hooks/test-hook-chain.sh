@@ -33,8 +33,9 @@ a=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/coordi
 b=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh" | shasum)
 [ -n "$(sed -n '/^# --- opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh")" ] && [ "$a" = "$b" ] \
   || { echo "FAIL the opted-in shape blocks in coordinator-hook-pretool.sh and qa-ship-gate-hook.sh differ"; fails=$((fails + 1)); }
-# No shape anywhere in the chain may name a PR merge (owner decision 2026-10-06).
-if grep -nE 'pr \(merge|pr merge|pulls/\[0-9\]\+/merge|mergePullRequest' "$HOOKS/coordinator-hook-pretool.sh" "$HOOKS/qa-ship-gate-hook.sh" \
+# No shape anywhere in the chain may name a PR command (owner decision
+# 2026-10-06; gh pr ready too, since GitHub cannot merge a draft).
+if grep -nE 'pr \((merge|ready)|pr (merge|ready)|pulls/\[0-9\]\+/merge|mergePullRequest' "$HOOKS/coordinator-hook-pretool.sh" "$HOOKS/qa-ship-gate-hook.sh" \
   | grep -v '^[^:]*:[0-9]*:#'; then
   echo "FAIL a ship shape still matches PR merges"; fails=$((fails + 1))
 fi
@@ -221,6 +222,7 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 30|0|-|$H/optin|gh pr merge 1 --admin --squash
 13|0|-|$H/optin/sub|gh pr merge 1 --admin
 13|0|-|$H/plain|gh pr merge 1 --admin
+13|0|-|$H/optin|gh pr ready 1
 13|0|-|$H/optin|gh api -X PUT repos/o/r/pulls/5/merge
 13|0|-|$H/optin|gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}
 13|2|Ship denied|$H/optin|vercel --prod
@@ -258,6 +260,7 @@ while IFS='|' read -r want dir cmd; do
   else echo "FAIL fallback, cwd ${dir#$H/}, [$cmd]: rc=$rc, want $want"; fails=$((fails + 1)); fi
 done <<EOF
 0|$H/optin|gh pr merge 1 --admin
+0|$H/optin|gh pr ready 1
 2|$H/optin|git push origin main
 2|$H/optin|vercel --prod
 0|$H/plain|git push origin main
