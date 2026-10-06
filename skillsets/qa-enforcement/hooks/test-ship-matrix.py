@@ -72,8 +72,22 @@ REL = '../"opted repo"/.git'
 # From inside the opted repo: any shell whitespace between words (a line continuation, a run of
 # spaces, a tab) still spells a push, and still is not a PR merge.
 LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push origin main", "git\tpush origin main",
-              "git \\\n  -c core.x=y \\\n  push origin main", "git pu\\\nsh origin main"]
-LOCAL_ALLOW = ["gh pr merge 5 --admin", "gh pr merge 5 \\\n  --admin --squash", "git \\\n  status"]
+              "git \\\n  -c core.x=y \\\n  push origin main", "git pu\\\nsh origin main",
+              # a merge that also runs something else is judged by what else it runs
+              "gh pr merge 5; git push origin main", "gh pr merge 5 && git push origin main",
+              "gh pr merge 5\ngit push origin main", 'gh pr merge 5 --subject "$(git push origin main)"',
+              "gh pr merge 5 --subject `git push origin main`",
+              # a push in a substitution runs, quoted or not
+              'echo "$(git push origin main)"', "echo `git push origin main`", 'echo "`git push origin main`"',
+              "echo $(git push origin main)", 'echo "x $(echo "$(git push origin main)")"',
+              'git push origin main && gh pr merge 5']
+# A PR merge whose quoted subject or body names a push or a deploy is still only a merge.
+MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
+              "gh pr merge 5 --body 'run vercel --prod; git push --tags'",
+              'gh pr merge 5 \\\n  --subject "git \\\n  -c x=y \\\n  push" --admin',
+              'cd "/x y" && gh pr merge 5 -t "git push"', 'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1',
+              """gh pr merge 5 --subject 'it'"'"'s git push'""", 'gh pr merge 5 --subject "a \\" git push"']
+LOCAL_ALLOW = ["gh pr merge 5 --admin", "gh pr merge 5 \\\n  --admin --squash", "git \\\n  status"] + MERGE_TEXT
 
 
 def run(mode, cmd, cwd):
@@ -99,6 +113,33 @@ for cwd_name, cwd in (("opted repo", O), ("plain checkout", P), ("non-repo dir",
             rows.append((cmd.replace(O, "<opted>").replace("\n", "\\n").replace("\t", "\\t"), cwd_name, mode,
                          "deny" if want == 2 else "allow",
                          {0: "allow", 2: "deny"}.get(got, f"rc {got}"), ok))
+
+# The gate's pure_pr_merge and the shell fallback's pure_merge are one scanner written twice: they
+# must agree on every form above and on these edge cases.
+import importlib.util
+import re
+
+spec = importlib.util.spec_from_file_location("ship_gate", GATE)
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+func = re.search(r"^pure_merge\(\) \{\n.*?^\}\n", open(ADAPTER).read(), re.S | re.M).group(0)
+EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x && cd y && gh pr merge 5",
+        "gh pr merge 5 >/dev/null 2>&1", "gh pr merge 5 & git push", 'gh pr merge 5 --subject "unterminated',
+        "gh pr merge 5 | tee x", "sh -c 'gh pr merge 5'", "(gh pr merge 5)", 'gh pr merge 5 --subject "ü git push"',
+        "gh pr merge 5 # note", "X=$(git push) gh pr merge 5", "LD_PRELOAD=x gh pr merge 5", "gh pr merge 5 \\",
+        "gh pr merge 5 --subject 'a \\' git push'", "gh pr merge 5 -t \"x\" -b 'y' --auto"]
+agree = 0
+for cmd in LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE:
+    for ascii_only in (True, False):
+        payload = json.dumps({"tool_input": {"command": cmd}, "cwd": N}, ensure_ascii=ascii_only)
+        shell = sh(f"input=$(cat)\n{func}pure_merge", N, payload).returncode == 0
+        py = gate.pure_pr_merge(cmd)
+        ok = shell == py
+        agree += ok
+        bad += not ok
+        if not ok or not md:
+            print(f"{'ok ' if ok else 'BAD'} scanners  gate {py!s:<5} shell {shell!s:<5} {cmd!r}")
+print(f"scanners agree on {agree} of {2 * len(LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE)} payloads")
 if md:
     print("| command | cwd | path | expected | observed |\n|---|---|---|---|---|")
     for c, w, m, e, o, ok in rows:

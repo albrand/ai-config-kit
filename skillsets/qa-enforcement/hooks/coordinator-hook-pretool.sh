@@ -174,11 +174,68 @@ qa_opted_in() {
 moves_dir() {
   ship_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |env( [^ ;&|]+)* (-C |--chdir)|--git-dir|GIT_DIR='
 }
+# A plain PR merge: the payload's command is only `gh pr merge ...`, after
+# optional `cd DIR &&` steps and NAME=value prefixes, with no other separator
+# and no substitution, so it runs nothing else. Quoted text in it is an
+# argument: a subject or body naming a push or a deploy is not a ship. The
+# same scanner as ship-gate.py's pure_pr_merge; test-ship-matrix.py checks
+# that the two agree.
+pure_merge() {
+  printf '%s' "$input" | tr '\n' ' ' | LC_ALL=C awk -v sq="'" '
+  { s = s $0 }
+  END {
+    if (!match(s, /"command"[ \t]*:[ \t]*"/)) exit 1
+    n = length(s); cmd = ""
+    for (i = RSTART + RLENGTH; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (c == "\"") break
+      if (c == "\\") {
+        e = substr(s, ++i, 1)
+        if (e == "n") c = "\n"; else if (e == "t") c = "\t"; else if (e == "r") c = "\r"
+        else if (e == "\"" || e == "\\" || e == "/") c = e
+        else if (e == "u" && tolower(substr(s, i + 1, 4)) ~ /^00[89a-f][0-9a-f]|^0[1-9a-f][0-9a-f][0-9a-f]|^[1-9a-f][0-9a-f][0-9a-f][0-9a-f]/) { c = "?"; i += 4 }
+        else exit 1
+      }
+      cmd = cmd c
+    }
+    if (i > n) exit 1
+    n = length(cmd); q = ""; cur = ""; has = 0; nw = 0
+    for (i = 1; i <= n; i++) {
+      c = substr(cmd, i, 1); d = substr(cmd, i + 1, 1)
+      if (q == sq) { if (c == sq) q = ""; else cur = cur c; continue }
+      if (q == "\"") {
+        if (c == "\"") q = ""
+        else if (c == "\\" && d != "" && index("$`\"\\\n", d)) { if (d != "\n") cur = cur d; i++ }
+        else if (c == "`" || (c == "$" && d == "(")) exit 1
+        else cur = cur c
+        continue
+      }
+      if (c == "\\" && d != "") { if (d != "\n") { cur = cur d; has = 1 }; i++; continue }
+      if (c == " " || c == "\t") { if (has) { w[++nw] = cur; cur = ""; has = 0 }; continue }
+      if (c == "&" && d == "&") {
+        if (has) { w[++nw] = cur; cur = ""; has = 0 }
+        if (!(nw == 2 && (w[1] == "cd" || w[1] == "pushd"))) exit 1
+        nw = 0; i++; continue
+      }
+      if (c == "&" && i > 1 && index("<>", substr(cmd, i - 1, 1))) { cur = cur c; continue }
+      if (index(";&|()`\n\r", c)) exit 1
+      if (c == "\"" || c == sq) { q = c; has = 1; continue }
+      cur = cur c; has = 1
+    }
+    if (q != "") exit 1
+    if (has) w[++nw] = cur
+    for (k = 1; k <= nw && w[k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/; k++) ;
+    exit !(w[k] == "gh" && w[k + 1] == "pr" && w[k + 2] == "merge")
+  }'
+}
 # --- end opted-in shape ---
 # The scope shape decision is made now, while there is time: after a stage
 # is killed at the deadline the shell only reads the answer (review r2b: the
 # post-kill path started about 10 processes, and each can cost 0.6 s at high
 # load). Only a thread with a ledger starts anything here (one jq).
+# A plain PR merge is never denied at the deadline; that is decided now too.
+merge_only=1
+pure_merge && merge_only=0
 scope_shape_deny=1
 scope_dispatch_denied && scope_shape_deny=0
 LATE="the hook chain could not finish within $GATE_DEADLINE s of starting (the host's hook timeout is 15 s, and a timed-out hook lets the command run)"
@@ -186,7 +243,7 @@ LATE="the hook chain could not finish within $GATE_DEADLINE s of starting (the h
 printf '%s' "$input" | run "$GATE_DEADLINE" "$H/qa-ship-gate-hook.sh"
 rc=$?
 [ "$rc" = 2 ] && exit 2
-if [ "$rc" = 124 ] && ship_shape && { qa_opted_in || moves_dir; }; then
+if [ "$rc" = 124 ] && [ "$merge_only" = 1 ] && ship_shape && { qa_opted_in || moves_dir; }; then
   deny "[qa-ship-gate] Ship denied: $LATE; this command is ship-shaped in a QA opted-in repo, so it is denied. Retry it."
 fi
 if [ -x "$H/scope-gate-hook.sh" ]; then

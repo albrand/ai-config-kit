@@ -234,6 +234,11 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|2|Ship denied|$H/optin|git @NL@push origin main
 13|2|Ship denied|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
 13|0|-|$H/optin|gh pr merge 1 @NL@  --admin
+13|0|-|$H/optin|gh pr merge 5 --subject \"git @NL@push\"
+13|0|-|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
+13|0|-|$H/plain|cd $H/optin && gh pr merge 5 -t \"git push origin main\"
+13|2|Ship denied|$H/optin|gh pr merge 5 && git push origin main
+13|2|Ship denied|$H/optin|gh pr merge 5 --subject \"\$(git push origin main)\"
 13|0|-|$H/plain|vercel --prod
 13|0|-|$H/plain|git push origin main
 13|2|Ship denied|$H/plain|cd $H/optin && git push origin main
@@ -278,6 +283,11 @@ done <<EOF
 2|$H/optin|git @NL@push origin main
 2|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
 0|$H/optin|gh pr merge 1 @NL@  --admin
+0|$H/optin|gh pr merge 5 --subject "git @NL@push"
+0|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
+0|$H/plain|cd $H/optin && gh pr merge 5 -t "git push origin main"
+2|$H/optin|gh pr merge 5 && git push origin main
+2|$H/optin|gh pr merge 5 --subject "\$(git push origin main)"
 2|$H/optin|vercel --prod
 0|$H/plain|git push origin main
 2|$H/plain|cd $H/optin && git push origin main

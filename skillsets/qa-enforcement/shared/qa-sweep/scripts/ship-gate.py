@@ -1183,6 +1183,66 @@ def join_continuations(command):
     return LINE_CONTINUATION.sub(lambda m: m.group(1), command)
 
 
+def pure_pr_merge(command):
+    """True when the command only merges a PR: `gh pr merge ...`, optionally after `cd DIR &&` steps
+    and NAME=value prefixes, with no other separator and no substitution, so it runs nothing else.
+    Quoted text in it is an argument: a subject or body that mentions a push or a deploy is not a
+    ship (Hermes 2026-10-06, kit-never-block-pr-merge). The shell fallback's pure_merge is the same
+    scanner in awk; test-ship-matrix.py checks that the two agree."""
+    segs, words, cur, q, i, n = [], [], None, None, 0, len(command)
+    while i < n:
+        c, d = command[i], command[i + 1:i + 2]
+        if q == "'":
+            if c == "'":
+                q = None
+            else:
+                cur += c
+        elif q == '"':
+            if c == '"':
+                q = None
+            elif c == "\\" and d and d in '$`"\\\n':
+                cur += "" if d == "\n" else d
+                i += 1
+            elif c == "`" or (c == "$" and d == "("):
+                return False
+            else:
+                cur += c
+        elif c == "\\" and d:
+            if d != "\n":
+                cur = (cur or "") + d
+            i += 1
+        elif c in " \t":
+            if cur is not None:
+                words.append(cur)
+                cur = None
+        elif c == "&" and d == "&":
+            if cur is not None:
+                words.append(cur)
+                cur = None
+            segs.append(words)
+            words = []
+            i += 1
+        elif c == "&" and i and command[i - 1] in "<>":
+            cur = (cur or "") + c  # a descriptor copy such as 2>&1
+        elif c in ";&|()`\n\r":
+            return False
+        elif c in "'\"":
+            q, cur = c, cur or ""
+        else:
+            cur = (cur or "") + c
+        i += 1
+    if q:
+        return False
+    if cur is not None:
+        words.append(cur)
+    if any(not (len(s) == 2 and s[0] in ("cd", "pushd")) for s in segs):
+        return False
+    k = 0
+    while k < len(words) and re.match(r"[A-Za-z_]\w*=", words[k]):
+        k += 1
+    return words[k:k + 3] == ["gh", "pr", "merge"]
+
+
 def command_segments(command, _depth=0):
     """Top-level shell segments as token lists, split on ; | && ( ) and
     newlines, tokenized with the same POSIX word parser the target resolver
@@ -1218,7 +1278,42 @@ def command_segments(command, _depth=0):
         script = _inline_script(s)
         if script and _depth < 3:
             out.extend(command_segments(script, _depth + 1))
+    if _depth < 3:
+        for body in _substitutions(command):
+            out.extend(command_segments(body, _depth + 1))
     return out
+
+
+def _substitutions(command):
+    """Bodies of the command substitutions the shell would run that the split above keeps inside a
+    word: `$(...)` and backticks within double quotes, and backticks anywhere outside single quotes.
+    An unquoted `$(` is already split on its parenthesis."""
+    bodies, q, i, n = [], None, 0, len(command)
+    while i < n:
+        c = command[i]
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i += 1
+        elif c == "'" and q is None:
+            q = "'"
+        elif c == '"':
+            q = None if q == '"' else '"'
+        elif c == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            bodies.append(command[i + 1:j])
+            i = j
+        elif c == "$" and command[i + 1:i + 2] == "(" and q == '"':
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            bodies.append(command[i + 2:j - 1])
+            i = j - 1
+        i += 1
+    return bodies
 
 
 def unwrap_segment(seg):
@@ -2868,6 +2963,26 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(bool(coarse_ship("git -c core.x=y push origin main")), "coarse_ship: options between git and push")
     expect(not coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 1 \\\n --admin"}})),
            "coarse_ship: a continued PR merge is not ship-shaped")
+    # A PR merge whose quoted subject or body names a push or a deploy is still only a merge, on every
+    # path (Hermes 2026-10-06, kit-never-block-pr-merge); anything that can run more is not.
+    merge_texts = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
+                   "gh pr merge 5 --body 'run vercel --prod; git push --tags'", 'cd "/x y" && gh pr merge 5 -t "git push"',
+                   'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1']
+    not_pure = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push', 'gh pr merge 5 | sh',
+                'gh pr merge 5 --subject "$(git push origin main)"', 'gh pr merge 5 --subject "`git push`"',
+                'gh pr merge 5 \ngit push', 'git push && gh pr merge 5',
+                'gh pr merge 5 --subject "unterminated', 'sh -c "gh pr merge 5"', 'gh pr merge 5 & git push']
+    for c in merge_texts:
+        expect(pure_pr_merge(c), "pure_pr_merge: %r is a plain merge" % c)
+        expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
+        p = hookrun(r3, c)
+        expect(p.returncode == 0, "gate: %r ALLOWED in an opted-in repo [%s]" % (c, " ".join(p.stderr.split())[:100]))
+    for c in not_pure:
+        expect(not pure_pr_merge(c), "pure_pr_merge: %r is not a plain merge" % c)
+    expect(bool(coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 5; git push origin main"}}))),
+           "coarse_ship: a merge followed by a push is ship-shaped")
+    expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
+           "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
     # ---------------- v3: per-run namespacing (change request) ----------------
     # Contract: evidence ships as .qa-only artifacts commits over the walked
@@ -3096,6 +3211,12 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin tag vbad", "`git push origin tag <name>`")
     deny4(r9, "git push --tags", "git push --tags (hook checks HEAD; pre-push checks each tag)")
     deny4(r9, "git push --follow-tags origin feat", "git push --follow-tags")
+    # A push inside a command substitution runs, quoted or not, so the gate sees it.
+    for c in ('echo "$(git push origin vbad)"', "echo `git push origin vbad`", 'echo "`git push origin vbad`"',
+              'gh pr merge 5 --subject "$(git push origin vbad)"', 'echo "x $(echo "$(git push origin vbad)")"'):
+        deny4(r9, c, "a push in a substitution: %s" % c)
+    allow4(r9, "echo '$(git push origin vbad)'", "a substitution inside single quotes is text")
+    allow4(r9, 'gh pr merge 5 --subject "git push origin vbad"', "a merge whose subject names a push")
     allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
     deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
     # releases and dispatches check the commit they publish
@@ -3872,7 +3993,8 @@ def coarse_ship(text):
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose. Reads the
     payload's command when the text is a payload, with line continuations
-    joined, and allows options between git and push."""
+    joined, and allows options between git and push. A plain PR merge is
+    never ship-shaped, whatever its quoted subject or body says."""
     try:
         d = json.loads(text)
         inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
@@ -3881,6 +4003,8 @@ def coarse_ship(text):
             text = cmd
     except Exception:
         pass
+    if pure_pr_merge(text):
+        return None
     text = join_continuations(text)
     return re.search(r"\bgit\b[^;&|\n]*?\spush\b|--mirror|--tags|refs/tags/|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
