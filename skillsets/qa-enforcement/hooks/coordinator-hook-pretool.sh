@@ -1,8 +1,9 @@
 #!/bin/sh
 # pretool adapter for coordinator-mode (no argv: Codex runs hook commands as a path).
 # Since 2026-09-24 the QA ship gate runs first: it denies ship commands
-# (git push, gh pr create/merge, bb fleet validate, deploys) in repos that
-# opted in with a committed .qa/config.json, and allows everything else.
+# (protected pushes, gh pr ready, releases, deploys) in repos that opted in
+# with a committed .qa/config.json, and allows everything else. PR merges are
+# always allowed (2026-10-06).
 # Since 2026-09-25 the scope gate runs second: from a thread with a scope
 # ledger, a spawn or tell must say which open purpose it serves.
 # Non-ship behaviour is unchanged: it falls through to coordinator-hook.sh,
@@ -139,11 +140,31 @@ scope_dispatch_denied() {
 }
 # --- end scope shape ---
 
-# Ship shape (the ship gate's coarse classes). At the deadline a ship-shaped
-# command is denied whether or not its repo opted in: there was no time to read.
+# Ship shape (the ship gate's coarse classes). PR merges are not in it: no
+# gate ever denies a PR merge (owner decision 2026-10-06: prod fixes keep
+# shipping, admin merges stay available). At the deadline a ship-shaped
+# command is denied only where the gate could have denied it: a repo that
+# opted in (a .qa/config.json at or above the payload cwd), or a command that
+# moves to another directory first, which there was no time to resolve.
 ship_shape() {
-  scope_flat | grep -qE 'git( [^ ;&|]+)* push|gh pr (merge|ready)|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(pulls/[0-9]+/merge|merges|releases|git/refs|dispatches|contents/|deployments)|mergePullRequest|createCommitOnBranch|updateRef'
+  scope_flat | grep -qE 'git( [^ ;&|]+)* push|gh pr ready|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|/v[0-9]+/deployments|/v[0-9]+/projects/[^ ]*/promote/|repos/[^ ]*/(merges|releases|git/refs|dispatches|contents/|deployments)|createCommitOnBranch|updateRef'
 }
+# --- opted-in shape (identical in coordinator-hook-pretool.sh and
+# qa-ship-gate-hook.sh; test-hook-chain.sh checks the two copies match) ---
+# Shell builtins only, so it costs nothing at the deadline.
+qa_opted_in() {
+  _d=${input#*\"cwd\"}
+  if [ "$_d" = "$input" ]; then _d=$PWD; else _d=${_d#*\"}; _d=${_d%%\"*}; fi
+  while [ -n "$_d" ] && [ "$_d" != / ]; do
+    [ -f "$_d/.qa/config.json" ] && return 0
+    _d=${_d%/*}
+  done
+  return 1
+}
+moves_dir() {
+  scope_flat | grep -qE '(^|[^A-Za-z0-9_./-])(cd|pushd) |git( [^ ;&|]+)* -C |--git-dir|--work-tree'
+}
+# --- end opted-in shape ---
 # The scope shape decision is made now, while there is time: after a stage
 # is killed at the deadline the shell only reads the answer (review r2b: the
 # post-kill path started about 10 processes, and each can cost 0.6 s at high
@@ -155,8 +176,8 @@ LATE="the hook chain could not finish within $GATE_DEADLINE s of starting (the h
 printf '%s' "$input" | run "$GATE_DEADLINE" "$H/qa-ship-gate-hook.sh"
 rc=$?
 [ "$rc" = 2 ] && exit 2
-if [ "$rc" = 124 ] && ship_shape; then
-  deny "[qa-ship-gate] Ship denied: $LATE; this command is ship-shaped, so it is denied. Retry it."
+if [ "$rc" = 124 ] && ship_shape && { qa_opted_in || moves_dir; }; then
+  deny "[qa-ship-gate] Ship denied: $LATE; this command is ship-shaped in a QA opted-in repo, so it is denied. Retry it."
 fi
 if [ -x "$H/scope-gate-hook.sh" ]; then
   printf '%s' "$input" | run "$GATE_DEADLINE" "$H/scope-gate-hook.sh"

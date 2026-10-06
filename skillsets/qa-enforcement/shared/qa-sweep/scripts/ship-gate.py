@@ -2,9 +2,9 @@
 """QA ship gate: fail-closed push/PR/deploy gate for repos that opted in.
 
 A repo opts in by committing `.qa/config.json`. From that moment the gate is
-ALWAYS ON for that repo for ship commands (merges, pushes to protected
+ALWAYS ON for that repo for ship commands (gh pr ready, pushes to protected
 branches, production deploys, releases, tag pushes, workflow dispatch -- see
-segment_ship_kind). It denies unless the whole
+segment_ship_kind). PR merges are never gated (2026-10-06). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
@@ -49,6 +49,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +85,9 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # pushes, gh pr create and bb fleet validate are free: that is how previews,
 # CI and review get produced. No dead patterns: every class below is exercised
 # by selftest against a canonical sample.
+# 2026-10-06 (owner decision): PR merges (gh pr merge, the REST and GraphQL
+# merge calls) are never gated, so production fixes and admin merges are never
+# blocked. gh pr ready, protected pushes, releases and deploys stay gated.
 # v4 (card 6): "what ships" also covers releases (gh release create), any
 # workflow dispatch (gh workflow run -- justification at the classifier), tag
 # pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
@@ -141,16 +145,16 @@ DEPLOYMENT_ID_BODY_RE = re.compile(r"""["']?deploymentId["']?\s*[:=]\s*["']?([A-
 DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
 # GitHub REST/GraphQL writes that ship without a CLI form the gate can check
-# (gh api / curl api.github.com): merging a PR, merging branches, creating or
-# publishing a release, creating or moving a ref, committing file contents,
-# dispatching a workflow, creating a deployment. The commit they ship is not
-# decidable locally, so they DENY outright and name the gated CLI form.
+# (gh api / curl api.github.com): merging branches, creating or publishing a
+# release, creating or moving a ref, committing file contents, dispatching a
+# workflow, creating a deployment. The commit they ship is not decidable
+# locally, so they DENY outright and name the gated CLI form. Merging a PR
+# (pulls/N/merge, mergePullRequest, enablePullRequestAutoMerge) is never gated.
 GITHUB_WRITE_RE = re.compile(
-    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(pulls/\d+/merge|merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
+    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
     r"actions/workflows/[^/\s]+/dispatches|dispatches|contents/[^\s?#]*|deployments)(?:[?#]|$)")
 GITHUB_GRAPHQL_WRITE_RE = re.compile(
-    r"\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch|createRef|updateRef|updateRefs|"
-    r"createCommitOnBranch)\b")
+    r"\b(mergeBranch|createRef|updateRef|updateRefs|createCommitOnBranch)\b")
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
@@ -1699,7 +1703,7 @@ def github_api_write(seg, command):
     if not what:
         return None
     return ("GitHub API write (%s) ships code the gate cannot tie to a commit: use the gated CLI form "
-            "(gh pr merge, gh release create|edit, git push, gh workflow run) so the shipped commit is "
+            "(gh release create|edit, git push, gh workflow run) so the shipped commit is "
             "checked" % what)
 
 
@@ -1769,7 +1773,12 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
                 equiv.add(c)
         return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
     if head == "gh" and len(seg) > 2:
-        if seg[1] == "pr" and seg[2] in ("merge", "ready"):
+        if seg[1] == "pr" and seg[2] == "merge":
+            # PR merges are never gated (owner decision 2026-10-06: production
+            # fixes must keep shipping; admin merges stay available). Protected
+            # pushes, gh pr ready, releases and deploys stay gated.
+            return None, [], set()
+        if seg[1] == "pr" and seg[2] == "ready":
             base = pr_base_branch(root, seg)
             if base is not None and normalize_ref(base) not in protected_refs(root, cfg):
                 return None, [], set()
@@ -2738,17 +2747,20 @@ def selftest(v4_gate=None, v4_templates=None):
     open_head = sh("git rev-parse HEAD", cwd=r3).stdout.strip()
     open(base_file, "w").write("qa/batch-card16\n")
     open(head_file, "w").write(open_head + "\n")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 0,
+           "card16: ready into non-protected batch base with open inventory ALLOWED")
+    open(base_file, "w").write("main\n")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: ready into default protected base with open inventory DENIED")
+    open(base_file, "w").write("dev\n")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: ready into configured protected dev base with open inventory DENIED")
     p = hookrun(r3, "gh pr merge 22 --admin")
     expect(p.returncode == 0,
-           "card16: merge into non-protected batch base with open inventory ALLOWED")
-    open(base_file, "w").write("main\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: merge into default protected base with open inventory DENIED")
-    open(base_file, "w").write("dev\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: merge into configured protected dev base with open inventory DENIED")
+           "2026-10-06: gh pr merge --admin into a protected base with open inventory ALLOWED (merges are never gated)")
 
     # Close the batch inventory and automate the one whole-workflow rewalk.
     lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
@@ -2788,25 +2800,27 @@ def selftest(v4_gate=None, v4_templates=None):
            "card16: Playwright first-attempt pass records report and attachments")
     pass_head = commit_qa(r3)
     open(head_file, "w").write(pass_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "gh pr ready 22")
     expect(p.returncode == 0,
-           "card16: protected default-base merge with closed inventory and fresh rewalk ALLOWED [%s]"
+           "card16: protected default-base ready with closed inventory and fresh rewalk ALLOWED [%s]"
            % p.stderr.strip()[:140])
 
     failing = generate_rewalk("failed", True, pass_head)
     fail_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
     fail_head = commit_qa(r3)
     open(head_file, "w").write(fail_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "gh pr ready 22")
     expect(failing.returncode == 0 and fail_doc["steps"][0]["verdict"] == "FAIL"
            and p.returncode == 2 and "verdict 'FAIL'" in p.stderr,
-           "card16: failing annotated Playwright test emits FAIL and protected merge is DENIED")
+           "card16: failing annotated Playwright test emits FAIL and protected ready is DENIED")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0, "2026-10-06: gh pr merge with a FAIL rewalk ALLOWED (merges are never gated)")
 
     unmapped = generate_rewalk("passed", False, fail_head)
     no_auto = json.load(open(os.path.join(qa3, "rewalk.json")))
     no_auto_head = commit_qa(r3)
     open(head_file, "w").write(no_auto_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "gh pr ready 22")
     expect(unmapped.returncode == 0 and no_auto["steps"][0]["verdict"] == "NOT_AUTOMATED"
            and p.returncode == 2 and "matching manual workflow_step evidence is required" in p.stderr,
            "card16: unmapped step emits NOT_AUTOMATED and denies without manual evidence")
@@ -2821,7 +2835,7 @@ def selftest(v4_gate=None, v4_templates=None):
     json.dump(manual_rewalk, open(os.path.join(qa3, "rewalk.json"), "w"))
     manual_head = commit_qa(r3)
     open(head_file, "w").write(manual_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "gh pr ready 22")
     expect(p.returncode == 0,
            "card16: NOT_AUTOMATED clears with matching verified manual workflow evidence [%s]"
            % p.stderr.strip()[:140])
@@ -2837,7 +2851,7 @@ def selftest(v4_gate=None, v4_templates=None):
     segs = lambda c: command_segments(c)
     ok_classes = (
         segment_ship_kind(segs("git push origin main")[0], r3, cfgs_of(r3)) == "push"
-        and segment_ship_kind(segs("gh pr merge 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("gh pr merge 22 --admin")[0], r3, cfgs_of(r3)) is None
         and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) == "merge"
         and segment_ship_kind(segs("vercel deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("netlify deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
@@ -3118,7 +3132,8 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin feat:main", "feat:main ships the unwalked source")
     deny4(r9, "git push origin +feat:dev", "forced refspec +feat:dev")
     deny4(r9, "git status\ngit push origin HEAD:dev", "ship on the second line of a multi-line command")
-    deny4(r9, "GH_TOKEN=x gh pr merge 5", "env-prefixed gh pr merge")
+    deny4(r9, "GH_TOKEN=x gh pr ready 5", "env-prefixed gh pr ready")
+    allow4(r9, "GH_TOKEN=x gh pr merge 5 --admin", "env-prefixed gh pr merge (merges are never gated)")
     sh("git checkout -q -b dev", cwd=r9)
     deny4(r9, "git push origin HEAD", "git push origin HEAD while on a protected branch")
     deny4(r9, "git push origin +dev", "forced +dev")
@@ -3259,7 +3274,7 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "gh release edit vnope --draft=false", "gh release edit of a tag not in the clone",
           "not in this clone")
     gw = "GitHub API write"
-    deny5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge", gw)
+    allow5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge (merges are never gated)")
     deny5(r9, "gh api repos/{owner}/{repo}/releases -f tag_name=v9", "gh api release create (fields imply POST)", gw)
     deny5(r9, "gh api -X PATCH repos/o/r/releases/123 -F draft=false", "gh api release publish", gw)
     deny5(r9, "gh api repos/o/r/git/refs -f ref=refs/tags/v9 -f sha=abc", "gh api ref create", gw)
@@ -3267,10 +3282,10 @@ def selftest(v4_gate=None, v4_templates=None):
           "gh api workflow dispatch", gw)
     deny5(r9, "gh api repos/o/r/merges -f base=main -f head=feat", "gh api branch merge", gw)
     deny5(r9, "gh api -X PUT repos/o/r/contents/f.txt -f message=m -f content=eA==", "gh api contents commit", gw)
-    deny5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
-              "{ clientMutationId } }'", "gh api graphql mergePullRequest", gw)
-    deny5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
-          "curl PR merge", gw)
+    allow5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
+               "{ clientMutationId } }'", "gh api graphql mergePullRequest (merges are never gated)")
+    allow5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
+           "curl PR merge (merges are never gated)")
     deny5(r9, "curl -d '{\"tag_name\":\"v9\"}' https://api.github.com/repos/o/r/releases", "curl release create", gw)
     allow5(r9, "vercel --prod", "control: upload deploy of a clean walked HEAD")
     with open(os.path.join(r9, "f.txt"), "a") as fh:
@@ -3709,6 +3724,17 @@ def selftest(v4_gate=None, v4_templates=None):
                "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
     ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
     saved_path = os.environ["PATH"]
+    # The reduced PATH keeps out a real gh, not git: on macOS /usr/bin/git is
+    # the Xcode shim, which exits 69 until the Xcode license is accepted, and
+    # every owner_run case then failed for a reason unrelated to the gate. A
+    # directory holding only a link to the real git keeps gh out (Homebrew's
+    # bin has both).
+    git_only = os.path.join(tmp, "git-only-bin")
+    os.makedirs(git_only, exist_ok=True)
+    real_git = shutil.which("git", path=saved_path)
+    if real_git and not os.path.exists(os.path.join(git_only, "git")):
+        os.symlink(real_git, os.path.join(git_only, "git"))
+    base_path = os.pathsep.join([git_only, "/usr/bin", "/bin"])
 
     def gh_calls():
         p = os.path.join(ghdir, "calls")
@@ -3724,7 +3750,7 @@ def selftest(v4_gate=None, v4_templates=None):
         for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
             with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
                 f.write(d if isinstance(d, str) else json.dumps(d))
-        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + "/usr/bin:/bin"
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + base_path
         if sleep:
             os.environ["OR_GH_SLEEP"] = sleep
         _LOOKUP_DEADLINE = None
@@ -3790,7 +3816,7 @@ def selftest(v4_gate=None, v4_templates=None):
            and verify(ident_or) == [], "owner_run: a later check looks the run up again")
     verify(ident_or)  # leaves the stub's run doc in place
     os.remove(os.path.join(ghdir, "calls"))
-    os.environ["PATH"] = orbin + os.pathsep + "/usr/bin:/bin"
+    os.environ["PATH"] = orbin + os.pathsep + base_path
     try:
         f_two = []
         check_e2e("q", reader({"q/evidence.json": json.dumps({"authentication": {"identities": [ident_or, dict(ident_or)]}})}),
@@ -3836,11 +3862,11 @@ def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
     closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
+    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+ready|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
-                     r"repos/\S+/(pulls/\d+/merge|merges|releases|git/refs|dispatches|contents/|deployments)|"
-                     r"mergePullRequest|createCommitOnBranch|updateRef", text)
+                     r"repos/\S+/(merges|releases|git/refs|dispatches|contents/|deployments)|"
+                     r"createCommitOnBranch|updateRef", text)
 
 
 if __name__ == "__main__":

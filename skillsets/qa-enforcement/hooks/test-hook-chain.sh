@@ -29,6 +29,15 @@ a=$(sed -n '/^# --- scope shape/,/^# --- end scope shape/p' "$HOOKS/coordinator-
 b=$(sed -n '/^# --- scope shape/,/^# --- end scope shape/p' "$HOOKS/scope-gate-hook.sh" | shasum)
 [ -n "$(sed -n '/^# --- scope shape/p' "$HOOKS/scope-gate-hook.sh")" ] && [ "$a" = "$b" ] \
   || { echo "FAIL the scope shape blocks in coordinator-hook-pretool.sh and scope-gate-hook.sh differ"; fails=$((fails + 1)); }
+a=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/coordinator-hook-pretool.sh" | shasum)
+b=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh" | shasum)
+[ -n "$(sed -n '/^# --- opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh")" ] && [ "$a" = "$b" ] \
+  || { echo "FAIL the opted-in shape blocks in coordinator-hook-pretool.sh and qa-ship-gate-hook.sh differ"; fails=$((fails + 1)); }
+# No shape anywhere in the chain may name a PR merge (owner decision 2026-10-06).
+if grep -nE 'pr \(merge|pr merge|pulls/\[0-9\]\+/merge|mergePullRequest' "$HOOKS/coordinator-hook-pretool.sh" "$HOOKS/qa-ship-gate-hook.sh" \
+  | grep -v '^[^:]*:[0-9]*:#'; then
+  echo "FAIL a ship shape still matches PR merges"; fails=$((fails + 1))
+fi
 H=$(mktemp -d "${TMPDIR:-/tmp}/hook-chain-test.XXXXXX")
 trap 'rm -rf "$H"' EXIT
 mkdir -p "$H/.agent-hooks" "$H/.agents/skills" "$H/.local/state/agent-quality/scope" "$H/slowpy"
@@ -84,7 +93,7 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hoo
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
 # No jq (or no answer from it): the grep fallback denies every case the jq
 # shape denies (it is broader: any dispatch word, fails closed).
-bash_payload() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:"/tmp"}'; }
+bash_payload() { jq -nc --arg c "$1" --arg d "${2:-/tmp}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
 mkdir -p "$H/nojq"
 printf '#!/bin/sh\nexit 1\n' > "$H/nojq/jq"
 chmod +x "$H/nojq/jq"
@@ -146,7 +155,7 @@ cases='0|2|must say|bb thread tell thr_x also refactor it
 13|2|could not finish|bb thread tell thr_x serves: P9 unknown
 13|0|-|bb thread tell thr_x serves: P1 next step
 13|0|-|ls -la
-13|2|Ship denied|git push origin main
+13|0|-|git push origin main
 30|2|could not finish|bb thread tell thr_x also refactor it
 30|0|-|ls -la
 13|2|could not finish|bb thread tell thr_x also refactor it # serves: P1
@@ -200,5 +209,60 @@ for mode in plain slowpy; do
 $cases
 EOF
 done
+# Ship decisions by repo (2026-10-06): a PR merge is never denied, whatever
+# the repo, the gate's speed or the form; at the deadline a ship-shaped command
+# is denied only in a QA opted-in repo (a .qa/config.json at or above the
+# payload cwd) or when it first moves to another directory.
+# case: <ship stage seconds>|<want rc>|<reason or ->|<cwd>|<command>
+mkdir -p "$H/optin/.qa" "$H/optin/sub" "$H/plain"
+echo '{}' > "$H/optin/.qa/config.json"
+ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
+13|0|-|$H/optin|gh pr merge 1 --admin
+30|0|-|$H/optin|gh pr merge 1 --admin --squash
+13|0|-|$H/optin/sub|gh pr merge 1 --admin
+13|0|-|$H/plain|gh pr merge 1 --admin
+13|0|-|$H/optin|gh api -X PUT repos/o/r/pulls/5/merge
+13|0|-|$H/optin|gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}
+13|2|Ship denied|$H/optin|vercel --prod
+13|2|Ship denied|$H/optin/sub|git push origin main
+13|0|-|$H/plain|vercel --prod
+13|0|-|$H/plain|git push origin main
+13|2|Ship denied|$H/plain|cd $H/optin && git push origin main"
+for mode in plain slowpy; do
+  path="$PATH"
+  [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"
+  while IFS='|' read -r slow want why dir cmd; do
+    printf '#!/bin/sh\ncat >/dev/null\nsleep %s\nexit 0\n' "$slow" > "$H/.agent-hooks/qa-ship-gate-hook.sh"
+    chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
+    bash_payload "$cmd" "$dir" | PATH="$path" HOME="$H" perl -e 'alarm shift; exec @ARGV' "$T" \
+      sh "$H/.agent-hooks/coordinator-hook-pretool.sh" >"$H/out" 2>"$H/err"
+    rc=$?
+    label="$mode, ship stage ${slow}s, cwd ${dir#$H/}, [$cmd]"
+    if [ "$rc" != "$want" ]; then
+      echo "FAIL $label: rc=$rc, want $want [$(tr '\n' ' ' < "$H/err" | cut -c1-70)]"; fails=$((fails + 1))
+    elif [ "$why" != - ] && ! grep -q "$why" "$H/err"; then
+      echo "FAIL $label: denied, but not by \"$why\""; fails=$((fails + 1))
+    else
+      echo "ok   $label: rc=$rc"
+    fi
+  done 2>/dev/null <<EOF
+$ship_cases
+EOF
+done
+# The adapter's own fallback (gate script missing, so python never decides).
+cp "$HOOKS/qa-ship-gate-hook.sh" "$H/.agent-hooks/qa-ship-gate-hook.sh"
+while IFS='|' read -r want dir cmd; do
+  bash_payload "$cmd" "$dir" | HOME="$H" sh "$H/.agent-hooks/qa-ship-gate-hook.sh" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$want" ]; then echo "ok   fallback, cwd ${dir#$H/}, [$cmd]: rc=$rc"
+  else echo "FAIL fallback, cwd ${dir#$H/}, [$cmd]: rc=$rc, want $want"; fails=$((fails + 1)); fi
+done <<EOF
+0|$H/optin|gh pr merge 1 --admin
+2|$H/optin|git push origin main
+2|$H/optin|vercel --prod
+0|$H/plain|git push origin main
+2|$H/plain|cd $H/optin && git push origin main
+0|$H/optin|ls -la
+EOF
 echo "hook chain test: $([ $fails = 0 ] && echo "all pass" || echo "$fails FAIL") (config $CFG, timeout ${T}s, load $(sysctl -n vm.loadavg 2>/dev/null))"
 [ $fails = 0 ]
