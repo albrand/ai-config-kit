@@ -208,6 +208,97 @@ def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
     return spans
 
 
+def _css_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
+    """Extract CSS url() payloads, ignoring comments and unrelated strings."""
+    spans: list[tuple[str, int, bool]] = []
+    index = 0
+    while index < len(value):
+        if value.startswith("/*", index):
+            comment_end = value.find("*/", index + 2)
+            index = len(value) if comment_end < 0 else comment_end + 2
+            continue
+        if value[index] in "\"'":
+            quote = value[index]
+            index += 1
+            while index < len(value):
+                if value[index] == "\\":
+                    index += 2
+                elif value[index] == quote:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+
+        if value[index:index + 3].lower() != "url" or (
+                index > 0 and (value[index - 1].isalnum() or value[index - 1] in "_-")):
+            index += 1
+            continue
+        opening = index + 3
+        while opening < len(value) and value[opening].isspace():
+            opening += 1
+        if opening >= len(value) or value[opening] != "(":
+            index += 3
+            continue
+
+        cursor = opening + 1
+        while cursor < len(value) and value[cursor].isspace():
+            cursor += 1
+        if cursor < len(value) and value[cursor] in "\"'":
+            quote = value[cursor]
+            payload_start = cursor + 1
+            cursor = payload_start
+            while cursor < len(value):
+                if value[cursor] == "\\":
+                    cursor += 2
+                elif value[cursor] == quote:
+                    payload_end = cursor
+                    cursor += 1
+                    while cursor < len(value) and value[cursor].isspace():
+                        cursor += 1
+                    if cursor < len(value) and value[cursor] == ")" and payload_end > payload_start:
+                        spans.append((value[payload_start:payload_end], start + payload_start, True))
+                    break
+                else:
+                    cursor += 1
+        else:
+            payload_start = cursor
+            while cursor < len(value):
+                if value[cursor] == "\\":
+                    cursor += 2
+                elif value[cursor] == ")":
+                    payload_end = cursor
+                    while payload_end > payload_start and value[payload_end - 1].isspace():
+                        payload_end -= 1
+                    if payload_end > payload_start:
+                        spans.append((value[payload_start:payload_end], start + payload_start, True))
+                    break
+                else:
+                    cursor += 1
+        index = cursor + 1
+    return spans
+
+
+def _css_style_element_url_spans(source: str) -> list[tuple[str, int, bool]]:
+    """Extract CSS URL values from style-element bodies with original offsets."""
+    spans: list[tuple[str, int, bool]] = []
+    content_start: int | None = None
+    for tag_match in HTML_TAG.finditer(source):
+        name = re.match(r"</?([A-Za-z][^\s/>]*)", tag_match.group())
+        if name is None or name.group(1).lower() != "style":
+            continue
+        if tag_match.group().startswith("</"):
+            if content_start is not None:
+                spans.extend(_css_url_spans(
+                    source[content_start:tag_match.start()], content_start))
+                content_start = None
+        elif content_start is None:
+            content_start = tag_match.end()
+    if content_start is not None:
+        spans.extend(_css_url_spans(source[content_start:], content_start))
+    return spans
+
+
 def _normalize_nonrendered_label_texts(text: str) -> list[str]:
     """Scan raw and entity-decoded HTML values without changing rendered boundaries."""
     # Decoded references can reveal tags, but decoded newlines stay spaces so line
@@ -249,8 +340,17 @@ def _normalize_nonrendered_label_texts(text: str) -> list[str]:
                     url_spans = _url_list_spans(value, value_start, srcset=True)
                     spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
                                  for url, start, decode_url in url_spans)
+                elif attribute_name == "style":
+                    url_spans = _css_url_spans(value, value_start)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                    spans.append((value, line_offset, False))
                 else:
                     spans.append((value, line_offset, False))
+
+        for url, start, decode_url in _css_style_element_url_spans(source):
+            line_offset = bisect_right(source_line_starts, start) - 1
+            spans.append((url, line_offset, decode_url))
 
     markdown_line_starts = [0]
     markdown_line_starts.extend(item.end() for item in re.finditer(r"\r\n?|\n", text))

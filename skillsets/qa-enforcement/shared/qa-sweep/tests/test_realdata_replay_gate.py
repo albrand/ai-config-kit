@@ -467,6 +467,40 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_css_url_values_are_scanned_without_decoding_other_style_text(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        refusing = (
+            ('- Replay note: <div style="background-image:url(https://example.test/Test%20Tenant)">safe</div>', "line 14"),
+            ("- Replay note: <div style='background-image:url(\"https://example.test/Test%20Tenant\")'>safe</div>", "line 14"),
+            ('- Replay note: <div style=background-image:url(https://example.test/Test%20Tenant)>safe</div>', "line 14"),
+            ('- Replay note: <div style="background-image:url(https://example.test/ordinary), url(https://example.test/Test%20Tenant)">safe</div>', "line 14"),
+            ('- Replay note: &lt;div style=&quot;background-image:url(https://example.test/Test%20Tenant)&quot;&gt;safe&lt;/div&gt;', "line 14"),
+            ('- Replay note: <div style="background-image:url(https://example.test/ordinary),\n url(https://example.test/Test%20Tenant)">safe</div>', "line 15"),
+            ('- Replay note: <style> .x { background-image: url("https://example.test/Test%20Tenant") }</style>', "line 14"),
+            ('- Replay note: &lt;style&gt;.x{background:url(https://example.test/Test%20Tenant)}&lt;/style&gt;', "line 14"),
+        )
+        for note, expected_line in refusing:
+            with self.subTest(css_url="private URL value"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Test Tenant", reason)
+
+        passing = (
+            '- Replay note: <div style="background-image:url(https://example.test/ordinary)">safe</div>',
+            '- Replay note: <div style="--label:Test%20Tenant">safe</div>',
+            '- Replay note: <div style="content:\'Test%20Tenant\'">safe</div>',
+            '- Replay note: <div style="background-image:url(https://example.test/SuperTest%20TenantCo)">safe</div>',
+            '- Replay note: <div style="/* url(https://example.test/Test%20Tenant) */ background:none">safe</div>',
+            '- Replay note: <div style="content:\'url(https://example.test/Test%20Tenant)\'">safe</div>',
+        )
+        for note in passing:
+            with self.subTest(css_url="clean or non-URL control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_percent_encoded_url_newline_is_not_a_source_line_break(self) -> None:
         notes = (
             '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',
