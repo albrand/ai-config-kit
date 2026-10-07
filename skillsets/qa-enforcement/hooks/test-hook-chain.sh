@@ -29,6 +29,16 @@ a=$(sed -n '/^# --- scope shape/,/^# --- end scope shape/p' "$HOOKS/coordinator-
 b=$(sed -n '/^# --- scope shape/,/^# --- end scope shape/p' "$HOOKS/scope-gate-hook.sh" | shasum)
 [ -n "$(sed -n '/^# --- scope shape/p' "$HOOKS/scope-gate-hook.sh")" ] && [ "$a" = "$b" ] \
   || { echo "FAIL the scope shape blocks in coordinator-hook-pretool.sh and scope-gate-hook.sh differ"; fails=$((fails + 1)); }
+a=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/coordinator-hook-pretool.sh" | shasum)
+b=$(sed -n '/^# --- opted-in shape/,/^# --- end opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh" | shasum)
+[ -n "$(sed -n '/^# --- opted-in shape/p' "$HOOKS/qa-ship-gate-hook.sh")" ] && [ "$a" = "$b" ] \
+  || { echo "FAIL the opted-in shape blocks in coordinator-hook-pretool.sh and qa-ship-gate-hook.sh differ"; fails=$((fails + 1)); }
+# No shape anywhere in the chain may name a PR command (owner decision
+# 2026-10-06; gh pr ready too, since GitHub cannot merge a draft).
+if grep -nE 'pr \((merge|ready)|pr (merge|ready)|pulls/\[0-9\]\+/merge|mergePullRequest' "$HOOKS/coordinator-hook-pretool.sh" "$HOOKS/qa-ship-gate-hook.sh" \
+  | grep -v '^[^:]*:[0-9]*:#'; then
+  echo "FAIL a ship shape still matches PR merges"; fails=$((fails + 1))
+fi
 H=$(mktemp -d "${TMPDIR:-/tmp}/hook-chain-test.XXXXXX")
 trap 'rm -rf "$H"' EXIT
 mkdir -p "$H/.agent-hooks" "$H/.agents/skills" "$H/.local/state/agent-quality/scope" "$H/slowpy"
@@ -84,7 +94,12 @@ printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$H/.agent-hooks/qa-ship-gate-hoo
 chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
 # No jq (or no answer from it): the grep fallback denies every case the jq
 # shape denies (it is broader: any dispatch word, fails closed).
-bash_payload() { jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c},cwd:"/tmp"}'; }
+# @NL@ in a case stands for a backslash-newline (a shell line continuation), @LF@ for a plain
+# newline: cases are one per line.
+bash_payload() {
+  _c=$(python3 -c 'import sys; print(sys.argv[1].replace("@NL@", "\\\n").replace("@LF@", "\n"), end="")' "$1")
+  jq -nc --arg c "$_c" --arg d "${2:-/tmp}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'
+}
 mkdir -p "$H/nojq"
 printf '#!/bin/sh\nexit 1\n' > "$H/nojq/jq"
 chmod +x "$H/nojq/jq"
@@ -146,7 +161,7 @@ cases='0|2|must say|bb thread tell thr_x also refactor it
 13|2|could not finish|bb thread tell thr_x serves: P9 unknown
 13|0|-|bb thread tell thr_x serves: P1 next step
 13|0|-|ls -la
-13|2|Ship denied|git push origin main
+13|0|-|git push origin main
 30|2|could not finish|bb thread tell thr_x also refactor it
 30|0|-|ls -la
 13|2|could not finish|bb thread tell thr_x also refactor it # serves: P1
@@ -200,5 +215,116 @@ for mode in plain slowpy; do
 $cases
 EOF
 done
+# Ship decisions by repo (2026-10-06): a PR merge is never denied, whatever
+# the repo, the gate's speed or the form; at the deadline a ship-shaped command
+# is denied only in a QA opted-in repo (a .qa/config.json at or above the
+# payload cwd) or when it first moves to another directory.
+# case: <ship stage seconds>|<want rc>|<reason or ->|<cwd>|<command>
+mkdir -p "$H/optin/.qa" "$H/optin/sub" "$H/plain"
+echo '{}' > "$H/optin/.qa/config.json"
+ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
+13|0|-|$H/optin|gh pr merge 1 --admin
+30|0|-|$H/optin|gh pr merge 1 --admin --squash
+13|0|-|$H/optin/sub|gh pr merge 1 --admin
+13|0|-|$H/plain|gh pr merge 1 --admin
+13|0|-|$H/optin|gh pr ready 1
+13|0|-|$H/optin|gh api -X PUT repos/o/r/pulls/5/merge
+13|0|-|$H/optin|gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}
+13|2|Ship denied|$H/optin|vercel --prod
+13|2|Ship denied|$H/optin/sub|git push origin main
+13|2|Ship denied|$H/optin|git @NL@push origin main
+13|2|Ship denied|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
+13|0|-|$H/optin|gh pr merge 1 @NL@  --admin
+13|0|-|$H/optin|gh pr merge 5 --subject \"git @NL@push\"
+13|0|-|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
+13|0|-|$H/plain|cd $H/optin && gh pr merge 5 -t \"git push origin main\"
+13|2|Ship denied|$H/optin|gh pr merge 5 && git push origin main
+13|0|-|$H/optin|gh pr merge 5 # && git push origin main
+13|0|-|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 # see <<notes @NL@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 --subject 'a <<b'@LF@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 --subject \"\$(printf '<<')\"@LF@&& git push origin main
+13|2|Ship denied|$H/optin|x=\"\$(cat <<EOF@LF@&& y@LF@EOF@LF@)\"@LF@git push origin main
+13|2|Ship denied|$H/optin|cat <<EOF@LF@&& x@LF@EOF@LF@git push origin main
+13|2|Ship denied|$H/optin|gh pr merge 5 # comment@LF@git push origin main
+13|2|Ship denied|$H/optin|gh pr merge 5 @NL@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
+13|0|-|$H/optin|echo start; gh pr merge 5 -b \"git push --tags\"; echo done
+13|2|Ship denied|$H/optin|bash -c \"git push origin main\"
+13|2|Ship denied|$H/optin|gh pr merge 5 --subject \"\$(git push origin main)\"
+13|0|-|$H/plain|vercel --prod
+13|0|-|$H/plain|git push origin main
+13|2|Ship denied|$H/plain|cd $H/optin && git push origin main
+13|2|Ship denied|$H/plain|GIT_DIR=$H/optin/.git git push origin HEAD:main
+13|0|-|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
+13|0|-|$H/plain|git --work-tree=$H/optin push origin main
+13|2|Ship denied|$H/plain|git --git-dir=$H/optin/.git push origin main
+13|0|-|$H/plain|GIT_DIR=$H/optin/.git gh pr merge 1 --admin
+13|0|-|$H/plain|GIT_WORK_TREE=$H/optin gh pr merge 1 --admin"
+for mode in plain slowpy; do
+  path="$PATH"
+  [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"
+  while IFS='|' read -r slow want why dir cmd; do
+    printf '#!/bin/sh\ncat >/dev/null\nsleep %s\nexit 0\n' "$slow" > "$H/.agent-hooks/qa-ship-gate-hook.sh"
+    chmod +x "$H/.agent-hooks/qa-ship-gate-hook.sh"
+    bash_payload "$cmd" "$dir" | PATH="$path" HOME="$H" perl -e 'alarm shift; exec @ARGV' "$T" \
+      sh "$H/.agent-hooks/coordinator-hook-pretool.sh" >"$H/out" 2>"$H/err"
+    rc=$?
+    label="$mode, ship stage ${slow}s, cwd ${dir#$H/}, [$cmd]"
+    if [ "$rc" != "$want" ]; then
+      echo "FAIL $label: rc=$rc, want $want [$(tr '\n' ' ' < "$H/err" | cut -c1-70)]"; fails=$((fails + 1))
+    elif [ "$why" != - ] && ! grep -q "$why" "$H/err"; then
+      echo "FAIL $label: denied, but not by \"$why\""; fails=$((fails + 1))
+    else
+      echo "ok   $label: rc=$rc"
+    fi
+  done 2>/dev/null <<EOF
+$ship_cases
+EOF
+done
+# The adapter's own fallback (gate script missing, so python never decides).
+cp "$HOOKS/qa-ship-gate-hook.sh" "$H/.agent-hooks/qa-ship-gate-hook.sh"
+while IFS='|' read -r want dir cmd; do
+  bash_payload "$cmd" "$dir" | HOME="$H" sh "$H/.agent-hooks/qa-ship-gate-hook.sh" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$want" ]; then echo "ok   fallback, cwd ${dir#$H/}, [$cmd]: rc=$rc"
+  else echo "FAIL fallback, cwd ${dir#$H/}, [$cmd]: rc=$rc, want $want"; fails=$((fails + 1)); fi
+done <<EOF
+0|$H/optin|gh pr merge 1 --admin
+0|$H/optin|gh pr ready 1
+2|$H/optin|git push origin main
+2|$H/optin|git @NL@push origin main
+2|$H/optin|git @NL@  -c core.x=y @NL@  push origin main
+0|$H/optin|gh pr merge 1 @NL@  --admin
+0|$H/optin|gh pr merge 5 --subject "git @NL@push"
+0|$H/optin|gh pr merge 5 --admin --body 'git push origin main; vercel --prod'
+0|$H/plain|cd $H/optin && gh pr merge 5 -t "git push origin main"
+2|$H/optin|gh pr merge 5 && git push origin main
+0|$H/optin|gh pr merge 5 # && git push origin main
+0|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+0|$H/optin|gh pr merge 5 # see <<notes @NL@&& git push origin main
+0|$H/optin|gh pr merge 5 --subject 'a <<b'@LF@&& git push origin main
+0|$H/optin|gh pr merge 5 --subject "\$(printf '<<')"@LF@&& git push origin main
+0|$H/optin|gh pr merge 5 --subject "\`printf '<<'\`"@LF@&& git push origin main
+2|$H/optin|x="\$(cat <<EOF@LF@&& y@LF@EOF@LF@)"@LF@git push origin main
+0|$H/optin|gh pr merge 5 --subject "\$(printf "%s" "<<")"@LF@&& git push origin main
+2|$H/optin|x=\$(cat <<EOF@LF@)@LF@&& y@LF@EOF@LF@)@LF@git push origin main
+2|$H/optin|x=\$(echo "\$(cat <<EOF@LF@)")@LF@&& y@LF@EOF@LF@)")@LF@git push origin main
+2|$H/optin|cat <<EOF@LF@&& x@LF@EOF@LF@git push origin main
+2|$H/optin|gh pr merge 5 # comment@LF@git push origin main
+2|$H/optin|gh pr merge 5 @NL@&& git push origin main
+0|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
+0|$H/optin|echo start; gh pr merge 5 -b "git push --tags"; echo done
+2|$H/optin|bash -c "git push origin main"
+2|$H/optin|gh pr merge 5 --subject "\$(git push origin main)"
+2|$H/optin|vercel --prod
+0|$H/plain|git push origin main
+2|$H/plain|cd $H/optin && git push origin main
+2|$H/plain|GIT_DIR=$H/optin/.git git push origin HEAD:main
+0|$H/plain|GIT_DIR=$H/optin/.git gh pr merge 1 --admin
+0|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
+0|$H/plain|GIT_WORK_TREE=$H/optin gh pr merge 1 --admin
+0|$H/optin|ls -la
+EOF
 echo "hook chain test: $([ $fails = 0 ] && echo "all pass" || echo "$fails FAIL") (config $CFG, timeout ${T}s, load $(sysctl -n vm.loadavg 2>/dev/null))"
 [ $fails = 0 ]

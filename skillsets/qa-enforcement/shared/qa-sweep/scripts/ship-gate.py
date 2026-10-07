@@ -2,9 +2,9 @@
 """QA ship gate: fail-closed push/PR/deploy gate for repos that opted in.
 
 A repo opts in by committing `.qa/config.json`. From that moment the gate is
-ALWAYS ON for that repo for ship commands (merges, pushes to protected
-branches, production deploys, releases, tag pushes, workflow dispatch -- see
-segment_ship_kind). It denies unless the whole
+ALWAYS ON for that repo for ship commands (pushes to protected branches,
+production deploys, releases, tag pushes, workflow dispatch -- see
+segment_ship_kind). PR commands (merge, ready) are never gated (2026-10-06). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
@@ -49,6 +49,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +85,9 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # pushes, gh pr create and bb fleet validate are free: that is how previews,
 # CI and review get produced. No dead patterns: every class below is exercised
 # by selftest against a canonical sample.
+# 2026-10-06 (owner decision): PR commands (gh pr merge, gh pr ready, the
+# REST and GraphQL merge calls) are never gated, so production fixes and admin
+# merges are never blocked. Protected pushes, releases and deploys stay gated.
 # v4 (card 6): "what ships" also covers releases (gh release create), any
 # workflow dispatch (gh workflow run -- justification at the classifier), tag
 # pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
@@ -141,16 +145,16 @@ DEPLOYMENT_ID_BODY_RE = re.compile(r"""["']?deploymentId["']?\s*[:=]\s*["']?([A-
 DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
 # GitHub REST/GraphQL writes that ship without a CLI form the gate can check
-# (gh api / curl api.github.com): merging a PR, merging branches, creating or
-# publishing a release, creating or moving a ref, committing file contents,
-# dispatching a workflow, creating a deployment. The commit they ship is not
-# decidable locally, so they DENY outright and name the gated CLI form.
+# (gh api / curl api.github.com): merging branches, creating or publishing a
+# release, creating or moving a ref, committing file contents, dispatching a
+# workflow, creating a deployment. The commit they ship is not decidable
+# locally, so they DENY outright and name the gated CLI form. Merging a PR
+# (pulls/N/merge, mergePullRequest, enablePullRequestAutoMerge) is never gated.
 GITHUB_WRITE_RE = re.compile(
-    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(pulls/\d+/merge|merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
+    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
     r"actions/workflows/[^/\s]+/dispatches|dispatches|contents/[^\s?#]*|deployments)(?:[?#]|$)")
 GITHUB_GRAPHQL_WRITE_RE = re.compile(
-    r"\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch|createRef|updateRef|updateRefs|"
-    r"createCommitOnBranch)\b")
+    r"\b(mergeBranch|createRef|updateRef|updateRefs|createCommitOnBranch)\b")
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 LOOKUP_BUDGET_S = 3.2
@@ -176,7 +180,6 @@ HOOK_HOST_TIMEOUT_S = 15.0
 HOOK_HARD_S = 10.0
 HOOK_BUDGET_S = HOOK_HARD_S - 1.0
 _HOOK_DEADLINE = None
-PR_VIEW_CACHE = {}
 # None until _hook() knows whether the command targets an opted-in repo. At
 # the hard deadline, unknown counts as opted in: a deadline that fires before
 # the opt-in check (a chain that spent its budget before this process
@@ -1068,12 +1071,14 @@ def _shell_arg_at(s, i):
     n = len(s)
     while i < n and s[i] in " \t":
         i += 1
-    if i >= n or s[i] in ";&|\n":
+    if i >= n or s[i] in ";&|\n()":
         return None, i
     out = []
     while i < n:
         c = s[i]
-        if c in " \t;&|\n":  # v4: a newline ends the word (multi-line commands)
+        # v4: a newline ends the word (multi-line commands); unquoted ( and ) are
+        # shell metacharacters too, so `(cd x && git push origin main)` splits right
+        if c in " \t;&|\n()":
             break
         if c == "\\":
             if i + 1 < n:
@@ -1117,10 +1122,14 @@ def _shell_arg_at(s, i):
 
 def ship_target_roots(command, cwd):
     """Every local repo a ship command can target: the payload cwd's repo plus
-    any `git -C path`, `cd path &&`, or --work-tree path inside the command,
+    any `git -C path` or `cd path &&` inside the command,
     with quoting honoured (paths with spaces included). Hermes review
     2026-09-24, topic qa-ship-gate: two rounds - first only the payload cwd
-    was resolved, then whitespace-split regexes truncated quoted paths."""
+    was resolved, then whitespace-split regexes truncated quoted paths.
+    `pushd`, `--git-dir` and the GIT_DIR env prefix name a target too; a .git
+    path resolves to the repo that holds it. A work tree alone (`--work-tree`,
+    GIT_WORK_TREE) does not choose the repository git pushes from, so it is not
+    a target (Hermes 2026-10-06, topic kit-never-block-pr-merge, rounds 1-2)."""
     roots = []
 
     def add(p):
@@ -1131,7 +1140,7 @@ def ship_target_roots(command, cwd):
                 roots.append(r)
 
     add(cwd)
-    for pattern in (r"(?<![\w-])-C\s", r"\bcd\s", r"--work-tree[=\s]"):
+    for pattern in (r"(?<![\w-])-C\s", r"\b(?:cd|pushd)\s", r"--git-dir[=\s]", r"\bGIT_DIR=", r"--chdir[=\s]"):
         pos = 0
         while True:
             m = re.compile(pattern).search(command, pos)
@@ -1146,32 +1155,537 @@ def ship_target_roots(command, cwd):
     return roots
 
 
-def command_segments(command):
-    """Top-level shell segments as token lists, split on ; | && and newlines,
-    tokenized with the same POSIX word parser the target resolver uses."""
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+COMPOUND_HEADS = {"{", "}", "!", "if", "then", "elif", "else", "while", "until", "do"}
+
+
+def _inline_script(seg):
+    """The script a segment hands to a shell: `sh|bash|zsh -c '<script>'`
+    (combined flags like -lc included) or `eval <words>`; None otherwise."""
+    if not seg:
+        return None
+    if seg[0] == "eval":
+        return " ".join(seg[1:]) or None
+    if os.path.basename(seg[0]) in SHELLS:
+        for k, a in enumerate(seg[1:], 1):
+            if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                return seg[k + 1] if k + 1 < len(seg) else None
+    return None
+
+
+LINE_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\r?\n")
+
+
+def join_continuations(command):
+    """Remove each backslash-newline, as /bin/sh does: a line continuation joins the lines, it does not
+    end the command. An escaped backslash before a newline is not one (Hermes 2026-10-06,
+    kit-never-block-pr-merge)."""
+    return LINE_CONTINUATION.sub(lambda m: m.group(1), command)
+
+
+SHELL_WRAPPERS = ("env", "command", "nohup", "time", "exec", "sudo", "nice")
+WRAPPER_ARG_FLAGS = ("-C", "-u", "-n", "--chdir", "--unset")
+SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _view_segment(words, seg, subs, depth):
+    """What one segment runs, for ship_view: a `gh pr merge` keeps only its substitutions,
+    `sh -c SCRIPT` and `eval` are read as their script, anything else is kept as written."""
+    k = 0
+    while k < len(words):
+        if SHELL_ASSIGN.match(words[k]):
+            k += 1
+            continue
+        if os.path.basename(words[k]) in SHELL_WRAPPERS:
+            k += 1
+            while k < len(words) and words[k].startswith("-"):
+                k += 2 if words[k] in WRAPPER_ARG_FLAGS else 1
+            continue
+        break
+    if k >= len(words):
+        return seg
+    h = os.path.basename(words[k])
+    if h == "gh" and words[k + 1:k + 3] == ["pr", "merge"]:
+        return subs
+    if depth < 3 and h in ("sh", "bash", "zsh", "dash") and k + 2 < len(words) \
+            and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k + 1]):
+        inner = ship_view(words[k + 2], depth + 1)
+        return None if inner is None else inner + subs
+    if depth < 3 and h == "eval" and k + 1 < len(words):
+        inner = ship_view(" ".join(words[k + 1:]), depth + 1)
+        return None if inner is None else inner + subs
+    return seg
+
+
+def ship_view(command, depth=0):
+    """What a command would run, for the coarse ship check: segments split at unquoted
+    ; & | ( ) and newlines, comments dropped, where a `gh pr merge` keeps only the bodies of its $(...) and
+    backtick substitutions, so its quoted subject or body never reads as a ship (Hermes
+    2026-10-06, kit-never-block-pr-merge). None when the command can't be read (unbalanced
+    quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
+    test-ship-matrix.py checks that the two agree."""
+    command = _strip_heredoc_bodies(command)  # a heredoc body is text, as in command_segments
+    if command is None:
+        return None  # a heredoc it can't read exactly: the raw text is scanned (r11)
+    out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
+    # A line that starts with && || or | is a syntax error: the shell stops there and runs nothing
+    # after it. Not after a heredoc operator, whose body lines are text and may start with anything. Only an
+    # unquoted `<<` the scan reaches counts: one in a comment or in quotes is text (Hermes 2026-10-06 r8).
+    line_start, heredoc = True, False
+    while i < n:
+        c, nx = command[i], command[i + 1:i + 2]
+        if q == "'":
+            seg += c
+            if c == "'":
+                q = None
+            else:
+                cur += c
+            i += 1
+            continue
+        if c == "\\" and nx:
+            i += 2
+            if nx == "\n":
+                continue
+            seg += c + nx
+            cur = (cur or "") + (c + nx if q == '"' and nx not in '$`"\\' else nx)
+            continue
+        if c == "`" or (c == "$" and nx == "("):
+            if c == "`":
+                j = i + 1
+                while j < n and command[j] != "`":
+                    j += 2 if command[j] == "\\" else 1
+                if j >= n:
+                    return None
+                body = command[i + 1:j]
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep > 0:
+                    dep += {"(": 1, ")": -1}.get(command[j], 0)
+                    j += 1
+                if dep > 0:
+                    return None
+                j -= 1
+                body = command[i + 2:j]
+            subs += " ; " + body
+            seg += command[i:j + 1]
+            cur = (cur or "") + "$()"
+            i = j + 1
+            continue
+        if q == '"':
+            seg += c
+            if c == '"':
+                q = None
+            else:
+                cur += c
+            i += 1
+            continue
+        if c in "'\"":
+            q, cur = c, cur or ""
+        elif c in " \t":
+            if cur is not None:
+                words.append(cur)
+                cur = None
+        elif c == "&" and i and command[i - 1] in "<>":
+            cur = (cur or "") + c  # a descriptor copy such as 2>&1
+        elif c == "#" and cur is None:
+            j = command.find("\n", i)  # a comment runs to the end of the line and never runs
+            i = n if j < 0 else j
+            continue
+        elif c in "&|" and line_start and cur is None and not words and not heredoc:
+            return out  # a syntax error (Hermes 2026-10-06 r7: `gh pr merge 5 # c \` then `&& git push`)
+        elif c in ";&|()\n\r":
+            line_start = c == "\n"
+            if cur is not None:
+                words.append(cur)
+                cur = None
+            part = _view_segment(words, seg, subs, depth)
+            if part is None:
+                return None
+            out += part + " ; "
+            seg, subs, words = "", "", []
+            i += 1
+            continue
+        else:
+            heredoc = heredoc or (c == "<" and nx == "<")
+            cur = (cur or "") + c
+        seg += c
+        i += 1
+    if q:
+        return None
+    if cur is not None:
+        words.append(cur)
+    part = _view_segment(words, seg, subs, depth)
+    return None if part is None else out + part
+
+
+def flat_words(text):
+    """ship_view's text as the shell fallback reads it: quotes and backslashes removed,
+    whitespace as single spaces."""
+    text = re.sub(r"[\t\r\n]", " ", text)
+    return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
+
+
+HEREDOC_PLAIN = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+,:@%/!^-#~=*?[]{}$")
+HEREDOC_QUOTEISH = frozenset("\"'()`")
+
+
+def _heredoc_word(s, j):
+    """(delimiter, end) for the heredoc word at s[j], or None when bash, zsh, sh and dash might not all read it as
+    that delimiter (Hermes 2026-10-07, kit-never-block-pr-merge r10 `<<'EOF!'`, r11 `<<"a\\q"`, r13 dash). Measured, not guessed:
+    hooks/test-heredoc-words.py runs every generated spelling in the four shells, at top level and inside a
+    `"$(...)"` merge body, and requires this reader and the awk hdword() to read each word as the shells do or not
+    at all. POSIX quote removal: `\\X` is X; `'...'` is literal; in `"..."` a backslash
+    is dropped only before `$` or `\\`. Declined, because a shell reads them differently: a leading `#` or `-`, an
+    escaped or quoted quote, parenthesis or backtick, a `$'...'` or `$"..."`, a `${` `$[` `$(`, a word-final unquoted `}` (zsh), a trailing
+    backslash, an empty delimiter, and a word that ends anywhere but a blank, `; & | < >` or a newline."""
+    out, k, n, tail = [], j, len(s), ""
+    if s[j:j + 1] in ("#", "-"):
+        return None
+    while k < n:
+        c = s[k]
+        plain = c in HEREDOC_PLAIN or ord(c) > 127
+        if not (plain or c in "\\'\""):
+            break
+        tail = c if plain else ""
+        if c == "\\":
+            x = s[k + 1:k + 2]
+            if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                return None
+            out.append(x)
+            k += 2
+        elif c == "$" and s[k + 1:k + 2] in ("'", '"'):
+            return None  # $"..." (zsh) and $'...' (dash has no $'...' quoting) are read differently
+        elif c == "'":
+            k += 1
+            e = s.find("'", k)
+            if e < 0:
+                return None
+            body = s[k:e]
+            if "\n" in body or set(body) & HEREDOC_QUOTEISH:
+                return None
+            out.append(body)
+            k = e + 1
+        elif c == '"':
+            k += 1
+            while True:
+                d = s[k:k + 1]
+                if d in ("", "\n") or (d != '"' and d in HEREDOC_QUOTEISH):
+                    return None
+                k += 1
+                if d == '"':
+                    break
+                if d == "\\":
+                    x = s[k:k + 1]
+                    if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                        return None
+                    out.append(x if x in ("$", "\\") else "\\" + x)
+                    k += 1
+                else:
+                    out.append(d)
+        else:
+            out.append(c)
+            k += 1
+    delim = "".join(out)
+    if k == j or (k < n and s[k] not in " \t\n;&|<>") or not delim or delim.endswith("\\") or tail == "}":
+        return None
+    if any(x in s[j:k] for x in ("${", "$[", "$(")):
+        return None
+    return delim, k
+
+
+def _strip_heredoc_bodies(command):
+    """The command as the shell parses it, without heredocs, or None when a heredoc can't be read exactly. A body is
+    text the shell never parses, but the word parsers here would read its quotes, parentheses and words as code:
+    `gh pr merge 5 --body "$(cat <<EOF` / `git push origin main` / `EOF` / `)"` read as a push, and in
+    `x=$(echo "$(cat <<EOF` / `)")` / `&& y` / `EOF` / `)")` / `git push origin main` (zsh runs the push) the parser
+    closed the substitution early and swallowed the push into a quote (Hermes 2026-10-07, kit-never-block-pr-merge
+    r10). A real operator is a `<<` in code: not quoted, escaped, commented, in arithmetic (`$((1<<2))`, `$[1<<2]`)
+    or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
+    terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
+    hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
+      - the delimiter is a word _heredoc_word reads: one bash, zsh, sh and dash read alike, measured by
+        hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
+      - the context that held the operator is still open at the newline where the body starts;
+      - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
+      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
+    Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
+    raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
+    is idempotent. The shell fallback's awk strip() is the same scanner."""
+    out, stack, pending, word, i, n = [], [], [], False, 0, len(command)
+    while i < n:
+        c, nx = command[i], command[i + 1:i + 2]
+        top = stack[-1] if stack else ""
+        if top == "'":
+            out.append(c)
+            if c == "'":
+                stack.pop()
+            i += 1
+            continue
+        if c == "\\" and nx:
+            out.append(c + nx)
+            i += 2
+            word = True
+            continue
+        if top in ('"', "{", "["):  # double quotes, ${...} and $[...]: a << here is text
+            out.append(c)
+            if c == {'"': '"', "{": "}", "[": "]"}[top]:
+                stack.pop()
+            elif c == "`":
+                stack.append("`")
+            elif c == "$" and nx in "({[" and nx:
+                out.append(nx)
+                stack.append({"(": "$", "{": "{", "[": "["}[nx])
+                i += 1
+            elif c in "'\"" and top != '"':
+                stack.append(c)
+            i += 1
+            continue
+        if top in ("A", "a"):  # arithmetic, from (( to )): "a" is a parenthesis inside it, and << is a shift
+            out.append(c)
+            if c == "(":
+                stack.append("a")
+            elif c == ")" and top == "a":
+                stack.pop()
+            elif c == ")" and nx == ")":
+                out.append(nx)
+                stack.pop()
+                i += 1
+            i += 1
+            continue
+        if c == "\n" and pending:
+            if any(held != stack for _, _, held in pending):
+                return None  # the operator's context closed on its own line, as in `x=$(cat <<E)`
+            out.append(c)
+            i += 1
+            for dash, delim, _ in pending:
+                while True:
+                    if i >= n:
+                        return None  # no terminator line
+                    j = command.find("\n", i)
+                    line = command[i:] if j < 0 else command[i:j]
+                    i = n if j < 0 else j + 1
+                    body = line.lstrip("\t") if dash else line
+                    if body == delim:
+                        break
+                    if body.startswith(delim):
+                        return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
+            pending = []
+            word = False
+            continue
+        if c == "#" and not word:
+            j = command.find("\n", i)
+            j = n if j < 0 else j
+            out.append(command[i:j])
+            i = j
+            continue
+        if c == "<" and nx == "<" and command[i + 2:i + 3] != "<" and (not i or command[i - 1] != "<"):
+            j = i + 2
+            dash = command[j:j + 1] == "-"
+            j += dash
+            while j < n and command[j] in " \t":
+                j += 1
+            word = _heredoc_word(command, j)
+            if word is None:
+                return None  # a delimiter the shells may read differently: $(...), `...`, zsh E(x), E), "a(b"
+            delim, k = word
+            pending.append((dash, delim, list(stack)))
+            i, word = k, True
+            continue
+        out.append(c)
+        if c in "'\"":
+            stack.append(c)
+        elif c == "`":
+            stack.pop() if top == "`" else stack.append("`")
+        elif c == "$" and command[i + 1:i + 3] == "((":
+            out.append("((")
+            stack.append("A")
+            i += 2
+        elif c == "$" and nx in ("(", "{", "["):
+            out.append(nx)
+            stack.append({"(": "$", "{": "{", "[": "["}[nx])
+            i += 1
+        elif c == "(" and nx == "(" and not word:
+            out.append("(")
+            stack.append("A")
+            i += 1
+        elif c == "(":
+            stack.append("(")
+        elif c == ")" and top in ("$", "("):
+            stack.pop()
+        word = c not in " \t\n;&|()<>"
+        i += 1
+    if pending:
+        return None  # an operator on the last line: no body, no terminator
+    return "".join(out)
+
+
+def _line_segments(command):
+    """Every line of a command it can't read exactly, split at ; & | ( ) ` and $(, as words with quotes and
+    backslashes dropped: a push on any line is a segment, whatever the quotes around it (deny side)."""
+    out = []
+    for line in command.split("\n"):
+        for part in re.split(r"\$\(|[;&|()`]", line):
+            words = flat_words(part).split()
+            if words:
+                out.append(unwrap_segment(words) or words)
+    return out
+
+
+def command_segments(command, _depth=0):
+    """Top-level shell segments as token lists, split on ; | && ( ) and
+    newlines, tokenized with the same POSIX word parser the target resolver
+    uses. Scripts run through `sh -c` or `eval` are split the same way and
+    their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge).
+    Heredoc bodies are text and are removed first (_strip_heredoc_bodies). A command with a heredoc that can't be
+    read exactly is split as it stands, plus every line as a command (_line_segments), so nothing a shell might
+    run is lost (Hermes 2026-10-07, kit-never-block-pr-merge r11)."""
+    stripped = _strip_heredoc_bodies(command)
+    if stripped is None:
+        return _command_segments(command, _depth) + _line_segments(command)
+    return _command_segments(stripped, _depth)
+
+
+def _command_segments(command, _depth):
     segments, cur, i, n = [], [], 0, len(command)
+    # As in ship_view: a line that starts with && || or | stops the shell, unless a heredoc operator came first.
+    line_start, heredoc, stop = True, False, n
     while i < n:
         c = command[i]
         if c in " \t":
             i += 1
             continue
-        if c in ";|&\n":
+        if c == "#":
+            # A word that starts with # starts a comment, which runs to the end of the line
+            # (Hermes 2026-10-06, kit-never-block-pr-merge: `gh pr merge 5 # && git push`).
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c in ";|&\n()":
             j = i
-            while j < n and command[j] in ";|&\n":
+            while j < n and command[j] in ";|&\n()":
+                if command[j] == "\n":
+                    line_start = True
+                elif command[j] in "&|" and line_start and not heredoc:
+                    stop = j
+                    break
+                else:
+                    line_start = False
                 j += 1
             if cur:
                 segments.append(cur)
                 cur = []
+            if stop < n:
+                break
             i = j
             continue
         word, endpos = _shell_arg_at(command, i)
         if word is None:
             break
+        heredoc = heredoc or _unquoted_heredoc(command[i:endpos])
         cur.append(word)
+        line_start = False
         i = endpos
     if cur:
         segments.append(cur)
-    return [s for s in (unwrap_segment(s) for s in segments) if s]
+    command = command[:stop]
+    out = []
+    for s in (unwrap_segment(s) for s in segments):
+        if not s:
+            continue
+        out.append(s)
+        script = _inline_script(s)
+        if script and _depth < 3:
+            out.extend(command_segments(script, _depth + 1))
+    if _depth < 3:
+        for body in _substitutions(command):
+            out.extend(command_segments(body, _depth + 1))
+    return out
+
+
+def _unquoted_heredoc(raw):
+    """True if a word's raw source text holds a heredoc operator; see _has_heredoc."""
+    return _has_heredoc(raw, comments=False)
+
+
+def _has_heredoc(script, comments=True):
+    """True if a shell script holds a heredoc operator: an unquoted, unescaped `<<` outside comments, or one inside
+    a `$(...)` or backtick body read the same way. A `<<` in quotes is text, also inside a quoted substitution such
+    as `"$(printf '<<')"` (Hermes 2026-10-06 r9). An unbalanced substitution counts, which keeps scanning (the deny
+    side). The shell fallback's awk uhd() is the same scanner."""
+    q, word, i, n = None, False, 0, len(script)
+    while i < n:
+        c = script[i]
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i, word = i + 1, True
+        elif c == "`" or script[i:i + 2] == "$(":
+            if c == "`":
+                j = i + 1
+                while j < n and script[j] != "`":
+                    j += 2 if script[j] == "\\" else 1
+                if j >= n or _has_heredoc(script[i + 1:j]):
+                    return True
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep:
+                    dep += {"(": 1, ")": -1}.get(script[j], 0)
+                    j += 1
+                if dep or _has_heredoc(script[i + 2:j - 1]):
+                    return True
+                j -= 1
+            i, word = j, True
+        elif q == '"':
+            q = None if c == '"' else q
+        elif c in "'\"":
+            q, word = c, True
+        elif c == "#" and comments and not word:
+            j = script.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "<" and script[i + 1:i + 2] == "<":
+            return True
+        else:
+            word = c not in " \t\n;&|()"
+        i += 1
+    return False
+
+
+def _substitutions(command):
+    """Bodies of the command substitutions the shell would run that the split above keeps inside a
+    word: `$(...)` and backticks within double quotes, and backticks anywhere outside single quotes.
+    An unquoted `$(` is already split on its parenthesis. A comment holds none."""
+    bodies, q, i, n = [], None, 0, len(command)
+    while i < n:
+        c = command[i]
+        if q is None and c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()") \
+                and not (i >= 2 and command[i - 2] == "\\" and command[i - 1] in " \t"):
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i += 1
+        elif c == "'" and q is None:
+            q = "'"
+        elif c == '"':
+            q = None if q == '"' else '"'
+        elif c == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            bodies.append(command[i + 1:j])
+            i = j
+        elif c == "$" and command[i + 1:i + 2] == "(" and q == '"':
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            bodies.append(command[i + 2:j - 1])
+            i = j - 1
+        i += 1
+    return bodies
 
 
 def unwrap_segment(seg):
@@ -1184,7 +1698,7 @@ def unwrap_segment(seg):
     sha selection) sees the same words."""
     s = list(seg)
     while s:
-        if ASSIGN_RE.match(s[0]):
+        if ASSIGN_RE.match(s[0]) or s[0] in COMPOUND_HEADS:
             s.pop(0)
             continue
         h = os.path.basename(s[0])
@@ -1699,7 +2213,7 @@ def github_api_write(seg, command):
     if not what:
         return None
     return ("GitHub API write (%s) ships code the gate cannot tie to a commit: use the gated CLI form "
-            "(gh pr merge, gh release create|edit, git push, gh workflow run) so the shipped commit is "
+            "(gh release create|edit, git push, gh workflow run) so the shipped commit is "
             "checked" % what)
 
 
@@ -1715,7 +2229,7 @@ def _vercel_prod_flag(seg):
 
 def segment_ship(seg, root, cfg, command="", cwd=None):
     """(kind, shas, equiv, problems, prov) for one unwrapped shell segment.
-    kind: "merge" | "push" | "deploy" | None. shas: the commits this segment
+    kind: "push" | "deploy" | None. shas: the commits this segment
     ships, resolved locally, so a tag pointing at an unwalked commit cannot
     pass on a walked HEAD. equiv: the subset whose walk may sit on a
     tree-identical commit (tree_equiv_outside_qa): tags, releases,
@@ -1769,11 +2283,12 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
                 equiv.add(c)
         return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
     if head == "gh" and len(seg) > 2:
-        if seg[1] == "pr" and seg[2] in ("merge", "ready"):
-            base = pr_base_branch(root, seg)
-            if base is not None and normalize_ref(base) not in protected_refs(root, cfg):
-                return None, [], set()
-            return "merge", [], set()
+        if seg[1] == "pr":
+            # No PR command is gated (owner decision 2026-10-06: production
+            # fixes must keep shipping; admin merges stay available). That
+            # includes gh pr ready, since GitHub cannot merge a draft.
+            # Protected pushes, releases and deploys stay gated.
+            return None, [], set()
         if seg[1] == "release" and seg[2] == "create":
             c = release_commit(root, seg[3:])
             return "deploy", [c], {c}
@@ -1840,7 +2355,7 @@ def _segment_ship(seg, root, cfg, command="", cwd=None):
 
 
 def segment_ship_kind(seg, root, cfg):
-    """"merge" | "push" | "deploy" for one shell segment, else None."""
+    """"push" | "deploy" for one shell segment, else None."""
     return segment_ship(seg, root, cfg)[0]
 
 
@@ -1874,8 +2389,6 @@ def ship_plan(command, root, cfg, cwd=None):
         pass
     eq -= strict
     prov -= strict
-    if "merge" in kinds:
-        return "merge", shas, eq, problems, prov   # needs PR-head freshness, the stricter sha rule
     if "push" in kinds:
         return "push", shas, eq, problems, prov
     return (kinds[0] if kinds else None), shas, eq, problems, prov
@@ -1884,69 +2397,6 @@ def ship_plan(command, root, cfg, cwd=None):
 def ship_kind(command, root, cfg):
     """Highest-stakes ship kind anywhere in the command, for this root."""
     return ship_plan(command, root, cfg)[0]
-
-
-def pr_merge_args(command):
-    """Token list of the first `gh pr merge`/`gh pr ready` segment, if any."""
-    for seg in command_segments(command):
-        if len(seg) > 2 and seg[0] == "gh" and seg[1] == "pr" and seg[2] in ("merge", "ready"):
-            return seg
-    return None
-
-
-def pr_selector(args):
-    """PR selector from `gh pr merge|ready`, ignoring option values."""
-    value_flags = {"-R", "--repo", "--match-head-commit"}
-    skip_value = False
-    for token in args[3:]:
-        if skip_value:
-            skip_value = False
-            continue
-        if token in value_flags:
-            skip_value = True
-        elif token == "--":
-            break
-        elif token.startswith("-"):
-            continue
-        else:
-            return token
-    return None
-
-
-def pr_view(root, args):
-    """Return (base branch, head SHA) from one bounded `gh pr view` lookup."""
-    if os.environ.get("QA_GATE_NO_GH"):
-        return None, None
-    selector = pr_selector(args)
-    key = (root, selector)
-    if key in PR_VIEW_CACHE:
-        return PR_VIEW_CACHE[key]
-    cmd = (["gh", "pr", "view"] + ([selector] if selector else [])
-           + ["--json", "baseRefName,headRefOid", "-q", "[.baseRefName, .headRefOid] | @tsv"])
-    result_info = (None, None)
-    try:
-        result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
-        if result.returncode == 0:
-            values = result.stdout.rstrip("\r\n").split("\t", 1)
-            if len(values) == 2:
-                branch, sha = values
-                if branch and not any(ch.isspace() for ch in branch):
-                    result_info = (branch, sha if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None)
-    except Exception:
-        pass
-    PR_VIEW_CACHE[key] = result_info
-    return result_info
-
-
-def pr_base_branch(root, args):
-    """Base branch; an unresolved destination remains gated fail-closed."""
-    return pr_view(root, args)[0]
-
-
-def pr_head_sha(root, args):
-    """PR head sha for `gh pr merge [n]`: `gh pr view [n] --json headRefOid`.
-    None on any failure (caller falls back to the local HEAD)."""
-    return pr_view(root, args)[1]
 
 
 def _hard_deadline(signum, frame):
@@ -1986,7 +2436,6 @@ def hook(raw=None):
 def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     global _LAST_INPUT, _HOOK_OPTED
-    PR_VIEW_CACHE.clear()
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -2000,6 +2449,7 @@ def _hook(raw=None):
     command = inp.get("command") or inp.get("cmd") or ""
     if not isinstance(command, str) or not command:
         return 0
+    command = join_continuations(command)
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
     cwd = payload.get("cwd") or payload.get("working_directory") or os.getcwd()
@@ -2020,15 +2470,13 @@ def _hook(raw=None):
     if not any(kinds.values()):
         return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
     prov = derive_provider(payload)
-    merge_args = pr_merge_args(command)
     sections, denied = [], []
     for root in targets:
         kind = kinds[root]
         if not kind:
             continue
-        # Walk freshness: a merge needs the walk at the PR head SHA being
-        # merged (gh pr view), falling back to the local HEAD; pushes and
-        # deploys check the local HEAD (with the .qa-only-parent allowance).
+        # Walk freshness: pushes and deploys check the local HEAD (with the
+        # .qa-only-parent allowance).
         # v3: with a sha resolved, artifacts are read from that commit's tree.
         # v4: every segment contributes the commits it ships (ship_plan): a
         # tag push or release checks the TAGGED commit, a protected refspec
@@ -2041,8 +2489,6 @@ def _hook(raw=None):
         # freshness still judged against the deployment's commit. Anything
         # that could not be resolved (plans[root][3]) denies outright.
         shas, problems, prov_shas = list(plans[root][1]), plans[root][3], plans[root][4]
-        if kind == "merge" and merge_args is not None:
-            shas.insert(0, pr_head_sha(root, merge_args) or head_commit(root))
         if not shas and not problems:
             shas = [head_commit(root)]
         ok, fails, stats = not problems, list(problems), {"rows_total": 0, "clusters": 0, "open_rows": 0}
@@ -2437,6 +2883,26 @@ def selftest(v4_gate=None, v4_templates=None):
          "tool_input": {"command": 'git --work-tree="%s" -C "%s" push origin main' % (spaced, spaced)}, "cwd": foreign}))
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
            "git --work-tree quoted-space denied")
+    # Hermes 2026-10-06, topic kit-never-block-pr-merge: env-named and --git-dir targets
+    for cmd in ('GIT_DIR="%s/.git" git push origin HEAD:main' % spaced,
+                'GIT_WORK_TREE="%s" GIT_DIR="%s/.git" git push origin main' % (spaced, spaced),
+                'git --git-dir="%s/.git" push origin main' % spaced,
+                'pushd "%s" && git push origin main' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": foreign}))
+        expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "%s denied from foreign cwd" % cmd.replace(spaced, "<opted repo>"))
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'GIT_DIR="%s/.git" gh pr merge 5 --admin' % spaced}, "cwd": foreign}))
+    expect(p.returncode == 0, "GIT_DIR-prefixed PR merge into an opted-in repo allowed")
+    # Round 2: a work tree alone does not pick the pushed repository; from a plain
+    # checkout these push the plain repo and stay allowed.
+    for cmd in ('GIT_WORK_TREE="%s" git push origin main' % spaced,
+                'git --work-tree="%s" push origin main' % spaced,
+                'GIT_WORK_TREE="%s" gh pr merge 5 --admin' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=spaced_plain, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": spaced_plain}))
+        expect(p.returncode == 0, "%s from a plain checkout allowed" % cmd.replace(spaced, "<opted repo>"))
     esc_plain = spaced_plain.replace(" ", "\\ ")
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",
@@ -2738,17 +3204,22 @@ def selftest(v4_gate=None, v4_templates=None):
     open_head = sh("git rev-parse HEAD", cwd=r3).stdout.strip()
     open(base_file, "w").write("qa/batch-card16\n")
     open(head_file, "w").write(open_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:qa/batch-card16")
+    expect(p.returncode == 0,
+           "card16: push to non-protected batch base with open inventory ALLOWED")
+    open(base_file, "w").write("main\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: push to default protected base with open inventory DENIED")
+    open(base_file, "w").write("dev\n")
+    p = hookrun(r3, "git push origin HEAD:dev")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: push to configured protected dev base with open inventory DENIED")
     p = hookrun(r3, "gh pr merge 22 --admin")
     expect(p.returncode == 0,
-           "card16: merge into non-protected batch base with open inventory ALLOWED")
-    open(base_file, "w").write("main\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: merge into default protected base with open inventory DENIED")
-    open(base_file, "w").write("dev\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
-           "card16: merge into configured protected dev base with open inventory DENIED")
+           "2026-10-06: gh pr merge --admin into a protected base with open inventory ALLOWED (merges are never gated)")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 0, "2026-10-06: gh pr ready with open inventory ALLOWED (a draft cannot be merged)")
 
     # Close the batch inventory and automate the one whole-workflow rewalk.
     lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
@@ -2788,25 +3259,27 @@ def selftest(v4_gate=None, v4_templates=None):
            "card16: Playwright first-attempt pass records report and attachments")
     pass_head = commit_qa(r3)
     open(head_file, "w").write(pass_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(p.returncode == 0,
-           "card16: protected default-base merge with closed inventory and fresh rewalk ALLOWED [%s]"
+           "card16: protected default-base push with closed inventory and fresh rewalk ALLOWED [%s]"
            % p.stderr.strip()[:140])
 
     failing = generate_rewalk("failed", True, pass_head)
     fail_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
     fail_head = commit_qa(r3)
     open(head_file, "w").write(fail_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(failing.returncode == 0 and fail_doc["steps"][0]["verdict"] == "FAIL"
            and p.returncode == 2 and "verdict 'FAIL'" in p.stderr,
-           "card16: failing annotated Playwright test emits FAIL and protected merge is DENIED")
+           "card16: failing annotated Playwright test emits FAIL and protected push is DENIED")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0, "2026-10-06: gh pr merge with a FAIL rewalk ALLOWED (merges are never gated)")
 
     unmapped = generate_rewalk("passed", False, fail_head)
     no_auto = json.load(open(os.path.join(qa3, "rewalk.json")))
     no_auto_head = commit_qa(r3)
     open(head_file, "w").write(no_auto_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(unmapped.returncode == 0 and no_auto["steps"][0]["verdict"] == "NOT_AUTOMATED"
            and p.returncode == 2 and "matching manual workflow_step evidence is required" in p.stderr,
            "card16: unmapped step emits NOT_AUTOMATED and denies without manual evidence")
@@ -2821,7 +3294,7 @@ def selftest(v4_gate=None, v4_templates=None):
     json.dump(manual_rewalk, open(os.path.join(qa3, "rewalk.json"), "w"))
     manual_head = commit_qa(r3)
     open(head_file, "w").write(manual_head + "\n")
-    p = hookrun(r3, "gh pr merge 22 --admin")
+    p = hookrun(r3, "git push origin HEAD:main")
     expect(p.returncode == 0,
            "card16: NOT_AUTOMATED clears with matching verified manual workflow evidence [%s]"
            % p.stderr.strip()[:140])
@@ -2837,8 +3310,8 @@ def selftest(v4_gate=None, v4_templates=None):
     segs = lambda c: command_segments(c)
     ok_classes = (
         segment_ship_kind(segs("git push origin main")[0], r3, cfgs_of(r3)) == "push"
-        and segment_ship_kind(segs("gh pr merge 22")[0], r3, cfgs_of(r3)) == "merge"
-        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("gh pr merge 22 --admin")[0], r3, cfgs_of(r3)) is None
+        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) is None
         and segment_ship_kind(segs("vercel deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("netlify deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("fly deploy")[0], r3, cfgs_of(r3)) == "deploy"
@@ -2846,6 +3319,134 @@ def selftest(v4_gate=None, v4_templates=None):
         and segment_ship_kind(segs('git commit -m "pre-push hook"')[0], r3, cfgs_of(r3)) is None
     )
     expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
+
+    # A backslash-newline is whitespace, not the end of a command; an escaped backslash before a
+    # newline still ends it (Hermes 2026-10-06, kit-never-block-pr-merge).
+    expect(join_continuations("git \\\n  -c core.x=y \\\n  push origin main") == "git   -c core.x=y   push origin main",
+           "continuation: backslash-newline joins the lines")
+    expect(join_continuations("git pu\\\nsh origin main") == "git push origin main",
+           "continuation: inside a word it joins the word, as /bin/sh does")
+    expect(join_continuations("echo a\\\\\ngit push") == "echo a\\\\\ngit push",
+           "continuation: an escaped backslash before a newline is not a continuation")
+    expect([s[0] for s in segs(join_continuations("echo a\\\\\ngit push"))] == ["echo", "git"],
+           "continuation: the command after an escaped backslash and newline is its own segment")
+    cont_payload = json.dumps({"tool_input": {"command": "git \\\n  -c core.x=y \\\n  push origin main"}})
+    expect(bool(coarse_ship(cont_payload)), "coarse_ship: a continued push in a payload is ship-shaped")
+    expect(bool(coarse_ship("git -c core.x=y push origin main")), "coarse_ship: options between git and push")
+    expect(not coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 1 \\\n --admin"}})),
+           "coarse_ship: a continued PR merge is not ship-shaped")
+    # A PR merge is never ship-shaped for what its quoted subject or body says, on every path, even
+    # beside other commands (Hermes 2026-10-06, kit-never-block-pr-merge); what else runs still counts.
+    merge_texts = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
+                   "gh pr merge 5 --body 'run vercel --prod; git push --tags'", 'cd "/x y" && gh pr merge 5 -t "git push"',
+                   'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1',
+                   "gh pr merge 5 --subject 'git push origin main' && echo done",
+                   'echo start; gh pr merge 5 -b "git push --tags"; echo done', 'gh pr merge 5 -t "git push" | tee log',
+                   """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
+                   "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
+                   # a comment never runs (Hermes 2026-10-06 r6)
+                   "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`",
+                   "gh pr merge 5 #; vercel --prod",
+                   # a line that starts with && || or | is a syntax error: nothing after it runs (Hermes r7);
+                   # a backslash inside a comment is part of the comment, not a continuation
+                   "gh pr merge 5 # comment \\\n&& git push origin main", "gh pr merge 5\n&& git push origin main",
+                   "gh pr merge 5\n  || git push origin main", "gh pr merge 5 # c \\\n&& echo \"$(git push origin main)\"",
+                   # a << in a comment or in quotes is text, not a heredoc (Hermes 2026-10-06 r8)
+                   "gh pr merge 5 # see <<notes \\\n&& git push origin main",
+                   "gh pr merge 5 --subject \"a <<b\"\n&& git push origin main",
+                   "gh pr merge 5 --subject 'a <<b'\n&& git push origin main",
+                   # a << quoted inside a substitution is text too (Hermes 2026-10-06 r9)
+                   "gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                   "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                   "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main",
+                   'gh pr merge 5 --subject "$(printf "%s" "<<")"\n&& git push origin main']
+    ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
+                  'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
+                  'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
+                  'git push origin main && gh pr merge 5', 'gh pr merge 5 --subject "x && git push origin main',
+                  'sh -c "git push origin main"', 'gh pr merge 5 & git push origin main', 'eval "git push origin main"',
+                  'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5',
+                  # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
+                  'gh pr merge 5 #x\ngit push origin main', 'echo a#b && git push origin main',
+                  'echo \\# && git push origin main', 'echo "#" && git push origin main',
+                  # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
+                  'gh pr merge 5 # comment\ngit push origin main', 'gh pr merge 5 \\\n&& git push origin main',
+                  'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main',
+                  'cat<<EOF\n&& x\nEOF\ngit push origin main', 'x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main',
+                  'x="$(cat <<EOF\n&& y\nEOF\n)"\ngit push origin main', 'x="`cat <<EOF\n&& y\nEOF\n`"\ngit push origin main',
+                  # a heredoc body may hold a ) line: zsh reads past it and runs the push (bash and sh stop)
+                  'x=$(cat <<EOF\n)\n&& y\nEOF\n)\ngit push origin main',
+                  'x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main']
+    for c in merge_texts:
+        expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
+        p = hookrun(r3, c)
+        expect(p.returncode == 0, "gate: %r ALLOWED in an opted-in repo [%s]" % (c, " ".join(p.stderr.split())[:100]))
+    for c in ship_texts:
+        expect(bool(coarse_ship(json.dumps({"tool_input": {"command": c}}))), "coarse_ship: %r is ship-shaped" % c)
+    expect(ship_view("gh pr merge 5 -t 'git push' && echo done") == " ;  ;  echo done",
+           "ship_view: a merge segment is dropped, the rest kept")
+    expect(ship_view('gh pr merge 5 --subject "unterminated') is None, "ship_view: unbalanced quotes can't be read")
+    expect(ship_view("gh pr merge 5 # && git push origin main") == "", "ship_view: a comment is dropped")
+    expect(command_segments("gh pr merge 5 # && git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a comment is not a segment")
+    expect(_substitutions("echo x # `git push`") == [], "substitutions: none inside a comment")
+    expect("push" not in (ship_view("gh pr merge 5 # c \\\n&& git push origin main") or "push"),
+           "ship_view: nothing after a line that starts with && runs")
+    expect(command_segments("gh pr merge 5 # c \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: nothing after a line that starts with && runs")
+    expect("push" not in (ship_view("gh pr merge 5 # see <<notes \\\n&& git push origin main") or "push"),
+           "ship_view: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments("gh pr merge 5 # see <<notes \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments('gh pr merge 5 --subject "a <<b"\n&& git push origin main') ==
+           [["gh", "pr", "merge", "5", "--subject", "a <<b"]],
+           "command_segments: a quoted << is no heredoc")
+    for cmd in ("gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main"):
+        expect("push" not in (ship_view(cmd) or "push") and
+               not any(s[:2] == ["git", "push"] for s in command_segments(cmd)),
+               f"ship_view and command_segments: a << quoted inside a substitution is no heredoc: {cmd!r}")
+    for src, want in (('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main',
+                       'x=$(echo "$(cat \n)")\ngit push origin main'),
+                      ("cat <<-'E'\n\tbody\n\tE\nnext", "cat \nnext"), ('cat << "E O F"\nbody\nE O F\nnext', "cat \nnext"),
+                      ("a <<A; b <<B\n1\nA\n2\nB\nlast", "a ; b \nlast"), ("cat <<\\EOF\nbody\nEOF\nnext", "cat \nnext"),
+                      ("cat <<<word\nnext", None), ("echo $((1<<2))\nnext", None), ("(( x = 1 << 2 ))\nnext", None),
+                      ("echo $[1<<2]\nnext", None), ("echo ${x:-<<E }\nnext\nE", None),
+                      ("echo '<<x' \"<<y\" \\<<z # <<c\nnext", None)):
+        got = _strip_heredoc_bodies(src)
+        expect(got == (src if want is None else want) and _strip_heredoc_bodies(got) == got,
+               f"_strip_heredoc_bodies: removes each real operator, body and terminator, and nothing else: {src!r}")
+    # A heredoc it can't read exactly is unreadable, never guessed: shells disagree past these, and a wrong guess
+    # removed the lines they run (Hermes 2026-10-07, kit-never-block-pr-merge r11). Each runs the push in some shell.
+    push = "git push origin main"
+    for src in (f"x=$(cat <<E)\n{push}\nE", f'x="$(cat <<E)"\n{push}\nE', f"x=`cat <<E`\n{push}\nE",
+                f"x=$(cat <<A <<B)\n{push}\nA\nB", f"cat <<$(echo E)\nbody\n$(echo E)\n{push}",
+                f"cat <<`echo E`\nbody\n`echo E`\n{push}", f"cat <<$((1))\nbody\n$((1))\n{push}",
+                f"cat <<E$(x)F\nbody\nE$(x)F\n{push}", f"cat <<E(x)\nbody\nE(x)\n{push}", f"cat <<E)\nbody\nE)\n{push}",
+                f'cat <<$(echo "E")\nbody\n$(echo E)\n{push}', f"x=$(cat <<E\nbody\nE)\n{push}",
+                f"(cat <<E)\nbody\nE\n{push}", f"cat <<EOF\nnever ends\n{push}", f"cat << ;\n{push}", f"cat <<E"):
+        expect(_strip_heredoc_bodies(src) is None and ship_view(src) is None,
+               f"_strip_heredoc_bodies and ship_view: a heredoc not read exactly is unreadable: {src!r}")
+        expect(push not in src or any(s[:2] == ["git", "push"] for s in command_segments(src)),
+               f"command_segments: every line of an unreadable heredoc command is a segment: {src!r}")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments(f"echo ${{x:-<<E }}\n{push}\nE")),
+           "command_segments: a << inside ${...} is text, so the next line runs")
+    expect(["git", "push", "origin", "main"] in
+           command_segments('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main'),
+           "command_segments: a heredoc body cannot hide the push that follows it")
+    expect([_has_heredoc(s) for s in ("cat <<EOF", "cat<<EOF", "x=$(cat <<EOF\n)", 'x="$(cat <<EOF\n)"', "x=`cat <<E`",
+                                      'echo "$(echo "$(cat <<E)")"', "x=$(echo ok")] == [True] * 7,
+           "_has_heredoc: an unquoted << at any substitution depth is a heredoc, and so is an unbalanced substitution")
+    expect([_has_heredoc(s) for s in ("echo '<<'", 'echo "<<"', "echo \\<<x", "echo ok # <<x", '"$(printf \'<<\')"',
+                                      "\"`printf '<<'`\"", "$(echo ok # <<x\n)", "echo a#<b<c")] == [False] * 8,
+           "_has_heredoc: a << in quotes, escaped or in a comment is text, also inside a substitution")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat<<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc operator with no space still makes its body text")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat <<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc body line that starts with && does not hide what follows")
+    expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
+           "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
     # ---------------- v3: per-run namespacing (change request) ----------------
     # Contract: evidence ships as .qa-only artifacts commits over the walked
@@ -3074,6 +3675,16 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin tag vbad", "`git push origin tag <name>`")
     deny4(r9, "git push --tags", "git push --tags (hook checks HEAD; pre-push checks each tag)")
     deny4(r9, "git push --follow-tags origin feat", "git push --follow-tags")
+    # A push inside a command substitution runs, quoted or not, so the gate sees it.
+    for c in ('echo "$(git push origin vbad)"', "echo `git push origin vbad`", 'echo "`git push origin vbad`"',
+              'gh pr merge 5 --subject "$(git push origin vbad)"', 'echo "x $(echo "$(git push origin vbad)")"'):
+        deny4(r9, c, "a push in a substitution: %s" % c)
+    allow4(r9, "echo '$(git push origin vbad)'", "a substitution inside single quotes is text")
+    allow4(r9, 'gh pr merge 5 --subject "git push origin vbad"', "a merge whose subject names a push")
+    allow4(r9, "gh pr merge 5 # && git push origin vbad", "a push inside a comment never runs")
+    deny4(r9, "gh pr merge 5 #x\ngit push origin vbad", "a push on the line after a comment")
+    allow4(r9, "gh pr merge 5 # c \\\n&& git push origin vbad", "a comment's backslash is no continuation")
+    deny4(r9, "gh pr merge 5 \\\n&& git push origin vbad", "a real continuation before && still pushes")
     allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
     deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
     # releases and dispatches check the commit they publish
@@ -3118,7 +3729,9 @@ def selftest(v4_gate=None, v4_templates=None):
     deny4(r9, "git push origin feat:main", "feat:main ships the unwalked source")
     deny4(r9, "git push origin +feat:dev", "forced refspec +feat:dev")
     deny4(r9, "git status\ngit push origin HEAD:dev", "ship on the second line of a multi-line command")
-    deny4(r9, "GH_TOKEN=x gh pr merge 5", "env-prefixed gh pr merge")
+    deny4(r9, "GH_TOKEN=x git push origin HEAD:main", "env-prefixed protected push")
+    allow4(r9, "GH_TOKEN=x gh pr ready 5", "env-prefixed gh pr ready (PR commands are never gated)")
+    allow4(r9, "GH_TOKEN=x gh pr merge 5 --admin", "env-prefixed gh pr merge (merges are never gated)")
     sh("git checkout -q -b dev", cwd=r9)
     deny4(r9, "git push origin HEAD", "git push origin HEAD while on a protected branch")
     deny4(r9, "git push origin +dev", "forced +dev")
@@ -3259,7 +3872,7 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "gh release edit vnope --draft=false", "gh release edit of a tag not in the clone",
           "not in this clone")
     gw = "GitHub API write"
-    deny5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge", gw)
+    allow5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge (merges are never gated)")
     deny5(r9, "gh api repos/{owner}/{repo}/releases -f tag_name=v9", "gh api release create (fields imply POST)", gw)
     deny5(r9, "gh api -X PATCH repos/o/r/releases/123 -F draft=false", "gh api release publish", gw)
     deny5(r9, "gh api repos/o/r/git/refs -f ref=refs/tags/v9 -f sha=abc", "gh api ref create", gw)
@@ -3267,10 +3880,10 @@ def selftest(v4_gate=None, v4_templates=None):
           "gh api workflow dispatch", gw)
     deny5(r9, "gh api repos/o/r/merges -f base=main -f head=feat", "gh api branch merge", gw)
     deny5(r9, "gh api -X PUT repos/o/r/contents/f.txt -f message=m -f content=eA==", "gh api contents commit", gw)
-    deny5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
-              "{ clientMutationId } }'", "gh api graphql mergePullRequest", gw)
-    deny5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
-          "curl PR merge", gw)
+    allow5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
+               "{ clientMutationId } }'", "gh api graphql mergePullRequest (merges are never gated)")
+    allow5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
+           "curl PR merge (merges are never gated)")
     deny5(r9, "curl -d '{\"tag_name\":\"v9\"}' https://api.github.com/repos/o/r/releases", "curl release create", gw)
     allow5(r9, "vercel --prod", "control: upload deploy of a clean walked HEAD")
     with open(os.path.join(r9, "f.txt"), "a") as fh:
@@ -3709,6 +4322,17 @@ def selftest(v4_gate=None, v4_templates=None):
                "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
     ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
     saved_path = os.environ["PATH"]
+    # The reduced PATH keeps out a real gh, not git: on macOS /usr/bin/git is
+    # the Xcode shim, which exits 69 until the Xcode license is accepted, and
+    # every owner_run case then failed for a reason unrelated to the gate. A
+    # directory holding only a link to the real git keeps gh out (Homebrew's
+    # bin has both).
+    git_only = os.path.join(tmp, "git-only-bin")
+    os.makedirs(git_only, exist_ok=True)
+    real_git = shutil.which("git", path=saved_path)
+    if real_git and not os.path.exists(os.path.join(git_only, "git")):
+        os.symlink(real_git, os.path.join(git_only, "git"))
+    base_path = os.pathsep.join([git_only, "/usr/bin", "/bin"])
 
     def gh_calls():
         p = os.path.join(ghdir, "calls")
@@ -3724,7 +4348,7 @@ def selftest(v4_gate=None, v4_templates=None):
         for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
             with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
                 f.write(d if isinstance(d, str) else json.dumps(d))
-        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + "/usr/bin:/bin"
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + base_path
         if sleep:
             os.environ["OR_GH_SLEEP"] = sleep
         _LOOKUP_DEADLINE = None
@@ -3790,7 +4414,7 @@ def selftest(v4_gate=None, v4_templates=None):
            and verify(ident_or) == [], "owner_run: a later check looks the run up again")
     verify(ident_or)  # leaves the stub's run doc in place
     os.remove(os.path.join(ghdir, "calls"))
-    os.environ["PATH"] = orbin + os.pathsep + "/usr/bin:/bin"
+    os.environ["PATH"] = orbin + os.pathsep + base_path
     try:
         f_two = []
         check_e2e("q", reader({"q/evidence.json": json.dumps({"authentication": {"identities": [ident_or, dict(ident_or)]}})}),
@@ -3835,12 +4459,25 @@ _LAST_INPUT = None
 def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
-    closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|--tags|refs/tags/|gh\s+pr\s+(merge|ready)|"
+    closed), never allow. Coarser than the classifier on purpose. Reads the
+    payload's command when the text is a payload, with line continuations
+    joined, and allows options between git and push. It reads ship_view, so a
+    PR merge is never ship-shaped for what its quoted subject or body says."""
+    try:
+        d = json.loads(text)
+        inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
+        cmd = (inp.get("command") or inp.get("cmd")) if isinstance(inp, dict) else None
+        if isinstance(cmd, str) and cmd:
+            text = cmd
+    except Exception:
+        pass
+    view = ship_view(text)
+    text = flat_words(view) if view is not None else join_continuations(text)
+    return re.search(r"\bgit\b[^;&|\n]*?\spush\b|--mirror|--tags|refs/tags/|"
                      r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
                      r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
-                     r"repos/\S+/(pulls/\d+/merge|merges|releases|git/refs|dispatches|contents/|deployments)|"
-                     r"mergePullRequest|createCommitOnBranch|updateRef", text)
+                     r"repos/\S+/(merges|releases|git/refs|dispatches|contents/|deployments)|"
+                     r"createCommitOnBranch|updateRef", text)
 
 
 if __name__ == "__main__":
