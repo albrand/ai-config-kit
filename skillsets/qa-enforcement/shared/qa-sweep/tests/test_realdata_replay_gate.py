@@ -581,6 +581,34 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_quoted_greater_than_does_not_truncate_html_tag_privacy_scan(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        refusing = (
+            ('- Replay note: <div title="x >" style="background:url(https://example.test/Test%20Tenant)">safe</div>', "line 14"),
+            ('- Replay note: <div title="x >"\n style="background:url(https://example.test/Test%20Tenant)">safe</div>', "line 15"),
+            ('- Replay note: &lt;div title=&quot;x &gt;&quot; style=&quot;background:url(https://example.test/Test%20Tenant)&quot;&gt;safe&lt;/div&gt;', "line 14"),
+            ('- Replay note: &lt;div title=&quot;x &#62;&quot;\n style=&quot;background:url(https://example.test/Test%20Tenant)&quot;&gt;safe&lt;/div&gt;', "line 15"),
+        )
+        for note, expected_line in refusing:
+            with self.subTest(quoted_tag_boundary="private URL hidden after quoted greater-than"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Test Tenant", reason)
+
+        passing = (
+            '- Replay note: <div title="x >" style="background:url(https://example.test/ordinary)">safe</div>',
+            '- Replay note: &lt;div title=&quot;x &gt;&quot; style=&quot;background:url(https://example.test/ordinary)&quot;&gt;safe&lt;/div&gt;',
+            '- Replay note: <div title="Test%20Tenant >" data-note="ordinary">safe</div>',
+            '- Replay note: <div title="x >" style="background:url(https://example.test/SuperTest%20TenantCo)">safe</div>',
+        )
+        for note in passing:
+            with self.subTest(quoted_tag_boundary="clean or non-URL control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_percent_encoded_url_newline_is_not_a_source_line_break(self) -> None:
         notes = (
             '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',

@@ -57,7 +57,7 @@ ARTIFACT_FOOTER_LINE = re.compile(
 LABEL_LINE_MARKER = "\ue000"
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 HTML_REFERENCE = re.compile(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;?)")
-HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>", re.S)
+HTML_TAG = re.compile(r'''</?[A-Za-z](?:[^'">]|"[^"]*"|'[^']*')*>''', re.S)
 HTML_ATTRIBUTE_VALUE = re.compile(
     r'''(?:^|\s)([^\s=<>/]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))'''
 )
