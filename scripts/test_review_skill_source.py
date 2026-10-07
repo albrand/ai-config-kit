@@ -87,6 +87,30 @@ def gate_sentences(text: str) -> list[str]:
     return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s)]
 
 
+# Wording-independent: outside the pinned Hermes advisor pass section, no sentence may tie Hermes to posting,
+# publishing or approval, so a hold in new words ("Publication remains pending until Hermes returns a verdict")
+# fails until it is moved into the section, where the digest pins it, or added verbatim below (Hermes 2026-10-07,
+# kit-review-skill-merge r5).
+_POSTING = r"(?:\bpost(?:s|ed|ing)?\b|\bunposted\b|\bpublish\w*|\bpublication\b|\bapprov(?:e|es|ed|ing|al)\b(?! broker))"
+HERMES_NEAR_POSTING = re.compile(r"(?i)hermes.{0,100}?" + _POSTING + r"|" + _POSTING + r".{0,100}?hermes")
+ALLOWED_HERMES_POSTING: frozenset[str] = frozenset()
+
+
+def hermes_posting_sentences(text: str) -> list[str]:
+    """Sentences outside the Hermes advisor pass section that mention Hermes near a posting word. Blocks start at
+    a blank line, bullet, table row or heading, so wrapped prose stays one sentence and list items stay apart."""
+    text = re.sub(r"(?ms)^## Hermes advisor pass\n.*?(?=^## |\Z)", "", text)
+    blocks, cur = [], []
+    for line in text.splitlines():
+        if not line.strip() or re.match(r"\s*(?:[-*+] |\d+\. |\||#)", line):
+            blocks.append(" ".join(cur))
+            cur = []
+        cur.append(line.strip())
+    blocks.append(" ".join(cur))
+    return [s for b in blocks for s in sentences(plain(b))
+            if HERMES_NEAR_POSTING.search(s) and s.strip() not in ALLOWED_HERMES_POSTING]
+
+
 class ReviewSkillSourceTests(unittest.TestCase):
     def test_gate_predicate_controls(self) -> None:
         flagged = [
@@ -138,10 +162,29 @@ class ReviewSkillSourceTests(unittest.TestCase):
         self.assertEqual(gate_sentences(quoted), [quoted])
         self.assertEqual(len(gate_sentences(quoted + " Continue enforcing the quoted completion requirement.")), 1)
 
+    def test_hermes_posting_predicate_controls(self) -> None:
+        flagged = [
+            "Publication remains pending until Hermes returns a verdict.",
+            "The review gets posted once Hermes is back.",
+            "- Hermes must approve the verdict first.",
+            "When it is down, approval\nwaits for Hermes.",
+        ]
+        allowed = [
+            "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
+            "- Hermes terminal bridge: `scripts/orca-hermes-terminal.py`\n- Post a status line after each run.",
+            "Hermes reviews every one of our PRs before merge.",
+            "## Hermes advisor pass\n\nPost your verdict unchanged when Hermes does not answer.\n\n## Guardrails\n",
+        ]
+        for text in flagged:
+            self.assertEqual(len(hermes_posting_sentences(text)), 1, text)
+        for text in allowed:
+            self.assertEqual(hermes_posting_sentences(text), [], text)
+
     def test_hermes_is_never_described_as_a_completion_gate(self) -> None:
         offenders = []
         for path in sorted(SKILLSETS.rglob("*.md")):
-            for sentence in gate_sentences(path.read_text(encoding="utf-8")):
+            text = path.read_text(encoding="utf-8")
+            for sentence in gate_sentences(text) + hermes_posting_sentences(text):
                 offenders.append(f"{path.relative_to(ROOT)}: {sentence[:160]}")
         self.assertEqual(offenders, [])
 
@@ -150,7 +193,8 @@ class ReviewSkillSourceTests(unittest.TestCase):
         offenders = []
         for raw in os.environ[CHAIN_ENV].split(os.pathsep):
             path = Path(raw).expanduser()
-            for sentence in gate_sentences(path.read_text(encoding="utf-8")):
+            text = path.read_text(encoding="utf-8")
+            for sentence in gate_sentences(text) + hermes_posting_sentences(text):
                 offenders.append(f"{path}: {sentence[:160]}")
         self.assertEqual(offenders, [])
 
