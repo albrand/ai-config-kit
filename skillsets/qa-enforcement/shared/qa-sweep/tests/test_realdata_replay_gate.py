@@ -56,8 +56,8 @@ class RealdataReplayGateTests(unittest.TestCase):
         git(self.repo, "add", ".")
         git(self.repo, "commit", "-m", "base")
         self.base = git(self.repo, "rev-parse", "HEAD")
-        git(self.repo, "branch", "origin/develop", self.base)
-        git(self.repo, "branch", "origin/main", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
         (self.repo / "src/server/ingestion").mkdir(parents=True)
         (self.repo / "src/server/ingestion/worker.ts").write_text("candidate\n", encoding="utf-8")
         git(self.repo, "add", ".")
@@ -250,8 +250,8 @@ sys.exit(2)
         self.assertEqual(allowed.returncode, 0)
 
     def test_release_defaults_to_origin_main_and_requires_replay(self) -> None:
-        git(self.repo, "branch", "-f", "origin/main", self.base)
-        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
         denied, payload = self.check("release", "release-request", default_base=True)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
@@ -272,18 +272,18 @@ sys.exit(2)
         self.assertTrue(payload["allowed"])
 
     def test_release_denies_when_origin_main_is_missing(self) -> None:
-        git(self.repo, "update-ref", "-d", "refs/heads/origin/main")
-        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        git(self.repo, "update-ref", "-d", "refs/remotes/origin/main")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
         denied, payload = self.check("release", "release-request", default_base=True)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
-        self.assertIn("cannot resolve production branch origin/main", payload["reason"])
+        self.assertIn("cannot resolve production branch refs/remotes/origin/main", payload["reason"])
 
     def test_release_explicit_base_cannot_hide_changes_since_origin_main(self) -> None:
         # origin/main has no data-path change, while the explicit release base
         # already contains it. The release check must still include main's diff.
-        git(self.repo, "branch", "-f", "origin/main", self.base)
-        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
         denied, payload = self.check("release", "release-request", base_arg="HEAD")
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
@@ -308,12 +308,50 @@ sys.exit(2)
         self.assertEqual(allowed.returncode, 0, payload["reason"])
         self.assertTrue(payload["allowed"])
 
+    def test_release_ignores_ambiguous_local_origin_main(self) -> None:
+        # The remote-tracking ref is the production baseline, but a conflicting
+        # local branch at HEAD would make the shorthand origin/main miss changes.
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.repo, "branch", "origin/main", "HEAD")
+        denied, payload = self.check("release", "release-request", default_base=True)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
+
     def test_review_default_base_remains_origin_develop(self) -> None:
-        git(self.repo, "branch", "-f", "origin/develop", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
         denied, payload = self.check("review", "pre-review.py", default_base=True)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
         self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
+
+    def test_inherited_report_is_denied_but_report_changed_in_branch_is_allowed(self) -> None:
+        # Put a valid report on the PR base, then make a data-path change without
+        # changing it. Inherited evidence must not validate a different change.
+        git(self.repo, "reset", "--hard", self.base)
+        inherited = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(inherited, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "base replay report")
+        report_base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", report_base)
+
+        (self.repo / "src/server/ingestion/worker.ts").parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / "src/server/ingestion/worker.ts").write_text("branch change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "change ingestion without replay")
+        denied, payload = self.check("review", "pre-review.py", base_arg=report_base)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("report inherited from base; replay this change", payload["reason"])
+
+        updated = replay_report(note="- Replay updated for this branch change.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(updated, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "update replay for ingestion change")
+        allowed, payload = self.check("review", "pre-review.py", base_arg=report_base)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
 
     def test_blocked_report_denies_digest_only_release_request(self) -> None:
         report = replay_report(blocked=True)
@@ -488,7 +526,8 @@ sys.exit(2)
         gh = fake_bin / "gh"
         head = git(self.repo, "rev-parse", "HEAD")
         response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head,
-                               "files": [{"path": "src/server/ingestion/worker.ts"}]})
+                               "files": [{"path": "src/server/ingestion/worker.ts"},
+                                         {"path": report_path.name}]})
         gh.write_text(f"#!/bin/sh\nprintf '%s\\n' '{response}'\n", encoding="utf-8")
         gh.chmod(0o755)
         env = os.environ.copy()

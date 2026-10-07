@@ -92,7 +92,7 @@ def repo_root(start: Path) -> Path | None:
 def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
     paths: set[str] = set()
     if base is None:
-        base = "origin/develop"
+        base = "refs/remotes/origin/develop"
         git(repo, "rev-parse", "--verify", f"{base}^{{commit}}")
     if base:
         paths.update(filter(None, git(repo, "diff", "--name-only", f"{base}...{head}").splitlines()))
@@ -100,6 +100,14 @@ def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
         paths.update(filter(None, git(repo, *args).splitlines()))
     paths.update(filter(None, git(repo, "ls-files", "--others", "--exclude-standard").splitlines()))
     return paths
+
+
+def committed_changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
+    """Return only paths changed in the committed base-to-head range."""
+    if base is None:
+        base = "refs/remotes/origin/develop"
+        git(repo, "rev-parse", "--verify", f"{base}^{{commit}}")
+    return set(filter(None, git(repo, "diff", "--name-only", f"{base}...{head}").splitlines()))
 
 
 def production_paths(paths: set[str]) -> set[str]:
@@ -365,28 +373,36 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     if not repo_identity(repo, head):
         return True, "not the Pallium app repository", set(), None
     pr_info: dict[str, Any] | None = None
+    diff_paths: set[str]
+    report_diff_paths: set[str]
     try:
         if action == "pr":
             pr_info = pull_request_info(repo, command)
             if pr_info is None:
                 return False, "cannot read the target PR's changed files; refusing to guess", set(), None
-            pr_paths = {str(item.get("path")) for item in pr_info["files"]
-                        if isinstance(item, dict) and item.get("path")}
-            impacted = production_paths(pr_paths)
+            diff_paths = {str(item.get("path")) for item in pr_info["files"]
+                          if isinstance(item, dict) and item.get("path")}
+            report_diff_paths = diff_paths
+            impacted = production_paths(diff_paths)
         elif action == "release":
-            production_base = "origin/main"
+            production_base = "refs/remotes/origin/main"
             try:
                 git(repo, "rev-parse", "--verify", f"{production_base}^{{commit}}")
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
-                return False, "cannot resolve production branch origin/main for release diff", set(), None
-            release_paths = changed_paths(repo, production_base, head)
+                return False, ("cannot resolve production branch refs/remotes/origin/main "
+                               "for release diff"), set(), None
+            diff_paths = changed_paths(repo, production_base, head)
+            report_diff_paths = committed_changed_paths(repo, production_base, head)
             if base is not None and base != production_base:
                 # Explicit bases may broaden the release scope, but must never
                 # hide paths changed since production's current branch.
-                release_paths.update(changed_paths(repo, base, head))
-            impacted = production_paths(release_paths)
+                diff_paths.update(changed_paths(repo, base, head))
+                report_diff_paths.update(committed_changed_paths(repo, base, head))
+            impacted = production_paths(diff_paths)
         else:
-            impacted = production_paths(changed_paths(repo, base, head))
+            diff_paths = changed_paths(repo, base, head)
+            report_diff_paths = committed_changed_paths(repo, base, head)
+            impacted = production_paths(diff_paths)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return False, f"cannot establish the Pallium production-data diff: {exc}", set(), None
     if not impacted:
@@ -396,6 +412,8 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     valid, reason, digest = validate_report(repo, head)
     if not valid or digest is None:
         return False, reason, impacted, digest
+    if REPORT_NAME not in report_diff_paths:
+        return False, f"{REPORT_NAME} report inherited from base; replay this change", impacted, digest
     if action == "review":
         # pre-review creates the packet that cites the report; Hermes itself must attach it.
         if "pre-review.py" not in command and not report_attached(command, cwd, digest):
