@@ -78,6 +78,42 @@ class RealdataReplayGateTests(unittest.TestCase):
                                 text=True, capture_output=True, env=env)
         return result, json.loads(result.stdout)
 
+    def merge_with_manual_conflict_resolution(self, conflict_path: str) -> tuple[str, str]:
+        git(self.repo, "reset", "--hard", self.base)
+        conflicted = self.repo / conflict_path
+        conflicted.parent.mkdir(parents=True, exist_ok=True)
+        conflicted.write_text("base-side\n", encoding="utf-8")
+        git(self.repo, "add", conflict_path)
+        git(self.repo, "commit", "-m", "add conflict fixture base")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.repo, "checkout", "-b", "feature")
+        conflicted.write_text("feature-side\n", encoding="utf-8")
+        git(self.repo, "add", conflict_path)
+        git(self.repo, "commit", "-m", "feature change")
+
+        report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "feature replay report")
+
+        git(self.repo, "checkout", "-b", "develop-source", self.base)
+        conflicted.write_text("develop-side\n", encoding="utf-8")
+        git(self.repo, "add", conflict_path)
+        git(self.repo, "commit", "-m", "develop conflict change")
+        develop_head = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", develop_head)
+
+        git(self.repo, "checkout", "feature")
+        merge = subprocess.run(["git", "merge", "--no-ff", "develop-source", "-m", "merge develop"],
+                               cwd=self.repo, text=True, capture_output=True)
+        self.assertNotEqual(merge.returncode, 0, "fixture must produce a merge conflict")
+        conflicted.write_text("manual-resolution\n", encoding="utf-8")
+        git(self.repo, "add", conflict_path)
+        git(self.repo, "commit", "-m", "resolve merge conflict")
+        return develop_head, git(self.repo, "rev-parse", "HEAD")
+
     def gate_module(self):
         from importlib.util import module_from_spec, spec_from_file_location
         spec = spec_from_file_location("realdata_gate_for_gh_tests", GATE)
@@ -461,6 +497,50 @@ sys.exit(2)
         allowed, payload = self.check("review", "pre-review.py", default_base=True)
         self.assertEqual(allowed.returncode, 0, payload["reason"])
         self.assertTrue(payload["allowed"])
+
+    def test_production_merge_resolution_after_report_is_denied(self) -> None:
+        develop_head, merge_commit = self.merge_with_manual_conflict_resolution(
+            "src/server/ingestion/worker.ts")
+        denied, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("production-data change postdates REALDATA-REPLAY.md", payload["reason"])
+        self.assertIn(merge_commit[:8], payload["reason"])
+
+    def test_refreshed_report_after_production_merge_resolution_is_allowed(self) -> None:
+        develop_head, _ = self.merge_with_manual_conflict_resolution(
+            "src/server/ingestion/worker.ts")
+        report = replay_report(note="- Refreshed after the production merge conflict resolution.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "refresh report after production merge resolution")
+        allowed, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
+    def test_nonproduction_merge_resolution_does_not_make_report_stale(self) -> None:
+        develop_head, _ = self.merge_with_manual_conflict_resolution("docs/notes.md")
+        allowed, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
+    def test_unavailable_remerge_diff_fails_closed(self) -> None:
+        develop_head, _ = self.merge_with_manual_conflict_resolution(
+            "src/server/ingestion/worker.ts")
+        module = self.gate_module()
+        real_git = module.git
+
+        def git_without_remerge_diff(repo: Path, *args: str, timeout: float = 4) -> str:
+            if args and args[0] == "show" and "--remerge-diff" in args:
+                raise RuntimeError("unsupported remerge diff")
+            return real_git(repo, *args, timeout=timeout)
+
+        with patch.object(module, "git", side_effect=git_without_remerge_diff):
+            allowed, reason, _, _ = module.evaluate(
+                self.repo, develop_head, "review", command="pre-review.py")
+        self.assertFalse(allowed)
+        self.assertIn("cannot inspect merge resolution", reason)
+        self.assertIn("--remerge-diff", reason)
 
     def test_review_default_base_remains_origin_develop(self) -> None:
         git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)

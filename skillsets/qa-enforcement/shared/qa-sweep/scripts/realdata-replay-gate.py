@@ -103,7 +103,7 @@ def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
 
 
 def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str | None:
-    """Require every production-data commit to precede the newest report commit."""
+    """Require production-data changes and merge resolutions to precede the report."""
     commit_range = f"{base}..{head}"
     report_commit = git(repo, "log", "-1", "--format=%H", commit_range, "--", REPORT_NAME)
     if not report_commit:
@@ -133,6 +133,26 @@ def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str |
                     f"replay this change (commit {commit[:8]})")
         if result.returncode:
             raise RuntimeError(f"cannot verify production-data commit ancestry for {commit[:8]}")
+
+    merge_commits = git(repo, "rev-list", "--merges", commit_range).splitlines()
+    for merge_commit in merge_commits:
+        try:
+            resolution_paths = set(filter(None, git(
+                repo, "show", "--remerge-diff", "--format=", "--name-only", merge_commit,
+                timeout=4).splitlines()))
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(
+                f"cannot inspect merge resolution for {merge_commit[:8]} with --remerge-diff: {exc}") from exc
+        if not production_paths(resolution_paths):
+            continue
+        result = subprocess.run(["git", "merge-base", "--is-ancestor", merge_commit, report_commit],
+                                cwd=repo, text=True, capture_output=True, timeout=4)
+        if result.returncode == 1:
+            return ("a production-data change postdates REALDATA-REPLAY.md; "
+                    f"replay this change (merge {merge_commit[:8]})")
+        if result.returncode:
+            raise RuntimeError(
+                f"cannot verify production-data merge ancestry for {merge_commit[:8]}")
     return None
 
 

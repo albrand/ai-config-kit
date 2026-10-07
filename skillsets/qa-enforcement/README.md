@@ -26,7 +26,12 @@ submission requires the report itself attached as `--evidence` with its digest;
 creation requires the report committed and its name and digest in the creation
 request. PR-ready and merge require the committed report and verify that the
 current PR body cites its name and digest. Release requests require the
-committed report and a citation in the request. Install with
+committed report and a citation in the request. For each checked range, every
+non-merge production-data commit and every merge commit whose `--remerge-diff`
+shows a production-path resolution difference must be an ancestor of the newest
+report-changing commit. Clean merges and resolutions limited to non-production
+paths do not make the report stale. If Git cannot compute a merge remerge diff,
+the gate denies the action. Install with
 `hooks/install-realdata-replay-gate.sh`; it backs up and updates only the new
 gate files, installed pre-review runners, and QA ship-hook adapter, preserving
 each home's existing QA sweep gate.
