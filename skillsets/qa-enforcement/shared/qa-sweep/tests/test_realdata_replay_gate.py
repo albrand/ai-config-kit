@@ -321,6 +321,56 @@ sys.exit(2)
     def test_private_tenant_label_rejects_named_html_space_reference(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme&nbsp;Energy reviewer")
 
+    def test_encoded_newline_entities_do_not_advance_source_line(self) -> None:
+        gate = self.gate_module()
+        for entity in ("&#10;", "&#x0a;", "&NewLine;"):
+            with self.subTest(entity_kind="encoded newline"):
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report(note=f"- Replay note: {entity}Acme Energy"))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn("line 14", reason)
+                self.assertNotIn("Acme Energy", reason)
+
+    def test_encoded_newline_entity_inside_html_tag_does_not_advance_source_line(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note='- Replay note: <b title="&#10;">Acme Energy'))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_encoded_newline_after_real_source_newline_keeps_original_line(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: preceding text\r\n&#10;Acme Energy"))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_encoded_newline_between_label_words_remains_a_visible_separator(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: Acme&#10;Energy"))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_actual_source_newlines_advance_lines_inside_hidden_markup(self) -> None:
+        gate = self.gate_module()
+        notes_and_lines = (
+            ("- Replay note: preceding text\rAcme Energy", "line 15"),
+            ("- Replay note: preceding text\r\nAcme Energy", "line 15"),
+            ("- Replay note: preceding text\r\n<!--\r\n\r-->Acme Energy", "line 17"),
+        )
+        for note, expected_line in notes_and_lines:
+            with self.subTest(source_newline_case="actual source newline"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Acme Energy", reason)
+
     def test_private_tenant_label_rejects_zero_width_character(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")
 

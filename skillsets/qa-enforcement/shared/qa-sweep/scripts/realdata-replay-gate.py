@@ -55,6 +55,7 @@ ARTIFACT_FOOTER_LINE = re.compile(
 )
 LABEL_LINE_MARKER = "\ue000"
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+HTML_REFERENCE = re.compile(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;?)")
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -112,7 +113,7 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True,
         text = re.sub(r"\r\n?|\n", "\n", text)
     else:
         text = HTML_COMMENT.sub("", text)
-    text = unicodedata.normalize("NFKC", html.unescape(text))
+    text = unicodedata.normalize("NFKC", _unescape_without_source_newlines(text))
     format_replacement = " " if cf_as_space else ""
     text = "".join(format_replacement if unicodedata.category(char) == "Cf" else char
                     for char in text)
@@ -136,6 +137,14 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True,
     text = re.sub(r"[*_`~]", "", text)
     text = text.replace("|", " ")
     return re.sub(r"[^\S\n]+", " ", text)
+
+
+def _unescape_without_source_newlines(text: str) -> str:
+    """Decode HTML references while keeping decoded CR/LF from shifting source lines."""
+    def replace_reference(match: re.Match[str]) -> str:
+        return re.sub(r"\r\n?|\n", " ", html.unescape(match.group(0)))
+
+    return HTML_REFERENCE.sub(replace_reference, text)
 
 
 def _exclude_gate_owned_label_keys(text: str) -> str:
