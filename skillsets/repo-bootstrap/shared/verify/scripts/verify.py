@@ -773,12 +773,26 @@ def ensure_mirror(slug, url):
 
 
 def pending_jobs(slug, mirror, args):
-    rc, out = sh(["gh", "pr", "list", "-R", slug, "--state", "open", "--limit", "50",
-                  "--json", "number,headRefOid,baseRefName,isCrossRepository"], timeout=60, merge=False)
+    selected = getattr(args, "pr", None)
+    if selected is not None:
+        if type(selected) is not int or selected < 1 or args.branch:
+            raise RuntimeError("--pr needs a positive PR number and cannot be combined with --branch")
+        command = ["gh", "pr", "view", str(selected), "-R", slug,
+                   "--json", "number,state,headRefOid,baseRefName,isCrossRepository"]
+    else:
+        command = ["gh", "pr", "list", "-R", slug, "--state", "open", "--limit", "50",
+                   "--json", "number,headRefOid,baseRefName,isCrossRepository"]
+    rc, out = sh(command, timeout=60, merge=False)
     if rc != 0:
-        raise RuntimeError(f"cannot list PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
+        raise RuntimeError(f"cannot read PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
+    prs = json.loads(out or "[]")
+    if selected is not None:
+        if not isinstance(prs, dict) or type(prs.get("number")) is not int or prs["number"] != selected \
+                or prs.get("state") != "OPEN":
+            raise RuntimeError(f"{slug} PR #{selected}: response does not identify that open PR; not running")
+        prs = [prs]
     jobs = []
-    for p in json.loads(out or "[]"):
+    for p in prs:
         if not isinstance(p, dict):
             continue
         label, head, base = f"PR #{p.get('number')}", p.get("headRefOid"), p.get("baseRefName")
@@ -884,7 +898,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
                                            withheld - set(FORGE_TOKENS))
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
-        art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "base": base, "fork": fork,
+        art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "label": label, "base": base, "fork": fork,
                "sandboxed": bool(wrap), "verdict": verdict, "stages": results}
         (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
@@ -1242,7 +1256,9 @@ def main(argv=None):
     p.add_argument("--sha")
     p = sub.add_parser("serve")
     p.add_argument("--repo", action="append", required=True, help="OWNER/NAME or a checkout path (read only)")
-    p.add_argument("--branch", action="append", help="also verify this branch head (e.g. develop)")
+    targets = p.add_mutually_exclusive_group()
+    targets.add_argument("--branch", action="append", help="also verify this branch head (e.g. develop)")
+    targets.add_argument("--pr", type=int, help="only verify this open PR; refuses a mismatched response")
     p.add_argument("--once", action="store_true")
     p.add_argument("--interval", type=int, default=300)
     p.add_argument("--max-jobs", type=int, default=2)

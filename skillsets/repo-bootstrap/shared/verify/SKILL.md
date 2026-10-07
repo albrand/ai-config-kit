@@ -65,6 +65,8 @@ stopping point: write the missing stage if you can, then run it.
 4. Copy [templates/AGENTS.repo.md](templates/AGENTS.repo.md) to the repo's `AGENTS.md` and fill it in.
 5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME` (add `--once` to a cron
    or bb automation). It runs open PR heads in throwaway clones and posts `verify/<stage>` statuses.
+   Add `--pr NUMBER` for one open PR; it reads that exact PR, refuses closed or mismatched replies,
+   and records its label with the result. This cannot be combined with `--branch`.
    Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
    - PR code is untrusted. A PR runs its base branch's `.verify/config.json`, so it can't change what
      is checked. A PR that adds the first config gets `missing` until that config is merged.

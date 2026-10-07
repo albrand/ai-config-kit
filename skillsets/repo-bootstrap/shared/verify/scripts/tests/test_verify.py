@@ -519,7 +519,7 @@ class RunnerIsolation(unittest.TestCase):
         self.assertFalse((self.runner_home / "runs").exists())
         self.assertEqual(ExfilHandler.received, [])
 
-    def serve(self, prs, branch=None):
+    def serve(self, prs, branch=None, pr=None):
         """Drive the real dispatch (serve_repo -> pending_jobs -> run_job) against a fake `gh` that lists `prs`."""
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir(exist_ok=True)
@@ -530,13 +530,20 @@ class RunnerIsolation(unittest.TestCase):
         fake.write_text(f"#!{sys.executable}\n"
                         "import json, sys\n"
                         f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
-                        f"print(open({str(self.tmp / 'prs.json')!r}).read() if sys.argv[1:3] == ['pr', 'list'] else '{{}}')\n")
+                        f"prs = json.load(open({str(self.tmp / 'prs.json')!r}))\n"
+                        "if sys.argv[1:3] == ['pr', 'list']:\n"
+                        "    print(json.dumps(prs))\n"
+                        "elif sys.argv[1:3] == ['pr', 'view']:\n"
+                        "    p = next((p for p in prs if isinstance(p, dict) and p.get('number') == int(sys.argv[3])), prs[0] if prs else {})\n"
+                        "    print(json.dumps({'state': 'OPEN', **p}))\n"
+                        "else:\n"
+                        "    print('{}')\n")
         fake.chmod(0o755)
         mirror = self.runner_home / "mirrors/acme__app.git"
         if not mirror.exists():
             subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
         os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
-        args = argparse.Namespace(allow_forks=True, branch=branch, max_jobs=50, stale_hours=6, rerun=None,
+        args = argparse.Namespace(allow_forks=True, branch=branch, pr=pr, max_jobs=50, stale_hours=6, rerun=None,
                                   unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
         try:
             _, out = quiet(verify.serve_repo, "acme/app", args)
@@ -544,6 +551,38 @@ class RunnerIsolation(unittest.TestCase):
             os.environ["PATH"] = self.saved[1]["PATH"]
         calls = [json.loads(l) for l in log.read_text().splitlines()]
         return out, [c for c in calls if c[:3] == ["api", "-X", "POST"]]
+
+    def test_selected_pr_dispatch_runs_only_that_pr_without_secrets(self):
+        prs = [{"number": n, "headRefOid": self.sha, "baseRefName": "main", "isCrossRepository": False}
+               for n in (11, 22)]
+        out, posts = self.serve(prs, pr=22)
+        self.assertEqual(set(re.findall(r"\[serve\] acme/app (PR #\d+) \w{9} running", out)), {"PR #22"}, out)
+        calls = [json.loads(line) for line in (self.tmp / 'gh.log').read_text().splitlines()]
+        self.assertEqual([call[:3] for call in calls if call[:1] == ['pr']], [['pr', 'view', '22']])
+        self.assertTrue(posts)
+        sent = ''.join(ExfilHandler.received)
+        self.assertTrue(sent, 'selected PR never reached the probe server')
+        for canary in self.CANARIES:
+            self.assertNotIn(canary, out + json.dumps(posts) + sent)
+        art = json.loads((self.runner_home / 'runs/acme__app' / (self.sha + '.json')).read_text())
+        self.assertEqual((art['kind'], art['label'], art['base']), ('pr', 'PR #22', 'main'))
+
+    def test_selected_pr_wrong_target_or_closed_reply_refuses_dispatch(self):
+        for reply in ({'number': 11, 'state': 'OPEN'}, {'number': 22, 'state': 'CLOSED'}, {'number': '22', 'state': 'OPEN'}):
+            with self.subTest(reply=reply):
+                with self.assertRaisesRegex(RuntimeError, 'does not identify that open PR'):
+                    self.serve([{**reply, 'headRefOid': self.sha, 'baseRefName': 'main', 'isCrossRepository': False}], pr=22)
+                self.assertFalse(self.marker.exists())
+                calls = [json.loads(line) for line in (self.tmp / 'gh.log').read_text().splitlines()]
+                self.assertFalse(any(call[:3] == ['api', '-X', 'POST'] for call in calls))
+
+    def test_selected_pr_invalid_number_refuses_before_forge_read(self):
+        for number in (0, -1, True):
+            with self.subTest(number=number):
+                with self.assertRaisesRegex(RuntimeError, 'positive PR number'):
+                    self.serve([], pr=number)
+                self.assertEqual((self.tmp / 'gh.log').read_text(), '')
+                self.assertFalse(self.marker.exists())
 
     def test_serve_dispatch_never_gives_a_pr_the_secrets(self):
         sha = self.sha
