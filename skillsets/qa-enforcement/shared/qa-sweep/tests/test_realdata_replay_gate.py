@@ -1182,14 +1182,48 @@ sys.exit(2)
         self.assertIn("line 9", reason)
         self.assertNotIn("Acme Energy", reason)
 
+    def test_malformed_html_tag_does_not_hide_private_attribute_text(self) -> None:
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        for note in (
+            '<div title="Test Tenant>safe</div>',
+            '&lt;div title=&quot;Test Tenant&gt;safe&lt;/div&gt;',
+        ):
+            with self.subTest(note_kind="encoded" if note.startswith("&lt;") else "raw"):
+                valid, reason, _ = self.gate_module().validate_report_text(
+                    replay_report(note=f"- Replay note: {note}"))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn("line 14", reason)
+                self.assertNotIn("Test Tenant", reason)
+
+    def test_malformed_html_tag_with_unrelated_attribute_remains_valid(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note='- Replay note: <div title="ordinary>safe</div>'))
+        self.assertTrue(valid, reason)
+
+    def test_unreadable_denylist_refuses_without_echoing_path_or_label(self) -> None:
+        denylist_path = Path(self.temp.name) / "unreadable-labels.txt"
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(denylist_path)}):
+            with patch.object(Path, "read_text", side_effect=PermissionError("synthetic read failure")):
+                valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertFalse(valid)
+        self.assertIn("deny-list unavailable", reason)
+        self.assertIn("label check refused", reason)
+        self.assertNotIn(str(denylist_path), reason)
+        self.assertNotIn("Test Tenant", reason)
+
     def test_missing_denylist_skips_label_check_but_runs_other_privacy_checks(self) -> None:
         missing = Path(self.temp.name) / "missing-labels.txt"
         with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(missing)}):
             clean, clean_reason, _ = self.gate_module().validate_report_text(replay_report())
+            label_only, label_reason, _ = self.gate_module().validate_report_text(
+                replay_report(note="- Replay note: Test Tenant"))
             object_id, object_reason, _ = self.gate_module().validate_report_text(
                 replay_report(note="- Replay note: 507f1f77bcf86cd799439011"))
         self.assertTrue(clean, clean_reason)
         self.assertIn("label check skipped", clean_reason.lower())
+        self.assertTrue(label_only, label_reason)
+        self.assertIn("label check skipped", label_reason.lower())
         self.assertFalse(object_id)
         self.assertIn("ObjectId-like token", object_reason)
 

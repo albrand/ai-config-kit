@@ -146,9 +146,9 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True,
     text = re.sub(r"\[([^\]]+)\]\[[^\]]*\]",
                   lambda match: keep_source_lines(match.group(1), match.group(0)), text)
     text = re.sub(r"<((?:https?://|mailto:)[^\s>]+)>", r"\1", text, flags=re.I)
-    text = re.sub(r"</?[A-Za-z][^>]*>",
-                  lambda match: LABEL_LINE_MARKER * (
-                      match.group(0).count("\n") + match.group(0).count(LABEL_LINE_MARKER)), text)
+    text = HTML_TAG.sub(
+        lambda match: LABEL_LINE_MARKER * (
+            match.group().count("\n") + match.group().count(LABEL_LINE_MARKER)), text)
     text = re.sub(r"[*_`~]", "", text)
     text = text.replace("|", " ")
     return re.sub(r"[^\S\n]+", " ", text)
