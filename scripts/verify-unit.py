@@ -48,6 +48,8 @@ def python_markers(path):
                    for a, b in (pair, pair[::-1]))
 
     def invokes_main(node):
+        if isinstance(node, ast.NamedExpr):
+            return invokes_main(node.value)
         if not isinstance(node, ast.Call):
             return False
         if member(node.func, 'main') or isinstance(node.func, ast.Name) and node.func.id in mains:
@@ -61,7 +63,8 @@ def python_markers(path):
         # A call in an unused helper or a false branch does not run the suite.
         # Only recognize direct calls and the conventional script entry guard.
         for node in body:
-            if isinstance(node, ast.Expr) and invokes_main(node.value):
+            if isinstance(node, (ast.Expr, ast.Assign, ast.AnnAssign, ast.AugAssign)) \
+                    and invokes_main(node.value):
                 return True
             elif isinstance(node, ast.If) and main_guard(node.test) and calls_main(node.body):
                 return True

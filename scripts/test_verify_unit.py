@@ -68,7 +68,9 @@ class UnitStageTests(unittest.TestCase):
     def test_inactive_main_call_does_not_skip_failing_suite(self):
         for entry in ('def launch():\n    unittest.main()\n', 'if False:\n    unittest.main()\n',
                       'def ignore(thunk):\n    pass\nignore(lambda: unittest.main())\n',
-                      'print(unittest.main() if False else "inactive")\n'):
+                      'print(unittest.main() if False else "inactive")\n',
+                      'pending = lambda: unittest.main()\n',
+                      'result = unittest.main() if False else None\n'):
             with self.subTest(entry=entry), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 subprocess.run(['git', 'init', '-q', tmp], check=True)
@@ -87,7 +89,9 @@ class UnitStageTests(unittest.TestCase):
 
     def test_main_guard_setup_and_import_alias_are_preserved(self):
         for guard, entry in ((guard, entry) for guard in ("__name__ == '__main__'", "'__main__' == __name__")
-                             for entry in ('run_tests()', 'sys.exit(run_tests())')):
+                             for entry in ('run_tests()', 'sys.exit(run_tests())', 'result = run_tests()',
+                                           'result: object = run_tests()', 'result += run_tests()',
+                                           '(result := run_tests())')):
             with self.subTest(guard=guard, entry=entry), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 subprocess.run(['git', 'init', '-q', tmp], check=True)
@@ -96,7 +100,7 @@ class UnitStageTests(unittest.TestCase):
                 (root / 'checks').mkdir()
                 (root / 'checks/audit.py').write_text('import sys\nfrom unittest import TestCase, main as run_tests\n'
                     'class Audit(TestCase):\n    def test_outcome(self):\n        self.assertTrue(ready)\n'
-                    f'if {guard}:\n    ready = True\n    {entry}\n')
+                    f'if {guard}:\n    ready = True\n    result = 0\n    {entry}\n')
                 subprocess.run(['git', 'add', '.'], cwd=root, check=True)
                 result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
