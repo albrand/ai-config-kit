@@ -21,10 +21,10 @@ PATHS_FILE = ROOT / "realdata-paths.json"
 REPORT_NAME = "REALDATA-REPLAY.md"
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
-SAFE_REASON_CODE = re.compile(r"^[a-z0-9_.:-]{1,64}$")
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+    ("labelled personal name", re.compile(r"\b(?:full|personal|first|last|patient|tenant|user|owner|contact|clinician)\s+name\s*[:=]\s*[^\s,;|]+", re.I)),
     ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}", re.I)),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")),
     ("secret assignment", re.compile(r"\b(?:api[_-]?key|key|secret|password)\s*=\s*['\"]?[^\s,'\";]{1,}", re.I)),
@@ -46,26 +46,6 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
             except ValueError:
                 return False, f"REALDATA-REPLAY.md contains malformed URI at line {line_number}", None
 
-    rows = text.splitlines()
-    for index, line in enumerate(rows):
-        if not line.strip().startswith("|"):
-            continue
-        header = [cell.strip().lower() for cell in line.strip().strip("|").split("|")]
-        if "reason" not in header or "error class" not in header:
-            continue
-        reason_index, error_index = header.index("reason"), header.index("error class")
-        for row_index in range(index + 2, len(rows)):
-            row = rows[row_index]
-            if not row.strip().startswith("|"):
-                break
-            cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
-            if max(reason_index, error_index) >= len(cells):
-                return False, f"REALDATA-REPLAY.md has malformed result row at line {row_index + 1}", None
-            for label, column in (("reason", reason_index), ("error class", error_index)):
-                if not SAFE_REASON_CODE.fullmatch(cells[column]):
-                    return False, (f"REALDATA-REPLAY.md {label} must be a safe code token "
-                                   f"^[a-z0-9_.:-]{{1,64}}$ at line {row_index + 1}"), None
-        break
     return _validate_report_structure_and_digest(text)
 
 

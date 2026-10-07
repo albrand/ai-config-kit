@@ -175,7 +175,7 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertIn("missing REALDATA-REPLAY.md at reviewed head", payload["reason"])
 
     def assert_sensitive_report_denied(self, marker: str) -> None:
-        report = replay_report(note=f"\nOperator note: {marker}\n")
+        report = replay_report(reason=marker)
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
         git(self.repo, "add", "REALDATA-REPLAY.md")
         git(self.repo, "commit", "-m", "commit report with identifying content")
@@ -183,14 +183,17 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
 
-    def test_object_id_in_report_is_rejected(self) -> None:
+    def test_object_id_in_reason_cell_is_rejected(self) -> None:
         self.assert_sensitive_report_denied("64f1a2b3c4d5e6f789012345")
 
-    def test_email_in_report_is_rejected(self) -> None:
+    def test_email_in_reason_cell_is_rejected(self) -> None:
         self.assert_sensitive_report_denied("operator@example.com")
 
-    def test_credentialed_uri_in_report_is_rejected(self) -> None:
+    def test_credentialed_uri_in_reason_cell_is_rejected(self) -> None:
         self.assert_sensitive_report_denied("postgres://user:password@db.example.invalid/prod")
+
+    def test_labelled_personal_name_in_reason_cell_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("patient name: Example Person")
 
     def test_secret_patterns_in_report_are_rejected(self) -> None:
         for marker in ("Bearer abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9.payload.signature",
@@ -198,14 +201,15 @@ class RealdataReplayGateTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assert_sensitive_report_denied(marker)
 
-    def test_reason_and_error_class_must_be_safe_code_tokens(self) -> None:
-        report = replay_report(reason="records now project")
+    def test_plain_prose_reason_and_error_class_are_allowed(self) -> None:
+        report = replay_report(reason="External provider fetch is required before settlement",
+                               error_class="Provider response is pending")
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
         git(self.repo, "add", "REALDATA-REPLAY.md")
-        git(self.repo, "commit", "-m", "commit report with prose reason")
-        denied, payload = self.check()
-        self.assertEqual(denied.returncode, 2)
-        self.assertIn("reason must be a safe code token", payload["reason"])
+        git(self.repo, "commit", "-m", "commit report with descriptive text")
+        allowed, payload = self.check()
+        self.assertEqual(allowed.returncode, 0)
+        self.assertTrue(payload["allowed"])
 
     def test_pr_ready_requires_report_digest_in_live_pr_body(self) -> None:
         report = replay_report()
