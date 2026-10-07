@@ -53,6 +53,8 @@ ARTIFACT_FOOTER_PREFIX = re.compile(
 ARTIFACT_FOOTER_LINE = re.compile(
     r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", re.I
 )
+LABEL_LINE_MARKER = "\ue000"
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -77,8 +79,8 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         for line in label_scan_text.splitlines()
     ]
     normalized_text = [
-        _normalize_label_text(label_scan_text),
-        _normalize_label_text(label_scan_text, cf_as_space=False),
+        _normalize_label_text(label_scan_text, preserve_line_numbers=True),
+        _normalize_label_text(label_scan_text, cf_as_space=False, preserve_line_numbers=True),
     ]
     label_patterns = [pattern for label in labels for pattern in (
         _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
@@ -106,17 +108,36 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     return valid, _with_label_check_status(reason, label_check_skipped), digest
 
 
-def _normalize_label_text(text: str, *, cf_as_space: bool = True) -> str:
+def _normalize_label_text(text: str, *, cf_as_space: bool = True,
+                          preserve_line_numbers: bool = False) -> str:
+    if preserve_line_numbers:
+        text = HTML_COMMENT.sub(
+            lambda match: LABEL_LINE_MARKER * len(re.findall(r"\r\n?|\n", match.group())), text)
+        text = re.sub(r"\r\n?|\n", "\n", text)
+    else:
+        text = HTML_COMMENT.sub("", text)
     text = unicodedata.normalize("NFKC", html.unescape(text))
     format_replacement = " " if cf_as_space else ""
     text = "".join(format_replacement if unicodedata.category(char) == "Cf" else char
                     for char in text)
     text = re.sub(r"\\(.)", r"\1", text)
-    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"\[([^\]]+)\]\[[^\]]*\]", r"\1", text)
+
+    def keep_source_lines(visible: str, source: str) -> str:
+        removed_lines = source.count("\n") - visible.count("\n")
+        removed_markers = source.count(LABEL_LINE_MARKER) - visible.count(LABEL_LINE_MARKER)
+        return (visible + "\n" * max(0, removed_lines)
+                + LABEL_LINE_MARKER * max(0, removed_markers))
+
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
+    text = re.sub(r"\[([^\]]+)\]\[[^\]]*\]",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
     text = re.sub(r"<((?:https?://|mailto:)[^\s>]+)>", r"\1", text, flags=re.I)
-    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
+    text = re.sub(r"</?[A-Za-z][^>]*>",
+                  lambda match: ("\n" * match.group(0).count("\n")
+                                 + LABEL_LINE_MARKER * match.group(0).count(LABEL_LINE_MARKER)), text)
     text = re.sub(r"[*_`~]", "", text)
     text = text.replace("|", " ")
     return re.sub(r"[^\S\n]+", " ", text)
@@ -173,7 +194,13 @@ def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Patter
     words = normalized.split()
     if not words:
         return None
-    expression = r"(?<!\w)" + r"\s+".join(re.escape(word) for word in words) + r"(?!\w)"
+    marker = re.escape(LABEL_LINE_MARKER)
+    marker_gap = f"(?:{marker})*"
+    words_with_markers = [marker_gap.join(re.escape(char) for char in word) for word in words]
+    separator = rf"(?:\s|{marker})+"
+    expression = (rf"(?<![\w{marker}]){marker}*(?P<label_start>"
+                  + separator.join(words_with_markers) + ")"
+                  + rf"(?![\w{marker}])")
     return re.compile(expression, re.I)
 
 
@@ -189,7 +216,9 @@ def _private_label_line(lines: list[list[str]], text: list[str],
         for variant in text:
             match = pattern.search(variant)
             if match:
-                whole_text_line = variant.count("\n", 0, match.start()) + 1
+                start = match.start("label_start") if "label_start" in pattern.groupindex else match.start()
+                whole_text_line = (variant.count("\n", 0, start)
+                                   + variant.count(LABEL_LINE_MARKER, 0, start) + 1)
                 if line_number is None or whole_text_line < line_number:
                     line_number = whole_text_line
     return line_number

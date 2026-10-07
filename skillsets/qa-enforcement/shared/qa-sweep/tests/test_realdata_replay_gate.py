@@ -403,6 +403,38 @@ sys.exit(2)
         self.assertIn("line 14", reason)
         self.assertNotIn("reviewer@example.invalid", reason)
 
+    def test_private_label_split_by_single_line_html_comment_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Ac<!-- -->me Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_split_by_multiline_html_comment_keeps_start_line(self) -> None:
+        text = replay_report(note="- Replay note: Ac<!--\n -->me Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_after_multiline_html_comment_reports_its_line(self) -> None:
+        text = replay_report(note="- Replay note: <!--\n -->Acme Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_split_by_comment_inside_html_tags_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: <b>Ac<!-- -->me</b> Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0; no boundary")
         valid, reason, _ = self.gate_module().validate_report_text(text)
