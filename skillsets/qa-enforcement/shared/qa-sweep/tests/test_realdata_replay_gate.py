@@ -495,6 +495,56 @@ sys.exit(2)
         self.assertIn("line 15", reason)
         self.assertNotIn("Acme Energy", reason)
 
+    def test_private_label_with_visible_space_before_multiline_tag_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Acme <b\n>Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_with_visible_space_after_multiline_tag_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Acme</b\n> Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_with_visible_space_before_multiline_comment_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Acme <!--\n-->Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_with_visible_space_after_multiline_comment_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Acme<!--\n--> Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_markup_without_visible_space_does_not_split_private_label_words(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        for markup in ("Acme<b\n>Energy", "Acme</b\n>Energy",
+                       "Acme<!--\n-->Energy"):
+            with self.subTest(markup_type="hidden markup"):
+                text = replay_report(note=f"- Replay note: {markup}")
+                valid, reason, _ = gate.validate_report_text(text)
+                self.assertTrue(valid, reason)
+
+    def test_visible_line_break_after_multiline_markup_keeps_start_line_accurate(self) -> None:
+        text = replay_report(note="- Replay note: <b\n>Acme \nEnergy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0; no boundary")
         valid, reason, _ = self.gate_module().validate_report_text(text)
