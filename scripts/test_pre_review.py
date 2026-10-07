@@ -157,11 +157,13 @@ class PreReviewTests(unittest.TestCase):
 
 | Goal | Target rows | Control count | Candidate count | Reason | Error class |
 |---|---:|---:|---:|---|---|
-| repair ingestion projection | 3 | 0 | 3 | records now project | none |
+| repair ingestion projection | 3 | 0 | 3 | source_revision_conflict | none |
 """
         digest = hashlib.sha256(report.encode("utf-8")).hexdigest()
         (self.repo / "REALDATA-REPLAY.md").write_text(
             report + f"- Artifact SHA-256 (excluding this line): {digest}\n", encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit valid replay report")
         result, packet = self.run_pre_review("--skip-tests", "--skip-repo-lint", base=self.initial_sha)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["realdata_replay"]["artifact"], "REALDATA-REPLAY.md")

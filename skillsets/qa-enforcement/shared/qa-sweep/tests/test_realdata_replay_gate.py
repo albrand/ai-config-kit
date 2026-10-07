@@ -17,7 +17,8 @@ def git(repo: Path, *args: str) -> str:
                           capture_output=True).stdout.strip()
 
 
-def replay_report(candidate_count: int = 3) -> str:
+def replay_report(candidate_count: int = 3, note: str = "", reason: str = "source_revision_conflict",
+                  error_class: str = "none") -> str:
     body = f"""# REALDATA-REPLAY
 
 - Copy time (UTC): 2026-10-06T23:00:00Z
@@ -30,7 +31,8 @@ def replay_report(candidate_count: int = 3) -> str:
 
 | Goal | Target rows | Control count | Candidate count | Reason | Error class |
 |---|---:|---:|---:|---|---|
-| repair ingestion projection | 3 | 0 | {candidate_count} | records now project | none |
+| repair ingestion projection | 3 | 0 | {candidate_count} | {reason} | {error_class} |
+{note}'''
 """
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
@@ -171,6 +173,39 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
         self.assertIn("missing REALDATA-REPLAY.md at reviewed head", payload["reason"])
+
+    def assert_sensitive_report_denied(self, marker: str) -> None:
+        report = replay_report(note=f"\nOperator note: {marker}\n")
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with identifying content")
+        denied, payload = self.check()
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+
+    def test_object_id_in_report_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("64f1a2b3c4d5e6f789012345")
+
+    def test_email_in_report_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("operator@example.com")
+
+    def test_credentialed_uri_in_report_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("postgres://user:password@db.example.invalid/prod")
+
+    def test_secret_patterns_in_report_are_rejected(self) -> None:
+        for marker in ("Bearer abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9.payload.signature",
+                       "api_key=topsecret", "secret=topsecret", "password=topsecret", "key=topsecret"):
+            with self.subTest(marker=marker):
+                self.assert_sensitive_report_denied(marker)
+
+    def test_reason_and_error_class_must_be_safe_code_tokens(self) -> None:
+        report = replay_report(reason="records now project")
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with prose reason")
+        denied, payload = self.check()
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("reason must be a safe code token", payload["reason"])
 
     def test_pr_ready_requires_report_digest_in_live_pr_body(self) -> None:
         report = replay_report()

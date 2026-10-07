@@ -21,6 +21,52 @@ PATHS_FILE = ROOT / "realdata-paths.json"
 REPORT_NAME = "REALDATA-REPLAY.md"
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
+SAFE_REASON_CODE = re.compile(r"^[a-z0-9_.:-]{1,64}$")
+IDENTIFIERS = (
+    ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
+    ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+    ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}", re.I)),
+    ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")),
+    ("secret assignment", re.compile(r"\b(?:api[_-]?key|key|secret|password)\s*=\s*['\"]?[^\s,'\";]{1,}", re.I)),
+)
+URI = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.I)
+
+
+def validate_report_text(text: str) -> tuple[bool, str, str | None]:
+    """Validate report structure, safe reason codes, privacy and its footer."""
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        for label, pattern in IDENTIFIERS:
+            if pattern.search(line):
+                return False, f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}", None
+        for match in URI.finditer(line):
+            try:
+                parsed = urlsplit(match.group(0))
+                if parsed.username is not None or parsed.password is not None:
+                    return False, f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}", None
+            except ValueError:
+                return False, f"REALDATA-REPLAY.md contains malformed URI at line {line_number}", None
+
+    rows = text.splitlines()
+    for index, line in enumerate(rows):
+        if not line.strip().startswith("|"):
+            continue
+        header = [cell.strip().lower() for cell in line.strip().strip("|").split("|")]
+        if "reason" not in header or "error class" not in header:
+            continue
+        reason_index, error_index = header.index("reason"), header.index("error class")
+        for row_index in range(index + 2, len(rows)):
+            row = rows[row_index]
+            if not row.strip().startswith("|"):
+                break
+            cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+            if max(reason_index, error_index) >= len(cells):
+                return False, f"REALDATA-REPLAY.md has malformed result row at line {row_index + 1}", None
+            for label, column in (("reason", reason_index), ("error class", error_index)):
+                if not SAFE_REASON_CODE.fullmatch(cells[column]):
+                    return False, (f"REALDATA-REPLAY.md {label} must be a safe code token "
+                                   f"^[a-z0-9_.:-]{{1,64}}$ at line {row_index + 1}"), None
+        break
+    return _validate_report_structure_and_digest(text)
 
 
 def git(repo: Path, *args: str, timeout: float = 4) -> str:
@@ -105,6 +151,10 @@ def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
         text = committed_bytes.decode("utf-8")
     except UnicodeError as exc:
         return False, f"cannot decode committed {REPORT_NAME}: {exc}", None
+    return validate_report_text(text)
+
+
+def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | None]:
     required = {
         "copy time": r"(?im)^\s*[-*]?\s*Copy time \(UTC\):\s*\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)\s*$",
         "control SHA": r"(?im)^\s*[-*]?\s*Control SHA:\s*[0-9a-f]{40,64}\s*$",
@@ -247,7 +297,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
             return False, f"Hermes evidence must attach {REPORT_NAME} with its SHA-256", impacted, digest
     elif action in {"pr", "pr-create", "release"}:
         try:
-            git(repo, "cat-file", "-e", f"HEAD:{REPORT_NAME}")
+            git(repo, "cat-file", "-e", f"{head}:{REPORT_NAME}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
         if action == "pr" and not (REPORT_NAME in str(pr_info.get("body") or "")
