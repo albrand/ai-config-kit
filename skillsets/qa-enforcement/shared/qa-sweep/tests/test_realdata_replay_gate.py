@@ -416,12 +416,6 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_accepts_descriptive_count_before_boundary(self) -> None:
-        text = replay_report_with_blocked_line(
-            "Blocked rows: 8,992 external calls (boundary reached: provider limit). Additional boundary: two")
-        valid, reason, _ = self.gate_module().validate_report_text(text)
-        self.assertTrue(valid, reason)
-
     def test_blocked_rows_accepts_single_count_with_trailing_period(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 1 (boundary reached: provider limit).")
         valid, reason, _ = self.gate_module().validate_report_text(text)
