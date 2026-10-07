@@ -74,10 +74,6 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
 
     # Check both deletion and word-separator forms so format marks cannot join or split label words.
     label_scan_text = _exclude_gate_owned_label_keys(text)
-    normalized_lines = [
-        [_normalize_label_text(line), _normalize_label_text(line, cf_as_space=False)]
-        for line in label_scan_text.splitlines()
-    ]
     normalized_text = [
         _normalize_label_text(label_scan_text, preserve_line_numbers=True),
         _normalize_label_text(label_scan_text, cf_as_space=False, preserve_line_numbers=True),
@@ -99,7 +95,7 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
                 reason = f"REALDATA-REPLAY.md contains malformed URI at line {line_number}"
                 return False, _with_label_check_status(reason, label_check_skipped), None
 
-    label_line = _private_label_line(normalized_lines, normalized_text, label_patterns)
+    label_line = _private_label_line(normalized_text, label_patterns)
     if label_line is not None:
         reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {label_line}"
         return False, _with_label_check_status(reason, label_check_skipped), None
@@ -193,33 +189,37 @@ def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Patter
     words = normalized.split()
     if not words:
         return None
-    marker = re.escape(LABEL_LINE_MARKER)
-    marker_gap = f"(?:{marker})*"
-    words_with_markers = [marker_gap.join(re.escape(char) for char in word) for word in words]
-    separator = rf"(?:{marker}|\s)*\s(?:{marker}|\s)*"
-    expression = (rf"(?<![\w{marker}]){marker}*(?P<label_start>"
-                  + separator.join(words_with_markers) + ")"
-                  + rf"(?![\w{marker}])")
+    expression = (r"(?<!\w)(?P<label_start>"
+                  + r"\s+".join(re.escape(word) for word in words) + ")"
+                  + r"(?!\w)")
     return re.compile(expression, re.I)
 
 
-def _private_label_line(lines: list[list[str]], text: list[str],
-                        patterns: list[re.Pattern[str] | None]) -> int | None:
+def _private_label_line(text: list[str], patterns: list[re.Pattern[str] | None]) -> int | None:
     active_patterns = [pattern for pattern in patterns if pattern is not None]
+    rendered_variants: list[tuple[str, list[int]]] = []
+    for variant in text:
+        visible: list[str] = []
+        source_lines: list[int] = []
+        source_line = 1
+        for char in variant:
+            if char == LABEL_LINE_MARKER:
+                source_line += 1
+                continue
+            visible.append(char)
+            source_lines.append(source_line)
+            if char == "\n":
+                source_line += 1
+        rendered_variants.append(("".join(visible), source_lines))
+
     line_number: int | None = None
-    for index, variants in enumerate(lines, start=1):
-        if any(pattern.search(line) for pattern in active_patterns for line in variants):
-            line_number = index
-            break
     for pattern in active_patterns:
-        for variant in text:
-            match = pattern.search(variant)
-            if match:
-                start = match.start("label_start") if "label_start" in pattern.groupindex else match.start()
-                whole_text_line = (variant.count("\n", 0, start)
-                                   + variant.count(LABEL_LINE_MARKER, 0, start) + 1)
-                if line_number is None or whole_text_line < line_number:
-                    line_number = whole_text_line
+        for rendered_text, source_lines in rendered_variants:
+            for match in pattern.finditer(rendered_text):
+                start = match.start("label_start")
+                matched_line = source_lines[start]
+                if line_number is None or matched_line < line_number:
+                    line_number = matched_line
     return line_number
 
 

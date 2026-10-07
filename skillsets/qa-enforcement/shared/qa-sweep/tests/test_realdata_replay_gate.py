@@ -623,6 +623,40 @@ sys.exit(2)
         self.assertIn("line 14", reason)
         self.assertNotIn("Acme Energy", reason)
 
+    def test_private_label_at_end_before_multiline_link_marker_is_rejected(self) -> None:
+        text = replay_report(note='- Replay note: Acme [Energy](https://example.org\n "title")')
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_multiline_markup_does_not_invent_prefix_or_suffix_word_boundaries(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        notes = (
+            "- Replay note: Acme Energy<b\n>x",
+            "- Replay note: x<b\n>Acme Energy",
+        )
+        for index, note in enumerate(notes, start=1):
+            text = replay_report(note=note)
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(word_boundary=index):
+                self.assertTrue(valid, reason)
+
+    def test_multiline_tags_and_comments_do_not_hide_real_trailing_word_boundary(self) -> None:
+        gate = self.gate_module()
+        for index, note in enumerate((
+                "- Replay note: Acme Energy</b\n>",
+                "- Replay note: Acme Energy<!--\n-->"), start=1):
+            text = replay_report(note=note)
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(markup=index):
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn("line 14", reason)
+                self.assertNotIn("Acme Energy", reason)
+
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0; no boundary")
         valid, reason, _ = self.gate_module().validate_report_text(text)
