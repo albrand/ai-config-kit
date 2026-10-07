@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Fail-closed real production-data replay gate for Pallium data fixes."""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+PATHS_FILE = ROOT / "realdata-paths.json"
+REPORT_NAME = "REALDATA-REPLAY.md"
+HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
+HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
+
+
+def git(repo: Path, *args: str, timeout: float = 4) -> str:
+    result = subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "git command failed").strip())
+    return result.stdout.strip()
+
+
+def repo_identity(repo: Path) -> bool:
+    try:
+        remote = git(repo, "remote", "get-url", "origin").lower()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        return repo.name == "pallium-app"
+    return "palliumai-com/pallium-app" in remote or repo.name == "pallium-app"
+
+
+def repo_root(start: Path) -> Path | None:
+    try:
+        return Path(git(start, "rev-parse", "--show-toplevel"))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        return None
+
+
+def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
+    paths: set[str] = set()
+    if base is None:
+        base = "origin/develop"
+        git(repo, "rev-parse", "--verify", f"{base}^{{commit}}")
+    if base:
+        paths.update(filter(None, git(repo, "diff", "--name-only", f"{base}...{head}").splitlines()))
+    for args in (("diff", "--name-only", "HEAD"), ("diff", "--cached", "--name-only", "HEAD")):
+        paths.update(filter(None, git(repo, *args).splitlines()))
+    paths.update(filter(None, git(repo, "ls-files", "--others", "--exclude-standard").splitlines()))
+    return paths
+
+
+def production_paths(paths: set[str]) -> set[str]:
+    try:
+        patterns = json.loads(PATHS_FILE.read_text(encoding="utf-8"))["patterns"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(f"cannot load reviewed production-data path list: {exc}") from exc
+    return {path for path in paths if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)}
+
+
+def normalized_report_hash(text: str) -> str:
+    """Hash report bytes with the digest field omitted to avoid self-reference."""
+    lines = [line for line in text.splitlines(keepends=True)
+             if not re.match(r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", line, re.I)]
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def validate_report(repo: Path) -> tuple[bool, str, str | None]:
+    path = repo / REPORT_NAME
+    if not path.is_file():
+        return False, f"missing {REPORT_NAME} at repository root", None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return False, f"cannot read {REPORT_NAME}: {exc}", None
+    required = {
+        "copy time": r"(?im)^\s*[-*]?\s*Copy time \(UTC\):\s*\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)\s*$",
+        "control SHA": r"(?im)^\s*[-*]?\s*Control SHA:\s*[0-9a-f]{40,64}\s*$",
+        "candidate SHA": r"(?im)^\s*[-*]?\s*Candidate SHA:\s*[0-9a-f]{40,64}\s*$",
+        "loopback-only local copy": r"(?im)^\s*[-*]?\s*Local copy:\s*(?:Mac|local Mac)[^\n]*loopback[^\n]*$",
+        "read-only production source": r"(?im)^\s*[-*]?\s*Production source:\s*read-only\b[^\n]*$",
+        "counts-only privacy": r"(?im)^\s*[-*]?\s*Privacy:\s*counts only;? no (?:row )?(?:IDs|PII)\b[^\n]*$",
+        "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
+        "blocked external-call rows": r"(?im)^\s*[-*]?\s*Blocked rows:\s*.+$",
+    }
+    missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
+    rows = [line for line in text.splitlines() if line.strip().startswith("|")]
+    has_result = any(any(cell.strip() and not set(cell.strip()) <= {"-", ":"}
+                         for cell in line.strip().strip("|").split("|")) for line in rows[2:])
+    if len(rows) < 3 or not has_result:
+        missing.append("at least one per-goal result row")
+    if missing:
+        return False, "REALDATA-REPLAY.md is missing required fields: " + ", ".join(missing), None
+    digest_match = re.search(r"(?im)^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", text)
+    if not digest_match:
+        return False, "REALDATA-REPLAY.md is missing its Artifact SHA-256 (excluding this line)", None
+    actual = normalized_report_hash(text)
+    if digest_match.group(1).lower() != actual:
+        return False, "REALDATA-REPLAY.md artifact SHA-256 does not match its contents", actual
+    return True, "REALDATA-REPLAY.md fields and SHA-256 are valid", actual
+
+
+def command_action(command: str) -> str | None:
+    lower = command.lower()
+    if re.search(r"(?:^|[/\\ ])pre-review\.py(?:\s|$)", command):
+        return "review"
+    if re.search(r"\bhermes-one(?:\.zsh)?\b|\bbb\s+fleet\s+validate\b", lower):
+        return "review"
+    if re.search(r"\bgh\s+pr\s+(?:ready|merge)\b", lower):
+        return "pr"
+    if re.search(r"\bgh\s+pr\s+create\b", lower):
+        return "pr-create"
+    if re.search(r"\b(?:gh\s+release\s+(?:create|edit)|release[- ]request)\b", lower):
+        return "release"
+    return None
+
+
+def attached_texts(command: str, cwd: Path) -> tuple[list[str], list[str]]:
+    texts: list[str] = []
+    attached_paths: list[str] = []
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        return texts, attached_paths
+    for index, token in enumerate(args):
+        if token in {"--evidence", "--body-file", "--notes-file", "--message-file"} and index + 1 < len(args):
+            value = args[index + 1]
+            evidence = Path(value)
+            evidence = evidence if evidence.is_absolute() else cwd / evidence
+            attached_paths.append(evidence.name)
+            if evidence.is_file():
+                try:
+                    texts.append(evidence.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError):
+                    pass
+        elif token == "--body" and index + 1 < len(args):
+            texts.append(args[index + 1])
+        elif token.startswith("--body="):
+            texts.append(token.split("=", 1)[1])
+    return texts, attached_paths
+
+
+def cited(command: str, cwd: Path, digest: str) -> bool:
+    texts, attached_paths = attached_texts(command, cwd)
+    names_report = any(REPORT_NAME in text for text in texts)
+    includes_digest = any(digest in text for text in texts)
+    direct_report_attachment = REPORT_NAME in attached_paths and includes_digest
+    return direct_report_attachment or (names_report and includes_digest)
+
+
+def report_attached(command: str, cwd: Path, digest: str) -> bool:
+    texts, attached_paths = attached_texts(command, cwd)
+    return REPORT_NAME in attached_paths and any(digest in text for text in texts)
+
+
+def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        args = []
+    reference: str | None = None
+    for index in range(max(0, len(args) - 1)):
+        if args[index:index + 2] == ["pr", "ready"] or args[index:index + 2] == ["pr", "merge"]:
+            if index + 2 < len(args) and not args[index + 2].startswith("-"):
+                reference = args[index + 2]
+            break
+    query = ["gh", "pr", "view"]
+    if reference:
+        query.append(reference)
+    query.extend(["--json", "body,headRefOid,files"])
+    try:
+        result = subprocess.run(query, cwd=repo, text=True, capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("files"), list):
+        return None
+    return data
+
+
+def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: Path | None = None,
+             head: str = "HEAD") -> tuple[bool, str, set[str], str | None]:
+    cwd = cwd or repo
+    if not repo_identity(repo):
+        return True, "not the Pallium app repository", set(), None
+    pr_info: dict[str, Any] | None = None
+    try:
+        if action == "pr":
+            pr_info = pull_request_info(repo, command)
+            if pr_info is None:
+                return False, "cannot read the target PR's changed files; refusing to guess", set(), None
+            pr_paths = {str(item.get("path")) for item in pr_info["files"]
+                        if isinstance(item, dict) and item.get("path")}
+            impacted = production_paths(pr_paths)
+        else:
+            impacted = production_paths(changed_paths(repo, base, head))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return False, f"cannot establish the Pallium production-data diff: {exc}", set(), None
+    if not impacted:
+        return True, "no production-data paths changed", set(), None
+    if action == "pr" and str(pr_info.get("headRefOid") or "").lower() != git(repo, "rev-parse", head).lower():
+        return False, "run the PR-ready or merge gate from the worktree at the exact target PR head", impacted, None
+    valid, reason, digest = validate_report(repo)
+    if not valid or digest is None:
+        return False, reason, impacted, digest
+    if action == "review":
+        # pre-review creates the packet that cites the report; Hermes itself must attach it.
+        if "pre-review.py" not in command and not report_attached(command, cwd, digest):
+            return False, f"Hermes evidence must attach {REPORT_NAME} with its SHA-256", impacted, digest
+    elif action in {"pr", "pr-create", "release"}:
+        try:
+            git(repo, "cat-file", "-e", f"HEAD:{REPORT_NAME}")
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
+        if action == "pr" and not (REPORT_NAME in str(pr_info.get("body") or "")
+                                    and digest in str(pr_info.get("body") or "")):
+            return False, f"the current PR body must cite {REPORT_NAME} and its SHA-256", impacted, digest
+        if action in {"pr-create", "release"} and not cited(command, cwd, digest):
+            return False, f"the PR or release request must cite {REPORT_NAME} and its SHA-256", impacted, digest
+    return True, "real production-data replay evidence and citation are present", impacted, digest
+
+
+def hook() -> int:
+    try:
+        payload: dict[str, Any] = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                    "permissionDecisionReason": "[realdata-replay-gate] invalid hook payload; review or release denied"}}))
+        return 2
+    tool_input = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
+    command = str(tool_input.get("command") or tool_input.get("cmd") or "")
+    action = command_action(command)
+    if not action:
+        return 0
+    cwd = Path(str(payload.get("cwd") or payload.get("working_directory") or os.getcwd())).resolve()
+    repo = repo_root(cwd)
+    if repo is None or not repo_identity(repo):
+        return 0
+    ok, reason, impacted, digest = evaluate(repo, None, action, command, cwd)
+    if ok:
+        return 0
+    detail = ", ".join(sorted(impacted)) or "diff unknown"
+    message = f"[realdata-replay-gate] {reason}; affected paths: {detail}. Complete and cite the read-only Mac loopback replay before review or release."
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                "permissionDecisionReason": message}}))
+    print(message, file=sys.stderr)
+    return 2
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    subs = parser.add_subparsers(dest="mode", required=True)
+    subs.add_parser("hook")
+    check = subs.add_parser("check")
+    check.add_argument("--repo", type=Path, required=True)
+    check.add_argument("--base")
+    check.add_argument("--action", choices=("review", "pr", "pr-create", "release"), default="review")
+    check.add_argument("--command", default="pre-review.py")
+    check.add_argument("--cwd", type=Path)
+    check.add_argument("--head", default="HEAD")
+    check.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    if args.mode == "hook":
+        return hook()
+    repo = repo_root(args.repo.resolve())
+    if repo is None:
+        print("[realdata-replay-gate] not inside a git worktree", file=sys.stderr)
+        return 2
+    ok, reason, impacted, digest = evaluate(repo, args.base, args.action, args.command,
+                                            args.cwd.resolve() if args.cwd else repo, args.head)
+    if args.json:
+        print(json.dumps({"allowed": ok, "reason": reason, "affected_paths": sorted(impacted),
+                          "artifact": REPORT_NAME if impacted and digest else None, "sha256": digest}))
+    else:
+        print(f"[realdata-replay-gate] {'ALLOW' if ok else 'DENY'}: {reason}")
+        if impacted:
+            print("affected paths: " + ", ".join(sorted(impacted)))
+    return 0 if ok else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

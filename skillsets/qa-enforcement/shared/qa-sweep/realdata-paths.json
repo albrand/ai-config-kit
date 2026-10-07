@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "description": "Editable Pallium production-data path inventory. Changes under these paths require a real production-data replay before review or release.",
+  "patterns": [
+    "src/server/**ingestion/**",
+    "src/server/**integrations/**",
+    "src/server/**intelligence/**",
+    "src/server/**projections/**",
+    "src/server/**readers/**",
+    "src/server/**repositories/**",
+    "prisma/migrations/**",
+    "scripts/**"
+  ]
+}

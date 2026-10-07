@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import runpy
@@ -121,6 +122,53 @@ class PreReviewTests(unittest.TestCase):
         result, packet = self.run_pre_review()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["rule_hits"], [])
+
+    def test_pallium_production_data_change_is_blocked_before_packet_without_replay(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/palliumai-com/pallium-app.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.initial_sha)
+        source = self.repo / "src/server/ingestion/worker.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const changed = true;\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "data fix")
+        result = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.repo),
+                                 "--base", self.initial_sha, "--output-dir", str(self.output)],
+                                cwd=self.repo, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("missing REALDATA-REPLAY.md", result.stderr)
+
+    def test_pallium_pre_review_packet_cites_valid_replay_report(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/palliumai-com/pallium-app.git")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.initial_sha)
+        source = self.repo / "scripts/data-fix-notes.md"
+        source.parent.mkdir(parents=True)
+        source.write_text("changed data workflow\n", encoding="utf-8")
+        git(self.repo, "add", "scripts/data-fix-notes.md")
+        git(self.repo, "commit", "-m", "data fix")
+        report = """# REALDATA-REPLAY
+
+- Copy time (UTC): 2026-10-06T23:00:00Z
+- Control SHA: 0123456789abcdef0123456789abcdef01234567
+- Candidate SHA: 89abcdef0123456789abcdef0123456789abcdef
+- Local copy: Mac-local database bound to loopback only; production data never leaves the Mac.
+- Production source: read-only; no production writes were performed.
+- Privacy: counts only; no row IDs or PII are included.
+- Blocked rows: 0; external provider boundary was not needed for this replay.
+
+| Goal | Target rows | Control count | Candidate count | Reason | Error class |
+|---|---:|---:|---:|---|---|
+| repair ingestion projection | 3 | 0 | 3 | records now project | none |
+"""
+        digest = hashlib.sha256(report.encode("utf-8")).hexdigest()
+        (self.repo / "REALDATA-REPLAY.md").write_text(
+            report + f"- Artifact SHA-256 (excluding this line): {digest}\n", encoding="utf-8")
+        result, packet = self.run_pre_review("--skip-tests", "--skip-repo-lint", base=self.initial_sha)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(packet["realdata_replay"]["artifact"], "REALDATA-REPLAY.md")
+        self.assertEqual(packet["realdata_replay"]["sha256"], digest)
+        markdown = (self.output / "pre-review.md").read_text(encoding="utf-8")
+        self.assertIn("REALDATA-REPLAY.md", markdown)
+        self.assertIn(digest, markdown)
 
     def test_workflow_without_permissions_fails_with_named_rule(self) -> None:
         self.add_fixture("missing-permissions.yml", ".github/workflows/token-use.yml")

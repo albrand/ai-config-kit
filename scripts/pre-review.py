@@ -144,6 +144,34 @@ def add_detached_worktree(source_repo: Path, head_sha: str) -> tuple[Path | None
     return worktree, None, cleanup
 
 
+def realdata_replay_evidence(source_repo: Path, base_sha: str, head_sha: str) -> dict[str, Any] | None:
+    candidates = [
+        Path.home() / ".agents/skills/qa-sweep/scripts/realdata-replay-gate.py",
+        Path(__file__).resolve().parents[1] / "skillsets/qa-enforcement/shared/qa-sweep/scripts/realdata-replay-gate.py",
+    ]
+    gate = next((path for path in candidates if path.is_file()), None)
+    if gate is None:
+        remote = run_capture(["git", "remote", "get-url", "origin"], source_repo)
+        if source_repo.name == "pallium-app" or "palliumai-com/pallium-app" in remote.stdout.decode("utf-8", errors="replace").lower():
+            raise PreReviewError("real-data replay gate is missing from the installed qa-sweep skill")
+        return None
+    try:
+        result = run_capture([sys.executable, str(gate), "check", "--repo", str(source_repo), "--base", base_sha,
+                              "--head", head_sha, "--action", "review", "--command", "pre-review.py", "--json"],
+                             source_repo, timeout=8)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PreReviewError(f"real-data replay gate did not finish: {error}") from error
+    try:
+        evidence = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        raise PreReviewError("real-data replay gate returned an unreadable result")
+    if result.returncode and evidence.get("affected_paths"):
+        raise PreReviewError("real-data replay gate: " + str(evidence.get("reason", "required replay evidence is missing")))
+    if result.returncode:
+        raise PreReviewError("real-data replay gate could not establish the production-data diff")
+    return evidence if evidence.get("affected_paths") else None
+
+
 def hydrate_checkout(repo: Path, output_dir: Path) -> str | None:
     package, manager = package_metadata(repo)
     has_lockfile = any((repo / name).is_file() for name in
@@ -1948,6 +1976,12 @@ def markdown_summary(packet: dict[str, Any]) -> bytes:
              f"- Raw diff bytes: {packet['raw_diff_bytes']}", f"- Packet bytes: {packet['packet_bytes']} / {packet['packet_budget_bytes']}",
              f"- Worktree-only paths excluded from range: {len(packet.get('excluded_worktree_paths', []))}",
              "", "## Excluded worktree paths", ""]
+    realdata = packet.get("realdata_replay")
+    if realdata:
+        lines.extend(["## Required production-data replay", "",
+                      f"- Artifact: `{realdata['artifact']}`",
+                      f"- SHA-256: `{realdata['sha256']}`",
+                      f"- Affected production-data paths: {len(realdata['affected_paths'])}", ""])
     lines.extend(f"- `{path}`" for path in packet.get("excluded_worktree_paths", []))
     lines.extend(["", "## Checks", ""])
     for command in packet["commands"]:
@@ -2093,6 +2127,7 @@ def main(argv: list[str] | None = None) -> int:
             raise PreReviewError("reviewed head SHA is not available in the source repository")
         reviewed_head_sha = os.fsdecode(resolved_head.stdout.strip())
         base_ref, base_sha, merge_sha = resolve_base(source_repo, args.base, args.base_sha, args.merge_base_sha)
+        realdata_evidence = realdata_replay_evidence(source_repo, merge_sha, reviewed_head_sha)
         free_bytes = shutil.disk_usage(source_repo).free
         tracked_clean = tracked_tree_clean(source_repo)
         execution_mode, setup_error = execution_plan(
@@ -2292,6 +2327,7 @@ def main(argv: list[str] | None = None) -> int:
         "source_porcelain_unchanged": source_status_before == source_status_after,
         "temporary_worktree_cleanup_failed": cleanup_failed,
         "base": {"ref": base_ref, "sha": base_sha, "merge_base_sha": merge_sha},
+        "realdata_replay": realdata_evidence,
         "review_scope": "committed-range" if pr_mode else "working-tree",
         "dirty": dirty,
         "changed_paths": paths,

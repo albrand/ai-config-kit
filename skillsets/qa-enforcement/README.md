@@ -16,6 +16,25 @@ from the qa-speed-quality research report §2 (report at
   and the plugin's `lib/qa-evidence-policy.mjs` helper,
   the extended `coordinator-hook-pretool.sh`, and `install.sh`.
 
+Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
+Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
+The hook blocks pre-review/Hermes submission until a valid `REALDATA-REPLAY.md`
+is present and cited; PR-ready and merge require the current PR body to cite
+the report and digest, and release requests must cite it too. Hermes review
+must attach the report itself as `--evidence`; `pre-review.py` adds the artifact
+path and SHA-256 to both review packets. Install with
+`hooks/install-realdata-replay-gate.sh`; it backs up and updates only the new
+gate files, installed pre-review runners, and QA ship-hook adapter, preserving
+each home's existing QA sweep gate.
+
+The replay report uses these machine-checked fields: `Copy time (UTC)`,
+`Control SHA`, `Candidate SHA`, `Local copy`, `Production source`, `Privacy`,
+`Blocked rows`, and a per-goal Markdown table with `Goal`, `Target rows`,
+`Control count`, `Candidate count`, `Reason`, and `Error class` columns. Finish
+the report with `Artifact SHA-256 (excluding this line)`; hash the report bytes
+with that digest line omitted. External provider/model/key boundaries remain
+in the report as blocked rows.
+
 ## How it enforces
 
 A repo opts in by committing `.qa/config.json`; from then the gate is ALWAYS
