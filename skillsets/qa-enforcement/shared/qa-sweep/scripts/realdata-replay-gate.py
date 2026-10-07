@@ -166,7 +166,7 @@ def _url_list_spans(value: str, start: int, *, srcset: bool = False) -> list[tup
     if srcset:
         return _srcset_url_spans(value, start)
     spans: list[tuple[str, int, bool]] = []
-    for token in re.finditer(r"\S+", value):
+    for token in re.finditer(r"[^ \t\n\r\f]+", value):
         raw = token.group()
         left_trim = len(raw) - len(raw.lstrip(","))
         url = raw[left_trim:].rstrip(",")
@@ -180,13 +180,13 @@ def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
     spans: list[tuple[str, int, bool]] = []
     index = 0
     while index < len(value):
-        while index < len(value) and (value[index].isspace() or value[index] == ","):
+        while index < len(value) and (value[index] in " \t\n\r\f" or value[index] == ","):
             index += 1
         if index == len(value):
             break
 
         url_start = index
-        while index < len(value) and not value[index].isspace():
+        while index < len(value) and value[index] not in " \t\n\r\f":
             index += 1
         url_end = index
         while url_end > url_start and value[url_end - 1] == ",":

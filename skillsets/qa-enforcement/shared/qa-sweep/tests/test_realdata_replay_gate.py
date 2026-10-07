@@ -489,6 +489,8 @@ sys.exit(2)
             ('- Replay note: <a ping="https://example.test/first\nhttps://example.test/Acme%20Energy">safe</a>', "line 15"),
             ('- Replay note: <img srcset="https://example.test/first 1x,\n https://example.test/Acme%20Energy 2x">', "line 15"),
             ('- Replay note: <link imagesrcset="https://example.test/first 1x,\n https://example.test/Acme%20Energy 2x">', "line 15"),
+            ('- Replay note: <a ping="https://example.test/Acme\u00a0Energy">safe</a>', "line 14"),
+            ('- Replay note: <img srcset="https://example.test/Acme\u00a0Energy 1x">', "line 14"),
         )
         for note, expected_line in refusing:
             with self.subTest(list_url="actual source line"):
