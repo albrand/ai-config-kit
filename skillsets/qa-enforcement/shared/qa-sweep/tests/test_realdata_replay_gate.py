@@ -415,6 +415,24 @@ sys.exit(2)
             ("html href", lambda value: f'<a href="https://example.test/{encode_url_spaces(value)}">safe</a>', "line 14"),
             ("html src", lambda value: f'<img src="https://example.test/{encode_url_spaces(value)}">', "line 14"),
             ("html action", lambda value: f'<form action="https://example.test/{encode_url_spaces(value)}">safe</form>', "line 14"),
+            ("html formaction", lambda value: f'<button formaction="https://example.test/{encode_url_spaces(value)}">safe</button>', "line 14"),
+            ("html cite", lambda value: f'<blockquote cite="https://example.test/{encode_url_spaces(value)}">safe</blockquote>', "line 14"),
+            ("object data", lambda value: f'<object data="https://example.test/{encode_url_spaces(value)}">safe</object>', "line 14"),
+            ("html poster", lambda value: f'<video poster="https://example.test/{encode_url_spaces(value)}">safe</video>', "line 14"),
+            ("html manifest", lambda value: f'<html manifest="https://example.test/{encode_url_spaces(value)}">safe</html>', "line 14"),
+            ("html background", lambda value: f'<body background="https://example.test/{encode_url_spaces(value)}">safe</body>', "line 14"),
+            ("object codebase", lambda value: f'<object codebase="https://example.test/{encode_url_spaces(value)}">safe</object>', "line 14"),
+            ("object classid", lambda value: f'<object classid="https://example.test/{encode_url_spaces(value)}">safe</object>', "line 14"),
+            ("html longdesc", lambda value: f'<img longdesc="https://example.test/{encode_url_spaces(value)}">', "line 14"),
+            ("html usemap", lambda value: f'<img usemap="https://example.test/{encode_url_spaces(value)}">', "line 14"),
+            ("svg xlink href", lambda value: f'<svg><use xlink:href="https://example.test/{encode_url_spaces(value)}"></use></svg>', "line 14"),
+            ("microdata itemid", lambda value: f'<div itemid="https://example.test/{encode_url_spaces(value)}">safe</div>', "line 14"),
+            ("html ping list", lambda value: f'<a ping="https://example.test/{encode_url_spaces(value)} https://example.test/other">safe</a>', "line 14"),
+            ("object archive list", lambda value: f'<object archive="https://example.test/{encode_url_spaces(value)} https://example.test/other">safe</object>', "line 14"),
+            ("microdata itemtype list", lambda value: f'<div itemtype="https://example.test/{encode_url_spaces(value)} https://example.test/other">safe</div>', "line 14"),
+            ("head profile list", lambda value: f'<head profile="https://example.test/{encode_url_spaces(value)} https://example.test/other"></head>', "line 14"),
+            ("html srcset list", lambda value: f'<img srcset="https://example.test/{encode_url_spaces(value)} 1x, https://example.test/other 2x">', "line 14"),
+            ("html imagesrcset list", lambda value: f'<link imagesrcset="https://example.test/{encode_url_spaces(value)} 1x">', "line 14"),
             ("markdown destination", lambda value: f'[safe](https://example.test/{encode_url_spaces(value)})', "line 14"),
             ("markdown title", lambda value: f'[safe](https://example.test "{value}")', "line 14"),
             ("html comment", lambda value: f"<!-- {value} -->safe", "line 14"),
@@ -430,12 +448,17 @@ sys.exit(2)
                     self.assertIn("private tenant label", reason)
                     self.assertIn(expected_line, reason)
                     self.assertNotIn("Acme Energy", reason)
+            control = "- Replay note: " + render("SuperAcme EnergyCo")
+            with self.subTest(hidden_consumer=consumer_name, format_variant="larger word control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=control))
+                self.assertTrue(valid, reason)
 
     def test_percent_decoding_is_limited_to_hidden_url_values(self) -> None:
         gate = self.gate_module()
         notes = (
             '- Replay note: <span title="Acme%20Energy">safe</span>',
             '- Replay note: <span data-note="Acme%20Energy">safe</span>',
+            '- Replay note: <div data="Acme%20Energy">safe</div>',
             '- Replay note: [safe](https://example.test "Acme%20Energy")',
             "- Replay note: <!-- Acme%20Energy -->safe",
         )
@@ -448,6 +471,9 @@ sys.exit(2)
         notes = (
             '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',
             "- Replay note: [safe](https://example.test/%0AAcme%20Energy)",
+            '- Replay note: <blockquote cite="https://example.test/%0AAcme%20Energy">safe</blockquote>',
+            '- Replay note: <img srcset="https://example.test/%0AAcme%20Energy 1x">',
+            '- Replay note: <link imagesrcset="https://example.test/%0AAcme%20Energy 1x">',
         )
         for note in notes:
             with self.subTest(encoded_newline="URL percent escape"):
@@ -456,6 +482,49 @@ sys.exit(2)
                 self.assertIn("private tenant label", reason)
                 self.assertIn("line 14", reason)
                 self.assertNotIn("Acme Energy", reason)
+
+    def test_list_valued_url_attributes_keep_source_lines_and_item_boundaries(self) -> None:
+        gate = self.gate_module()
+        refusing = (
+            ('- Replay note: <a ping="https://example.test/first\nhttps://example.test/Acme%20Energy">safe</a>', "line 15"),
+            ('- Replay note: <img srcset="https://example.test/first 1x,\n https://example.test/Acme%20Energy 2x">', "line 15"),
+            ('- Replay note: <link imagesrcset="https://example.test/first 1x,\n https://example.test/Acme%20Energy 2x">', "line 15"),
+        )
+        for note, expected_line in refusing:
+            with self.subTest(list_url="actual source line"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Acme Energy", reason)
+
+        unrelated_tokens = (
+            '- Replay note: <a ping="https://example.test/Acme%20 https://example.test/Energy">safe</a>',
+            '- Replay note: <img srcset="https://example.test/Acme%20 1x, https://example.test/Energy 2x">',
+        )
+        for note in unrelated_tokens:
+            with self.subTest(list_url="separate token negative control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
+    def test_srcset_scans_each_candidate_url_and_not_its_descriptors(self) -> None:
+        gate = self.gate_module()
+        cases = (
+            ('<img srcset="https://example.test/first 1x, https://example.test/Acme%20Energy 2x">', True),
+            ('<img srcset="https://example.test/Acme%20Energy, https://example.test/other">', True),
+            ('<img srcset="data:image/svg+xml,%3Csvg%3E 1x, https://example.test/Acme%20Energy 2x">', True),
+            ('<img srcset="https://example.test/Acme%20 1x, https://example.test/Energy 2x">', False),
+            ('<img srcset="https://example.test/first 1x, https://example.test/other 2x">', False),
+        )
+        for markup, should_refuse in cases:
+            with self.subTest(srcset_candidate="URL token and descriptor boundary"):
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report(note=f"- Replay note: {markup}"))
+                self.assertEqual(not valid, should_refuse, reason)
+                if should_refuse:
+                    self.assertIn("private tenant label", reason)
+                    self.assertIn("line 14", reason)
+                    self.assertNotIn("Acme Energy", reason)
 
     def test_private_tenant_label_rejects_zero_width_character(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")

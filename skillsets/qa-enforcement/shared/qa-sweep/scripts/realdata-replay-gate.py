@@ -64,7 +64,12 @@ HTML_ATTRIBUTE_VALUE = re.compile(
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)", re.S)
 MARKDOWN_REFERENCE_DEFINITION = re.compile(r"(?m)^\s{0,3}\[[^\]]+\]:\s*(.+)$")
 MARKDOWN_DESTINATION = re.compile(r"^\s*(?:<([^>\r\n]*)>|((?:\\.|[^\s()<>])+))")
-URL_ATTRIBUTES = {"href", "src", "action", "formaction", "xlink:href", "poster"}
+URL_SINGLE_ATTRIBUTES = {
+    "href", "src", "action", "formaction", "cite", "data", "poster", "xlink:href",
+    "manifest", "background", "codebase", "classid", "longdesc", "usemap", "itemid",
+}
+URL_WHITESPACE_LIST_ATTRIBUTES = {"ping", "archive", "itemtype", "profile"}
+URL_SRCSET_ATTRIBUTES = {"srcset", "imagesrcset"}
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -157,6 +162,52 @@ def _unescape_without_source_newlines(text: str) -> str:
     return HTML_REFERENCE.sub(replace_reference, text)
 
 
+def _url_list_spans(value: str, start: int, *, srcset: bool = False) -> list[tuple[str, int, bool]]:
+    if srcset:
+        return _srcset_url_spans(value, start)
+    spans: list[tuple[str, int, bool]] = []
+    for token in re.finditer(r"\S+", value):
+        raw = token.group()
+        left_trim = len(raw) - len(raw.lstrip(","))
+        url = raw[left_trim:].rstrip(",")
+        if url:
+            spans.append((url, start + token.start() + left_trim, True))
+    return spans
+
+
+def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
+    """Extract URL tokens from srcset syntax without decoding descriptor text."""
+    spans: list[tuple[str, int, bool]] = []
+    index = 0
+    while index < len(value):
+        while index < len(value) and (value[index].isspace() or value[index] == ","):
+            index += 1
+        if index == len(value):
+            break
+
+        url_start = index
+        while index < len(value) and not value[index].isspace():
+            index += 1
+        url_end = index
+        while url_end > url_start and value[url_end - 1] == ",":
+            url_end -= 1
+        if url_end > url_start:
+            spans.append((value[url_start:url_end], start + url_start, True))
+
+        # A trailing comma on the URL token ends a candidate without descriptors.
+        if url_end < index:
+            continue
+
+        # Consume descriptors up to the candidate separator. Commas inside a
+        # data URL are part of the URL token above, before descriptor parsing.
+        while index < len(value):
+            if value[index] == ",":
+                index += 1
+                break
+            index += 1
+    return spans
+
+
 def _normalize_nonrendered_label_texts(text: str) -> list[str]:
     """Normalize hidden source values separately so rendered boundaries stay unchanged."""
     spans: list[tuple[str, int, bool]] = []
@@ -166,18 +217,27 @@ def _normalize_nonrendered_label_texts(text: str) -> list[str]:
 
     for match in HTML_TAG.finditer(text):
         tag = match.group()
-        name = re.match(r"</?[A-Za-z][^\s/>]*", tag)
+        name = re.match(r"</?([A-Za-z][^\s/>]*)", tag)
         if name is None:
             continue
+        tag_name = name.group(1).lower()
         attribute_text = tag[name.end():]
         attribute_offset = match.start() + name.end()
         for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
             attribute_name = attribute.group(1).lower()
             group = next(index for index in range(2, 5)
                          if attribute.group(index) is not None)
-            spans.append((attribute.group(group),
-                          attribute_offset + attribute.start(group),
-                          attribute_name in URL_ATTRIBUTES))
+            value = attribute.group(group)
+            value_start = attribute_offset + attribute.start(group)
+            if (attribute_name in URL_SINGLE_ATTRIBUTES
+                    and (attribute_name != "data" or tag_name == "object")):
+                spans.append((value, value_start, True))
+            elif attribute_name in URL_WHITESPACE_LIST_ATTRIBUTES:
+                spans.extend(_url_list_spans(value, value_start))
+            elif attribute_name in URL_SRCSET_ATTRIBUTES:
+                spans.extend(_url_list_spans(value, value_start, srcset=True))
+            else:
+                spans.append((value, value_start, False))
 
     for match in MARKDOWN_LINK.finditer(text):
         payload = match.group(1)
