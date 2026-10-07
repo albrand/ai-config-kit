@@ -54,16 +54,13 @@ Advance in order. Do not draft or publish early and validate afterward.
    - Before walking with a discovered identity, check whether an automated
      suite owns it: it appears in CI workflows or in e2e setup, fixtures or
      teardown that create, reset or delete its data. Use an identity no suite
-     owns. On 2026-09-25 two interactive walks on meu-psi signed in as the
-     deployed CI suite's own e2e identities on the shared preview DB. The
-     suite's setup recreated their data mid-walk, the walks changed data under
-     the suite, and its gate went 36/38 on a build that was 38/38 twelve
-     minutes earlier. Both sides' evidence was contaminated.
+     owns. An identity used by an automated suite can be reset while a manual
+     walk is in progress, which can invalidate both the walk and the run.
    - If the repository has no unowned identity, walk with the owned one only
      outside every automated run on the same data. After the walk, check for
-     runs whose interval intersected the walk window (a check at the start
-     would have passed the meu-psi incident), and say in the evidence that the
-     identity is shared. A run that overlapped makes the walk invalid: record
+     runs whose interval intersected the walk window, and say in the evidence
+     that the identity is shared. A run that overlapped makes the walk invalid:
+     record
      an `environment_contamination` defect naming the writer and walk again.
      Record all of it in `authentication.identities`, one block per persona
      (`references/evidence-contract.md`).

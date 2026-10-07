@@ -38,17 +38,11 @@ export function parseZonedTime(value) {
 }
 const isoTime = parseZonedTime;
 
-// 2026-09-25, meu-psi: interactive walks signed in as e2e.professional and
-// e2e.patient, the deployed CI suite's own identities on the same preview DB.
-// The suite's setup deleted and recreated their data mid-walk, the walks
-// changed the data under the suite, and a deployed gate went 36/38 on a build
-// that was 38/38 twelve minutes earlier. Both sides' evidence was
-// contaminated. A walk names its identity (a label, never a credential) and
-// whether an automated suite owns it; an owned identity is allowed only when
-// no unowned one exists, no automated run overlapped the whole walk window
-// (checked after the walk, not only at its start), and the evidence says so.
-// A walk may sign in as several personas (meu-psi walks e2e.professional AND
-// e2e.patient). `identities` holds one block per persona; the single
+// A walk names its identity (a label, never a credential) and whether an
+// automated suite owns it; an owned identity is allowed only when no unowned
+// one exists, no automated run overlapped the whole walk window (checked after
+// the walk, not only at its start), and the evidence says so. A walk may use
+// several personas. `identities` holds one block per persona; the single
 // `identity` is kept for older packets. Both are read, so a block in either
 // place is checked: with one field only, a second persona went unchecked.
 export function declaredIdentities(authentication) {
@@ -61,7 +55,7 @@ export function declaredIdentities(authentication) {
 }
 
 // Identity labels (review r1 D4): `E2E.patient`, `e2e.patient `,
-// `e2e.patient@meupsi.test` and `e2е.patient` (Cyrillic е) all name the CI
+// `e2e.patient@example.test` and `e2е.patient` (Cyrillic е) all name the CI
 // suite's e2e.patient. One spec, the same in ship-gate.py (see the comment
 // there): key = NFKC, lowercase, ß -> ss, LABEL_SPACE stripped, @domain
 // dropped; refused = a character of NFKC(label) outside printable ASCII and
@@ -216,9 +210,8 @@ function checkIdentityIsolation(identity, base, failures, owned) {
     failures.push(failure("IDENTITY_OWNERSHIP_UNKNOWN", `${base}.owned_by_automation`, "owned_by_automation must be true or false"));
     return;
   }
-  // The owner running its own suite is not borrowing the identity (meu-psi
-  // 2026-09-25: CI run 36193694659 can only sign in as the e2e pair it owns,
-  // and with qa.* provisioned every PR was denied). walker.kind "owner_run"
+  // The owner running its own suite is not borrowing the identity.
+  // walker.kind "owner_run"
   // lifts the unowned-identity rule for that block only; the walk window, the
   // overlap check and the disclosure stay required, since another writer
   // during the owner's run is exactly the contamination this guards.
@@ -792,7 +785,7 @@ function selftest() {
       throw new Error(`manual publish failure codes missing at ${effort}`);
     }
 
-    // meu-psi 2026-09-25: a walk on the CI suite's identity while its run mutated the data.
+    // A walk on a suite-owned identity must account for concurrent data changes.
     const owned = validFixture("claim_e2e_complete");
     owned.reasoning_effort = effort;
     owned.authentication.identity = ownedIdentity(0);
@@ -833,9 +826,9 @@ function selftest() {
     if (!evaluateEvidence(owned).ok) throw new Error(`two unowned personas failed at ${effort}`);
     // review r1 D4: a listed CI identity is found however it is spelled.
     const list = { automationIdentities: ["e2e.patient"] };
-    for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@meupsi.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient",
+    for (const label of ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@example.test", "e2е.patient", "е2е.раtіеnt", "e2e.pat​ient",
       // review r2a: compound labels and U+2800
-      "e2e.patient (CI)", "@e2e.patient", "patient (e2e.patient@meupsi.test)", "e2e.pat⠀ient", "e2e.patͅient",
+      "e2e.patient (CI)", "@e2e.patient", "patient (e2e.patient@example.test)", "e2e.pat⠀ient", "e2e.patͅient",
       // review r2a-ter: a listed label after an @ (before the @domain drop)
       "tester @e2e.patient", "x@e2e.patient"]) {
       owned.authentication.identities = [{ ...unownedIdentity(), label }];
@@ -851,14 +844,15 @@ function selftest() {
 
     owned.authentication.identities = [{ ...ownedIdentity(0), label: "E2E.Patient" }];
     if (!evaluateEvidence(owned, list).ok) throw new Error(`a listed label declared owned failed at ${effort}`);
-    // meu-psi PR #36: the suite's own CI run recorded as the walk.
+    // The suite's own CI run may be recorded as the walk when it owns the
+    // identity.
     const codes = (block, opts = list) => {
       owned.authentication.identities = [block];
       return evaluateEvidence(owned, opts).failures.map(({ code }) => code);
     };
     const ownerRun = () => ({
       ...ownedIdentity(0), label: "e2e.patient", unowned_identity_available: true, unowned_identity_evidence: "qa.* provisioned 21:47Z",
-      walker: { kind: "owner_run", owner: ownedIdentity(0).owner, run_id: 36193694659, run_url: "https://github.com/albrand/psyche-project/actions/runs/36193694659" },
+      walker: { kind: "owner_run", owner: ownedIdentity(0).owner, run_id: 123456789, run_url: "https://github.com/example-org/example-repo/actions/runs/123456789" },
     });
     const expectCodes = (got, want, what) => {
       const ok = want === null ? got.length === 0 : got.includes(want);
@@ -875,9 +869,9 @@ function selftest() {
     expectCodes(codes(madeUp), "OWNER_RUN_URL_INVALID", "an owner_run without a run_url passes");
     const elsewhere = ownerRun(); elsewhere.walker.run_id = 1; elsewhere.walker.run_url = "https://github.com/someone/else/actions/runs/999";
     expectCodes(codes(elsewhere), "OWNER_RUN_URL_MISMATCH", "a run_url for another run passes");
-    const notGithub = ownerRun(); notGithub.walker.run_url = "https://evil.test/o/r/actions/runs/36193694659";
+    const notGithub = ownerRun(); notGithub.walker.run_url = "https://evil.test/o/r/actions/runs/123456789";
     expectCodes(codes(notGithub), "OWNER_RUN_URL_INVALID", "a run_url off github.com passes");
-    if (ownerRunProblems(ownerRun(), ["e2e.patient"]).repo !== "albrand/psyche-project") throw new Error(`owner_run repo not parsed at ${effort}`);
+    if (ownerRunProblems(ownerRun(), ["e2e.patient"]).repo !== "example-org/example-repo") throw new Error(`owner_run repo not parsed at ${effort}`);
 
     const noWalker = ownerRun(); delete noWalker.walker;
     expectCodes(codes(noWalker), "IDENTITY_OWNED_BY_AUTOMATION", "the same walk without walker passes");
@@ -968,4 +962,3 @@ const realUrl = (p) => {
   }
 };
 if (process.argv[1] && realUrl(process.argv[1]) === realUrl(fileURLToPath(import.meta.url))) main();
-

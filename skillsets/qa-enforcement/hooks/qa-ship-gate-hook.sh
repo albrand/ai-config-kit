@@ -10,6 +10,28 @@
 # (owner decision 2026-10-06).
 GATE="$HOME/.agents/skills/qa-sweep/scripts/ship-gate.py"
 input=$(cat)
+# Pallium production-data changes have an additional mandatory evidence gate,
+# independent of whether the repository opted into the general .qa pipeline.
+REALDATA_GATE="$HOME/.agents/skills/qa-sweep/scripts/realdata-replay-gate.py"
+if [ -f "$REALDATA_GATE" ]; then
+  set +e
+  printf '%s' "$input" | python3 "$REALDATA_GATE" hook
+  realdata_rc=$?
+  set -e
+  if [ "$realdata_rc" = 2 ]; then
+    exit 2
+  elif [ "$realdata_rc" != 0 ]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the gate failed; retry after repairing the installed gate"}}'
+    echo "[realdata-replay-gate] gate failed (exit $realdata_rc); command denied" >&2
+    exit 2
+  fi
+else
+  if printf '%s' "$input" | grep -qiE '"command"[^:]*:[^"]*"[^"]*(hermes-one\.zsh?|bb[[:space:]]+fleet[[:space:]]+validate|gh[[:space:]]+pr[[:space:]]+(create|ready|merge)|gh[[:space:]]+release|release[-[:space:]]request)'; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the required gate is missing; review or release denied"}}'
+    echo "[realdata-replay-gate] required gate is missing; command denied" >&2
+    exit 2
+  fi
+fi
 set +e
 if [ -f "$GATE" ]; then
   printf '%s' "$input" | python3 "$GATE" hook

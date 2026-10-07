@@ -163,6 +163,9 @@ def trust(only_command=None, only_event=None):
 
 
 def falsify():
+    # Test-only known answer: the hash Codex itself stored when it trusted this hook on one machine. The absolute
+    # path is part of the hashed input, so replacing it with a placeholder would lose the proof that
+    # codex_hook_hash matches Codex. Nothing reads this path at run time.
     ok = codex_hook_hash("pre_tool_use", "/Users/alexandrebrandizzi/.agent-hooks/codex-context-hygiene.sh", 5) == \
         "sha256:80367355e038758b8be8ac940f2854317fc103d13916f60d26bde0896eb47c5f"
     ok_neg = codex_hook_hash("pre_tool_use", "/x", 5) != codex_hook_hash("pre_tool_use", "/x", 6)

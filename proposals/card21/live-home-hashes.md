@@ -2,8 +2,8 @@
 
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
-profiles. Accepted live profiles include the #47 render, the #49 render and
-the #50 render currently installed in all four homes. The current rendered profile is the
+profiles. Accepted live profiles include the #47 and #49 renders and
+the #50, #51 and #60 renders; #60 is installed in all four homes. The current rendered profile is the
 output of this source revision; keeping it here means that after this revision
 is merged and installed, the next installer recognizes that complete set
 without weakening the live-edit guard.
@@ -56,10 +56,13 @@ command-produced SHA-256 values for those live files.
 | OpenCode | `935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8` |
 | bb | `db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1` |
 
-### Current rendered profile: follow-through PR candidate based on 192f652a
+### Accepted live profile: #51 render at f9e6837 (installed before #56)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+Verified byte-for-byte on 2026-10-06: all four live homes equal the output of
+`python3 scripts/render-standing-homes.py --output-dir <dir>` at f9e6837, the
+last commit before #56. #56 replaced this bb digest in the current rendered
+profile without keeping it as an accepted one, so the installer refused the
+very homes it had installed.
 
 | Home | SHA-256 |
 |---|---|
@@ -67,6 +70,44 @@ output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
 | Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
 | OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
 | bb | `ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb` |
+
+### Accepted live profile: #60 render at b55f327 (installed 2026-10-06)
+
+Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
+5be3296 reported all four live homes MATCH. Digests below are the output of
+`shasum -a 256` on those live files.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5` |
+| Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
+| OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
+| bb | `d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e` |
+
+### Accepted live profile: #62 render at 296ae3b (installed 2026-10-07)
+
+Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
+296ae3b reported all four live homes MATCH. Digests below are the output of
+`shasum -a 256` on those live files.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `9bc9d866b7fcdd1e760afd7c174cd4cb7f1ad579f0ca6843ce28271bf3260ab1` |
+| Codex | `afe6281966c5ffebc3f86aca2fc30ba5109f86c15c611492e6d26a55f605bd33` |
+| OpenCode | `f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0` |
+| bb | `c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c` |
+
+### Current rendered profile: session-input scope based on 296ae3b
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `2a13a95dee10b4c6d280c92d93ce66af876101dc86c379806de4701635acef52` |
+| Codex | `76321ba05d277eb20c3f88515771e56fe77edf2923da01487048686cf182bdff` |
+| OpenCode | `1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a` |
+| bb | `72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

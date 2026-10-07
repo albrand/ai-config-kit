@@ -131,7 +131,7 @@ Latin punctuation names carry to ASCII (U+2018 and U+2019 to `'`, U+2013 and
 U+2014 to `-`, U+00B7 to `.`: `O’Brien` typed with a macOS smart quote,
 `maria–silva`, `Paral·lel`), lowercase, `ß` to `ss`, strip, and lose an
 `@domain` suffix, so `E2E.patient`,
-`e2e.patient ` and `e2e.patient@meupsi.test` all name `e2e.patient`. A label
+`e2e.patient ` and `e2e.patient@example.test` all name `e2e.patient`. A label
 with a character outside printable ASCII and the Latin letter blocks (after
 NFKC) is refused outright: that covers mixed scripts (`e2е.patient` with a
 Cyrillic `е`), Greek and Cyrillic look-alikes, IPA and small capitals
@@ -156,7 +156,7 @@ To record such a run as the walk, add a `walker` to that identity block:
 
 ```json
 "walker": {"kind": "owner_run", "owner": "deployed e2e gate (playwright global setup)",
-           "run_id": 36193694659, "run_url": "https://github.com/<org>/<repo>/actions/runs/36193694659"}
+           "run_id": 123456789, "run_url": "https://github.com/example-org/example-repo/actions/runs/123456789"}
 ```
 
 With `walker.kind` `owner_run`, `walker.owner` equal to the block's `owner`,

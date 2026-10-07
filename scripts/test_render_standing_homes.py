@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,23 @@ SPEC = importlib.util.spec_from_file_location("render_standing_homes", SCRIPT)
 RENDERER = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(RENDERER)
+
+# Every commit that changed the fingerprint manifest up to #56, newest first. The history test must see all of them.
+MANIFEST_HISTORY = (
+    "60059aaa8539e47d98a33a4689e7038622178335",  # Housekeep shared kit artifacts and routing (#56)
+    "e0832ee3acb0efd397efe4b2501ef8a5a339bd85",  # Agents finish the work (#51): the profile #56 stranded
+    "192f652a87399222ab09c97f08ca853b1823a7a7",  # Restore delegate evidence rule across rendered homes (#50)
+    "73786e99fe1f453f1e145c8f559e61fdfc0637b7",  # Track complete rendered home fingerprint profiles (#49)
+    "539e88a254a22014befa5ba8cef5ddd94e958624",  # Fix home fingerprint and review sync (#47)
+    "9c24d9dbc66cadc881d61959bfa2719567b13f9b",  # Carry full-picture rule to every provider home
+    "3ab75d63d2fd75c8b38a675a344f15a7bc217723",  # Record the live home fingerprints after the delivery-guidance install
+    "e210aa9958d14c292c3e92ce818fae3a5b4cfa4e",  # Align delivery guidance and preserve skill invocation policies
+    "c6713d69ac84cf95ea925f3864822d5c7eaf5e91",  # Preserve typed decisions and guard home installs
+    "1fbdc81d829aae12d58cef21f851ccdb0b996edb",  # Tighten standing rule preservation checks
+    "9a176b3f14217eb5c826291c95354a3469689654",  # Preserve Codex context cleanup guard
+    "bcd5fbb83c1e340085d534764c2f5ac9299f0b8e",  # Require explicit worktree safeguards in compact homes
+    "e017b585ddf1bfb560fb4a4118f768b96ff23cf8",  # Check each worktree protection independently (first)
+)
 
 
 class CommittedSnapshotTests(unittest.TestCase):
@@ -38,6 +56,101 @@ class CommittedSnapshotTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(manifest), 2, "keep both the installed baseline and current render")
         self.assertEqual(expected, manifest[-1])
+
+    def require_full_history(self) -> None:
+        # These tests read the manifest's past commits. A shallow or pruned checkout must fail, not pass vacuously
+        # or skip; the self-hosted runner makes full mirror clones (Hermes 2026-10-06, kit-standing-home-profile r3).
+        shallow = subprocess.run(["git", "-C", str(RENDERER.ROOT), "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True)
+        self.assertEqual(0, shallow.returncode, f"not a git checkout: {shallow.stderr!r}")
+        self.assertEqual("false", shallow.stdout.strip(), "shallow checkout; fetch the full history to run this test")
+
+    def test_every_current_profile_in_history_stays_recorded(self) -> None:
+        # #56 replaced the current bb digest without keeping the old one as an accepted profile, so the
+        # installer refused the very homes it had installed. A past current profile must stay installable:
+        # accepted or current. History-only does not count, since the installer refuses it (Hermes 2026-10-06,
+        # kit-standing-home-profile r1).
+        rel = "proposals/card21/live-home-hashes.md"
+
+        def sections(text: str) -> dict[str, frozenset[str]]:
+            out, header = {}, None
+            for line in text.splitlines():
+                if line.startswith("### "):
+                    header = line[4:]
+                    out[header] = frozenset()
+                elif header is not None:
+                    found = re.findall(r"`([0-9a-f]{64})`", line)
+                    out[header] = out[header] | frozenset(found)
+            return out
+
+        self.require_full_history()
+        log = subprocess.run(["git", "-C", str(RENDERER.ROOT), "log", "--format=%H", "--", rel],
+                             capture_output=True, text=True)
+        self.assertEqual(0, log.returncode, log.stderr)
+        self.assertTrue(log.stdout.split(), "no git history for the fingerprint manifest")
+        # A grafted or orphaned history is not shallow but drops old profiles; the known commits must all be there.
+        missing = [c[:8] for c in MANIFEST_HISTORY if c not in log.stdout.split()]
+        self.assertEqual([], missing, "the manifest's git history is truncated; fetch the full history")
+        now = sections((RENDERER.ROOT / rel).read_text(encoding="utf-8"))
+        kept = {d for h, d in now.items() if h.startswith(("Accepted live profile", "Current rendered profile"))}
+        installable = [frozenset(p.values()) for p in RENDERER.load_expected_hash_profiles()]
+        self.assertEqual(set(installable), kept, "the installer's profiles are the accepted and current sections")
+        for commit in log.stdout.split():
+            old = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show", f"{commit}:{rel}"],
+                                 capture_output=True, text=True).stdout
+            for header, digests in sections(old).items():
+                if header.startswith("Current rendered profile") and len(digests) == 4:
+                    with self.subTest(commit=commit[:8]):
+                        self.assertIn(digests, kept,
+                                      f"{commit[:8]}'s current profile is no longer installable: {sorted(d[:12] for d in digests)}")
+
+    def test_installer_replaces_the_installed_51_render(self) -> None:
+        # The homes #56 stranded: the committed #51 snapshots at f9e6837 must match the recorded profile, and
+        # `--install` must accept them and write the current render. The CLI runs from a clone whose origin/main
+        # holds this checkout's install sources, with HOME pointed at a temp dir, so the default target paths and
+        # the writer lock resolve there and no live home is touched.
+        self.require_full_history()
+        # Readable objects are not enough: a graft can cut f9e6837 out of HEAD's history and leave its blobs behind.
+        ancestor = subprocess.run(["git", "-C", str(RENDERER.ROOT), "merge-base", "--is-ancestor", "f9e6837", "HEAD"],
+                                  capture_output=True, text=True)
+        self.assertEqual(0, ancestor.returncode, f"f9e6837 is not reachable from HEAD: {ancestor.stderr!r}")
+        files = {}
+        for key, filename in RENDERER.NAMES.items():
+            shown = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show",
+                                    f"f9e6837:proposals/card21/rendered-homes/{filename}"], capture_output=True)
+            self.assertEqual(0, shown.returncode, f"commit f9e6837 is not in this checkout: {shown.stderr!r}")
+            files[key] = shown.stdout
+        live_homes = {"claude": ".claude/CLAUDE.md", "codex": ".codex/AGENTS.md",
+                      "opencode": ".config/opencode/AGENTS.md", "bb": ".bb/AGENTS.md"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home, repo, remote = root / "home", root / "repo", root / "origin.git"
+            git = ["git", "-c", "user.name=Card 21 test", "-c", "user.email=card21-test@example.invalid", "-C", str(repo)]
+            subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+            subprocess.run(["git", "init", "--initial-branch=main", "-q", str(repo)], check=True)
+            for source in RENDERER.INSTALL_SOURCE_PATHS:
+                (repo / source).parent.mkdir(parents=True, exist_ok=True)
+                (repo / source).write_bytes((RENDERER.ROOT / source).read_bytes())
+            subprocess.run([*git, "add", *RENDERER.INSTALL_SOURCE_PATHS], check=True)
+            subprocess.run([*git, "commit", "-qm", "This checkout's install sources"], check=True)
+            subprocess.run([*git, "remote", "add", "origin", str(remote)], check=True)
+            subprocess.run([*git, "push", "-q", "origin", "main"], check=True)
+            targets = {key: home / path for key, path in live_homes.items()}
+            for key, target in targets.items():
+                target.parent.mkdir(parents=True)
+                target.write_bytes(files[key])
+            env = {**os.environ, "HOME": str(home)}
+            cli = [sys.executable, str(repo / "scripts/render-standing-homes.py")]
+            install = subprocess.run([*cli, "--install"], env=env, capture_output=True, text=True)
+            self.assertEqual(0, install.returncode, install.stderr)
+            self.assertEqual(sorted(f"INSTALLED {t}" for t in targets.values()),
+                             sorted(line.split(" (backup")[0] for line in install.stdout.splitlines()))
+            outputs = {key: RENDERER.rendered(key) for key in targets}
+            self.assertEqual(outputs, {key: target.read_text(encoding="utf-8") for key, target in targets.items()})
+            check = subprocess.run([*cli, "--check"], env=env, capture_output=True, text=True)
+            self.assertEqual(0, check.returncode, check.stdout)
+        snapshot = {key: hashlib.sha256(data).hexdigest() for key, data in files.items()}
+        self.assertIn(snapshot, RENDERER.load_expected_hash_profiles(), "the #51 render is a recorded profile")
 
     def test_installer_accepts_only_a_complete_known_home_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

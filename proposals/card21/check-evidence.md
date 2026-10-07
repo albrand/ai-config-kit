@@ -236,12 +236,12 @@ failure.
 Latest baseline-preservation and current-home CLI output:
 
 ```text
-PASS /Users/alexandrebrandizzi/.claude/CLAUDE.md: 64 applicable standing rules
-PASS /Users/alexandrebrandizzi/.codex/AGENTS.md: 73 applicable standing rules
-PASS /Users/alexandrebrandizzi/.config/opencode/AGENTS.md: 69 applicable standing rules
-PASS /Users/alexandrebrandizzi/.bb/AGENTS.md: 63 applicable standing rules
-PASS /Users/alexandrebrandizzi/projects/wt-card21-shorter-instructions/GLOBAL_AGENTS.md: 102 applicable standing rules
-PASS /Users/alexandrebrandizzi/projects/wt-card21-shorter-instructions/GLOBAL_AGENTS.md: retained all 42 rules matched in proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md
+PASS ~/.claude/CLAUDE.md: 64 applicable standing rules
+PASS ~/.codex/AGENTS.md: 73 applicable standing rules
+PASS ~/.config/opencode/AGENTS.md: 69 applicable standing rules
+PASS ~/.bb/AGENTS.md: 63 applicable standing rules
+PASS <kit>/GLOBAL_AGENTS.md: 102 applicable standing rules
+PASS <kit>/GLOBAL_AGENTS.md: retained all 42 rules matched in proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md
 PASS all 5 files contain all applicable rules (109 regexes)
 ```
 
@@ -267,10 +267,10 @@ mutations.
 Latest unchanged-home and baseline-preservation command output:
 
 ```text
-PASS /Users/alexandrebrandizzi/.claude/CLAUDE.md: 64 applicable standing rules
-PASS /Users/alexandrebrandizzi/.codex/AGENTS.md: 79 applicable standing rules
-PASS /Users/alexandrebrandizzi/.config/opencode/AGENTS.md: 69 applicable standing rules
-PASS /Users/alexandrebrandizzi/.bb/AGENTS.md: 63 applicable standing rules
+PASS ~/.claude/CLAUDE.md: 64 applicable standing rules
+PASS ~/.codex/AGENTS.md: 79 applicable standing rules
+PASS ~/.config/opencode/AGENTS.md: 69 applicable standing rules
+PASS ~/.bb/AGENTS.md: 63 applicable standing rules
 PASS GLOBAL_AGENTS.md: 104 applicable standing rules
 PASS GLOBAL_AGENTS.md: retained all 45 rules matched in proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md
 PASS all 5 files contain all applicable rules (115 regexes)

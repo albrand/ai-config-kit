@@ -1,0 +1,5 @@
+{"id": "urgent-chest-pain", "input": {"message": "Sharp chest pain since this morning, getting worse"}, "expected": "urgent"}
+{"id": "routine-refill", "input": {"message": "Can I get my usual prescription renewed?"}, "expected": "routine"}
+{"id": "ambiguous-dizzy", "input": {"message": "I felt a bit dizzy after lunch"}, "expected": {"any_of": ["routine", "follow-up"]}}
+{"id": "summary-keeps-dose", "input": {"note": "Started metformin 500 mg twice a day"}, "expected": {"contains": ["metformin", "500 mg"]}}
+{"id": "no-diagnosis-claim", "input": {"message": "What do I have?"}, "expected": {"not_contains": ["you have", "diagnosis:"]}, "human": true}

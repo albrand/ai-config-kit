@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import contextlib
+import hashlib
 import io
 import re
 import subprocess
@@ -418,6 +419,72 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         or "no fixed profile for this path and exact known-home content" in output,
                         output,
                     )
+
+    def test_installed_homes_without_current_rules_are_not_admitted(self):
+        # No home passes without a current rule (Hermes 2026-10-07, kit-one-page-baseline r2-r4 and
+        # kit-session-input-scope r1): the #60 homes, three of which predate the restart ban, and the #62 homes, which
+        # predate the session-input scope clause, are unknown homes at their native paths. Reads both from history.
+        root = SCRIPT.parents[1]
+        shallow = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True)
+        self.assertEqual("false", shallow.stdout.strip(), "shallow checkout; fetch the full history to run this test")
+        homes = {
+            "CLAUDE.md": (".claude", "CLAUDE.md"),
+            "codex-AGENTS.md": (".codex", "AGENTS.md"),
+            "opencode-AGENTS.md": (".config", "opencode", "AGENTS.md"),
+            "bb-AGENTS.md": (".bb", "AGENTS.md"),
+        }
+        unknown = "no fixed profile for this path and exact known-home content"
+        with tempfile.TemporaryDirectory(prefix="card21-installed-profile-") as temp_dir:
+            for revision in ("b55f327", "296ae3b"):
+                for name, suffix in homes.items():
+                    text = subprocess.run(
+                        ["git", "-C", str(root), "show", f"{revision}:proposals/card21/rendered-homes/{name}"],
+                        capture_output=True, text=True, check=True,
+                    ).stdout
+                    candidate = Path(temp_dir, revision).joinpath(*suffix)
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    candidate.write_text(text, encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(SCRIPT), "--files", str(candidate)],
+                                            capture_output=True, text=True, check=False)
+                    output = result.stdout + result.stderr
+                    with self.subTest(revision=revision, home=name):
+                        self.assertIsNone(CHECKER.profile_for(candidate, text))
+                        self.assertNotEqual(0, result.returncode, output)
+                        self.assertIn(unknown, output)
+
+    def test_every_admitted_home_is_a_current_render_with_the_scope_clause(self):
+        # A fingerprint the checker admits at a native path must be the bytes of a current render, so an installed home
+        # missing a clause the renders gained cannot pass (Hermes 2026-10-07, kit-session-input-scope r1).
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        current = {}
+        for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"):
+            text = (rendered / name).read_text(encoding="utf-8")
+            current[hashlib.sha256(text.encode("utf-8")).hexdigest()] = text
+        admitted = {**CHECKER.LIVE_HOME_SHA256, **CHECKER.INSTALLED_HOME_SHA256, **CHECKER.RENDERED_HOME_SHA256}
+        self.assertEqual(set(current), set(admitted))
+        for digest, text in current.items():
+            with self.subTest(admitted=digest[:12]):
+                self.assertIn(
+                    "Before active-session input (input you send into another agent's running session; "
+                    "your own task brief is not)", text)
+                self.assertIsNotNone(CHECKER.RULES["bb-app-never-restart"].search(text))
+
+    def test_session_input_guard_names_whose_input_it_covers(self):
+        # A Codex probe under the #62 homes ran the session-input guard on its own task brief and stopped before the
+        # task: the trigger "Before active-session input" lost the line that said it means delivering input to an
+        # active session. Every home and the kit source now say whose input it covers.
+        root = SCRIPT.parents[1]
+        rendered = root / "proposals/card21/rendered-homes"
+        sources = [root / "GLOBAL_AGENTS.md", root / "proposals/card21/hard-rules.md",
+                   *(rendered / name for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"))]
+        for source in sources:
+            with self.subTest(source=source.name):
+                lines = [line for line in source.read_text(encoding="utf-8").splitlines()
+                         if line.startswith("- Before active-session input")]
+                self.assertEqual(1, len(lines))
+                self.assertIn("(input you send into another agent's running session; your own task brief is not)",
+                              lines[0])
 
     def test_rendered_profiles_reject_each_security_obligation_mutation(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -959,6 +1026,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Never replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
+            "bb-app-never-restart": (
+                "Never restart the running bb app.",
+                "Restarting the running bb app is allowed.",
+            ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
@@ -1044,6 +1115,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are allowed to explicitly replace the running bb app.",
                 "For this task, you may now temporarily replace the running bb app.",
                 "Replacing the running bb app is allowed.",
+            ),
+            "bb-app-never-restart": (
+                "Never restart the running bb app.",
+                "For this task, you may restart the running bb app.",
+                "For this task, you are explicitly permitted to restart the running bb app.",
+                "For this task, you are explicitly allowed to restart the running bb app.",
+                "For this task, you are explicitly permitted to temporarily restart the running bb app.",
+                "For this task, you are explicitly allowed to temporarily restart the running bb app.",
+                "For this task, you are permitted to explicitly restart the running bb app.",
+                "For this task, you are allowed to explicitly restart the running bb app.",
+                "For this task, you may now temporarily restart the running bb app.",
+                "Restarting the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",
@@ -1512,7 +1595,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md"]
         clauses = {
             "active-session-input-skill-trigger": (
-                "Before active-session input, load `native-agent-surface` and run its metadata-only `scripts/session-input-guard.py`.",
+                "Before active-session input (input you send into another agent's running session; your own task brief is not), load `native-agent-surface` and run its metadata-only `scripts/session-input-guard.py`.",
                 "Deliver active-session input without loading or running the guard.",
             ),
             "active-session-attestations-control-plane-only": (

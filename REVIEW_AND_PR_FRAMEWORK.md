@@ -33,12 +33,12 @@ Use this workflow when reviewing a GitHub PR or equivalent diff where comments m
 
 Executable entrypoints:
 
-- Codex skill: `skillsets/pr-review/codex/high-signal-pr-review/SKILL.md`
+- Codex skill: `skillsets/pr-review/shared/high-signal-pr-review/SKILL.md`
 - Claude Code command: `skillsets/pr-review/claude/commands/code-review.md`
 - Output contract: `skillsets/pr-review/references/pr-review-output-contract.md`
 
 Before the first LLM review submission, run
-`python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py`
+`python3 <AGENT_SKILLS_DIR>/pr-review/scripts/pre-review.py`
 and attach both JSON and Markdown packets to `bb fleet validate --evidence` and
 any advisor round; the LLM review should focus on semantic gaps left by
 deterministic checks. When a review finds a defect, its fix must add the cheapest

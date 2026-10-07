@@ -356,6 +356,18 @@ try {
   const rejectedGlm = runWrapper({ OPENCODE_MODEL: 'zai-coding-plan/glm-5.3-flash' });
   assert.equal(rejectedGlm.status, 64);
   assert.match(rejectedGlm.stderr, /GLM routing is retired/);
+  for (const glmModel of ['Z.AI/GLM-5', 'zhipu/GLM-4.6', 'openrouter/z-ai/glm-4.7', 'ZAI/whatever']) {
+    const rejected = runWrapper({ OPENCODE_MODEL: glmModel });
+    assert.equal(rejected.status, 64, `${glmModel} should be refused`);
+    assert.match(rejected.stderr, /GLM routing is retired/);
+  }
+  // The legacy OpenCode procedure keeps its written no-GLM rule in both copies.
+  for (const doc of [path.join(scripts, '..', 'references', 'OPENCODE_DELEGATION.md'),
+                     path.join(scripts, '..', '..', '..', '..', '..', 'OPENCODE_DELEGATION.md')]) {
+    const text = fs.readFileSync(doc, 'utf8');
+    assert.match(text, /Never select GLM\./, doc);
+    assert.match(text, /existing non-GLM OpenCode setup/, doc);
+  }
 
   const missingModel = runWrapper({ OPENCODE_MODEL: '' });
   assert.equal(missingModel.status, 64);

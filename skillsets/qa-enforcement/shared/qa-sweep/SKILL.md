@@ -49,7 +49,7 @@ tools; and every inventory row records whether it predates this change.
 ## P0 Scope: `.qa/workflow.json`
 
 Before the first LLM review submission, attach both JSON and Markdown packets
-from `python3 /Users/alexandrebrandizzi/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
+from `python3 ~/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
 advisor round; keep LLM review focused on semantic gaps left by deterministic
 checks. Each defect fix must add the cheapest deterministic detector that
 would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
@@ -86,7 +86,7 @@ times carry an offset (verified-qa-e2e evidence contract). Why: on
 
 
 
-2026-09-25 two interactive walks on meu-psi signed in as the deployed CI
+2026-09-25 two interactive walks on one repo signed in as the deployed CI
 suite's own e2e identities on the shared preview DB. The suite's setup
 recreated their data mid-walk, the walks changed data under the suite, and a
 deployed gate went 36/38 on a build that was 38/38 twelve minutes earlier.
@@ -266,7 +266,7 @@ built), **`gh pr create`** (that is how the preview and the PR are produced),
 **`bb fleet validate`** (review should see the work before the merge, not
 after), **preview deploys** (`vercel deploy` without a production target, and
 a `vercel api`/curl POST to `/vN/deployments` whose target is a preview — the
-meu-psi pilot heals seat-blocked previews through exactly that call, and
+a pilot repo heals seat-blocked previews through exactly that call, and
 blocking it would deadlock the pilot again), and **`vercel rollback`**
 (incident recovery restores an already-shipped deployment). A deployments POST
 whose body cannot be seen at hook time (built by a script or piped on stdin)
