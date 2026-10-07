@@ -94,6 +94,20 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at repository root")
         self.assertIn("src/server/ingestion/worker.ts", payload["affected_paths"])
 
+    def test_package_name_identifies_clone_with_unrelated_local_remote(self) -> None:
+        clone = Path(self.temp.name) / "another-clone"
+        self.repo.rename(clone)
+        self.repo = clone
+        git(self.repo, "remote", "set-url", "origin", "../upstream.git")
+        (self.repo / "package.json").write_text('{"name":"pallium-app"}\n', encoding="utf-8")
+        git(self.repo, "add", "package.json")
+        git(self.repo, "commit", "-m", "identify Pallium package")
+
+        denied, payload = self.check()
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at repository root")
+
     def test_hermes_must_attach_report_or_a_packet_that_cites_it(self) -> None:
         report = replay_report()
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
@@ -113,6 +127,7 @@ class RealdataReplayGateTests(unittest.TestCase):
         result, payload = self.check()
         self.assertEqual(result.returncode, 2)
         self.assertIn("SHA-256 does not match", payload["reason"])
+        self.assertIn("likely stale footer", payload["reason"])
 
     def test_release_requires_committed_report_and_citation(self) -> None:
         report = replay_report()

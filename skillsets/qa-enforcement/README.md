@@ -31,9 +31,13 @@ The replay report uses these machine-checked fields: `Copy time (UTC)`,
 `Control SHA`, `Candidate SHA`, `Local copy`, `Production source`, `Privacy`,
 `Blocked rows`, and a per-goal Markdown table with `Goal`, `Target rows`,
 `Control count`, `Candidate count`, `Reason`, and `Error class` columns. Finish
-the report with `Artifact SHA-256 (excluding this line)`; hash the report bytes
-with that digest line omitted. External provider/model/key boundaries remain
-in the report as blocked rows.
+the report with `Artifact SHA-256 (excluding this line)`. Run the repository's
+formatter on the report first, then compute and append the digest over the
+formatted report bytes with that digest line omitted. Finally, confirm the
+formatter leaves the completed report bytes unchanged (use its check mode or
+compare the file bytes before and after formatting). If formatting changes the
+report, format it first and recompute the digest footer last. External
+provider/model/key boundaries remain in the report as blocked rows.
 
 ## How it enforces
 

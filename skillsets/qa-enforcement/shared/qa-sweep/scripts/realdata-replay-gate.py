@@ -116,7 +116,8 @@ def validate_report(repo: Path) -> tuple[bool, str, str | None]:
         return False, "REALDATA-REPLAY.md is missing its Artifact SHA-256 (excluding this line)", None
     actual = normalized_report_hash(text)
     if digest_match.group(1).lower() != actual:
-        return False, "REALDATA-REPLAY.md artifact SHA-256 does not match its contents", actual
+        return False, ("REALDATA-REPLAY.md artifact SHA-256 does not match its contents; likely stale footer after formatting. "
+                       "Run the repository formatter first, recompute the footer last, and confirm formatting leaves the bytes unchanged"), actual
     return True, "REALDATA-REPLAY.md fields and SHA-256 are valid", actual
 
 
