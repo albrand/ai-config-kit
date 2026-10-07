@@ -196,7 +196,7 @@ def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Patter
     marker = re.escape(LABEL_LINE_MARKER)
     marker_gap = f"(?:{marker})*"
     words_with_markers = [marker_gap.join(re.escape(char) for char in word) for word in words]
-    separator = rf"(?:{marker})*\s+(?:{marker})*"
+    separator = rf"(?:{marker}|\s)*\s(?:{marker}|\s)*"
     expression = (rf"(?<![\w{marker}]){marker}*(?P<label_start>"
                   + separator.join(words_with_markers) + ")"
                   + rf"(?![\w{marker}])")

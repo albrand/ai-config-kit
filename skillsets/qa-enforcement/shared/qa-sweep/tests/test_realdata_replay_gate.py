@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import json
 import os
 import subprocess
@@ -531,7 +532,8 @@ sys.exit(2)
         gate = self.gate_module()
         self.denylist.write_text("Acme Energy\n", encoding="utf-8")
         for markup in ("Acme<b\n>Energy", "Acme</b\n>Energy",
-                       "Acme<!--\n-->Energy"):
+                       "Acme<!--\n-->Energy",
+                       'Acme![](https://example.invalid "title\nline")Energy'):
             with self.subTest(markup_type="hidden markup"):
                 text = replay_report(note=f"- Replay note: {markup}")
                 valid, reason, _ = gate.validate_report_text(text)
@@ -543,6 +545,82 @@ sys.exit(2)
         self.assertFalse(valid)
         self.assertIn("private tenant label", reason)
         self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_matches_generated_marker_whitespace_interleavings(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        markers = ("<b\n>", "<!--\n-->")
+        visible_spaces = (" ", "\t", "\n", "  ")
+        case_number = 0
+        failures = 0
+        for length in range(2, 7):
+            for sequence in itertools.product(("marker", "space"), repeat=length):
+                if "marker" not in sequence or "space" not in sequence:
+                    continue
+                parts: list[str] = []
+                marker_number = 0
+                space_number = 0
+                for item in sequence:
+                    if item == "marker":
+                        parts.append(markers[marker_number % len(markers)])
+                        marker_number += 1
+                    else:
+                        parts.append(visible_spaces[space_number % len(visible_spaces)])
+                        space_number += 1
+                text = replay_report(note="- Replay note: Acme" + "".join(parts) + "Energy")
+                valid, reason, _ = gate.validate_report_text(text)
+                case_number += 1
+                if (valid or "private tenant label" not in reason or "line 14" not in reason
+                        or "Acme Energy" in reason):
+                    failures += 1
+        self.assertEqual(0, failures,
+                         f"{failures} of {case_number} marker/whitespace interleavings failed")
+
+    def test_all_reported_marker_whitespace_interleavings_are_refused(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        notes = (
+            "- Replay note: Acme <b\n> Energy",
+            "- Replay note: Acme <!--\n--> Energy",
+            "- Replay note: Acme<b\n> <b\n> Energy",
+            "- Replay note: Acme<!--\n--> <!--\n--> Energy",
+            "- Replay note: Acme <b\n> <b\n>Energy",
+        )
+        for index, note in enumerate(notes, start=1):
+            text = replay_report(note=note)
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(reproducer_case=index):
+                self.assertFalse(valid, f"reproducer case {index}: {reason}")
+                if not valid:
+                    self.assertIn("private tenant label", reason)
+                    self.assertIn("line 14", reason)
+                    self.assertNotIn("Acme Energy", reason)
+
+    def test_marker_only_interleavings_do_not_create_word_boundaries(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        markers = ("<b\n>", "<!--\n-->")
+        for length in range(1, 5):
+            for sequence in itertools.product(markers, repeat=length):
+                text = replay_report(note="- Replay note: Acme" + "".join(sequence) + "Energy")
+                valid, reason, _ = gate.validate_report_text(text)
+                self.assertTrue(valid, reason)
+
+    def test_interleaved_whitespace_after_multiline_tag_keeps_start_line_accurate(self) -> None:
+        text = replay_report(note="- Replay note: <b\n>Acme <!--\n--> Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_matches_visible_spaces_around_hidden_multiline_image(self) -> None:
+        text = replay_report(note='- Replay note: Acme ![](https://example.invalid "title\nline") Energy')
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
         self.assertNotIn("Acme Energy", reason)
 
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
