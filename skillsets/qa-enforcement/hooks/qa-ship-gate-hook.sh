@@ -88,7 +88,73 @@ ship_scan() {
     }
     return seg
   }
+  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line, re) {
+    # The command without heredocs, or SFAIL = 1 when one is not read exactly. Same contract as the ship-gate.py
+    # _strip_heredoc_bodies (Hermes r10, r11): a real << is code, not quoted, escaped, commented, arithmetic or in
+    # ${...} / $[...]; <<< is a here-string. Its delimiter must be a plain word ending at a blank, ; & | < > or a
+    # newline, its context must still be open where the body starts, a terminator line must exist, and no body
+    # line may start with the delimiter and go on. Anything else is unreadable, so the raw text is scanned.
+    out = ""; st = ""; np = 0; hp = 1; w = 0; n = length(s); SFAIL = 0
+    re = "^([A-Za-z0-9_.-]|\\\\[A-Za-z0-9_.-]|" sq "[A-Za-z0-9_. -]+" sq "|\"[A-Za-z0-9_. -]+\")+"
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1); nx = substr(s, i + 1, 1); top = substr(st, length(st), 1)
+      if (top == sq) { out = out c; if (c == sq) st = substr(st, 1, length(st) - 1); continue }
+      if (c == "\\" && nx != "") { out = out c nx; i++; w = 1; continue }
+      if (top == "\"" || top == "{" || top == "[") {
+        out = out c
+        if ((top == "\"" && c == "\"") || (top == "{" && c == "}") || (top == "[" && c == "]")) st = substr(st, 1, length(st) - 1)
+        else if (c == "`") st = st "`"
+        else if (c == "$" && (nx == "(" || nx == "{" || nx == "[")) { out = out nx; st = st (nx == "(" ? "$" : nx); i++ }
+        else if ((c == sq || c == "\"") && top != "\"") st = st c
+        continue
+      }
+      if (top == "A" || top == "a") {
+        out = out c
+        if (c == "(") st = st "a"
+        else if (c == ")" && top == "a") st = substr(st, 1, length(st) - 1)
+        else if (c == ")" && nx == ")") { out = out nx; st = substr(st, 1, length(st) - 1); i++ }
+        continue
+      }
+      if (c == "\n" && np >= hp) {
+        for (k = hp; k <= np; k++) if (ps[k] != st) { SFAIL = 1; return "" }
+        out = out c; i++
+        for (; hp <= np; hp++) {
+          for (;;) {
+            if (i > n) { SFAIL = 1; return "" }
+            for (j = i; j <= n && substr(s, j, 1) != "\n"; j++);
+            line = substr(s, i, j - i); i = j + 1
+            if (pd[hp]) sub(/^\t+/, "", line)
+            if (line == pw[hp]) break
+            if (index(line, pw[hp]) == 1) { SFAIL = 1; return "" }
+          }
+        }
+        np = 0; hp = 1; w = 0; i--; continue
+      }
+      if (c == "#" && !w) { for (j = i; j <= n && substr(s, j, 1) != "\n"; j++); out = out substr(s, i, j - i); i = j - 1; continue }
+      if (c == "<" && nx == "<" && substr(s, i + 2, 1) != "<" && (i == 1 || substr(s, i - 1, 1) != "<")) {
+        j = i + 2; dash = (substr(s, j, 1) == "-"); if (dash) j++
+        while (j <= n && (substr(s, j, 1) == " " || substr(s, j, 1) == "\t")) j++
+        if (!match(substr(s, j), re)) { SFAIL = 1; return "" }
+        k = j + RLENGTH
+        if (k <= n && !index(" \t\n;&|<>", substr(s, k, 1))) { SFAIL = 1; return "" }
+        dl = substr(s, j, RLENGTH); gsub(sq, "", dl); gsub(/"/, "", dl); gsub(/\\/, "", dl)
+        np++; pd[np] = dash; pw[np] = dl; ps[np] = st; i = k - 1; w = 1; continue
+      }
+      out = out c
+      if (c == sq || c == "\"") st = st c
+      else if (c == "`") { if (top == "`") st = substr(st, 1, length(st) - 1); else st = st "`" }
+      else if (c == "$" && substr(s, i + 1, 2) == "((") { out = out "(("; st = st "A"; i += 2 }
+      else if (c == "$" && (nx == "(" || nx == "{" || nx == "[")) { out = out nx; st = st (nx == "(" ? "$" : nx); i++ }
+      else if (c == "(" && nx == "(" && !w) { out = out "("; st = st "A"; i++ }
+      else if (c == "(") st = st "("
+      else if (c == ")" && (top == "$" || top == "(")) st = substr(st, 1, length(st) - 1)
+      w = !index(" \t\n;&|()<>", c)
+    }
+    if (np >= hp) { SFAIL = 1; return "" }
+    return out
+  }
   function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body, ls, hd) {
+    cmd = strip(cmd); if (SFAIL) { FAIL = 1; return "" }
     out = ""; seg = ""; subs = ""; nw = 0; cur = ""; has = 0; q = ""; n = length(cmd)
     ls = 1; hd = 0
     for (i = 1; i <= n; i++) {
@@ -113,7 +179,6 @@ ship_scan() {
           j--
           body = substr(cmd, i + 2, j - i - 2)
         }
-        if (index(body, "<<")) hd = 1
         subs = subs " ; " body; seg = seg substr(cmd, i, j - i + 1); cur = cur "$()"; has = 1; i = j
         continue
       }

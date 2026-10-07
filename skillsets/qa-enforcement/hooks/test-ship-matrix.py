@@ -89,11 +89,23 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               "gh pr merge 5 # comment\ngit push origin main", "gh pr merge 5 \\\n&& git push origin main",
               "gh pr merge 5 &&\ngit push origin main", "cat <<EOF\n&& x\nEOF\ngit push origin main",
               # a real heredoc operator, unspaced or in a substitution, still makes its body text
-              "cat<<EOF\n&& x\nEOF\ngit push origin main", "x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main"]
+              "cat<<EOF\n&& x\nEOF\ngit push origin main", "x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main",
+              'x="$(cat <<EOF\n&& y\nEOF\n)"\ngit push origin main', 'x="`cat <<EOF\n&& y\nEOF\n`"\ngit push origin main',
+              # a heredoc body may hold a ) line: zsh reads past it and runs the push (bash and sh stop)
+              'x=$(cat <<EOF\n)\n&& y\nEOF\n)\ngit push origin main',
+              'x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main']
 # A PR merge whose quoted subject or body names a push or a deploy is still only a merge.
 MERGE_TEXT = [# a << in a comment or in quotes is no heredoc: the line-start && stops the shell (Hermes r8)
               'gh pr merge 5 # see <<notes \\\n&& git push origin main',
               'gh pr merge 5 --subject "a <<b"\n&& git push origin main',
+              # ... also when quoted inside a substitution (Hermes r9)
+              'gh pr merge 5 --subject "$(printf \'<<\')"\n&& git push origin main',
+              'gh pr merge 5 --subject "`printf \'<<\'`"\n&& git push origin main',
+              "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main",
+              'gh pr merge 5 --subject "$(printf "%s" "<<")"\n&& git push origin main',
+              # a heredoc body is text: a merge whose body names a push is still only a merge
+              'gh pr merge 5 --body "$(cat <<EOF\ngit push origin main\nEOF\n)"',
+              'gh pr merge 5 --body "$(cat <<-EOF\n\tgit push origin main\n\tEOF\n)"',
               'gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
               "gh pr merge 5 --body 'run vercel --prod; git push --tags'",
               'gh pr merge 5 \\\n  --subject "git \\\n  -c x=y \\\n  push" --admin',
@@ -153,7 +165,83 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
         "/opt/homebrew/bin/gh pr merge 5 -t 'git push'", "env -C /x gh pr merge 5 -t 'git push'",
         "sudo -u me gh pr merge 5 -t 'git push'", 'sh -c "sh -c \\"sh -c \\\\\\"git push\\\\\\"\\""',
         "eval 'gh pr merge 5 -t \"git push\"'", 'gh pr merge 5 -b "$(cat <<EOF\ngit push\nEOF\n)"',
-        "echo ${X:-$(git push)}", "cat <(git push)", "gh pr merge 5 -t \"`echo \\`x\\``\"", "git push \\\\\ngit push", 'gh pr merge 5 -t "x && git push origin main']
+        "echo ${X:-$(git push)}", "cat <(git push)", "gh pr merge 5 -t \"`echo \\`x\\``\"", "git push \\\\\ngit push", 'gh pr merge 5 -t "x && git push origin main',
+        # heredoc shapes the strip must read like the gate (Hermes r10)
+        "echo $((1<<2))\ngit push origin main", "(( x = 1 << 2 ))\ngit push origin main",
+        "echo $(( (1+2) << 3 ))\ngit push origin main", 'cat << "E O F"\ngit push\nE O F\ngit push origin main',
+        "cat <<-'E'\n\tgit push\n\tE\ngit push origin main", "a <<A; b <<B\ngit push\nA\n2\nB\ngit push origin main",
+        "cat <<<word\ngit push origin main", "cat <<EOF\nnever ends\ngit push origin main",
+        "cat <<\\EOF\ngit push\nEOF\ngit push origin main", "echo '<<x' \"<<y\" \\<<z # <<c\ngit push origin main",
+        # unreadable on both scanners (Hermes r11): an operator on the last line, a context closed on its line
+        "gh pr merge 5; cat <<E", "x=$(cat <<E )\ngit push origin main\nE", "echo ${x:-<<E }\ngit push origin main\nE"]
+
+# Real-shell oracle (Hermes 2026-10-07, kit-never-block-pr-merge r11): heredoc delimiter words crossed with the
+# contexts that hold them, run by every shell here with -c, as agents run commands. When a shell runs the line
+# after the heredoc (a push in the scanned copy, an echo in the run copy), the gate's segments and the fallback's
+# scan must both see the push, and one case per word and context goes through both hooks and must be denied. A
+# PR merge whose body heredoc has a plain delimiter must still be allowed on both paths.
+PUSH, RAN = "git push origin main", "echo ORACLE-RAN"
+WORDS = ["EOF", "'EOF'", '"EOF"', "\\EOF", "E'O'F", '"E O F"', "$(echo E)", '$(echo "E")', "`echo E`", "$((1))",
+         "E$(x)F", "E(x)", "E)", "${X}", "$X", "E{a,b}", "E*", "E=x"]
+PLAIN = WORDS[:6]
+CONTEXTS = {
+    "top": "cat <<{W}\n{B}\n{T}\n{P}", "sub": "x=$(cat <<{W}\n{B}\n{T}\n)\n{P}",
+    "quoted sub": 'x="$(cat <<{W}\n{B}\n{T}\n)"\n{P}', "backtick": "x=`cat <<{W}\n{B}\n{T}\n`\n{P}",
+    "subshell": "(cat <<{W}\n{B}\n{T}\n)\n{P}", "two deep": 'x="$(echo "$(cat <<{W}\n{B}\n{T}\n)")"\n{P}',
+    "closed on its line": "x=$(cat <<{W})\n{P}\n{T}", "quoted, closed on its line": 'x="$(cat <<{W})"\n{P}\n{T}',
+    "<<-": "cat <<-{W}\n\t{B}\n\t{T}\n{P}", "merge body": 'gh pr merge 5 --body "$(cat <<{W}\n{B}\n{T}\n)"\n{P}',
+    # each reaches one strip check with the others passing: a context closed after a blank or a ;, a body line
+    # bash ends at (T then a parenthesis), and a << inside ${...}, which is text
+    "closed on its line after a blank": "x=$(cat <<{W} )\n{P}\n{T}", "closed on its line by ;": "x=$(cat <<{W};)\n{P}\n{T}",
+    "bash ends the body at T)": "x=$(cat <<{W}\n{B}\n{T})\n{P}\n{T}\n)", "in ${...}": "echo ${x:-<<{W} }\n{P}\n{T}",
+}
+SHELLS = [s for s in ("/bin/bash", "/bin/zsh", "/bin/sh") if os.path.exists(s)]
+
+
+def unquote(w):
+    return w.replace("'", "").replace('"', "").replace("\\", "")
+
+
+oracle_cases = oracle_bad = oracle_hooks = 0
+sampled = set()
+for wname in WORDS:
+    for cname, tpl in CONTEXTS.items():
+        for body in ("&& y", "{P}", '"'):  # a lone quote: read as code, it swallows the lines after it
+            for term in dict.fromkeys((wname, unquote(wname))):
+                src = tpl.replace("{B}", body).replace("{W}", wname).replace("{T}", term)
+                scanned, runnable = src.replace("{P}", PUSH), src.replace("{P}", RAN).replace("gh pr merge", ": gh pr merge")
+                ran = [s for s in SHELLS
+                       if "ORACLE-RAN" in subprocess.run([s, "-c", runnable], cwd=N, capture_output=True, text=True,
+                                                         timeout=20).stdout.splitlines()]
+                oracle_cases += 1
+                if not ran:
+                    continue
+                segs = gate.command_segments(scanned)
+                seen_gate = any(s[:2] == ["git", "push"] for s in segs)
+                payload = json.dumps({"tool_input": {"command": scanned}, "cwd": N})
+                flags = sh(f"input=$(cat)\n{func}ship_scan", N, payload).stdout.split()
+                seen_shell = flags[:1] == ["1"]
+                ok = seen_gate and seen_shell
+                if (wname, cname) not in sampled:
+                    sampled.add((wname, cname))
+                    for mode in ("gate", "fallback"):
+                        oracle_hooks += 1
+                        got = run(mode, f"cd {q}\n" + scanned, N)
+                        ok = ok and got == 2
+                oracle_bad += not ok
+                if not ok:
+                    print(f"BAD oracle {cname} <<{wname} terminator {term!r}: ran in {ran}, gate segments see the push "
+                          f"{seen_gate}, fallback scan sees it {seen_shell}: {scanned!r}")
+for wname in PLAIN:
+    merge = f'gh pr merge 5 --body "$(cat <<{wname}\n{PUSH}\n{unquote(wname)}\n)"'
+    for mode in ("gate", "fallback"):
+        oracle_hooks += 1
+        got = run(mode, merge, O)
+        oracle_bad += got != 0
+        if got != 0:
+            print(f"BAD oracle merge with a plain <<{wname} body: {mode} rc {got}, want allow")
+bad += oracle_bad
+print(f"real-shell oracle: {oracle_cases} cases on {len(SHELLS)} shells, {oracle_hooks} hook runs, {oracle_bad} bad")
 agree = total = 0
 for cmd in LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE:
     for ascii_only in (True, False):

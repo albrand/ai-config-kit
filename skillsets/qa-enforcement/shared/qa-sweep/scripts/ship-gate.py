@@ -1224,6 +1224,9 @@ def ship_view(command, depth=0):
     2026-10-06, kit-never-block-pr-merge). None when the command can't be read (unbalanced
     quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
     test-ship-matrix.py checks that the two agree."""
+    command = _strip_heredoc_bodies(command)  # a heredoc body is text, as in command_segments
+    if command is None:
+        return None  # a heredoc it can't read exactly: the raw text is scanned (r11)
     out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
     # A line that starts with && || or | is a syntax error: the shell stops there and runs nothing
     # after it. Not after a heredoc operator, whose body lines are text and may start with anything. Only an
@@ -1263,7 +1266,6 @@ def ship_view(command, depth=0):
                     return None
                 j -= 1
                 body = command[i + 2:j]
-            heredoc = heredoc or "<<" in body  # a heredoc inside a substitution: keep scanning (deny side)
             subs += " ; " + body
             seg += command[i:j + 1]
             cur = (cur or "") + "$()"
@@ -1323,11 +1325,164 @@ def flat_words(text):
     return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
 
 
+HEREDOC_WORD = re.compile(r"(?:[A-Za-z0-9_.-]|\\[A-Za-z0-9_.-]|'[A-Za-z0-9_. -]+'|\"[A-Za-z0-9_. -]+\")+")
+
+
+def _strip_heredoc_bodies(command):
+    """The command as the shell parses it, without heredocs, or None when a heredoc can't be read exactly. A body is
+    text the shell never parses, but the word parsers here would read its quotes, parentheses and words as code:
+    `gh pr merge 5 --body "$(cat <<EOF` / `git push origin main` / `EOF` / `)"` read as a push, and in
+    `x=$(echo "$(cat <<EOF` / `)")` / `&& y` / `EOF` / `)")` / `git push origin main` (zsh runs the push) the parser
+    closed the substitution early and swallowed the push into a quote (Hermes 2026-10-07, kit-never-block-pr-merge
+    r10). A real operator is a `<<` in code: not quoted, escaped, commented, in arithmetic (`$((1<<2))`, `$[1<<2]`)
+    or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
+    terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
+    hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
+      - the delimiter is a plain word: letters, digits, `_ . -`, a backslash before one, or quoted `'...'`/`"..."`
+        of those and spaces, and it ends at a blank, `; & | < >` or a newline;
+      - the context that held the operator is still open at the newline where the body starts;
+      - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
+      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
+    Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
+    raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
+    is idempotent. The shell fallback's awk strip() is the same scanner."""
+    out, stack, pending, word, i, n = [], [], [], False, 0, len(command)
+    while i < n:
+        c, nx = command[i], command[i + 1:i + 2]
+        top = stack[-1] if stack else ""
+        if top == "'":
+            out.append(c)
+            if c == "'":
+                stack.pop()
+            i += 1
+            continue
+        if c == "\\" and nx:
+            out.append(c + nx)
+            i += 2
+            word = True
+            continue
+        if top in ('"', "{", "["):  # double quotes, ${...} and $[...]: a << here is text
+            out.append(c)
+            if c == {'"': '"', "{": "}", "[": "]"}[top]:
+                stack.pop()
+            elif c == "`":
+                stack.append("`")
+            elif c == "$" and nx in "({[" and nx:
+                out.append(nx)
+                stack.append({"(": "$", "{": "{", "[": "["}[nx])
+                i += 1
+            elif c in "'\"" and top != '"':
+                stack.append(c)
+            i += 1
+            continue
+        if top in ("A", "a"):  # arithmetic, from (( to )): "a" is a parenthesis inside it, and << is a shift
+            out.append(c)
+            if c == "(":
+                stack.append("a")
+            elif c == ")" and top == "a":
+                stack.pop()
+            elif c == ")" and nx == ")":
+                out.append(nx)
+                stack.pop()
+                i += 1
+            i += 1
+            continue
+        if c == "\n" and pending:
+            if any(held != stack for _, _, held in pending):
+                return None  # the operator's context closed on its own line, as in `x=$(cat <<E)`
+            out.append(c)
+            i += 1
+            for dash, delim, _ in pending:
+                while True:
+                    if i >= n:
+                        return None  # no terminator line
+                    j = command.find("\n", i)
+                    line = command[i:] if j < 0 else command[i:j]
+                    i = n if j < 0 else j + 1
+                    body = line.lstrip("\t") if dash else line
+                    if body == delim:
+                        break
+                    if body.startswith(delim):
+                        return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
+            pending = []
+            word = False
+            continue
+        if c == "#" and not word:
+            j = command.find("\n", i)
+            j = n if j < 0 else j
+            out.append(command[i:j])
+            i = j
+            continue
+        if c == "<" and nx == "<" and command[i + 2:i + 3] != "<" and (not i or command[i - 1] != "<"):
+            j = i + 2
+            dash = command[j:j + 1] == "-"
+            j += dash
+            while j < n and command[j] in " \t":
+                j += 1
+            m = HEREDOC_WORD.match(command, j)
+            k = m.end() if m else j
+            if not m or (k < n and command[k] not in " \t\n;&|<>"):
+                return None  # not a plain word: $(...), `...`, $((...)), zsh E(x), E), an empty word
+            delim = re.sub(r"\\(.)", r"\1", re.sub(r"'([^']*)'|\"([^\"]*)\"", lambda q: q.group(1) or q.group(2) or "",
+                                                  m.group(0)))
+            pending.append((dash, delim, list(stack)))
+            i, word = k, True
+            continue
+        out.append(c)
+        if c in "'\"":
+            stack.append(c)
+        elif c == "`":
+            stack.pop() if top == "`" else stack.append("`")
+        elif c == "$" and command[i + 1:i + 3] == "((":
+            out.append("((")
+            stack.append("A")
+            i += 2
+        elif c == "$" and nx in ("(", "{", "["):
+            out.append(nx)
+            stack.append({"(": "$", "{": "{", "[": "["}[nx])
+            i += 1
+        elif c == "(" and nx == "(" and not word:
+            out.append("(")
+            stack.append("A")
+            i += 1
+        elif c == "(":
+            stack.append("(")
+        elif c == ")" and top in ("$", "("):
+            stack.pop()
+        word = c not in " \t\n;&|()<>"
+        i += 1
+    if pending:
+        return None  # an operator on the last line: no body, no terminator
+    return "".join(out)
+
+
+def _line_segments(command):
+    """Every line of a command it can't read exactly, split at ; & | ( ) ` and $(, as words with quotes and
+    backslashes dropped: a push on any line is a segment, whatever the quotes around it (deny side)."""
+    out = []
+    for line in command.split("\n"):
+        for part in re.split(r"\$\(|[;&|()`]", line):
+            words = flat_words(part).split()
+            if words:
+                out.append(unwrap_segment(words) or words)
+    return out
+
+
 def command_segments(command, _depth=0):
     """Top-level shell segments as token lists, split on ; | && ( ) and
     newlines, tokenized with the same POSIX word parser the target resolver
     uses. Scripts run through `sh -c` or `eval` are split the same way and
-    their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge)."""
+    their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge).
+    Heredoc bodies are text and are removed first (_strip_heredoc_bodies). A command with a heredoc that can't be
+    read exactly is split as it stands, plus every line as a command (_line_segments), so nothing a shell might
+    run is lost (Hermes 2026-10-07, kit-never-block-pr-merge r11)."""
+    stripped = _strip_heredoc_bodies(command)
+    if stripped is None:
+        return _command_segments(command, _depth) + _line_segments(command)
+    return _command_segments(stripped, _depth)
+
+
+def _command_segments(command, _depth):
     segments, cur, i, n = [], [], 0, len(command)
     # As in ship_view: a line that starts with && || or | stops the shell, unless a heredoc operator came first.
     line_start, heredoc, stop = True, False, n
@@ -1385,23 +1540,50 @@ def command_segments(command, _depth=0):
 
 
 def _unquoted_heredoc(raw):
-    """True if a word's raw source text holds a `<<` outside quotes and not escaped. A `<<` inside a
-    substitution counts too, which keeps scanning (the deny side)."""
-    q, i = None, 0
-    while i < len(raw):
-        c = raw[i]
+    """True if a word's raw source text holds a heredoc operator; see _has_heredoc."""
+    return _has_heredoc(raw, comments=False)
+
+
+def _has_heredoc(script, comments=True):
+    """True if a shell script holds a heredoc operator: an unquoted, unescaped `<<` outside comments, or one inside
+    a `$(...)` or backtick body read the same way. A `<<` in quotes is text, also inside a quoted substitution such
+    as `"$(printf '<<')"` (Hermes 2026-10-06 r9). An unbalanced substitution counts, which keeps scanning (the deny
+    side). The shell fallback's awk uhd() is the same scanner."""
+    q, word, i, n = None, False, 0, len(script)
+    while i < n:
+        c = script[i]
         if q == "'":
             q = None if c == "'" else q
         elif c == "\\":
-            i += 1
-        elif c == "'" and q is None:
-            q = "'"
-        elif c == '"':
-            q = None if q == '"' else '"'
-        elif q == '"' and (c == "`" or raw[i:i + 2] == "$(") and "<<" in raw[i:]:
-            return True  # a substitution runs inside double quotes, as ship_view counts it
-        elif c == "<" and q is None and raw[i + 1:i + 2] == "<":
+            i, word = i + 1, True
+        elif c == "`" or script[i:i + 2] == "$(":
+            if c == "`":
+                j = i + 1
+                while j < n and script[j] != "`":
+                    j += 2 if script[j] == "\\" else 1
+                if j >= n or _has_heredoc(script[i + 1:j]):
+                    return True
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep:
+                    dep += {"(": 1, ")": -1}.get(script[j], 0)
+                    j += 1
+                if dep or _has_heredoc(script[i + 2:j - 1]):
+                    return True
+                j -= 1
+            i, word = j, True
+        elif q == '"':
+            q = None if c == '"' else q
+        elif c in "'\"":
+            q, word = c, True
+        elif c == "#" and comments and not word:
+            j = script.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "<" and script[i + 1:i + 2] == "<":
             return True
+        else:
+            word = c not in " \t\n;&|()"
         i += 1
     return False
 
@@ -3109,7 +3291,12 @@ def selftest(v4_gate=None, v4_templates=None):
                    # a << in a comment or in quotes is text, not a heredoc (Hermes 2026-10-06 r8)
                    "gh pr merge 5 # see <<notes \\\n&& git push origin main",
                    "gh pr merge 5 --subject \"a <<b\"\n&& git push origin main",
-                   "gh pr merge 5 --subject 'a <<b'\n&& git push origin main"]
+                   "gh pr merge 5 --subject 'a <<b'\n&& git push origin main",
+                   # a << quoted inside a substitution is text too (Hermes 2026-10-06 r9)
+                   "gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                   "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                   "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main",
+                   'gh pr merge 5 --subject "$(printf "%s" "<<")"\n&& git push origin main']
     ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
                   'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
                   'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
@@ -3122,7 +3309,11 @@ def selftest(v4_gate=None, v4_templates=None):
                   # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
                   'gh pr merge 5 # comment\ngit push origin main', 'gh pr merge 5 \\\n&& git push origin main',
                   'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main',
-                  'cat<<EOF\n&& x\nEOF\ngit push origin main', 'x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main']
+                  'cat<<EOF\n&& x\nEOF\ngit push origin main', 'x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main',
+                  'x="$(cat <<EOF\n&& y\nEOF\n)"\ngit push origin main', 'x="`cat <<EOF\n&& y\nEOF\n`"\ngit push origin main',
+                  # a heredoc body may hold a ) line: zsh reads past it and runs the push (bash and sh stop)
+                  'x=$(cat <<EOF\n)\n&& y\nEOF\n)\ngit push origin main',
+                  'x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main']
     for c in merge_texts:
         expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
         p = hookrun(r3, c)
@@ -3147,6 +3338,46 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(command_segments('gh pr merge 5 --subject "a <<b"\n&& git push origin main') ==
            [["gh", "pr", "merge", "5", "--subject", "a <<b"]],
            "command_segments: a quoted << is no heredoc")
+    for cmd in ("gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main"):
+        expect("push" not in (ship_view(cmd) or "push") and
+               not any(s[:2] == ["git", "push"] for s in command_segments(cmd)),
+               f"ship_view and command_segments: a << quoted inside a substitution is no heredoc: {cmd!r}")
+    for src, want in (('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main',
+                       'x=$(echo "$(cat \n)")\ngit push origin main'),
+                      ("cat <<-'E'\n\tbody\n\tE\nnext", "cat \nnext"), ('cat << "E O F"\nbody\nE O F\nnext', "cat \nnext"),
+                      ("a <<A; b <<B\n1\nA\n2\nB\nlast", "a ; b \nlast"), ("cat <<\\EOF\nbody\nEOF\nnext", "cat \nnext"),
+                      ("cat <<<word\nnext", None), ("echo $((1<<2))\nnext", None), ("(( x = 1 << 2 ))\nnext", None),
+                      ("echo $[1<<2]\nnext", None), ("echo ${x:-<<E }\nnext\nE", None),
+                      ("echo '<<x' \"<<y\" \\<<z # <<c\nnext", None)):
+        got = _strip_heredoc_bodies(src)
+        expect(got == (src if want is None else want) and _strip_heredoc_bodies(got) == got,
+               f"_strip_heredoc_bodies: removes each real operator, body and terminator, and nothing else: {src!r}")
+    # A heredoc it can't read exactly is unreadable, never guessed: shells disagree past these, and a wrong guess
+    # removed the lines they run (Hermes 2026-10-07, kit-never-block-pr-merge r11). Each runs the push in some shell.
+    push = "git push origin main"
+    for src in (f"x=$(cat <<E)\n{push}\nE", f'x="$(cat <<E)"\n{push}\nE', f"x=`cat <<E`\n{push}\nE",
+                f"x=$(cat <<A <<B)\n{push}\nA\nB", f"cat <<$(echo E)\nbody\n$(echo E)\n{push}",
+                f"cat <<`echo E`\nbody\n`echo E`\n{push}", f"cat <<$((1))\nbody\n$((1))\n{push}",
+                f"cat <<E$(x)F\nbody\nE$(x)F\n{push}", f"cat <<E(x)\nbody\nE(x)\n{push}", f"cat <<E)\nbody\nE)\n{push}",
+                f'cat <<$(echo "E")\nbody\n$(echo E)\n{push}', f"x=$(cat <<E\nbody\nE)\n{push}",
+                f"(cat <<E)\nbody\nE\n{push}", f"cat <<EOF\nnever ends\n{push}", f"cat << ;\n{push}", f"cat <<E"):
+        expect(_strip_heredoc_bodies(src) is None and ship_view(src) is None,
+               f"_strip_heredoc_bodies and ship_view: a heredoc not read exactly is unreadable: {src!r}")
+        expect(push not in src or any(s[:2] == ["git", "push"] for s in command_segments(src)),
+               f"command_segments: every line of an unreadable heredoc command is a segment: {src!r}")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments(f"echo ${{x:-<<E }}\n{push}\nE")),
+           "command_segments: a << inside ${...} is text, so the next line runs")
+    expect(["git", "push", "origin", "main"] in
+           command_segments('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main'),
+           "command_segments: a heredoc body cannot hide the push that follows it")
+    expect([_has_heredoc(s) for s in ("cat <<EOF", "cat<<EOF", "x=$(cat <<EOF\n)", 'x="$(cat <<EOF\n)"', "x=`cat <<E`",
+                                      'echo "$(echo "$(cat <<E)")"', "x=$(echo ok")] == [True] * 7,
+           "_has_heredoc: an unquoted << at any substitution depth is a heredoc, and so is an unbalanced substitution")
+    expect([_has_heredoc(s) for s in ("echo '<<'", 'echo "<<"', "echo \\<<x", "echo ok # <<x", '"$(printf \'<<\')"',
+                                      "\"`printf '<<'`\"", "$(echo ok # <<x\n)", "echo a#<b<c")] == [False] * 8,
+           "_has_heredoc: a << in quotes, escaped or in a comment is text, also inside a substitution")
     expect(any(s[:2] == ["git", "push"] for s in command_segments("cat<<EOF\n&& x\nEOF\ngit push origin main")),
            "command_segments: a heredoc operator with no space still makes its body text")
     expect(any(s[:2] == ["git", "push"] for s in command_segments("cat <<EOF\n&& x\nEOF\ngit push origin main")),
