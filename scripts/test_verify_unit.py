@@ -75,5 +75,27 @@ class UnitStageTests(unittest.TestCase):
             self.assertIn('FAIL empty self-contained test inventory', result.stdout)
 
 
+    def test_imported_and_transitive_unittest_base_is_exercised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+            (root / 'checks').mkdir()
+            (root / 'checks/__init__.py').write_text('')
+            (root / 'checks/base.py').write_text('import unittest as ut\nclass BaseCase(ut.TestCase):\n    def test_anchor(self):\n        self.assertTrue(True)\n')
+            (root / 'checks/middle.py').write_text('import checks.base as support\nclass Middle(support.BaseCase):\n    pass\n')
+            audit = root / 'checks/audit.py'
+            audit.write_text('from .middle import Middle as SharedCase\nclass LocalBase(SharedCase):\n    pass\nclass Audit(LocalBase):\n    def test_outcome(self):\n        self.assertTrue(False)\n')
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('failed suite: checks/audit.py', result.stdout)
+            self.assertIn('PASS checks/middle.py', result.stdout)
+            audit.write_text(audit.read_text().replace('assertTrue(False)', 'assertTrue(True)'))
+            repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+            self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

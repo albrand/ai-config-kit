@@ -43,10 +43,66 @@ def registry(repo):
     return data.get('selftests', {}), data.get('excluded', {})
 
 
+def unittest_suites(repo, tracked):
+    """Resolve tracked TestCase inheritance without importing repository code.
+
+    Suffix matches also cover packages placed on sys.path by their local runner.
+    Ambiguous suffixes include every matching test base rather than dropping a suite.
+    """
+    classes = {}
+    owners = {}
+    for name in sorted(tracked):
+        path = repo / name
+        if path.suffix != '.py':
+            continue
+        try:
+            tree = ast.parse(path.read_bytes())
+        except SyntaxError:
+            continue  # Reported by the static stage.
+        module = tuple(path.relative_to(repo).with_suffix('').parts)
+        package = module[:-1]
+        if module[-1] == '__init__':
+            module = package
+        bindings = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    bindings[alias.asname or alias.name.split('.')[0]] = tuple(
+                        alias.name.split('.') if alias.asname else [alias.name.split('.')[0]])
+            elif isinstance(node, ast.ImportFrom):
+                prefix = package[:len(package) - node.level + 1] if node.level else ()
+                imported = prefix + tuple((node.module or '').split('.')) if node.module else prefix
+                for alias in node.names:
+                    bindings[alias.asname or alias.name] = imported + (alias.name,)
+
+        def target(node):
+            if isinstance(node, ast.Name):
+                return bindings.get(node.id, module + (node.id,))
+            if isinstance(node, ast.Attribute):
+                parent = target(node.value)
+                return parent + (node.attr,) if parent else ()
+            return ()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                key = module + (node.name,)
+                classes[key] = [target(base) for base in node.bases]
+                owners[key] = name
+    resolved = {key for key, bases in classes.items() if ('unittest', 'TestCase') in bases}
+    while True:
+        additions = {key for key, bases in classes.items() if key not in resolved and any(
+            base and any(parent == base or len(parent) >= len(base) and parent[-len(base):] == base
+                         for parent in resolved) for base in bases)}
+        if not additions:
+            return {owners[key] for key in resolved}
+        resolved.update(additions)
+
+
 def inventory(repo=ROOT):
     result = subprocess.run(['git', 'ls-files', '-z'], cwd=repo, capture_output=True, check=True)
     tracked = {p for p in result.stdout.decode().split('\0') if p}
     selftests, excluded = registry(repo)
+    suites = unittest_suites(repo, tracked)
     for name, args in selftests.items():
         if name not in tracked or args not in (['selftest'], ['--selftest']):
             raise ValueError(f'invalid registered selftest: {name}')
@@ -63,15 +119,15 @@ def inventory(repo=ROOT):
             raise ValueError(f'unregistered embedded selftest: {name}; declare its offline invocation')
         node_suite = path.suffix in ('.js', '.mjs', '.cjs') and re.search(
             r"(?:^|\n)\s*import\b[^;]*\bfrom\s*['\"]node:test['\"]|\brequire\(\s*['\"]node:test['\"]\s*\)", path.read_text())
-        if suite or node_suite or TEST_NAME.fullmatch(path.name):
+        if name in suites or suite or node_suite or TEST_NAME.fullmatch(path.name):
             tests.append(name)
     return tests
 
 
-def command(path, args=()):
+def command(path, args=(), inherited_suite=False):
     if path.suffix == '.py':
         suite, entry, _ = python_markers(path)
-        if suite and not entry and not args:
+        if (suite or inherited_suite) and not entry and not args:
             return [sys.executable, '-m', 'unittest', str(path.relative_to(ROOT))]
         return [sys.executable, str(path), *args]
     if path.suffix == '.sh':
@@ -83,13 +139,16 @@ def command(path, args=()):
 def main():
     tests = inventory()
     selftests, excluded = registry(ROOT)
+    # Include support modules so inheritance resolution sees imported bases too.
+    tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')
+    suites = unittest_suites(ROOT, [name for name in tracked if name])
     if not tests and not selftests:
         print('FAIL empty self-contained test inventory', flush=True)
         return 1
     failed = []
     for name, args in [(name, ()) for name in tests] + sorted(selftests.items()):
         print(f'== {name}', flush=True)
-        result = subprocess.run(command(ROOT / name, args), cwd=ROOT)
+        result = subprocess.run(command(ROOT / name, args, name in suites), cwd=ROOT)
         print(f'{"PASS" if result.returncode == 0 else "FAIL"} {name} (exit {result.returncode})', flush=True)
         if result.returncode:
             failed.append(name)
