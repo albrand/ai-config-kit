@@ -90,7 +90,7 @@ ship_scan() {
   }
   function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body, ls, hd) {
     out = ""; seg = ""; subs = ""; nw = 0; cur = ""; has = 0; q = ""; n = length(cmd)
-    ls = 1; hd = index(cmd, "<<")
+    ls = 1; hd = 0
     for (i = 1; i <= n; i++) {
       c = substr(cmd, i, 1); nx = substr(cmd, i + 1, 1)
       if (q == sq) { seg = seg c; if (c == sq) q = ""; else cur = cur c; continue }
@@ -113,6 +113,7 @@ ship_scan() {
           j--
           body = substr(cmd, i + 2, j - i - 2)
         }
+        if (index(body, "<<")) hd = 1
         subs = subs " ; " body; seg = seg substr(cmd, i, j - i + 1); cur = cur "$()"; has = 1; i = j
         continue
       }
@@ -128,6 +129,7 @@ ship_scan() {
         out = out emit(d, nw, seg, subs) " ; "; seg = ""; subs = ""; nw = 0
         continue
       }
+      if (c == "<" && nx == "<") hd = 1
       cur = cur c; has = 1; seg = seg c
     }
     if (q != "") { FAIL = 1; return "" }

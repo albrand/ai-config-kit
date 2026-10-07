@@ -241,6 +241,9 @@ ship_cases="0|0|-|$H/optin|gh pr merge 1 --admin
 13|2|Ship denied|$H/optin|gh pr merge 5 && git push origin main
 13|0|-|$H/optin|gh pr merge 5 # && git push origin main
 13|0|-|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 # see <<notes @NL@&& git push origin main
+13|0|-|$H/optin|gh pr merge 5 --subject 'a <<b'@LF@&& git push origin main
+13|2|Ship denied|$H/optin|cat <<EOF@LF@&& x@LF@EOF@LF@git push origin main
 13|2|Ship denied|$H/optin|gh pr merge 5 # comment@LF@git push origin main
 13|2|Ship denied|$H/optin|gh pr merge 5 @NL@&& git push origin main
 13|0|-|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done
@@ -297,6 +300,9 @@ done <<EOF
 2|$H/optin|gh pr merge 5 && git push origin main
 0|$H/optin|gh pr merge 5 # && git push origin main
 0|$H/optin|gh pr merge 5 # comment @NL@&& git push origin main
+0|$H/optin|gh pr merge 5 # see <<notes @NL@&& git push origin main
+0|$H/optin|gh pr merge 5 --subject 'a <<b'@LF@&& git push origin main
+2|$H/optin|cat <<EOF@LF@&& x@LF@EOF@LF@git push origin main
 2|$H/optin|gh pr merge 5 # comment@LF@git push origin main
 2|$H/optin|gh pr merge 5 @NL@&& git push origin main
 0|$H/optin|gh pr merge 5 --subject 'git push origin main' && echo done

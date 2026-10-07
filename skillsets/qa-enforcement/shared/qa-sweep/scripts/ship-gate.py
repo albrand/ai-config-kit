@@ -1226,8 +1226,9 @@ def ship_view(command, depth=0):
     test-ship-matrix.py checks that the two agree."""
     out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
     # A line that starts with && || or | is a syntax error: the shell stops there and runs nothing
-    # after it. Not with a heredoc, whose body lines are text and may start with anything.
-    line_start, heredoc = True, "<<" in command
+    # after it. Not after a heredoc operator, whose body lines are text and may start with anything. Only an
+    # unquoted `<<` the scan reaches counts: one in a comment or in quotes is text (Hermes 2026-10-06 r8).
+    line_start, heredoc = True, False
     while i < n:
         c, nx = command[i], command[i + 1:i + 2]
         if q == "'":
@@ -1262,6 +1263,7 @@ def ship_view(command, depth=0):
                     return None
                 j -= 1
                 body = command[i + 2:j]
+            heredoc = heredoc or "<<" in body  # a heredoc inside a substitution: keep scanning (deny side)
             subs += " ; " + body
             seg += command[i:j + 1]
             cur = (cur or "") + "$()"
@@ -1302,6 +1304,7 @@ def ship_view(command, depth=0):
             i += 1
             continue
         else:
+            heredoc = heredoc or (c == "<" and nx == "<")
             cur = (cur or "") + c
         seg += c
         i += 1
@@ -1326,8 +1329,8 @@ def command_segments(command, _depth=0):
     uses. Scripts run through `sh -c` or `eval` are split the same way and
     their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge)."""
     segments, cur, i, n = [], [], 0, len(command)
-    # As in ship_view: a line that starts with && || or | stops the shell (no heredoc).
-    line_start, heredoc, stop = True, "<<" in command, n
+    # As in ship_view: a line that starts with && || or | stops the shell, unless a heredoc operator came first.
+    line_start, heredoc, stop = True, False, n
     while i < n:
         c = command[i]
         if c in " \t":
@@ -1360,6 +1363,7 @@ def command_segments(command, _depth=0):
         word, endpos = _shell_arg_at(command, i)
         if word is None:
             break
+        heredoc = heredoc or _unquoted_heredoc(command[i:endpos])
         cur.append(word)
         line_start = False
         i = endpos
@@ -1378,6 +1382,28 @@ def command_segments(command, _depth=0):
         for body in _substitutions(command):
             out.extend(command_segments(body, _depth + 1))
     return out
+
+
+def _unquoted_heredoc(raw):
+    """True if a word's raw source text holds a `<<` outside quotes and not escaped. A `<<` inside a
+    substitution counts too, which keeps scanning (the deny side)."""
+    q, i = None, 0
+    while i < len(raw):
+        c = raw[i]
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i += 1
+        elif c == "'" and q is None:
+            q = "'"
+        elif c == '"':
+            q = None if q == '"' else '"'
+        elif q == '"' and (c == "`" or raw[i:i + 2] == "$(") and "<<" in raw[i:]:
+            return True  # a substitution runs inside double quotes, as ship_view counts it
+        elif c == "<" and q is None and raw[i + 1:i + 2] == "<":
+            return True
+        i += 1
+    return False
 
 
 def _substitutions(command):
@@ -3079,7 +3105,11 @@ def selftest(v4_gate=None, v4_templates=None):
                    # a line that starts with && || or | is a syntax error: nothing after it runs (Hermes r7);
                    # a backslash inside a comment is part of the comment, not a continuation
                    "gh pr merge 5 # comment \\\n&& git push origin main", "gh pr merge 5\n&& git push origin main",
-                   "gh pr merge 5\n  || git push origin main", "gh pr merge 5 # c \\\n&& echo \"$(git push origin main)\""]
+                   "gh pr merge 5\n  || git push origin main", "gh pr merge 5 # c \\\n&& echo \"$(git push origin main)\"",
+                   # a << in a comment or in quotes is text, not a heredoc (Hermes 2026-10-06 r8)
+                   "gh pr merge 5 # see <<notes \\\n&& git push origin main",
+                   "gh pr merge 5 --subject \"a <<b\"\n&& git push origin main",
+                   "gh pr merge 5 --subject 'a <<b'\n&& git push origin main"]
     ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
                   'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
                   'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
@@ -3091,7 +3121,8 @@ def selftest(v4_gate=None, v4_templates=None):
                   'echo \\# && git push origin main', 'echo "#" && git push origin main',
                   # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
                   'gh pr merge 5 # comment\ngit push origin main', 'gh pr merge 5 \\\n&& git push origin main',
-                  'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main']
+                  'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main',
+                  'cat<<EOF\n&& x\nEOF\ngit push origin main', 'x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main']
     for c in merge_texts:
         expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
         p = hookrun(r3, c)
@@ -3109,6 +3140,15 @@ def selftest(v4_gate=None, v4_templates=None):
            "ship_view: nothing after a line that starts with && runs")
     expect(command_segments("gh pr merge 5 # c \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
            "command_segments: nothing after a line that starts with && runs")
+    expect("push" not in (ship_view("gh pr merge 5 # see <<notes \\\n&& git push origin main") or "push"),
+           "ship_view: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments("gh pr merge 5 # see <<notes \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments('gh pr merge 5 --subject "a <<b"\n&& git push origin main') ==
+           [["gh", "pr", "merge", "5", "--subject", "a <<b"]],
+           "command_segments: a quoted << is no heredoc")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat<<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc operator with no space still makes its body text")
     expect(any(s[:2] == ["git", "push"] for s in command_segments("cat <<EOF\n&& x\nEOF\ngit push origin main")),
            "command_segments: a heredoc body line that starts with && does not hide what follows")
     expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],

@@ -87,9 +87,14 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               "echo \\# && git push origin main", 'echo "#" && git push origin main',
               # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
               "gh pr merge 5 # comment\ngit push origin main", "gh pr merge 5 \\\n&& git push origin main",
-              "gh pr merge 5 &&\ngit push origin main", "cat <<EOF\n&& x\nEOF\ngit push origin main"]
+              "gh pr merge 5 &&\ngit push origin main", "cat <<EOF\n&& x\nEOF\ngit push origin main",
+              # a real heredoc operator, unspaced or in a substitution, still makes its body text
+              "cat<<EOF\n&& x\nEOF\ngit push origin main", "x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main"]
 # A PR merge whose quoted subject or body names a push or a deploy is still only a merge.
-MERGE_TEXT = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
+MERGE_TEXT = [# a << in a comment or in quotes is no heredoc: the line-start && stops the shell (Hermes r8)
+              'gh pr merge 5 # see <<notes \\\n&& git push origin main',
+              'gh pr merge 5 --subject "a <<b"\n&& git push origin main',
+              'gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
               "gh pr merge 5 --body 'run vercel --prod; git push --tags'",
               'gh pr merge 5 \\\n  --subject "git \\\n  -c x=y \\\n  push" --admin',
               'cd "/x y" && gh pr merge 5 -t "git push"', 'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1',
