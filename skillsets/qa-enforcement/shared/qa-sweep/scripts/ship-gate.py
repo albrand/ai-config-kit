@@ -3694,6 +3694,11 @@ def selftest(v4_gate=None, v4_templates=None):
     sh("git init -q && git remote add origin git@github.com:example-owner/example-repo.git", cwd=orr)
     orbin = os.path.join(tmp, "owner-run-bin")
     os.makedirs(orbin)
+    # Keep the Git that built these fixtures when removing the real gh from PATH.
+    # /usr/bin/git can be an unavailable Xcode shim even when Homebrew Git works.
+    git_only = os.path.join(tmp, "owner-run-git")
+    os.makedirs(git_only)
+    os.symlink(shutil.which("git"), os.path.join(git_only, "git"))
     ghdir = os.path.join(tmp, "gh-api")
     os.makedirs(ghdir)
     open(os.path.join(orbin, "gh"), "w").write(
@@ -3724,7 +3729,7 @@ def selftest(v4_gate=None, v4_templates=None):
         for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
             with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
                 f.write(d if isinstance(d, str) else json.dumps(d))
-        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + "/usr/bin:/bin"
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + git_only + os.pathsep + "/usr/bin:/bin"
         if sleep:
             os.environ["OR_GH_SLEEP"] = sleep
         _LOOKUP_DEADLINE = None
@@ -3790,7 +3795,7 @@ def selftest(v4_gate=None, v4_templates=None):
            and verify(ident_or) == [], "owner_run: a later check looks the run up again")
     verify(ident_or)  # leaves the stub's run doc in place
     os.remove(os.path.join(ghdir, "calls"))
-    os.environ["PATH"] = orbin + os.pathsep + "/usr/bin:/bin"
+    os.environ["PATH"] = orbin + os.pathsep + git_only + os.pathsep + "/usr/bin:/bin"
     try:
         f_two = []
         check_e2e("q", reader({"q/evidence.json": json.dumps({"authentication": {"identities": [ident_or, dict(ident_or)]}})}),
