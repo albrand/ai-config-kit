@@ -47,14 +47,22 @@ def python_markers(path):
                    and isinstance(b, ast.Constant) and b.value == '__main__'
                    for a, b in (pair, pair[::-1]))
 
+    def invokes_main(node):
+        if not isinstance(node, ast.Call):
+            return False
+        if member(node.func, 'main') or isinstance(node.func, ast.Name) and node.func.id in mains:
+            return True
+        # Call arguments are evaluated eagerly, including sys.exit(main()).
+        # Do not traverse lazy lambdas, generators or conditional expressions.
+        return any(invokes_main(arg) for arg in node.args) \
+            or any(invokes_main(keyword.value) for keyword in node.keywords)
+
     def calls_main(body):
         # A call in an unused helper or a false branch does not run the suite.
         # Only recognize direct calls and the conventional script entry guard.
         for node in body:
-            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-                func = node.value.func
-                if member(func, 'main') or isinstance(func, ast.Name) and func.id in mains:
-                    return True
+            if isinstance(node, ast.Expr) and invokes_main(node.value):
+                return True
             elif isinstance(node, ast.If) and main_guard(node.test) and calls_main(node.body):
                 return True
         return False
