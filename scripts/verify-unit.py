@@ -38,8 +38,28 @@ def python_markers(path):
 
     suite = any(isinstance(n, ast.ClassDef) and any(member(b, 'TestCase')
                 or isinstance(b, ast.Name) and b.id in cases for b in n.bases) for n in ast.walk(tree))
-    entry = any(isinstance(n, ast.Call) and (member(n.func, 'main')
-                or isinstance(n.func, ast.Name) and n.func.id in mains) for n in ast.walk(tree))
+    def main_guard(node):
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1 \
+                or not isinstance(node.ops[0], ast.Eq) or len(node.comparators) != 1:
+            return False
+        pair = (node.left, node.comparators[0])
+        return any(isinstance(a, ast.Name) and a.id == '__name__'
+                   and isinstance(b, ast.Constant) and b.value == '__main__'
+                   for a, b in (pair, pair[::-1]))
+
+    def calls_main(body):
+        # A call in an unused helper or a false branch does not run the suite.
+        # Only recognize direct calls and the conventional script entry guard.
+        for node in body:
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                func = node.value.func
+                if member(func, 'main') or isinstance(func, ast.Name) and func.id in mains:
+                    return True
+            elif isinstance(node, ast.If) and main_guard(node.test) and calls_main(node.body):
+                return True
+        return False
+
+    entry = calls_main(tree.body)
     embedded = any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == 'selftest' for n in tree.body)
     return suite, entry, embedded
 

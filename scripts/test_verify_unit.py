@@ -65,6 +65,40 @@ class UnitStageTests(unittest.TestCase):
             repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
             self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
 
+    def test_inactive_main_call_does_not_skip_failing_suite(self):
+        for entry in ('def launch():\n    unittest.main()\n', 'if False:\n    unittest.main()\n'):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                subprocess.run(['git', 'init', '-q', tmp], check=True)
+                (root / 'scripts').mkdir()
+                (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+                (root / 'checks').mkdir()
+                audit = root / 'checks/audit.py'
+                audit.write_text('import unittest\nclass Audit(unittest.TestCase):\n    def test_outcome(self):\n        self.assertTrue(False)\n' + entry)
+                subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+                result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('FAIL: test_outcome', result.stdout)
+                audit.write_text(audit.read_text().replace('assertTrue(False)', 'assertTrue(True)'))
+                repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+                self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
+
+    def test_main_guard_setup_and_import_alias_are_preserved(self):
+        for guard in ("__name__ == '__main__'", "'__main__' == __name__"):
+            with self.subTest(guard=guard), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                subprocess.run(['git', 'init', '-q', tmp], check=True)
+                (root / 'scripts').mkdir()
+                (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+                (root / 'checks').mkdir()
+                (root / 'checks/audit.py').write_text('from unittest import TestCase, main as run_tests\n'
+                    'class Audit(TestCase):\n    def test_outcome(self):\n        self.assertTrue(ready)\n'
+                    f'if {guard}:\n    ready = True\n    run_tests()\n')
+                subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+                result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('Ran 1 test', result.stdout)
+
     def test_empty_inventory_cannot_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
