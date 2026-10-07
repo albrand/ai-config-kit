@@ -43,6 +43,18 @@ Blocked rows: {2 if blocked or prose_blocked else 0} (external provider boundary
     return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
 
 
+def replay_report_with_blocked_line(line: str | None) -> str:
+    lines = replay_report().splitlines()
+    index = next(i for i, value in enumerate(lines) if value.startswith("Blocked rows:"))
+    if line is None:
+        lines.pop(index)
+    else:
+        lines[index] = line
+    body = "\n".join(lines[:-1]) + "\n"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
+
+
 class RealdataReplayGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -354,17 +366,56 @@ sys.exit(2)
         self.assertNotIn("reviewer@example.invalid", reason)
 
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
-        text = replay_report().replace(
-            "Blocked rows: 0 (external provider boundary was not needed for this replay)\n",
-            "Blocked rows: 0; external provider boundary was not needed for this replay.\n")
-        # Keep the existing digest valid so this test reaches the required-field check.
-        body = "\n".join(text.splitlines()[:-1]) + "\n"
-        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        text = body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
+        text = replay_report_with_blocked_line("Blocked rows: 0; no boundary")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertFalse(valid)
         self.assertIn("blocked external-call rows", reason)
         self.assertIn(f"line {len(text.splitlines()) + 1} (end of report)", reason)
+
+    def test_blocked_rows_accepts_grouped_count_with_trailing_context(self) -> None:
+        text = replay_report_with_blocked_line(
+            "Blocked rows: 8,992 (boundary reached: provider limit). Additional blocked boundaries: two")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_single_count_with_trailing_period(self) -> None:
+        text = replay_report_with_blocked_line("Blocked rows: 1 (boundary reached: provider limit).")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_zero_with_none_boundary(self) -> None:
+        text = replay_report_with_blocked_line("Blocked rows: 0 (none)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_ungrouped_five_digit_count(self) -> None:
+        text = replay_report_with_blocked_line("Blocked rows: 12345 (x)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_rejects_missing_count(self) -> None:
+        text = replay_report_with_blocked_line("Blocked rows: (x)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_is_case_sensitive(self) -> None:
+        text = replay_report_with_blocked_line("blocked rows: 0 (none)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_must_start_at_line_start(self) -> None:
+        text = replay_report_with_blocked_line(" Blocked rows: 0 (none)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_rejects_missing_line(self) -> None:
+        text = replay_report_with_blocked_line(None)
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
 
     def test_report_passes_with_clean_private_denylist(self) -> None:
         valid, reason, digest = self.gate_module().validate_report_text(replay_report())
