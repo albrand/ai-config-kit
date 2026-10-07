@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import fnmatch
 import hashlib
 import html
@@ -16,7 +17,7 @@ import sys
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS_FILE = ROOT / "realdata-paths.json"
@@ -56,6 +57,12 @@ ARTIFACT_FOOTER_LINE = re.compile(
 LABEL_LINE_MARKER = "\ue000"
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 HTML_REFERENCE = re.compile(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;?)")
+HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>", re.S)
+HTML_ATTRIBUTE_VALUE = re.compile(
+    r'''(?:^|\s)[^\s=<>/]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))'''
+)
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)", re.S)
+MARKDOWN_REFERENCE_DEFINITION = re.compile(r"(?m)^\s{0,3}\[[^\]]+\]:\s*(.+)$")
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -79,6 +86,7 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         _normalize_label_text(label_scan_text, preserve_line_numbers=True),
         _normalize_label_text(label_scan_text, cf_as_space=False, preserve_line_numbers=True),
     ]
+    normalized_text.extend(_normalize_nonrendered_label_texts(label_scan_text))
     label_patterns = [pattern for label in labels for pattern in (
         _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
     for line_number, line in enumerate(text.splitlines(), start=1):
@@ -145,6 +153,49 @@ def _unescape_without_source_newlines(text: str) -> str:
         return re.sub(r"\r\n?|\n", " ", html.unescape(match.group(0)))
 
     return HTML_REFERENCE.sub(replace_reference, text)
+
+
+def _normalize_nonrendered_label_texts(text: str) -> list[str]:
+    """Normalize hidden source values separately so rendered boundaries stay unchanged."""
+    spans: list[tuple[str, int, bool]] = []
+    for match in HTML_COMMENT.finditer(text):
+        start = match.start() + 4
+        spans.append((text[start:match.end() - 3], start, False))
+
+    for match in HTML_TAG.finditer(text):
+        tag = match.group()
+        name = re.match(r"</?[A-Za-z][^\s/>]*", tag)
+        if name is None:
+            continue
+        attribute_text = tag[name.end():]
+        attribute_offset = match.start() + name.end()
+        for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
+            group = next(index for index in range(1, 4)
+                         if attribute.group(index) is not None)
+            spans.append((attribute.group(group),
+                          attribute_offset + attribute.start(group), False))
+
+    for match in MARKDOWN_LINK.finditer(text):
+        spans.append((match.group(1), match.start(1), True))
+    for match in MARKDOWN_REFERENCE_DEFINITION.finditer(text):
+        spans.append((match.group(1), match.start(1), True))
+
+    source_line_starts = [0]
+    source_line_starts.extend(match.end() for match in re.finditer(r"\r\n?|\n", text))
+    normalized: list[str] = []
+    for value, start, decode_url in spans:
+        line_offset = bisect_right(source_line_starts, start) - 1
+        prefix = LABEL_LINE_MARKER * line_offset
+        normalized.append(_normalize_label_text(
+            prefix + value, preserve_line_numbers=True))
+        if decode_url:
+            # Decode hidden URL text too, without treating escaped line breaks as source lines.
+            decoded = re.sub(r"(?i)%0d%0a|%0a|%0d", " ", value)
+            decoded = unquote(decoded)
+            if decoded != value:
+                normalized.append(_normalize_label_text(
+                    prefix + decoded, preserve_line_numbers=True))
+    return normalized
 
 
 def _exclude_gate_owned_label_keys(text: str) -> str:

@@ -371,6 +371,38 @@ sys.exit(2)
                 self.assertIn(expected_line, reason)
                 self.assertNotIn("Acme Energy", reason)
 
+    def test_private_labels_in_nonrendered_report_values_are_refused(self) -> None:
+        gate = self.gate_module()
+        notes_and_lines = (
+            ('- Replay note: <span title="Acme Energy">safe</span>', "line 14"),
+            ("- Replay note: <span title=Acme&#32;Energy>safe</span>", "line 14"),
+            ('- Replay note: <span title="hidden\nAcme Energy">safe</span>', "line 15"),
+            ("- Replay note: [safe](https://example.invalid/Acme%20Energy)", "line 14"),
+            ('- Replay note: [safe](https://example.invalid "Acme Energy")', "line 14"),
+            ('- Replay note: [safe](https://example.invalid\n "Acme Energy")', "line 15"),
+            ("- Replay note: [safe][r]\n\n[r]: https://example.invalid/Acme%20Energy", "line 16"),
+            ("- Replay note: <!-- hidden\nAcme Energy -->safe", "line 15"),
+        )
+        for note, expected_line in notes_and_lines:
+            with self.subTest(hidden_value="nonrendered report text"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Acme Energy", reason)
+
+    def test_nonrendered_report_label_scan_keeps_word_boundaries(self) -> None:
+        gate = self.gate_module()
+        notes = (
+            '- Replay note: <span title="SuperAcme EnergyCo">safe</span>',
+            "- Replay note: [safe](https://example.invalid/SuperAcme%20EnergyCo)",
+            "- Replay note: <!-- SuperAcme EnergyCo -->safe",
+        )
+        for note in notes:
+            with self.subTest(hidden_control="larger words"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_private_tenant_label_rejects_zero_width_character(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")
 
