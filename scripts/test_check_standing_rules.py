@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import contextlib
+import hashlib
 import io
 import re
 import subprocess
@@ -419,11 +420,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         output,
                     )
 
-    def test_installed_homes_without_the_restart_ban_are_not_admitted(self):
-        # No home passes without the restart ban: of the #60 homes installed before it was repeated in every home,
-        # the Claude, Codex and OpenCode ones are unknown homes, and the bb home (which has it in its combined line)
-        # passes only as its exact bytes, failing once any bb-app ban is removed (Hermes 2026-10-07,
-        # kit-one-page-baseline r2-r4). Reads the #60 renders from history.
+    def test_installed_homes_without_current_rules_are_not_admitted(self):
+        # No home passes without a current rule (Hermes 2026-10-07, kit-one-page-baseline r2-r4 and
+        # kit-session-input-scope r1): the #60 homes, three of which predate the restart ban, and the #62 homes, which
+        # predate the session-input scope clause, are unknown homes at their native paths. Reads both from history.
         root = SCRIPT.parents[1]
         shallow = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
                                  capture_output=True, text=True)
@@ -434,46 +434,57 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "opencode-AGENTS.md": (".config", "opencode", "AGENTS.md"),
             "bb-AGENTS.md": (".bb", "AGENTS.md"),
         }
-        bans = {
-            "quit": ("- Never quit the running bb app.\n", ""),
-            "kill": ("- Never kill the running bb app.\n", ""),
-            "replace": ("- Never replace the running bb app.\n", ""),
-            "restart": ("Never quit, kill, replace, or restart the running bb app.",
-                        "Never quit, kill, or replace the running bb app."),
-        }
         unknown = "no fixed profile for this path and exact known-home content"
         with tempfile.TemporaryDirectory(prefix="card21-installed-profile-") as temp_dir:
-            for name, suffix in homes.items():
-                text = subprocess.run(
-                    ["git", "-C", str(root), "show", f"b55f327:proposals/card21/rendered-homes/{name}"],
-                    capture_output=True, text=True, check=True,
-                ).stdout
-                candidate = Path(temp_dir).joinpath(*suffix)
-                candidate.parent.mkdir(parents=True, exist_ok=True)
-                candidate.write_text(text, encoding="utf-8")
-                run = lambda: subprocess.run([sys.executable, str(SCRIPT), "--files", str(candidate)],
-                                             capture_output=True, text=True, check=False)
-                result = run()
-                output = result.stdout + result.stderr
-                if "restart the running bb app" not in text:
-                    with self.subTest(home=name, state="installed without the restart ban"):
-                        self.assertNotEqual("bb-AGENTS.md", name)
+            for revision in ("b55f327", "296ae3b"):
+                for name, suffix in homes.items():
+                    text = subprocess.run(
+                        ["git", "-C", str(root), "show", f"{revision}:proposals/card21/rendered-homes/{name}"],
+                        capture_output=True, text=True, check=True,
+                    ).stdout
+                    candidate = Path(temp_dir, revision).joinpath(*suffix)
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    candidate.write_text(text, encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(SCRIPT), "--files", str(candidate)],
+                                            capture_output=True, text=True, check=False)
+                    output = result.stdout + result.stderr
+                    with self.subTest(revision=revision, home=name):
                         self.assertIsNone(CHECKER.profile_for(candidate, text))
                         self.assertNotEqual(0, result.returncode, output)
                         self.assertIn(unknown, output)
-                    continue
-                self.assertEqual("bb-AGENTS.md", name)
-                self.assertEqual("proposal-bb", CHECKER.profile_for(candidate, text))
-                self.assertEqual(0, result.returncode, output)
-                for action, (ban, weakened) in bans.items():
-                    with self.subTest(home=name, removed=action):
-                        self.assertIn(ban, text)
-                        candidate.write_text(text.replace(ban, weakened, 1), encoding="utf-8")
-                        result = run()
-                        output = result.stdout + result.stderr
-                        self.assertNotEqual(0, result.returncode, output)
-                        self.assertIn(unknown, output)
-                candidate.write_text(text, encoding="utf-8")
+
+    def test_every_admitted_home_is_a_current_render_with_the_scope_clause(self):
+        # A fingerprint the checker admits at a native path must be the bytes of a current render, so an installed home
+        # missing a clause the renders gained cannot pass (Hermes 2026-10-07, kit-session-input-scope r1).
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        current = {}
+        for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"):
+            text = (rendered / name).read_text(encoding="utf-8")
+            current[hashlib.sha256(text.encode("utf-8")).hexdigest()] = text
+        admitted = {**CHECKER.LIVE_HOME_SHA256, **CHECKER.INSTALLED_HOME_SHA256, **CHECKER.RENDERED_HOME_SHA256}
+        self.assertEqual(set(current), set(admitted))
+        for digest, text in current.items():
+            with self.subTest(admitted=digest[:12]):
+                self.assertIn(
+                    "Before active-session input (input you send into another agent's running session; "
+                    "your own task brief is not)", text)
+                self.assertIsNotNone(CHECKER.RULES["bb-app-never-restart"].search(text))
+
+    def test_session_input_guard_names_whose_input_it_covers(self):
+        # A Codex probe under the #62 homes ran the session-input guard on its own task brief and stopped before the
+        # task: the trigger "Before active-session input" lost the line that said it means delivering input to an
+        # active session. Every home and the kit source now say whose input it covers.
+        root = SCRIPT.parents[1]
+        rendered = root / "proposals/card21/rendered-homes"
+        sources = [root / "GLOBAL_AGENTS.md", root / "proposals/card21/hard-rules.md",
+                   *(rendered / name for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"))]
+        for source in sources:
+            with self.subTest(source=source.name):
+                lines = [line for line in source.read_text(encoding="utf-8").splitlines()
+                         if line.startswith("- Before active-session input")]
+                self.assertEqual(1, len(lines))
+                self.assertIn("(input you send into another agent's running session; your own task brief is not)",
+                              lines[0])
 
     def test_rendered_profiles_reject_each_security_obligation_mutation(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -1584,7 +1595,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md"]
         clauses = {
             "active-session-input-skill-trigger": (
-                "Before active-session input, load `native-agent-surface` and run its metadata-only `scripts/session-input-guard.py`.",
+                "Before active-session input (input you send into another agent's running session; your own task brief is not), load `native-agent-surface` and run its metadata-only `scripts/session-input-guard.py`.",
                 "Deliver active-session input without loading or running the guard.",
             ),
             "active-session-attestations-control-plane-only": (

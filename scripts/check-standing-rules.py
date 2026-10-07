@@ -717,17 +717,15 @@ PROFILE_RULES = {
 # Pre-compression live snapshots are no longer installed anywhere and are not recognized (Hermes 2026-10-07,
 # kit-one-page-baseline r3); LIVE_HOME_RULES keeps their inventory for the fixtures that still use it.
 LIVE_HOME_SHA256: dict[str, str] = {}
-# Of the homes installed now (the #60 render, 2026-10-06), only the bb home carries the restart ban, so only it is
-# recognized, on the full bb inventory. The #60 Claude, Codex and OpenCode homes predate the ban and fail as
-# unknown homes until this revision is installed over them (Hermes 2026-10-07, kit-one-page-baseline r4).
-INSTALLED_HOME_SHA256 = {
-    "d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e": "proposal-bb",
-}
+# No installed home is recognized apart from the current render: the #60 homes predate the restart ban and the #62
+# homes predate the session-input scope clause, so both fail as unknown homes until this revision is installed over
+# them (Hermes 2026-10-07, kit-one-page-baseline r4 and kit-session-input-scope r1).
+INSTALLED_HOME_SHA256: dict[str, str] = {}
 RENDERED_HOME_SHA256 = {
-    "9bc9d866b7fcdd1e760afd7c174cd4cb7f1ad579f0ca6843ce28271bf3260ab1": "proposal-claude",
-    "afe6281966c5ffebc3f86aca2fc30ba5109f86c15c611492e6d26a55f605bd33": "proposal-codex",
-    "f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0": "proposal-opencode",
-    "c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c": "proposal-bb",
+    "2a13a95dee10b4c6d280c92d93ce66af876101dc86c379806de4701635acef52": "proposal-claude",
+    "76321ba05d277eb20c3f88515771e56fe77edf2923da01487048686cf182bdff": "proposal-codex",
+    "1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a": "proposal-opencode",
+    "72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8": "proposal-bb",
 }
 
 

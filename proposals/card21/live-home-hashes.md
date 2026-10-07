@@ -84,10 +84,11 @@ Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
 | OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
 | bb | `d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e` |
 
-### Current rendered profile: one-page bb baseline and restart ban based on 5be3296
+### Accepted live profile: #62 render at 296ae3b (installed 2026-10-07)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
+296ae3b reported all four live homes MATCH. Digests below are the output of
+`shasum -a 256` on those live files.
 
 | Home | SHA-256 |
 |---|---|
@@ -95,6 +96,18 @@ output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
 | Codex | `afe6281966c5ffebc3f86aca2fc30ba5109f86c15c611492e6d26a55f605bd33` |
 | OpenCode | `f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0` |
 | bb | `c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c` |
+
+### Current rendered profile: session-input scope based on 296ae3b
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `2a13a95dee10b4c6d280c92d93ce66af876101dc86c379806de4701635acef52` |
+| Codex | `76321ba05d277eb20c3f88515771e56fe77edf2923da01487048686cf182bdff` |
+| OpenCode | `1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a` |
+| bb | `72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
