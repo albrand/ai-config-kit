@@ -528,6 +528,45 @@ sys.exit(2)
                     self.assertIn("line 14", reason)
                     self.assertNotIn("Acme Energy", reason)
 
+    def test_entity_encoded_html_tags_keep_private_attributes_visible_to_scan(self) -> None:
+        gate = self.gate_module()
+        cases = (
+            ('&lt;span title="Acme Energy"&gt;safe&lt;/span&gt;', "line 14"),
+            ('&lt;span title=&quot;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 14"),
+            ('&lt;a href="https://example.test/Acme%20Energy"&gt;safe&lt;/a&gt;', "line 14"),
+            ('&lt;a href=&quot;https://example.test/Acme%20Energy&quot;&gt;safe&lt;/a&gt;', "line 14"),
+            ('&lt;span title=&quot;Ac&#8203;me Energy&quot;&gt;safe&lt;/span&gt;', "line 14"),
+            ('&lt;a href=&quot;https://example.test/Acme&#8203;%20Energy&quot;&gt;safe&lt;/a&gt;', "line 14"),
+            ('&lt;span title=&quot;hidden\nAcme Energy&quot;&gt;safe&lt;/span&gt;', "line 15"),
+            ('&lt;span title=&quot;hidden\rAcme Energy&quot;&gt;safe&lt;/span&gt;', "line 15"),
+            ('&#10;&lt;span title=&quot;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 14"),
+            ('before\n&lt;span title=&quot;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 15"),
+            ('before\r\n&lt;span title=&quot;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 15"),
+            ('&lt;span title=&quot;&#10;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 14"),
+            ('&lt;span title=&quot;&NewLine;Acme Energy&quot;&gt;safe&lt;/span&gt;', "line 14"),
+            ('&lt;!-- Acme Energy --&gt;safe', "line 14"),
+        )
+        for encoded_markup, expected_line in cases:
+            with self.subTest(encoded_markup="hidden attribute privacy"):
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report(note=f"- Replay note: {encoded_markup}"))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Acme Energy", reason)
+
+        passing = (
+            '&lt;span title=&quot;ordinary&quot;&gt;safe&lt;/span&gt;',
+            '&lt;span title=&quot;SuperAcme EnergyCo&quot;&gt;safe&lt;/span&gt;',
+            '&lt;a href=&quot;https://example.test/SuperAcme%20EnergyCo&quot;&gt;safe&lt;/a&gt;',
+            '&lt;span title=&quot;Acme%20Energy&quot;&gt;safe&lt;/span&gt;',
+        )
+        for encoded_markup in passing:
+            with self.subTest(encoded_markup="clean or word-boundary control"):
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report(note=f"- Replay note: {encoded_markup}"))
+                self.assertTrue(valid, reason)
+
     def test_private_tenant_label_rejects_zero_width_character(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")
 

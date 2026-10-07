@@ -209,58 +209,74 @@ def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
 
 
 def _normalize_nonrendered_label_texts(text: str) -> list[str]:
-    """Normalize hidden source values separately so rendered boundaries stay unchanged."""
+    """Scan raw and entity-decoded HTML values without changing rendered boundaries."""
+    # Decoded references can reveal tags, but decoded newlines stay spaces so line
+    # positions in either source view still correspond to literal source lines.
     spans: list[tuple[str, int, bool]] = []
-    for match in HTML_COMMENT.finditer(text):
-        start = match.start() + 4
-        spans.append((text[start:match.end() - 3], start, False))
+    html_sources = dict.fromkeys((text, _unescape_without_source_newlines(text)))
+    for source in html_sources:
+        source_line_starts = [0]
+        source_line_starts.extend(match.end() for match in re.finditer(r"\r\n?|\n", source))
 
-    for match in HTML_TAG.finditer(text):
-        tag = match.group()
-        name = re.match(r"</?([A-Za-z][^\s/>]*)", tag)
-        if name is None:
-            continue
-        tag_name = name.group(1).lower()
-        attribute_text = tag[name.end():]
-        attribute_offset = match.start() + name.end()
-        for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
-            attribute_name = attribute.group(1).lower()
-            group = next(index for index in range(2, 5)
-                         if attribute.group(index) is not None)
-            value = attribute.group(group)
-            value_start = attribute_offset + attribute.start(group)
-            if (attribute_name in URL_SINGLE_ATTRIBUTES
-                    and (attribute_name != "data" or tag_name == "object")):
-                spans.append((value, value_start, True))
-            elif attribute_name in URL_WHITESPACE_LIST_ATTRIBUTES:
-                spans.extend(_url_list_spans(value, value_start))
-            elif attribute_name in URL_SRCSET_ATTRIBUTES:
-                spans.extend(_url_list_spans(value, value_start, srcset=True))
-            else:
-                spans.append((value, value_start, False))
+        for match in HTML_COMMENT.finditer(source):
+            start = match.start() + 4
+            line_offset = bisect_right(source_line_starts, start) - 1
+            spans.append((source[start:match.end() - 3], line_offset, False))
 
+        for match in HTML_TAG.finditer(source):
+            tag = match.group()
+            name = re.match(r"</?([A-Za-z][^\s/>]*)", tag)
+            if name is None:
+                continue
+            tag_name = name.group(1).lower()
+            attribute_text = tag[name.end():]
+            attribute_offset = match.start() + name.end()
+            for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
+                attribute_name = attribute.group(1).lower()
+                group = next(index for index in range(2, 5)
+                             if attribute.group(index) is not None)
+                value = attribute.group(group)
+                value_start = attribute_offset + attribute.start(group)
+                line_offset = bisect_right(source_line_starts, value_start) - 1
+                if (attribute_name in URL_SINGLE_ATTRIBUTES
+                        and (attribute_name != "data" or tag_name == "object")):
+                    spans.append((value, line_offset, True))
+                elif attribute_name in URL_WHITESPACE_LIST_ATTRIBUTES:
+                    url_spans = _url_list_spans(value, value_start)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                elif attribute_name in URL_SRCSET_ATTRIBUTES:
+                    url_spans = _url_list_spans(value, value_start, srcset=True)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                else:
+                    spans.append((value, line_offset, False))
+
+    markdown_line_starts = [0]
+    markdown_line_starts.extend(item.end() for item in re.finditer(r"\r\n?|\n", text))
     for match in MARKDOWN_LINK.finditer(text):
         payload = match.group(1)
-        spans.append((payload, match.start(1), False))
+        payload_line = bisect_right(markdown_line_starts, match.start(1)) - 1
+        spans.append((payload, payload_line, False))
         destination = MARKDOWN_DESTINATION.match(payload)
         if destination:
             group = 1 if destination.group(1) is not None else 2
-            spans.append((destination.group(group),
-                          match.start(1) + destination.start(group), True))
+            dest_start = match.start(1) + destination.start(group)
+            dest_line = bisect_right(markdown_line_starts, dest_start) - 1
+            spans.append((destination.group(group), dest_line, True))
     for match in MARKDOWN_REFERENCE_DEFINITION.finditer(text):
         payload = match.group(1)
-        spans.append((payload, match.start(1), False))
+        payload_line = bisect_right(markdown_line_starts, match.start(1)) - 1
+        spans.append((payload, payload_line, False))
         destination = MARKDOWN_DESTINATION.match(payload)
         if destination:
             group = 1 if destination.group(1) is not None else 2
-            spans.append((destination.group(group),
-                          match.start(1) + destination.start(group), True))
+            dest_start = match.start(1) + destination.start(group)
+            dest_line = bisect_right(markdown_line_starts, dest_start) - 1
+            spans.append((destination.group(group), dest_line, True))
 
-    source_line_starts = [0]
-    source_line_starts.extend(match.end() for match in re.finditer(r"\r\n?|\n", text))
     normalized: list[str] = []
-    for value, start, decode_url in spans:
-        line_offset = bisect_right(source_line_starts, start) - 1
+    for value, line_offset, decode_url in spans:
         prefix = LABEL_LINE_MARKER * line_offset
         values = [value]
         if decode_url:
