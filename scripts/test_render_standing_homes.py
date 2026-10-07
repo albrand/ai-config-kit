@@ -77,7 +77,9 @@ class CommittedSnapshotTests(unittest.TestCase):
 
     def test_installer_replaces_the_installed_51_render(self) -> None:
         # The homes #56 stranded: the committed #51 snapshots at f9e6837 must match the recorded profile, and
-        # install_homes must accept them and write the current render.
+        # `--install` must accept them and write the current render. The CLI runs from a clone whose origin/main
+        # holds this checkout's install sources, with HOME pointed at a temp dir, so the default target paths and
+        # the writer lock resolve there and no live home is touched.
         files = {}
         for key, filename in RENDERER.NAMES.items():
             shown = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show",
@@ -85,17 +87,37 @@ class CommittedSnapshotTests(unittest.TestCase):
             if shown.returncode != 0:
                 self.skipTest("commit f9e6837 is not in this checkout's history")
             files[key] = shown.stdout
-        profiles = RENDERER.load_expected_hash_profiles()
-        snapshot = {key: hashlib.sha256(data).hexdigest() for key, data in files.items()}
-        self.assertIn(snapshot, profiles, "the #51 render is a recorded profile")
+        live_homes = {"claude": ".claude/CLAUDE.md", "codex": ".codex/AGENTS.md",
+                      "opencode": ".config/opencode/AGENTS.md", "bb": ".bb/AGENTS.md"}
         with tempfile.TemporaryDirectory() as directory:
-            targets = {key: Path(directory) / key / "AGENTS.md" for key in RENDERER.TARGETS}
-            outputs = {key: RENDERER.rendered(key) for key in targets}
+            root = Path(directory)
+            home, repo, remote = root / "home", root / "repo", root / "origin.git"
+            git = ["git", "-c", "user.name=Card 21 test", "-c", "user.email=card21-test@example.invalid", "-C", str(repo)]
+            subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+            subprocess.run(["git", "init", "--initial-branch=main", "-q", str(repo)], check=True)
+            for source in RENDERER.INSTALL_SOURCE_PATHS:
+                (repo / source).parent.mkdir(parents=True, exist_ok=True)
+                (repo / source).write_bytes((RENDERER.ROOT / source).read_bytes())
+            subprocess.run([*git, "add", *RENDERER.INSTALL_SOURCE_PATHS], check=True)
+            subprocess.run([*git, "commit", "-qm", "This checkout's install sources"], check=True)
+            subprocess.run([*git, "remote", "add", "origin", str(remote)], check=True)
+            subprocess.run([*git, "push", "-q", "origin", "main"], check=True)
+            targets = {key: home / path for key, path in live_homes.items()}
             for key, target in targets.items():
-                target.parent.mkdir()
+                target.parent.mkdir(parents=True)
                 target.write_bytes(files[key])
-            RENDERER.install_homes(targets, outputs, profiles, stamp="from-51-render")
+            env = {**os.environ, "HOME": str(home)}
+            cli = [sys.executable, str(repo / "scripts/render-standing-homes.py")]
+            install = subprocess.run([*cli, "--install"], env=env, capture_output=True, text=True)
+            self.assertEqual(0, install.returncode, install.stderr)
+            self.assertEqual(sorted(f"INSTALLED {t}" for t in targets.values()),
+                             sorted(line.split(" (backup")[0] for line in install.stdout.splitlines()))
+            outputs = {key: RENDERER.rendered(key) for key in targets}
             self.assertEqual(outputs, {key: target.read_text(encoding="utf-8") for key, target in targets.items()})
+            check = subprocess.run([*cli, "--check"], env=env, capture_output=True, text=True)
+            self.assertEqual(0, check.returncode, check.stdout)
+        snapshot = {key: hashlib.sha256(data).hexdigest() for key, data in files.items()}
+        self.assertIn(snapshot, RENDERER.load_expected_hash_profiles(), "the #51 render is a recorded profile")
 
     def test_installer_accepts_only_a_complete_known_home_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
