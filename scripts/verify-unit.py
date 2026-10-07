@@ -155,13 +155,20 @@ def main():
     failed = []
     for name, args in [(name, ()) for name in tests] + sorted(selftests.items()):
         print(f'== {name}', flush=True)
-        result = subprocess.run(command(ROOT / name, args, name in suites), cwd=ROOT)
+        result = subprocess.run(command(ROOT / name, args, name in suites), cwd=ROOT,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+        print(result.stdout, end='', flush=True)
         print(f'{"PASS" if result.returncode == 0 else "FAIL"} {name} (exit {result.returncode})', flush=True)
         if result.returncode:
-            failed.append(name)
+            failure_log = ROOT / '.verify/runs/unit-failures' / (name + '.log')
+            failure_log.parent.mkdir(parents=True, exist_ok=True)
+            failure_log.write_text(result.stdout)
+            failed.append((name, result.stdout, failure_log))
     print(f'unit: {len(tests)} test files + {len(selftests)} CLI selftests; {len(failed)} failed', flush=True)
-    for name in failed:
+    for name, output, failure_log in failed:
         print(f'failed suite: {name}', flush=True)
+        print(f'failure output retained: {failure_log.relative_to(ROOT)}', flush=True)
+        print(output[-2000:], end='', flush=True)
     for name, reason in sorted(excluded.items()):
         print(f'host-only check excluded: {name}: {reason}', flush=True)
     return int(bool(failed))

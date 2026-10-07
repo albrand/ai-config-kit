@@ -57,6 +57,9 @@ class UnitStageTests(unittest.TestCase):
             result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('failed suite: checks/audit.py', result.stdout)
+            self.assertIn('FAIL: test_outcome', result.stdout.rsplit('unit:', 1)[1])
+            failure_log = root / '.verify/runs/unit-failures/checks/audit.py.log'
+            self.assertIn('AssertionError', failure_log.read_text())
             self.assertIn('anchor exercised', result.stdout)
             audit.write_text(audit.read_text().replace('assertTrue(False)', 'assertTrue(True)'))
             repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
