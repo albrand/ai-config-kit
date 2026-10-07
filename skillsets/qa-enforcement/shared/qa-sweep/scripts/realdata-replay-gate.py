@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import html
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -55,14 +57,21 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     except (OSError, UnicodeError):
         return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
 
+    raw_lines = text.splitlines()
+    # Check both deletion and word-separator forms so format marks cannot join or split label words.
+    normalized_lines = [
+        [_normalize_label_text(line), _normalize_label_text(line, cf_as_space=False)]
+        for line in raw_lines
+    ]
+    normalized_text = [
+        _normalize_label_text(text), _normalize_label_text(text, cf_as_space=False)
+    ]
+    label_patterns = [pattern for label in labels for pattern in (
+        _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
     for line_number, line in enumerate(text.splitlines(), start=1):
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):
                 reason = f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}"
-                return False, _with_label_check_status(reason, label_check_skipped), None
-        for label in labels:
-            if re.search(rf"(?<!\w){re.escape(label)}(?!\w)", line, re.I):
-                reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {line_number}"
                 return False, _with_label_check_status(reason, label_check_skipped), None
         for match in URI.finditer(line):
             try:
@@ -74,8 +83,49 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
                 reason = f"REALDATA-REPLAY.md contains malformed URI at line {line_number}"
                 return False, _with_label_check_status(reason, label_check_skipped), None
 
+    label_line = _private_label_line(normalized_lines, normalized_text, label_patterns)
+    if label_line is not None:
+        reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {label_line}"
+        return False, _with_label_check_status(reason, label_check_skipped), None
+
     valid, reason, digest = _validate_report_structure_and_digest(text)
     return valid, _with_label_check_status(reason, label_check_skipped), digest
+
+
+def _normalize_label_text(text: str, *, cf_as_space: bool = True) -> str:
+    text = unicodedata.normalize("NFKC", html.unescape(text))
+    format_replacement = " " if cf_as_space else ""
+    text = "".join(format_replacement if unicodedata.category(char) == "Cf" else char
+                    for char in text)
+    text = re.sub(r"\\(.)", r"\1", text)
+    return re.sub(r"[*_`~]", "", text)
+
+
+def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Pattern[str] | None:
+    normalized = _normalize_label_text(label, cf_as_space=cf_as_space).strip()
+    words = normalized.split()
+    if not words:
+        return None
+    expression = r"(?<!\w)" + r"\s+".join(re.escape(word) for word in words) + r"(?!\w)"
+    return re.compile(expression, re.I)
+
+
+def _private_label_line(lines: list[list[str]], text: list[str],
+                        patterns: list[re.Pattern[str] | None]) -> int | None:
+    active_patterns = [pattern for pattern in patterns if pattern is not None]
+    line_number: int | None = None
+    for index, variants in enumerate(lines, start=1):
+        if any(pattern.search(line) for pattern in active_patterns for line in variants):
+            line_number = index
+            break
+    for pattern in active_patterns:
+        for variant in text:
+            match = pattern.search(variant)
+            if match:
+                whole_text_line = variant.count("\n", 0, match.start()) + 1
+                if line_number is None or whole_text_line < line_number:
+                    line_number = whole_text_line
+    return line_number
 
 
 def _with_label_check_status(reason: str, skipped: bool) -> str:

@@ -295,6 +295,43 @@ sys.exit(2)
         self.assertIn("line 14", reason)
         self.assertNotIn("acme energy", reason.lower())
 
+    def assert_private_label_variant_denied(self, note: str) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(replay_report(note=note))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme", reason)
+
+    def test_private_tenant_label_rejects_decimal_html_space_reference(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme&#32;Energy reviewer")
+
+    def test_private_tenant_label_rejects_named_html_space_reference(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme&nbsp;Energy reviewer")
+
+    def test_private_tenant_label_rejects_zero_width_character(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")
+
+    def test_private_tenant_label_rejects_format_character_inside_word(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Ac\u200bme Energy reviewer")
+
+    def test_private_tenant_label_rejects_markdown_emphasis(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: **Acme** Energy reviewer")
+
+    def test_private_tenant_label_rejects_markdown_code_markers(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: `Acme` Energy reviewer")
+
+    def test_private_tenant_label_rejects_backslash_escape(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme\\* Energy reviewer")
+
+    def test_private_tenant_label_rejects_repeated_whitespace(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme  Energy reviewer")
+
+    def test_private_tenant_label_rejects_line_break_between_words(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme\nEnergy reviewer")
+
+    def test_private_tenant_label_rejects_full_width_unicode(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Ａｃｍｅ Energy reviewer")
+
     def test_private_tenant_label_uses_word_boundaries(self) -> None:
         valid, reason, _ = self.gate_module().validate_report_text(
             replay_report(note="- Persona: SuperAcme EnergyCo reviewer"))
