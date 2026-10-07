@@ -21,6 +21,23 @@ RENDERER = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(RENDERER)
 
+# Every commit that changed the fingerprint manifest up to #56, newest first. The history test must see all of them.
+MANIFEST_HISTORY = (
+    "60059aaa8539e47d98a33a4689e7038622178335",  # Housekeep shared kit artifacts and routing (#56)
+    "e0832ee3acb0efd397efe4b2501ef8a5a339bd85",  # Agents finish the work (#51): the profile #56 stranded
+    "192f652a87399222ab09c97f08ca853b1823a7a7",  # Restore delegate evidence rule across rendered homes (#50)
+    "73786e99fe1f453f1e145c8f559e61fdfc0637b7",  # Track complete rendered home fingerprint profiles (#49)
+    "539e88a254a22014befa5ba8cef5ddd94e958624",  # Fix home fingerprint and review sync (#47)
+    "9c24d9dbc66cadc881d61959bfa2719567b13f9b",  # Carry full-picture rule to every provider home
+    "3ab75d63d2fd75c8b38a675a344f15a7bc217723",  # Record the live home fingerprints after the delivery-guidance install
+    "e210aa9958d14c292c3e92ce818fae3a5b4cfa4e",  # Align delivery guidance and preserve skill invocation policies
+    "c6713d69ac84cf95ea925f3864822d5c7eaf5e91",  # Preserve typed decisions and guard home installs
+    "1fbdc81d829aae12d58cef21f851ccdb0b996edb",  # Tighten standing rule preservation checks
+    "9a176b3f14217eb5c826291c95354a3469689654",  # Preserve Codex context cleanup guard
+    "bcd5fbb83c1e340085d534764c2f5ac9299f0b8e",  # Require explicit worktree safeguards in compact homes
+    "e017b585ddf1bfb560fb4a4118f768b96ff23cf8",  # Check each worktree protection independently (first)
+)
+
 
 class CommittedSnapshotTests(unittest.TestCase):
     def test_committed_rendered_homes_match_the_renderer(self) -> None:
@@ -71,6 +88,9 @@ class CommittedSnapshotTests(unittest.TestCase):
                              capture_output=True, text=True)
         self.assertEqual(0, log.returncode, log.stderr)
         self.assertTrue(log.stdout.split(), "no git history for the fingerprint manifest")
+        # A grafted or orphaned history is not shallow but drops old profiles; the known commits must all be there.
+        missing = [c[:8] for c in MANIFEST_HISTORY if c not in log.stdout.split()]
+        self.assertEqual([], missing, "the manifest's git history is truncated; fetch the full history")
         now = sections((RENDERER.ROOT / rel).read_text(encoding="utf-8"))
         kept = {d for h, d in now.items() if h.startswith(("Accepted live profile", "Current rendered profile"))}
         installable = [frozenset(p.values()) for p in RENDERER.load_expected_hash_profiles()]
