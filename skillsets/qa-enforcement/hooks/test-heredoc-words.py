@@ -2,7 +2,7 @@
 """Heredoc delimiter words, measured in the real shells (Hermes 2026-10-07, kit-never-block-pr-merge r10, r11).
 
 Generates delimiter spellings: every printable character in plain, escaped, single-, double- and $'-quoted shapes,
-plus random mixes from fixed seeds. Each word runs in bash, zsh and sh, at top level and inside a `"$(...)"` merge
+plus random mixes from fixed seeds. Each word runs in bash, zsh, sh and dash, at top level and inside a `"$(...)"` merge
 body. A word is read alike when every shell, in both places, ends the body at the same terminator, which is then
 its delimiter. The gate's _heredoc_word and both hooks' awk hdword() must:
   - never read a word the shells disagree on, or read a different delimiter (safety: no hidden push);

@@ -1,16 +1,17 @@
 """The shells the heredoc oracles measure (test-heredoc-words.py, test-ship-matrix.py), all required (Hermes 2026-10-07,
 kit-never-block-pr-merge r12, r13): a missing one would let a green run skip that shell's reading, so each test exits 1
-naming it. Each shell is identified as what actually runs: zsh, bash (and whether POSIX mode is on) or ksh from the
-shell's own variables; otherwise (dash, busybox) the resolved binary's name, its package version where dpkg or rpm can
-tell, and always a hash of the binary.
-Usage: shell_oracle.py [shell...]   prints the identity of each (default: the three required shells)"""
+naming it. dash is required because it is /bin/sh on Debian and Ubuntu and reads $'...' differently from the others.
+Each shell is identified as what actually runs: zsh, bash (and whether POSIX mode is on) or ksh from the shell's own
+variables; otherwise (dash, busybox) the resolved binary's name, its package version where dpkg or rpm can tell, and
+always a hash of the binary.
+Usage: shell_oracle.py [shell...]   prints the identity of each (default: the four required shells)"""
 import hashlib
 import os
 import shutil
 import subprocess
 import sys
 
-SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh")
+SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh", "/bin/dash")
 PROBE = ('if [ -n "${ZSH_VERSION:-}" ]; then echo "zsh $ZSH_VERSION"; '
          'elif [ -n "${BASH_VERSION:-}" ]; then case ":${SHELLOPTS:-}:" in '
          '*:posix:*) echo "bash $BASH_VERSION, POSIX mode";; *) echo "bash $BASH_VERSION";; esac; '

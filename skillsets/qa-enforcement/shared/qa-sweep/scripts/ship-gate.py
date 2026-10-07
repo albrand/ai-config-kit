@@ -1330,13 +1330,13 @@ HEREDOC_QUOTEISH = frozenset("\"'()`")
 
 
 def _heredoc_word(s, j):
-    """(delimiter, end) for the heredoc word at s[j], or None when bash, zsh and sh might not all read it as that
-    delimiter (Hermes 2026-10-07, kit-never-block-pr-merge r10 `<<'EOF!'`, r11 `<<"a\\q"`). Measured, not guessed:
-    hooks/test-heredoc-words.py runs every generated spelling in the three shells, at top level and inside a
+    """(delimiter, end) for the heredoc word at s[j], or None when bash, zsh, sh and dash might not all read it as
+    that delimiter (Hermes 2026-10-07, kit-never-block-pr-merge r10 `<<'EOF!'`, r11 `<<"a\\q"`, r13 dash). Measured, not guessed:
+    hooks/test-heredoc-words.py runs every generated spelling in the four shells, at top level and inside a
     `"$(...)"` merge body, and requires this reader and the awk hdword() to read each word as the shells do or not
-    at all. POSIX quote removal: `\\X` is X; `'...'` and `$'...'` (no escapes) are literal; in `"..."` a backslash
+    at all. POSIX quote removal: `\\X` is X; `'...'` is literal; in `"..."` a backslash
     is dropped only before `$` or `\\`. Declined, because a shell reads them differently: a leading `#` or `-`, an
-    escaped or quoted quote, parenthesis or backtick, a `$"..."`, a `${` `$[` `$(`, a word-final unquoted `}` (zsh), a trailing
+    escaped or quoted quote, parenthesis or backtick, a `$'...'` or `$"..."`, a `${` `$[` `$(`, a word-final unquoted `}` (zsh), a trailing
     backslash, an empty delimiter, and a word that ends anywhere but a blank, `; & | < >` or a newline."""
     out, k, n, tail = [], j, len(s), ""
     if s[j:j + 1] in ("#", "-"):
@@ -1353,15 +1353,15 @@ def _heredoc_word(s, j):
                 return None
             out.append(x)
             k += 2
-        elif c == "'" or (c == "$" and s[k + 1:k + 2] in ("'", '"')):
-            if c == "$" and s[k + 1] == '"':
-                return None
-            k += 1 if c == "'" else 2
+        elif c == "$" and s[k + 1:k + 2] in ("'", '"'):
+            return None  # $"..." (zsh) and $'...' (dash has no $'...' quoting) are read differently
+        elif c == "'":
+            k += 1
             e = s.find("'", k)
             if e < 0:
                 return None
             body = s[k:e]
-            if "\n" in body or set(body) & HEREDOC_QUOTEISH or (c == "$" and "\\" in body):
+            if "\n" in body or set(body) & HEREDOC_QUOTEISH:
                 return None
             out.append(body)
             k = e + 1
@@ -1403,7 +1403,7 @@ def _strip_heredoc_bodies(command):
     or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
     terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
     hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
-      - the delimiter is a word _heredoc_word reads: one bash, zsh and sh read alike, measured by
+      - the delimiter is a word _heredoc_word reads: one bash, zsh, sh and dash read alike, measured by
         hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);

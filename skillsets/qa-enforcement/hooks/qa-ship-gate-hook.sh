@@ -90,8 +90,8 @@ ship_scan() {
   }
   function hdword(s, j,   n, k, c, x, nx, e, body, out, tail, d, t, plain, hp, hq) {
     # The heredoc word at s[j]: sets HW (delimiter) and HK (index after it) and returns 1, or returns 0 when the
-    # shells might read it differently. Same reader as ship-gate.py _heredoc_word, measured against bash, zsh
-    # and sh by hooks/test-heredoc-words.py (Hermes r10, r11). Bytes above 127 are plain (LC_ALL=C).
+    # shells might read it differently. Same reader as ship-gate.py _heredoc_word, measured against bash, zsh,
+    # sh and dash by hooks/test-heredoc-words.py (Hermes r10, r11, r13). Bytes above 127 are plain (LC_ALL=C).
     hp = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+,:@%/!^-#~=*?[]{}$"
     hq = "\"" sq "()`"
     n = length(s); k = j; out = ""; tail = ""
@@ -105,13 +105,13 @@ ship_scan() {
       if (c == "\\") {
         if (nx == "" || nx == "\n" || index(hq, nx)) return 0
         out = out nx; k += 2
-      } else if (c == sq || (c == "$" && (nx == sq || nx == "\""))) {
-        if (c == "$" && nx == "\"") return 0
-        k += (c == sq) ? 1 : 2
+      } else if (c == "$" && (nx == sq || nx == "\"")) {
+        return 0
+      } else if (c == sq) {
+        k++
         e = index(substr(s, k), sq); if (!e) return 0
         body = substr(s, k, e - 1)
         if (index(body, "\n") || index(body, "\"") || index(body, "(") || index(body, ")") || index(body, "`")) return 0
-        if (c == "$" && index(body, "\\")) return 0
         out = out body; k += e
       } else if (c == "\"") {
         k++

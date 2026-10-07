@@ -185,11 +185,11 @@ WORDS = ["EOF", "'EOF'", '"EOF"', "\\EOF", "E'O'F", '"E O F"', "$(echo E)", '$(e
          "E$(x)F", "E(x)", "E)", "${X}", "$X", "E{a,b}", "E*", "E=x",
          # read alike by every shell (Hermes r10 <<'EOF!', r11 <<"a\q"), so a merge body using one is allowed
          "EOF!", "!EOF", "a:b/c@d%e+f,g^h", "'EOF!'", '"EOF!"', "\\!EOF", "'a b$c'", "'a\\b'", "E\\ x", '"a\\q"',
-         '"a\\\\b"', "$'EOF'",
-         # bash 3.2 and sh misread a quote inside a "$(...)" merge body, so these stay unreadable (deny side);
-         # test-heredoc-words.py measures every spelling
-         "'a\"b'", '"a(b"']
-READABLE = WORDS[:6] + WORDS[18:30]
+         '"a\\\\b"',
+         # bash 3.2 and sh misread a quote inside a "$(...)" merge body, and dash has no $'...', so these stay
+         # unreadable (deny side); test-heredoc-words.py measures every spelling
+         "'a\"b'", '"a(b"', "$'EOF'"]
+READABLE = WORDS[:6] + WORDS[WORDS.index("EOF!"):WORDS.index("'a\"b'")]
 CONTEXTS = {
     "top": "cat <<{W}\n{B}\n{T}\n{P}", "sub": "x=$(cat <<{W}\n{B}\n{T}\n)\n{P}",
     "quoted sub": 'x="$(cat <<{W}\n{B}\n{T}\n)"\n{P}', "backtick": "x=`cat <<{W}\n{B}\n{T}\n`\n{P}",
