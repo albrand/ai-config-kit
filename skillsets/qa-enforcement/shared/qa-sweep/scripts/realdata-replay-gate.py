@@ -267,23 +267,26 @@ def _css_consume_ident(value: str, start: int) -> tuple[str, int]:
     return "".join(chars), index
 
 
-def _css_skip_string(value: str, start: int, quote: str) -> int:
-    index = start + 1
+def _css_string_payload(value: str, opening: int) -> tuple[str, int, int]:
+    """Read one CSS string, decoding escapes while retaining source-line markers."""
+    quote = value[opening]
+    payload_start = opening + 1
+    decoded: list[str] = []
+    index = payload_start
     while index < len(value):
-        if value[index] == "\\" and index + 1 < len(value):
-            if value[index + 1] in "\r\n\f":
-                _, index = _css_escape(value, index)
-            elif value[index + 1] in "0123456789abcdefABCDEF":
-                _, index = _css_escape(value, index)
-            else:
-                index += 2
-        elif value[index] == quote:
-            return index + 1
-        elif value[index] in "\r\n\f":
-            return index
-        else:
-            index += 1
-    return index
+        char = value[index]
+        if char == quote:
+            return "".join(decoded), payload_start, index + 1
+        if char in "\r\n\f":
+            # A literal newline terminates a CSS string token as a bad string.
+            return "".join(decoded), payload_start, index
+        if char == "\\" and index + 1 < len(value):
+            escaped, index = _css_escape(value, index)
+            decoded.append(escaped)
+            continue
+        decoded.append(char)
+        index += 1
+    return "".join(decoded), payload_start, index
 
 
 def _css_url_payload(value: str, opening: int) -> tuple[str, int, int] | None:
@@ -327,29 +330,75 @@ def _css_url_payload(value: str, opening: int) -> tuple[str, int, int] | None:
     return None
 
 
-def _css_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
-    """Extract CSS url() payloads, decoding CSS escapes only in URL consumers."""
+CSS_STRING_URL_FUNCTIONS = {"image-set", "-webkit-image-set", "image"}
+
+
+def _css_skip_space_and_comments(value: str, index: int) -> int:
+    while index < len(value):
+        if value[index] in " \t\r\n\f":
+            index += 1
+        elif value.startswith("/*", index):
+            comment_end = value.find("*/", index + 2)
+            if comment_end < 0:
+                return len(value)
+            index = comment_end + 2
+        else:
+            break
+    return index
+
+
+def _css_url_spans(value: str, start: int, *, stylesheet: bool = False) -> list[tuple[str, int, bool]]:
+    """Extract grammar-defined CSS URL values without decoding ordinary strings."""
     spans: list[tuple[str, int, bool]] = []
     index = 0
+    blocks: list[tuple[str, str | None]] = []
     while index < len(value):
         if value.startswith("/*", index):
             comment_end = value.find("*/", index + 2)
             index = len(value) if comment_end < 0 else comment_end + 2
             continue
         if value[index] in "\"'":
-            index = _css_skip_string(value, index, value[index])
+            decoded, payload_start, end = _css_string_payload(value, index)
+            if blocks and blocks[-1][0] == "(" and blocks[-1][1] in CSS_STRING_URL_FUNCTIONS:
+                spans.append((decoded, start + payload_start, True))
+            index = max(end, index + 1)
+            continue
+        if stylesheet and value[index] == "@" and not blocks:
+            ident, end = _css_consume_ident(value, index + 1)
+            if ident.replace(LABEL_LINE_MARKER, "").lower() == "import":
+                next_token = _css_skip_space_and_comments(value, end)
+                if next_token < len(value) and value[next_token] in "\"'":
+                    decoded, payload_start, string_end = _css_string_payload(value, next_token)
+                    spans.append((decoded, start + payload_start, True))
+                    index = string_end
+                    continue
+            index = max(end, index + 1)
             continue
         if _css_ident_start(value[index]):
             ident, end = _css_consume_ident(value, index)
-            if ident.replace(LABEL_LINE_MARKER, "").lower() == "url" and end < len(value) and value[end] == "(":
+            function_name = ident.replace(LABEL_LINE_MARKER, "").lower()
+            if function_name == "url" and end < len(value) and value[end] == "(":
                 payload = _css_url_payload(value, end)
                 if payload is not None:
                     decoded, payload_start, next_index = payload
                     spans.append((decoded, start + payload_start, True))
                     index = next_index
                     continue
+            if end < len(value) and value[end] == "(":
+                blocks.append(("(", function_name))
+                index = end + 1
+                continue
             index = max(end, index + 1)
             continue
+        char = value[index]
+        if char in "([{":
+            blocks.append((char, None))
+        elif char in ")]}" and blocks:
+            expected = { ")": "(", "]": "[", "}": "{" }[char]
+            while blocks:
+                opening, _ = blocks.pop()
+                if opening == expected:
+                    break
         index += 1
     return spans
 
@@ -365,12 +414,12 @@ def _css_style_element_url_spans(source: str) -> list[tuple[str, int, bool]]:
         if tag_match.group().startswith("</"):
             if content_start is not None:
                 spans.extend(_css_url_spans(
-                    source[content_start:tag_match.start()], content_start))
+                    source[content_start:tag_match.start()], content_start, stylesheet=True))
                 content_start = None
         elif content_start is None:
             content_start = tag_match.end()
     if content_start is not None:
-        spans.extend(_css_url_spans(source[content_start:], content_start))
+        spans.extend(_css_url_spans(source[content_start:], content_start, stylesheet=True))
     return spans
 
 

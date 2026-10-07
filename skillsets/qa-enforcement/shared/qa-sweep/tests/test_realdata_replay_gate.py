@@ -538,6 +538,49 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_css_string_url_consumers_are_scanned_without_decoding_other_strings(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        refusing = (
+            ("import string", '- Replay note: <style>@import "https://example.test/Test%20Tenant.css";</style>', "line 14"),
+            ("escaped import string", '- Replay note: <style>@\\69mport\n "https://example.test/Test%20Tenant.css";</style>', "line 15"),
+            ("import string escaped CRLF continuation", '- Replay note: <style>@import "https://example.test/\\\r\nTest%20Tenant.css";</style>', "line 15"),
+            ("image-set first source", '- Replay note: <style>.a{background:image-set("https://example.test/Test%20Tenant.png" 1x, url(https://example.test/clean) 2x)}</style>', "line 14"),
+            ("image-set later source", '- Replay note: <style>.a{background:image-set("https://example.test/clean.png" 1x,\n "https://example.test/Test%20Tenant.png" 2x)}</style>', "line 15"),
+            ("vendor image-set", '- Replay note: <style>.a{background:-webkit-image-set("https://example.test/Test%20Tenant.png" 1x)}</style>', "line 14"),
+            ("image() source", '- Replay note: <style>.a{background:image("https://example.test/Test%20Tenant.svg")}</style>', "line 14"),
+            ("nested image-set source", '- Replay note: <style>.a{background:linear-gradient(red, image-set("https://example.test/Test%20Tenant.png" 2x))}</style>', "line 14"),
+            ("style attribute image-set source", '- Replay note: <div style="background:image-set(\'https://example.test/Test%20Tenant.png\' 1x)">safe</div>', "line 14"),
+            ("escaped image-set function", '- Replay note: <style>.a{background:im\\61 ge-set("https://example.test/Test%20Tenant.png" 1x)}</style>', "line 14"),
+            ("encoded style tag", '- Replay note: &lt;style&gt;@import &quot;https://example.test/Test%20Tenant.css&quot;;&lt;/style&gt;', "line 14"),
+            ("CSS escaped URL label", '- Replay note: <style>@import "https://example.test/Test\\20 Tenant.css";</style>', "line 14"),
+        )
+        for case_name, note, expected_line in refusing:
+            with self.subTest(css_string_url=case_name):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Test Tenant", reason)
+
+        passing = (
+            '- Replay note: <style>@import "https://example.test/clean.css";</style>',
+            '- Replay note: <style>.a{background:image-set("https://example.test/clean.png" 1x, url(https://example.test/also-clean) 2x)}</style>',
+            '- Replay note: <style>.a{background:-webkit-image-set("https://example.test/clean.png" 1x)}</style>',
+            '- Replay note: <style>.a{background:image("https://example.test/clean.svg")}</style>',
+            '- Replay note: <style>.a{background:image-set("https://example.test/clean.png" 1x type("Test%20Tenant"))}</style>',
+            '- Replay note: <style>.a{content:"https://example.test/Test%20Tenant"}</style>',
+            '- Replay note: <style>/* @import "https://example.test/Test%20Tenant.css"; */ .a{background:none}</style>',
+            '- Replay note: <style>.a{content:"image-set(\\"https://example.test/Test%20Tenant.png\\" 1x)"}</style>',
+            '- Replay note: <style>.a{background:image-set(linear-gradient("Test%20Tenant", red) 1x)}</style>',
+            '- Replay note: <style>.a{background:image-set("https://example.test/SuperTest%20TenantCo.png" 1x)}</style>',
+            '- Replay note: <style>.a{background:image-set("https://example.test/clean.png" 1x type("image/avif"), "https://example.test/clean.jpg" 2x type("image/jpeg"))}</style>',
+        )
+        for note in passing:
+            with self.subTest(css_string_url="clean or non-URL control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_percent_encoded_url_newline_is_not_a_source_line_break(self) -> None:
         notes = (
             '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',
