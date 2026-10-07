@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import unittest
@@ -25,8 +26,28 @@ HERMES_AS_GATE = re.compile(
     r"[^.]{0,20}? only (?:after|when|once|if)[^.]{0,60}?hermes"
     r"|(?:do not|don't|never|must not|cannot) (?:post|publish|approve|merge|complete|finish)[^.]{0,60}?"
     r"(?:until|before|without)[^.]{0,40}?hermes (?:returns|answers|responds|replies|approves|accepts|verdict|result)"
-    r"|wait for hermes[^.]{0,40}?before (?:posting|publishing|approving|merging))"
+    r"|wait for hermes[^.]{0,40}?before (?:posting|publishing|approving|merging)"
+    # holding the review back for Hermes, in any order (Hermes 2026-10-07, kit-review-skill-merge r4)
+    r"|(?:hold|defer|delay|pause|postpone|withhold)[^.]{0,40}?(?:post|publish|the review|verdict|approv)[^.]{0,60}?"
+    r"(?:until|before|while|unless)[^.]{0,60}?hermes"
+    r"|(?:review|verdict)[^.]{0,30}?(?:unposted|unpublished|on hold)[^.]{0,60}?(?:until|before|while|unless)[^.]{0,60}?hermes"
+    r"|(?:retry|re-?send|re-?run|try) hermes[^.]{0,60}?before (?:posting|publishing|approving|merging))"
 )
+HERMES_SECTION_SHA256 = "1735148db18dd464b86f4460df3f7b977226b20532be925e59a7463350b6a1d3"
+# The whole other-PR block, verbatim (whitespace collapsed): an added instruction that keeps every asserted phrase,
+# such as holding the post after a Hermes timeout, still changes this text (Hermes 2026-10-07, kit-review-skill-merge r4).
+OTHER_PR_BLOCK = " - ".join((
+    "Hermes is an advisor, mandatory to attempt and never a publish blocker.",
+    "If it does not answer (transport fault, capacity, timeout), post your independently evidenced verdict unchanged. "
+    "Do not downgrade `REQUEST_CHANGES` to `COMMENT` or soften a finding.",
+    "Record `Hermes gate: BLOCKED` in the operator close-out only, and say there that the verdict is unadvised.",
+    "Do not claim the pass happened, and do not silently replace Hermes with another model.",
+    "Acknowledge queued automation work normally once the review is confirmed posted. "
+    "Hermes being down is not a reason to leave an item unacknowledged; only failing to post is.",
+    "Skipping the attempt while Hermes is reachable leaves the review incomplete.",
+    "An earlier rule that made the advisor's answer a condition for posting suppressed real findings: "
+    "a reviewer held back two located defects because two advisor calls timed out.",
+))
 # Each thing the review skill asks Hermes to challenge or name (Hermes 2026-10-06, kit-review-skill-merge r2:
 # assert every item, not the start of the sentence).
 CHALLENGE_ITEMS = (
@@ -82,6 +103,10 @@ class ReviewSkillSourceTests(unittest.TestCase):
             'This used to read "Hermes is optional", and now the review is complete only after Hermes returns.',
             'This previously said "Do not publish the review until Hermes returns"; this requirement remains binding.',
             'This used to read "Hermes help is a completion gate", and that wording is still in force.',
+            "If Hermes times out, hold the review until Hermes answers.",
+            "Defer posting the verdict until a Hermes retry succeeds.",
+            "Keep the review unposted while Hermes is unreachable.",
+            "Retry Hermes once more before posting.",
         ]
         formatted = [
             "A review is complete **only after** Hermes returns a verdict.",
@@ -97,6 +122,9 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "Do not silently replace Hermes with another model and do not claim the advisor pass happened.",
             "Post anyway, on your own evidence, if Hermes does not answer.",
             "Record Hermes gate: BLOCKED in the operator-facing close-out only.",
+            "Keep the review on its own evidence when Hermes does not answer.",
+            "If Hermes times out, post the review anyway.",
+            "When Hermes cannot be reached, fix the transport and resend rather than merging unreviewed.",
         ]
         for sentence in flagged:
             self.assertEqual(gate_sentences(sentence), [sentence], sentence)
@@ -154,7 +182,13 @@ class ReviewSkillSourceTests(unittest.TestCase):
         ):
             with self.subTest(act="our own PR", rule=rule):
                 self.assertIn(rule, own)
-        # Posting a review of someone else's PR never waits on Hermes: no blocking or gate wording in that block.
+        # The section is pinned by digest (whitespace collapsed): an instruction added anywhere in it, in any wording,
+        # fails here. To change the section, review the new text against both acts and update the digest.
+        self.assertEqual(hashlib.sha256(section.encode()).hexdigest(), HERMES_SECTION_SHA256,
+                         "the Hermes advisor pass section changed: review it against both acts, then update the digest")
+        # Posting a review of someone else's PR never waits on Hermes: the block is pinned verbatim, so nothing can
+        # be added to it, and it has no blocking or gate wording.
+        self.assertEqual(others.strip().rstrip(" -"), OTHER_PR_BLOCK)
         self.assertNotIn("blocks", others)
         self.assertEqual(gate_sentences(others), [])
         # The retired skill's rules that still apply, the stale-head rule among them (Hermes 2026-10-06,
