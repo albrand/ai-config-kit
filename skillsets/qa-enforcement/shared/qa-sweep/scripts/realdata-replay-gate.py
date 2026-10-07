@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS_FILE = ROOT / "realdata-paths.json"
@@ -29,12 +30,24 @@ def git(repo: Path, *args: str, timeout: float = 4) -> str:
     return result.stdout.strip()
 
 
-def repo_identity(repo: Path) -> bool:
+def repo_identity(repo: Path, head: str = "HEAD") -> bool:
+    if repo.name.lower() == "pallium-app":
+        return True
     try:
-        remote = git(repo, "remote", "get-url", "origin").lower()
-    except (OSError, RuntimeError, subprocess.TimeoutExpired):
-        return repo.name == "pallium-app"
-    return "palliumai-com/pallium-app" in remote or repo.name == "pallium-app"
+        remote = git(repo, "remote", "get-url", "origin").strip().lower()
+        remote_path = urlsplit(remote).path if "://" in remote else remote
+        if "@" in remote and ":" in remote and "://" not in remote:
+            remote_path = remote.split(":", 1)[1]
+        remote_name = remote_path.rstrip("/").rsplit("/", 1)[-1]
+        if remote_name in {"pallium-app", "pallium-app.git"}:
+            return True
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+        pass
+    try:
+        package = json.loads(git(repo, "show", f"{head}:package.json"))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+        return False
+    return isinstance(package, dict) and package.get("name") == "pallium-app"
 
 
 def repo_root(start: Path) -> Path | None:
@@ -193,7 +206,7 @@ def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
 def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: Path | None = None,
              head: str = "HEAD") -> tuple[bool, str, set[str], str | None]:
     cwd = cwd or repo
-    if not repo_identity(repo):
+    if not repo_identity(repo, head):
         return True, "not the Pallium app repository", set(), None
     pr_info: dict[str, Any] | None = None
     try:

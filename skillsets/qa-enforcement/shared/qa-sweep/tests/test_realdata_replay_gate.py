@@ -78,6 +78,22 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertEqual(passed_json["artifact"], "REALDATA-REPLAY.md")
         self.assertRegex(str(passed_json["sha256"]), r"^[0-9a-f]{64}$")
 
+    def test_local_clone_with_pallium_package_identity_is_gated(self) -> None:
+        clone = Path(self.temp.name) / "repo"
+        self.repo.rename(clone)
+        self.repo = clone
+        git(self.repo, "remote", "set-url", "origin",
+            "ssh://hsrpc-wsl/home/alex_/projects/pallium/pallium-app")
+        (self.repo / "package.json").write_text('{"name":"pallium-app"}\n', encoding="utf-8")
+        git(self.repo, "add", "package.json")
+        git(self.repo, "commit", "-m", "identify Pallium clone")
+
+        denied, payload = self.check()
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at repository root")
+        self.assertIn("src/server/ingestion/worker.ts", payload["affected_paths"])
+
     def test_hermes_must_attach_report_or_a_packet_that_cites_it(self) -> None:
         report = replay_report()
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
