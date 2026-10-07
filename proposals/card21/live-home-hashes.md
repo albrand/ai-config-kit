@@ -2,8 +2,8 @@
 
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
-profiles. Accepted live profiles include the #47 render, the #49 render and
-the #50 render currently installed in all four homes. The current rendered profile is the
+profiles. Accepted live profiles include the #47 and #49 renders and
+the #50, #51 and #60 renders; #60 is installed in all four homes. The current rendered profile is the
 output of this source revision; keeping it here means that after this revision
 is merged and installed, the next installer recognizes that complete set
 without weakening the live-edit guard.
@@ -71,10 +71,11 @@ very homes it had installed.
 | OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
 | bb | `ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb` |
 
-### Current rendered profile: follow-through PR candidate based on 192f652a
+### Accepted live profile: #60 render at b55f327 (installed 2026-10-06)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
+5be3296 reported all four live homes MATCH. Digests below are the output of
+`shasum -a 256` on those live files.
 
 | Home | SHA-256 |
 |---|---|
@@ -82,6 +83,18 @@ output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
 | Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
 | OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
 | bb | `d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e` |
+
+### Current rendered profile: one-page bb baseline and restart ban based on 5be3296
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `9bc9d866b7fcdd1e760afd7c174cd4cb7f1ad579f0ca6843ce28271bf3260ab1` |
+| Codex | `afe6281966c5ffebc3f86aca2fc30ba5109f86c15c611492e6d26a55f605bd33` |
+| OpenCode | `f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0` |
+| bb | `c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

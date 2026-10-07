@@ -12,6 +12,7 @@
 - Never quit the running bb app.
 - Never kill the running bb app.
 - Never replace the running bb app.
+- Never restart the running bb app.
 - Never move `/Applications/bb.app`.
 - Never delete `/Applications/bb.app`.
 - Never overwrite `/Applications/bb.app`.
