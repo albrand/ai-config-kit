@@ -43,7 +43,7 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
 
     @staticmethod
     def seed_review_source(kit: Path) -> None:
-        rel = Path("skillsets/pr-review/codex/high-signal-pr-review/SKILL.md")
+        rel = Path("skillsets/pr-review/shared/high-signal-pr-review/SKILL.md")
         source = REPO / rel
         target = kit / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +133,7 @@ class CanonicalPrReviewBlockTests(unittest.TestCase):
                 os.environ["AI_CONFIG_KIT"] = previous
 
     def test_pr_review_sync_emits_the_full_canonical_jev_block(self) -> None:
-        codex = REPO / "skillsets/pr-review/codex/high-signal-pr-review/SKILL.md"
+        codex = REPO / "skillsets/pr-review/shared/high-signal-pr-review/SKILL.md"
         claude = REPO / "skillsets/pr-review/claude/commands/code-review.md"
         canonical = self.sync.PAT.search(codex.read_text(encoding="utf-8"))
         self.assertIsNotNone(canonical)

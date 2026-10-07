@@ -38,7 +38,7 @@ If two sources conflict, stop and ask a direct question before implementing.
   use an independent model/counterpart critique when available, include the
   required authorization sentence in advisor briefs, and preserve source-of-truth
   precedence.
-- Use verification-before-completion before closing implementation, docs, config, workflow, or generated-artifact work.
+- Use `verify` before closing implementation, docs, config, workflow, or generated-artifact work.
 - Use quality convergence when first-pass validation fails, quality targets are high, or the task is security, data, auth, release, or architecture sensitive.
 - Use PR preparation guidance when creating, preparing, reviewing, or summarizing a branch or PR.
 

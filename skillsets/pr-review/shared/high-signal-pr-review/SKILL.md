@@ -1,6 +1,8 @@
 ---
 name: high-signal-pr-review
-description: Review pull requests or diffs with a business-rule-first, high-signal, low-false-positive workflow, mandatory PR review output contract loading, inline code threads, root-cause commentary, practical failure examples, GitHub suggestion blocks when safe, no monolithic review bodies, no validation-transcript boilerplate in PR surfaces, no AI signatures, and a board-backed regression gate. Use when the user asks Codex to review a PR, inspect a diff for merge readiness, prepare review comments, check a branch before merge, evaluate AI-generated code, improve developer-facing PR feedback, or draft PR bodies.
+description: Review pull requests or diffs with a business-rule-first, high-signal, low-false-positive workflow, mandatory PR review output contract loading, inline code threads, root-cause commentary, practical failure examples, GitHub suggestion blocks when safe, no monolithic review bodies, no validation-transcript boilerplate in PR surfaces, no AI signatures, and a board-backed regression gate. Use when the user asks an agent to review a PR, inspect a diff for merge readiness, prepare review comments, check a branch before merge, evaluate AI-generated code, improve developer-facing PR feedback, or draft PR bodies.
+verify: python3 scripts/test_review_skill_source.py
+verified: 2026-10-06
 ---
 
 # High Signal PR Review
@@ -18,12 +20,13 @@ would catch it (regex, Semgrep, lint, test, fixture, or probe), or say in one
 line when only semantic review can catch it. Put generic rules in the kit starter
 pack and project-specific rules in `.review-rules/`.
 
-For every pull-request review, also load and obey the `hermes-assisted-pr-review`
-skill. Its bounded Hermes advisor pass is mandatory to attempt, best-effort to
-obtain, and never a publish blocker: if the advisor is unavailable, publish the
-independently evidenced verdict unchanged and record the unadvised gap only in
-the operator close-out. Keep Hermes, model, AI, agent, and provenance details
-out of every team- or author-facing PR surface.
+For every pull-request review, attempt the Hermes advisor pass (see "Hermes advisor
+pass" below). It is mandatory to attempt, best-effort to obtain, and never a
+publish blocker: if the advisor is unavailable, publish the independently
+evidenced verdict unchanged and record the unadvised gap only in the operator
+close-out. On our own PRs, a defect Hermes names blocks merge until it is fixed.
+Keep Hermes, model, AI, agent, and provenance details out of every team- or
+author-facing PR surface.
 
 After the Hermes result, use the finding labels and bounded summaries to run
 the Jev second-judge step below. Keep its packet local and allowlisted; do not
@@ -128,6 +131,54 @@ pass raw review text, diffs, source excerpts, secrets, or personal data.
 13. For re-review (second or later review of the same PR, follow-up after author reply or push, or queue sweep), apply the delta-first re-review contract from `references/pr-review-output-contract.md`: record previous reviewed SHA, current SHA, `old..new` delta, prior finding ledger and dispositions, and causally affected consumers only. Raise new blockers only if introduced/materially worsened by the delta, a concrete regression caused/exposed by the delta, or an explicitly in-scope release-critical invariant with causal proof. Unrelated or pre-existing discoveries are non-blocking follow-ups. Preserve stable finding identity; do not duplicate or reopen fixed/not-applicable/accepted-risk findings without changed facts. Fall back to a full current-head review only when the baseline is unavailable, the rewritten range is unreliable, scope/security/data/architecture materially expanded, or the user asks for a fresh review.
 14. If merge-after-approval is active, perform merges after the review verdicts and report each PR as merged, not merged with reason, or blocked. Prefer the repository's standard merge method and never bypass branch protection or unresolved review requirements.
 15. Produce the final report using the output contract.
+
+## Hermes advisor pass
+
+Every PR review attempts one. The local reviewer stays responsible for evidence, falsification, the final verdict, freshness and posting; Hermes advice never substitutes for code, ticket, board, runtime or hosted-check evidence, so verify each load-bearing claim against the exact head.
+
+**Route.** `bb fleet validate "<claim>" --topic <name> --scope "<what was asked>" --evidence <file>...` stages the evidence on Hermes's machine, runs the review, and removes the evidence after the verdict. Send bounded evidence only:
+- the claim, written as what the change does and why;
+- the commits and diffstat;
+- the diff, in chunks of at most about 28 KB split at file boundaries;
+- the pre-review JSON and Markdown packets;
+- focused test or probe output.
+
+Never mount or register a project source on Hermes. Never send credentials, tokens, cookies, environment blocks or personal data.
+
+Ask Hermes to challenge business-rule coverage, changed-path correctness, auth, security, data and API contracts, regression risk, validation sufficiency, and each candidate finding. Ask it to name false positives, missing evidence and overlooked defects, and for a verdict from `accept | revise | reject` with per-finding evidence; any other shape counts as no verdict. Agreement between Hermes and your own separate judgment is a confidence source; Hermes saying it is sure is not.
+
+**Two acts, two rules.**
+- **Reviewing someone else's PR:** Hermes is an advisor, mandatory to attempt and never a publish blocker.
+  - If it does not answer (transport fault, capacity, timeout), post your independently evidenced verdict unchanged. Do not downgrade `REQUEST_CHANGES` to `COMMENT` or soften a finding.
+  - Record `Hermes gate: BLOCKED` in the operator close-out only, and say there that the verdict is unadvised.
+  - Do not claim the pass happened, and do not silently replace Hermes with another model.
+  - Acknowledge queued automation work normally once the review is confirmed posted. Hermes being down is not a reason to leave an item unacknowledged; only failing to post is.
+  - Skipping the attempt while Hermes is reachable leaves the review incomplete.
+  - An earlier rule that made the advisor's answer a condition for posting suppressed real findings: a reviewer held back two located defects because two advisor calls timed out.
+- **Merging our own PR:** Hermes reviews every one of our PRs before merge.
+  - A defect it names blocks the merge until it is fixed and Hermes, on the same topic, no longer names it.
+  - An objection about evidence or method that names no defect does not block.
+  - When Hermes cannot be reached, fix the transport and resend rather than merging unreviewed.
+
+**Fresh head.** Hermes advice is about the head it reviewed. Re-fetch the live head and review state just before you post, acknowledge, or merge. If the head changed after that review, discard the advice as stale and run a fresh same-topic review of the delta first. Never let advice about an older head support a post or a merge.
+
+**Packet discipline** (measured):
+- **Never put a length budget on the answer.** With the same evidence, "at most 8 lines" returned two defects where the unbounded prompt returned six, and one of the four it dropped was a race.
+- **Chunk large evidence and never re-send** what the conversation already holds. One review re-sent the same payloads until it reached about a million input tokens, and its answer was discarded.
+- **Continue a re-review on the same topic** (`reviewing-with-an-agent`). The same topic judges the delta against what Hermes itself examined. A fresh topic judges your summary, which is the material a biased summary can hide.
+- **A transport error is not a verdict.** For example: a stale plugin handle, or a database connection that is not open.
+  - Before resending, find the review thread (`bb thread list --include-hidden`, titled `Validate · ...`) and read its output with `bb thread output <id>`.
+  - If it is still running, wait for it with `bb thread wait <id>`. A resend while one is in flight is refused or starts a duplicate.
+
+**Attribution boundary.** Hermes is internal evidence. Never mention Hermes, its host, model, provider, AI assistance, agent names or review provenance on a team- or author-facing surface: inline threads, review bodies, PR comments, PR descriptions, merge-readiness comments, or ticket and chat messages to the team. Write those as direct technical feedback.
+
+**Completion evidence**, recorded in the operator close-out:
+- the exact PR and head reviewed;
+- the Hermes topic and verdict, or `Hermes gate: BLOCKED`;
+- which Hermes claims were confirmed, rejected or left open;
+- your final verdict and posting status;
+- the live-head freshness check;
+- the queue acknowledgement status, when the review came from a queue.
 
 ## Guardrails
 

@@ -127,15 +127,6 @@ Put each yes/no, and the final pick (`--pick` over the declared lanes with
 one-line descriptions), to Jev (`typed-decisions` section 10) as an isolated second judge. A
 disagreement with your own selection escalates.""",
 
-"hermes-assisted": """Ask Hermes for a verdict from `accept | revise | reject`, with per-finding
-evidence. Any other shape counts as no verdict, recorded as advisor
-unavailable/unusable. Under this skill's failure rules, that never blocks a
-verdict you have evidenced yourself. Agreement between Hermes and your own
-separate judgment is a confidence source. Hermes saying it is sure is not.
-
-Jev (`typed-decisions` section 10) can pre-screen each finding's yes/no before the Hermes pass.
-Jev and your own judgment agreeing is `agreement(N=2)`, whether or not
-Hermes is available.""",
 
 "harness-routing": """The model or lane is pick-one from the declared tiers. Decide it from
 separate yes/no questions (reversible? mechanically verifiable? touches
@@ -162,7 +153,7 @@ TARGETS = {
                                + homes("reviewing-with-an-agent"),
     "codex-delegation": [f"{KIT}/skillsets/agent-runtime/shared/codex-delegation/SKILL.md"]
                          + homes("codex-delegation"),
-    "pr-review": [f"{KIT}/skillsets/pr-review/codex/high-signal-pr-review/SKILL.md",
+    "pr-review": [f"{KIT}/skillsets/pr-review/shared/high-signal-pr-review/SKILL.md",
                   f"{KIT}/skillsets/pr-review/claude/commands/code-review.md",
                   "~/.claude/commands/code-review.md"] + homes("high-signal-pr-review"),
     "security-sweep": [f"{KIT}/skillsets/security-review/codex/adversarial-security-sweep/SKILL.md",
@@ -172,7 +163,6 @@ TARGETS = {
     "plan-arbiter": [f"{KIT}/skillsets/cmux-hermes-orchestration/codex/plan-arbiter/SKILL.md",
                      f"{KIT}/skillsets/cmux-hermes-orchestration/claude/commands/plan-arbiter.md",
                      "~/.claude/commands/plan-arbiter.md"] + homes("plan-arbiter"),
-    "hermes-assisted": homes("hermes-assisted-pr-review"),
     "harness-routing": homes("harness-routing"),
 }
 
@@ -200,7 +190,6 @@ RECORD = {
     "pr-review": "`--point review-finding` per finding and `--point pr-verdict`",
     "security-sweep": "`--point security-finding` per candidate",
     "plan-arbiter": "`--point route`",
-    "hermes-assisted": "nothing by hand: Hermes verdicts are imported daily",
     "harness-routing": "`--point route`",
 }
 
@@ -210,7 +199,7 @@ def skill_block(key):
         # The PR-review source block carries the complete Jev packet boundary,
         # privacy safeguards, escalation and resolution procedure. Reuse it
         # verbatim so this sync cannot replace it with a shortened duplicate.
-        canonical = os.path.join(KIT, "skillsets/pr-review/codex/high-signal-pr-review/SKILL.md")
+        canonical = os.path.join(KIT, "skillsets/pr-review/shared/high-signal-pr-review/SKILL.md")
         text = Path(canonical).read_text(encoding="utf-8")
         blocks = PAT.findall(text)
         if len(blocks) != 1:
