@@ -42,8 +42,9 @@ class CommittedSnapshotTests(unittest.TestCase):
 
     def test_every_current_profile_in_history_stays_recorded(self) -> None:
         # #56 replaced the current bb digest without keeping the old one as an accepted profile, so the
-        # installer refused the very homes it had installed. A past current profile must stay accepted,
-        # or be kept under an explicit "(history only)" superseded heading.
+        # installer refused the very homes it had installed. A past current profile must stay installable:
+        # accepted or current. History-only does not count, since the installer refuses it (Hermes 2026-10-06,
+        # kit-standing-home-profile r1).
         rel = "proposals/card21/live-home-hashes.md"
 
         def sections(text: str) -> dict[str, frozenset[str]]:
@@ -63,15 +64,38 @@ class CommittedSnapshotTests(unittest.TestCase):
             self.skipTest("no git history for the fingerprint manifest")
         now = sections((RENDERER.ROOT / rel).read_text(encoding="utf-8"))
         kept = {d for h, d in now.items() if h.startswith(("Accepted live profile", "Current rendered profile"))}
-        history_only = {d for h, d in now.items() if h.startswith("Superseded profile") and "(history only)" in h}
+        installable = [frozenset(p.values()) for p in RENDERER.load_expected_hash_profiles()]
+        self.assertEqual(set(installable), kept, "the installer's profiles are the accepted and current sections")
         for commit in log.stdout.split():
             old = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show", f"{commit}:{rel}"],
                                  capture_output=True, text=True).stdout
             for header, digests in sections(old).items():
                 if header.startswith("Current rendered profile") and len(digests) == 4:
                     with self.subTest(commit=commit[:8]):
-                        self.assertTrue(digests in kept or digests in history_only,
-                                        f"{commit[:8]}'s current profile is no longer recorded: {sorted(d[:12] for d in digests)}")
+                        self.assertIn(digests, kept,
+                                      f"{commit[:8]}'s current profile is no longer installable: {sorted(d[:12] for d in digests)}")
+
+    def test_installer_replaces_the_installed_51_render(self) -> None:
+        # The homes #56 stranded: the committed #51 snapshots at f9e6837 must match the recorded profile, and
+        # install_homes must accept them and write the current render.
+        files = {}
+        for key, filename in RENDERER.NAMES.items():
+            shown = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show",
+                                    f"f9e6837:proposals/card21/rendered-homes/{filename}"], capture_output=True)
+            if shown.returncode != 0:
+                self.skipTest("commit f9e6837 is not in this checkout's history")
+            files[key] = shown.stdout
+        profiles = RENDERER.load_expected_hash_profiles()
+        snapshot = {key: hashlib.sha256(data).hexdigest() for key, data in files.items()}
+        self.assertIn(snapshot, profiles, "the #51 render is a recorded profile")
+        with tempfile.TemporaryDirectory() as directory:
+            targets = {key: Path(directory) / key / "AGENTS.md" for key in RENDERER.TARGETS}
+            outputs = {key: RENDERER.rendered(key) for key in targets}
+            for key, target in targets.items():
+                target.parent.mkdir()
+                target.write_bytes(files[key])
+            RENDERER.install_homes(targets, outputs, profiles, stamp="from-51-render")
+            self.assertEqual(outputs, {key: target.read_text(encoding="utf-8") for key, target in targets.items()})
 
     def test_installer_accepts_only_a_complete_known_home_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
