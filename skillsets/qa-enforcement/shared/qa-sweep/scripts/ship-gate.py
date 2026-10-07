@@ -1325,9 +1325,72 @@ def flat_words(text):
     return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
 
 
-# A delimiter word the shells read alike: plain characters none of bash, zsh or sh treats as special in a word,
-# a backslash before any character, or a single- or double-quoted run (no \\, $ or backtick inside double quotes).
-HEREDOC_WORD = re.compile(r"""(?:[A-Za-z0-9_.+,:@%/!^-]|\\[^\n]|'[^'\n]+'|"[^"\\$`\n]+")+""")
+HEREDOC_PLAIN = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+,:@%/!^-#~=*?[]{}$")
+HEREDOC_QUOTEISH = frozenset("\"'()`")
+
+
+def _heredoc_word(s, j):
+    """(delimiter, end) for the heredoc word at s[j], or None when bash, zsh and sh might not all read it as that
+    delimiter (Hermes 2026-10-07, kit-never-block-pr-merge r10 `<<'EOF!'`, r11 `<<"a\\q"`). Measured, not guessed:
+    hooks/test-heredoc-words.py runs every generated spelling in the three shells, at top level and inside a
+    `"$(...)"` merge body, and requires this reader and the awk hdword() to read each word as the shells do or not
+    at all. POSIX quote removal: `\\X` is X; `'...'` and `$'...'` (no escapes) are literal; in `"..."` a backslash
+    is dropped only before `$` or `\\`. Declined, because a shell reads them differently: a leading `#` or `-`, an
+    escaped or quoted quote, parenthesis or backtick, a `$"..."`, a `${` `$[` `$(`, a word-final unquoted `}` (zsh), a trailing
+    backslash, an empty delimiter, and a word that ends anywhere but a blank, `; & | < >` or a newline."""
+    out, k, n, tail = [], j, len(s), ""
+    if s[j:j + 1] in ("#", "-"):
+        return None
+    while k < n:
+        c = s[k]
+        plain = c in HEREDOC_PLAIN or ord(c) > 127
+        if not (plain or c in "\\'\""):
+            break
+        tail = c if plain else ""
+        if c == "\\":
+            x = s[k + 1:k + 2]
+            if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                return None
+            out.append(x)
+            k += 2
+        elif c == "'" or (c == "$" and s[k + 1:k + 2] in ("'", '"')):
+            if c == "$" and s[k + 1] == '"':
+                return None
+            k += 1 if c == "'" else 2
+            e = s.find("'", k)
+            if e < 0:
+                return None
+            body = s[k:e]
+            if "\n" in body or set(body) & HEREDOC_QUOTEISH or (c == "$" and "\\" in body):
+                return None
+            out.append(body)
+            k = e + 1
+        elif c == '"':
+            k += 1
+            while True:
+                d = s[k:k + 1]
+                if d in ("", "\n") or (d != '"' and d in HEREDOC_QUOTEISH):
+                    return None
+                k += 1
+                if d == '"':
+                    break
+                if d == "\\":
+                    x = s[k:k + 1]
+                    if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                        return None
+                    out.append(x if x in ("$", "\\") else "\\" + x)
+                    k += 1
+                else:
+                    out.append(d)
+        else:
+            out.append(c)
+            k += 1
+    delim = "".join(out)
+    if k == j or (k < n and s[k] not in " \t\n;&|<>") or not delim or delim.endswith("\\") or tail == "}":
+        return None
+    if any(x in s[j:k] for x in ("${", "$[", "$(")):
+        return None
+    return delim, k
 
 
 def _strip_heredoc_bodies(command):
@@ -1340,9 +1403,8 @@ def _strip_heredoc_bodies(command):
     or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
     terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
     hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
-      - the delimiter is a word the shells read alike (HEREDOC_WORD: plain letters, digits and `_ . + , : @ % / ! ^ -`,
-        a backslash before any character, or quoted `'EOF!'`/`"a b"`), and it ends at a blank, `; & | < >` or a
-        newline (Hermes r10: `<<'EOF!'` is a valid delimiter, so a merge body using it is read, not denied);
+      - the delimiter is a word _heredoc_word reads: one bash, zsh and sh read alike, measured by
+        hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
       - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
@@ -1422,11 +1484,10 @@ def _strip_heredoc_bodies(command):
             j += dash
             while j < n and command[j] in " \t":
                 j += 1
-            m = HEREDOC_WORD.match(command, j)
-            k = m.end() if m else j
-            if not m or (k < n and command[k] not in " \t\n;&|<>"):
-                return None  # not a plain word: $(...), `...`, $((...)), zsh E(x), E), an empty word
-            delim = re.sub(r"'([^']*)'|\"([^\"]*)\"|\\(.)", lambda q: q.group(q.lastindex), m.group(0))
+            word = _heredoc_word(command, j)
+            if word is None:
+                return None  # a delimiter the shells may read differently: $(...), `...`, zsh E(x), E), "a(b"
+            delim, k = word
             pending.append((dash, delim, list(stack)))
             i, word = k, True
             continue

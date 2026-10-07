@@ -183,9 +183,13 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
 PUSH, RAN = "git push origin main", "echo ORACLE-RAN"
 WORDS = ["EOF", "'EOF'", '"EOF"', "\\EOF", "E'O'F", '"E O F"', "$(echo E)", '$(echo "E")', "`echo E`", "$((1))",
          "E$(x)F", "E(x)", "E)", "${X}", "$X", "E{a,b}", "E*", "E=x",
-         # read alike by every shell (Hermes r10: <<'EOF!' is valid), so a merge body using one is allowed
-         "EOF!", "!EOF", "a:b/c@d%e+f,g^h", "'EOF!'", '"EOF!"', "\\!EOF", "'a b$c'", "'a\"b'", "'a\\b'", "E\\ x"]
-READABLE = WORDS[:6] + WORDS[18:]
+         # read alike by every shell (Hermes r10 <<'EOF!', r11 <<"a\q"), so a merge body using one is allowed
+         "EOF!", "!EOF", "a:b/c@d%e+f,g^h", "'EOF!'", '"EOF!"', "\\!EOF", "'a b$c'", "'a\\b'", "E\\ x", '"a\\q"',
+         '"a\\\\b"', "$'EOF'",
+         # bash 3.2 and sh misread a quote inside a "$(...)" merge body, so these stay unreadable (deny side);
+         # test-heredoc-words.py measures every spelling
+         "'a\"b'", '"a(b"']
+READABLE = WORDS[:6] + WORDS[18:30]
 CONTEXTS = {
     "top": "cat <<{W}\n{B}\n{T}\n{P}", "sub": "x=$(cat <<{W}\n{B}\n{T}\n)\n{P}",
     "quoted sub": 'x="$(cat <<{W}\n{B}\n{T}\n)"\n{P}', "backtick": "x=`cat <<{W}\n{B}\n{T}\n`\n{P}",
@@ -201,7 +205,11 @@ SHELLS = [s for s in ("/bin/bash", "/bin/zsh", "/bin/sh") if os.path.exists(s)]
 
 
 def unquote(w):
-    """The delimiter the shells read from a word: quotes removed in one pass, a backslash keeps the next character."""
+    """The delimiter the shells read from a word: the gate's reader where it reads the word (test-heredoc-words.py
+    checks it against the shells), otherwise quotes removed in one pass, a backslash keeping the next character."""
+    got = gate._heredoc_word(w + "\n", 0)
+    if got:
+        return got[0]
     return re.sub(r"'([^']*)'|\"([^\"]*)\"|\\(.)", lambda m: m.group(m.lastindex), w)
 
 

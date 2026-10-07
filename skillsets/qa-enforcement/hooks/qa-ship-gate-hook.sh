@@ -88,16 +88,59 @@ ship_scan() {
     }
     return seg
   }
-  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line, re, u, uc, uw) {
+  function hdword(s, j,   n, k, c, x, nx, e, body, out, tail, d, t, plain, hp, hq) {
+    # The heredoc word at s[j]: sets HW (delimiter) and HK (index after it) and returns 1, or returns 0 when the
+    # shells might read it differently. Same reader as ship-gate.py _heredoc_word, measured against bash, zsh
+    # and sh by hooks/test-heredoc-words.py (Hermes r10, r11). Bytes above 127 are plain (LC_ALL=C).
+    hp = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+,:@%/!^-#~=*?[]{}$"
+    hq = "\"" sq "()`"
+    n = length(s); k = j; out = ""; tail = ""
+    c = substr(s, j, 1)
+    if (c == "#" || c == "-") return 0
+    while (k <= n) {
+      c = substr(s, k, 1); nx = substr(s, k + 1, 1)
+      plain = (index(hp, c) > 0 || c > "\177")
+      if (!(plain || c == "\\" || c == sq || c == "\"")) break
+      tail = plain ? c : ""
+      if (c == "\\") {
+        if (nx == "" || nx == "\n" || index(hq, nx)) return 0
+        out = out nx; k += 2
+      } else if (c == sq || (c == "$" && (nx == sq || nx == "\""))) {
+        if (c == "$" && nx == "\"") return 0
+        k += (c == sq) ? 1 : 2
+        e = index(substr(s, k), sq); if (!e) return 0
+        body = substr(s, k, e - 1)
+        if (index(body, "\n") || index(body, "\"") || index(body, "(") || index(body, ")") || index(body, "`")) return 0
+        if (c == "$" && index(body, "\\")) return 0
+        out = out body; k += e
+      } else if (c == "\"") {
+        k++
+        for (;;) {
+          d = substr(s, k, 1)
+          if (d == "" || d == "\n" || (d != "\"" && index(hq, d))) return 0
+          k++
+          if (d == "\"") break
+          if (d == "\\") {
+            x = substr(s, k, 1)
+            if (x == "" || x == "\n" || index(hq, x)) return 0
+            out = out ((x == "$" || x == "\\") ? x : "\\" x); k++
+          } else out = out d
+        }
+      } else { out = out c; k++ }
+    }
+    if (k == j || (k <= n && !index(" \t\n;&|<>", substr(s, k, 1)))) return 0
+    if (out == "" || substr(out, length(out), 1) == "\\" || tail == "}") return 0
+    t = substr(s, j, k - j)
+    if (index(t, "${") || index(t, "$[") || index(t, "$(")) return 0
+    HW = out; HK = k; return 1
+  }
+  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line) {
     # The command without heredocs, or SFAIL = 1 when one is not read exactly. Same contract as the ship-gate.py
     # _strip_heredoc_bodies (Hermes r10, r11): a real << is code, not quoted, escaped, commented, arithmetic or in
-    # ${...} / $[...]; <<< is a here-string. Its delimiter must be a word the shells read alike (the same
-    # HEREDOC_WORD: plain letters, digits and _ . + , : @ % / ! ^ -, a backslash before any character, or a quoted
-    # run, as in EOF! in single quotes) ending at a blank, ; & | < > or a newline, its context must still be open
-    # where the body starts, a terminator line must exist, and no body line may start with the delimiter and go
-    # on. Anything else is unreadable, so the raw text is scanned.
+    # ${...} / $[...]; <<< is a here-string. Its delimiter must be a word hdword() reads (one the shells read
+    # alike), its context must still be open where the body starts, a terminator line must exist, and no body
+    # line may start with the delimiter and go on. Anything else is unreadable, so the raw text is scanned.
     out = ""; st = ""; np = 0; hp = 1; w = 0; n = length(s); SFAIL = 0
-    re = "^([A-Za-z0-9_.+,:@%/!^-]|\\\\[^\n]|" sq "[^" sq "\n]+" sq "|\"[^\"\\\\$`\n]+\")+"
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1); nx = substr(s, i + 1, 1); top = substr(st, length(st), 1)
       if (top == sq) { out = out c; if (c == sq) st = substr(st, 1, length(st) - 1); continue }
@@ -136,17 +179,8 @@ ship_scan() {
       if (c == "<" && nx == "<" && substr(s, i + 2, 1) != "<" && (i == 1 || substr(s, i - 1, 1) != "<")) {
         j = i + 2; dash = (substr(s, j, 1) == "-"); if (dash) j++
         while (j <= n && (substr(s, j, 1) == " " || substr(s, j, 1) == "\t")) j++
-        if (!match(substr(s, j), re)) { SFAIL = 1; return "" }
-        k = j + RLENGTH
-        if (k <= n && !index(" \t\n;&|<>", substr(s, k, 1))) { SFAIL = 1; return "" }
-        dl = substr(s, j, RLENGTH); uw = ""
-        for (u = 1; u <= length(dl); u++) {
-          uc = substr(dl, u, 1)
-          if (uc == sq || uc == "\"") { for (u++; substr(dl, u, 1) != uc; u++) uw = uw substr(dl, u, 1) }
-          else if (uc == "\\") { u++; uw = uw substr(dl, u, 1) }
-          else uw = uw uc
-        }
-        dl = uw
+        if (!hdword(s, j)) { SFAIL = 1; return "" }
+        k = HK; dl = HW
         np++; pd[np] = dash; pw[np] = dl; ps[np] = st; i = k - 1; w = 1; continue
       }
       out = out c
