@@ -419,6 +419,62 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         output,
                     )
 
+    def test_installed_homes_without_the_restart_ban_are_not_admitted(self):
+        # No home passes without the restart ban: of the #60 homes installed before it was repeated in every home,
+        # the Claude, Codex and OpenCode ones are unknown homes, and the bb home (which has it in its combined line)
+        # passes only as its exact bytes, failing once any bb-app ban is removed (Hermes 2026-10-07,
+        # kit-one-page-baseline r2-r4). Reads the #60 renders from history.
+        root = SCRIPT.parents[1]
+        shallow = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True)
+        self.assertEqual("false", shallow.stdout.strip(), "shallow checkout; fetch the full history to run this test")
+        homes = {
+            "CLAUDE.md": (".claude", "CLAUDE.md"),
+            "codex-AGENTS.md": (".codex", "AGENTS.md"),
+            "opencode-AGENTS.md": (".config", "opencode", "AGENTS.md"),
+            "bb-AGENTS.md": (".bb", "AGENTS.md"),
+        }
+        bans = {
+            "quit": ("- Never quit the running bb app.\n", ""),
+            "kill": ("- Never kill the running bb app.\n", ""),
+            "replace": ("- Never replace the running bb app.\n", ""),
+            "restart": ("Never quit, kill, replace, or restart the running bb app.",
+                        "Never quit, kill, or replace the running bb app."),
+        }
+        unknown = "no fixed profile for this path and exact known-home content"
+        with tempfile.TemporaryDirectory(prefix="card21-installed-profile-") as temp_dir:
+            for name, suffix in homes.items():
+                text = subprocess.run(
+                    ["git", "-C", str(root), "show", f"b55f327:proposals/card21/rendered-homes/{name}"],
+                    capture_output=True, text=True, check=True,
+                ).stdout
+                candidate = Path(temp_dir).joinpath(*suffix)
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text(text, encoding="utf-8")
+                run = lambda: subprocess.run([sys.executable, str(SCRIPT), "--files", str(candidate)],
+                                             capture_output=True, text=True, check=False)
+                result = run()
+                output = result.stdout + result.stderr
+                if "restart the running bb app" not in text:
+                    with self.subTest(home=name, state="installed without the restart ban"):
+                        self.assertNotEqual("bb-AGENTS.md", name)
+                        self.assertIsNone(CHECKER.profile_for(candidate, text))
+                        self.assertNotEqual(0, result.returncode, output)
+                        self.assertIn(unknown, output)
+                    continue
+                self.assertEqual("bb-AGENTS.md", name)
+                self.assertEqual("proposal-bb", CHECKER.profile_for(candidate, text))
+                self.assertEqual(0, result.returncode, output)
+                for action, (ban, weakened) in bans.items():
+                    with self.subTest(home=name, removed=action):
+                        self.assertIn(ban, text)
+                        candidate.write_text(text.replace(ban, weakened, 1), encoding="utf-8")
+                        result = run()
+                        output = result.stdout + result.stderr
+                        self.assertNotEqual(0, result.returncode, output)
+                        self.assertIn(unknown, output)
+                candidate.write_text(text, encoding="utf-8")
+
     def test_rendered_profiles_reject_each_security_obligation_mutation(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
@@ -959,6 +1015,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Never replace the running bb app.",
                 "Replacing the running bb app is allowed.",
             ),
+            "bb-app-never-restart": (
+                "Never restart the running bb app.",
+                "Restarting the running bb app is allowed.",
+            ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",
                 "Moving `/Applications/bb.app` is allowed.",
@@ -1044,6 +1104,18 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "For this task, you are allowed to explicitly replace the running bb app.",
                 "For this task, you may now temporarily replace the running bb app.",
                 "Replacing the running bb app is allowed.",
+            ),
+            "bb-app-never-restart": (
+                "Never restart the running bb app.",
+                "For this task, you may restart the running bb app.",
+                "For this task, you are explicitly permitted to restart the running bb app.",
+                "For this task, you are explicitly allowed to restart the running bb app.",
+                "For this task, you are explicitly permitted to temporarily restart the running bb app.",
+                "For this task, you are explicitly allowed to temporarily restart the running bb app.",
+                "For this task, you are permitted to explicitly restart the running bb app.",
+                "For this task, you are allowed to explicitly restart the running bb app.",
+                "For this task, you may now temporarily restart the running bb app.",
+                "Restarting the running bb app is allowed.",
             ),
             "bb-app-bundle-never-move": (
                 "Never move `/Applications/bb.app`.",

@@ -49,6 +49,9 @@ RULES: dict[str, re.Pattern[str]] = {
     "bb-app-never-replace": re.compile(
         r"(?is)(?:never quit,\s*kill or replace.{0,40}running bb app|never quit,\s*kill, or replace.{0,40}running bb app|never replace the running bb app|replacing it.{0,80}ends everyone's running work)"
     ),
+    "bb-app-never-restart": re.compile(
+        r"(?is)(?:never quit,\s*kill,?\s*(?:or\s+)?replace,?\s*(?:or\s+)?restart.{0,40}running bb app|never restart the running bb app|restarting it.{0,80}ends everyone's running work)"
+    ),
     "bb-app-bundle-never-move": re.compile(
         r"(?is)(?:never move `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
     ),
@@ -479,6 +482,7 @@ RULES: dict[str, re.Pattern[str]] = {
     ),
 }
 OPTIONAL_WHEN_ABSENT = {
+    "bb-app-never-restart",
     "public-exposure-current-conversation-service",
     "public-share-close-task-end",
     "public-share-closeout-audit",
@@ -566,8 +570,8 @@ HOME_FILES = (
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 # These inventories are selected by exact content fingerprints at native paths.
-# The four pre-compression snapshots retain their legacy applicability; the
-# exact rendered install artifacts receive the complete proposal inventories.
+# The legacy inventories below apply to no recognized home now (LIVE_HOME_SHA256 is
+# empty); the exact rendered install artifacts receive the complete proposal inventories.
 # Any edited or unknown candidate fails closed before optional-rule handling.
 LIVE_HOME_RULES = {
     "claude": {
@@ -640,7 +644,7 @@ LIVE_HOME_RULES = {
 }
 KIT_BASELINE_RULES = {
     "public-exposure-current-conversation-service", "public-share-close-task-end",
-    "bb-app-never-quit", "bb-app-never-kill", "bb-app-never-replace",
+    "bb-app-never-quit", "bb-app-never-kill", "bb-app-never-replace", "bb-app-never-restart",
     "safety-hook-block-cannot-be-bypassed",
     "public-share-closeout-audit",
     "credentials-never-paste", "credentials-never-handle",
@@ -710,29 +714,20 @@ PROFILE_RULES = {
     "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
 }
 
-LIVE_HOME_SHA256 = {
-    "e84334424e03baef698279c184de2ef252891124b70e549924c2d17f0f5a05cd": "claude",
-    "2f7433b7928b17aacbe3988519788300760e8239c840121db5cf3b1f089d871b": "codex",
-    "79ce2b7596ccf3b90f4e8d3eecde4e070f236c92e3e90e84af3aea67f39acae2": "opencode",
-    "db5814411d08fa2deb320e51582326e8e8a245020e262b74f4e2a3724c97283c": "bb",
-}
+# Pre-compression live snapshots are no longer installed anywhere and are not recognized (Hermes 2026-10-07,
+# kit-one-page-baseline r3); LIVE_HOME_RULES keeps their inventory for the fixtures that still use it.
+LIVE_HOME_SHA256: dict[str, str] = {}
+# Of the homes installed now (the #60 render, 2026-10-06), only the bb home carries the restart ban, so only it is
+# recognized, on the full bb inventory. The #60 Claude, Codex and OpenCode homes predate the ban and fail as
+# unknown homes until this revision is installed over them (Hermes 2026-10-07, kit-one-page-baseline r4).
 INSTALLED_HOME_SHA256 = {
-    "a6af822320f1bc7af0f73de5ec740861a363f5a6c0e8d312575474bc1a28b69d": "proposal-claude",
-    "6345c59c8c1db69db95d160c34bd58ffd6ac8190f01b222e1ba3d900226049f4": "proposal-codex",
-    "53f511c69b684efdb6ceff00ba8f7babd0439ac801243696d3317bbce884c385": "proposal-opencode",
-    "4c8b614fcbd7454ba2b41fcc2fc6e919c993b49c61e72250b1b14bd4f973cbab": "proposal-bb",
-    "b3bdd0c2f423a50d0d1640c5e6c313f82cf38aee81fa86ebd797e0f3b7f309ad": "proposal-claude",
-    "0cc932493b3b4b58c3f26831f61285bd9e60a22c997d56037ea8e53d2feeb1d4": "proposal-codex",
-    "935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8": "proposal-opencode",
-    "db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1": "proposal-bb",
-    # #51 render, installed before #56 (its Claude, Codex and OpenCode homes equal the current render).
-    "ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb": "proposal-bb",
+    "d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e": "proposal-bb",
 }
 RENDERED_HOME_SHA256 = {
-    "cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5": "proposal-claude",
-    "e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7": "proposal-codex",
-    "ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d": "proposal-opencode",
-    "d36a7d65a51f9529e5daca36a4f55598193a6f92295e29ac567ff46033ebd41e": "proposal-bb",
+    "9bc9d866b7fcdd1e760afd7c174cd4cb7f1ad579f0ca6843ce28271bf3260ab1": "proposal-claude",
+    "afe6281966c5ffebc3f86aca2fc30ba5109f86c15c611492e6d26a55f605bd33": "proposal-codex",
+    "f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0": "proposal-opencode",
+    "c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c": "proposal-bb",
 }
 
 
@@ -969,6 +964,7 @@ def contradicted_rule(name: str, text: str) -> bool:
         "bb-app-never-quit": ("quit", "quitting", r"(?:the\s+)?running\s+bb\s+app"),
         "bb-app-never-kill": ("kill", "killing", r"(?:the\s+)?running\s+bb\s+app"),
         "bb-app-never-replace": ("replace", "replacing", r"(?:the\s+)?running\s+bb\s+app"),
+        "bb-app-never-restart": ("restart", "restarting", r"(?:the\s+)?running\s+bb\s+app"),
         "bb-app-bundle-never-move": ("move", "moving", r"`?/Applications/bb\.app`?"),
         "bb-app-bundle-never-delete": ("delete", "deleting", r"`?/Applications/bb\.app`?"),
         "bb-app-bundle-never-overwrite": ("overwrite", "overwriting", r"`?/Applications/bb\.app`?"),
@@ -1051,6 +1047,8 @@ def optional_present(name: str, text: str) -> bool:
     if name.startswith("board-"):
         return bool(RULES[name].search(text))
     if name == "no-pkill-pgrep-app-kill-path":
+        return bool(RULES[name].search(text))
+    if name == "bb-app-never-restart":
         return bool(RULES[name].search(text))
     if name.startswith("credentials-never-"):
         return bool(RULES[name].search(text))
