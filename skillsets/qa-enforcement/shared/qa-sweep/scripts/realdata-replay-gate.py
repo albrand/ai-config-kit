@@ -40,6 +40,13 @@ IDENTIFIERS = (
     ("secret assignment", re.compile(r"\b(?:api[_-]?key|key|secret|password)\s*=\s*['\"]?[^\s,'\";]{1,}", re.I)),
 )
 URI = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.I)
+REQUIRED_FIELD_KEYS = (
+    "Copy time (UTC)", "Control SHA", "Candidate SHA", "Local copy",
+    "Production source", "Privacy", "Blocked rows",
+)
+REQUIRED_TABLE_KEYS = {
+    "goal", "target rows", "control count", "candidate count", "reason", "error class",
+}
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -57,14 +64,15 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     except (OSError, UnicodeError):
         return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
 
-    raw_lines = text.splitlines()
     # Check both deletion and word-separator forms so format marks cannot join or split label words.
+    label_scan_text = _exclude_gate_owned_label_keys(text)
     normalized_lines = [
         [_normalize_label_text(line), _normalize_label_text(line, cf_as_space=False)]
-        for line in raw_lines
+        for line in label_scan_text.splitlines()
     ]
     normalized_text = [
-        _normalize_label_text(text), _normalize_label_text(text, cf_as_space=False)
+        _normalize_label_text(label_scan_text),
+        _normalize_label_text(label_scan_text, cf_as_space=False),
     ]
     label_patterns = [pattern for label in labels for pattern in (
         _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
@@ -98,7 +106,38 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True) -> str:
     text = "".join(format_replacement if unicodedata.category(char) == "Cf" else char
                     for char in text)
     text = re.sub(r"\\(.)", r"\1", text)
-    return re.sub(r"[*_`~]", "", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\[[^\]]*\]", r"\1", text)
+    text = re.sub(r"<((?:https?://|mailto:)[^\s>]+)>", r"\1", text, flags=re.I)
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
+    text = re.sub(r"[*_`~]", "", text)
+    text = text.replace("|", " ")
+    return re.sub(r"[^\S\n]+", " ", text)
+
+
+def _exclude_gate_owned_label_keys(text: str) -> str:
+    """Remove only validator-owned key text while preserving report values and line numbers."""
+    lines = text.splitlines(keepends=True)
+    key_prefix = re.compile(
+        r"^(\s*[-*]?\s*)(" + "|".join(re.escape(key) for key in REQUIRED_FIELD_KEYS) + r"):"
+    )
+    normalized_table_keys = {_normalize_label_text(key).strip().lower()
+                             for key in REQUIRED_TABLE_KEYS}
+    output: list[str] = []
+    for line in lines:
+        if re.match(r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", line, re.I):
+            output.append("\n" if line.endswith("\n") else "")
+            continue
+        line = key_prefix.sub(r"\1", line, count=1)
+        if "|" in line:
+            pieces = line.split("|")
+            for index, cell in enumerate(pieces):
+                if _normalize_label_text(cell).strip().lower() in normalized_table_keys:
+                    pieces[index] = " "
+            line = "|".join(pieces)
+        output.append(line)
+    return "".join(output)
 
 
 def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Pattern[str] | None:

@@ -344,6 +344,44 @@ sys.exit(2)
     def test_private_tenant_label_rejects_full_width_unicode(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Ａｃｍｅ Energy reviewer")
 
+    def test_private_tenant_label_rejects_markdown_inline_link(self) -> None:
+        self.assert_private_label_variant_denied(
+            "- Persona: [Acme](https://example.invalid) Energy reviewer")
+
+    def test_private_tenant_label_rejects_markdown_inline_link_with_title(self) -> None:
+        self.assert_private_label_variant_denied(
+            '- Persona: [Acme](https://example.invalid "title") Energy reviewer')
+
+    def test_private_tenant_label_rejects_markdown_reference_link(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: [Acme][r] Energy reviewer")
+
+    def test_private_tenant_label_rejects_collapsed_reference_link(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: [Acme][] Energy reviewer")
+
+    def test_private_tenant_label_rejects_html_bold_text(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: <b>Acme</b> Energy reviewer")
+
+    def test_private_tenant_label_rejects_empty_html_tag_between_words(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: Acme<span></span> Energy reviewer")
+
+    def test_private_tenant_label_rejects_adjacent_table_cells(self) -> None:
+        self.assert_private_label_variant_denied("| Acme | Energy |")
+
+    def test_private_tenant_label_rejects_markdown_image_alt_text(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: ![Acme](image.png) Energy reviewer")
+
+    def test_private_tenant_label_rejects_label_inside_html_tags(self) -> None:
+        self.assert_private_label_variant_denied("- Persona: <span class='x'>Acme Energy</span>")
+
+    def test_private_tenant_label_checks_autolink_visible_text(self) -> None:
+        self.denylist.write_text("example.invalid\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: <https://example.invalid>"))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("example.invalid", reason)
+
     def test_private_tenant_label_uses_word_boundaries(self) -> None:
         valid, reason, _ = self.gate_module().validate_report_text(
             replay_report(note="- Persona: SuperAcme EnergyCo reviewer"))
@@ -421,6 +459,32 @@ sys.exit(2)
         valid, reason, digest = self.gate_module().validate_report_text(replay_report())
         self.assertTrue(valid, reason)
         self.assertIsNotNone(digest)
+
+    def test_required_artifact_sha_footer_does_not_match_private_label(self) -> None:
+        self.denylist.write_text("SHA\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: no additional boundary."))
+        self.assertTrue(valid, reason)
+
+    def test_required_blocked_rows_key_does_not_match_private_label(self) -> None:
+        self.denylist.write_text("Blocked\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: no additional boundary."))
+        self.assertTrue(valid, reason)
+
+    def test_required_table_key_does_not_match_private_label(self) -> None:
+        self.denylist.write_text("Goal\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: no additional boundary."))
+        self.assertTrue(valid, reason)
+
+    def test_required_field_values_are_still_checked_for_private_labels(self) -> None:
+        text = replay_report_with_blocked_line("Blocked rows: 0 (Acme Energy boundary)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 9", reason)
+        self.assertNotIn("Acme Energy", reason)
 
     def test_missing_denylist_skips_label_check_but_runs_other_privacy_checks(self) -> None:
         missing = Path(self.temp.name) / "missing-labels.txt"
