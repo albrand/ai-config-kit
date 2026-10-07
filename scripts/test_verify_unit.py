@@ -32,6 +32,7 @@ class UnitStageTests(unittest.TestCase):
             self.assertIn('LATER SUITE exercised', result.stdout)
             self.assertIn('SELFTEST exercised', result.stdout)
             self.assertIn('2 test files + ship-gate selftest; 1 failed', result.stdout)
+            self.assertIn('failed suite: skillsets/new-skill/tests/a_test.py', result.stdout)
             self.assertNotIn('HOST-ONLY-CHECK-RAN', result.stdout)
             (tests / 'a_test.py').write_text('print("REPAIRED SUITE exercised")\n')
             repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root,

@@ -43,6 +43,8 @@ def main():
     if result.returncode:
         failed.append('ship-gate selftest')
     print(f'unit: {len(tests)} test files + ship-gate selftest; {len(failed)} failed', flush=True)
+    for name in failed:
+        print(f'failed suite: {name}', flush=True)
     print(f'host-only check excluded: {HOST_CHECK}', flush=True)
     return int(bool(failed))
 
