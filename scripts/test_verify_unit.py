@@ -1,5 +1,6 @@
 """Exercise test discovery and failure propagation through the stage CLI."""
 from pathlib import Path
+import json
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,9 @@ class UnitStageTests(unittest.TestCase):
             host = root / 'skillsets/qa-enforcement/hooks/test-hook-chain.sh'
             host.parent.mkdir(parents=True)
             host.write_text('#!/bin/sh\necho HOST-ONLY-CHECK-RAN\nexit 1\n')
+            (root / 'scripts/verify-suites.json').write_text(json.dumps({
+                'selftests': {str(gate.relative_to(root)): ['selftest']},
+                'excluded': {str(host.relative_to(root)): 'host installation check'}}))
             subprocess.run(['git', 'add', '.'], cwd=root, check=True)
             result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root,
                                     capture_output=True, text=True)
@@ -31,12 +35,31 @@ class UnitStageTests(unittest.TestCase):
             self.assertIn('NESTED FAILURE exercised', result.stdout)
             self.assertIn('LATER SUITE exercised', result.stdout)
             self.assertIn('SELFTEST exercised', result.stdout)
-            self.assertIn('2 test files + ship-gate selftest; 1 failed', result.stdout)
+            self.assertIn('2 test files + 1 CLI selftests; 1 failed', result.stdout)
             self.assertIn('failed suite: skillsets/new-skill/tests/a_test.py', result.stdout)
             self.assertNotIn('HOST-ONLY-CHECK-RAN', result.stdout)
             (tests / 'a_test.py').write_text('print("REPAIRED SUITE exercised")\n')
             repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root,
                                       capture_output=True, text=True)
+            self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
+
+    def test_unconventional_unittest_without_main_is_exercised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+            (root / 'checks').mkdir()
+            audit = root / 'checks/audit.py'
+            audit.write_text('from unittest import TestCase\nclass Audit(TestCase):\n    def test_outcome(self):\n        self.assertTrue(False)\n')
+            (root / 'checks/test_anchor.py').write_text('print("anchor exercised")\n')
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            result = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('failed suite: checks/audit.py', result.stdout)
+            self.assertIn('anchor exercised', result.stdout)
+            audit.write_text(audit.read_text().replace('assertTrue(False)', 'assertTrue(True)'))
+            repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
             self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
 
     def test_empty_inventory_cannot_pass(self):

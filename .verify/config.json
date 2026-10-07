@@ -9,7 +9,7 @@
     },
     "integration": {
       "run": null,
-      "na": "no database, queue or service; skillsets/qa-enforcement/hooks/test-hook-chain.sh exercises the hooks installed on a host, not the checkout"
+      "na": "no database, queue or service; installed hook-chain and live BB capability coverage require the host application/provider homes and are recorded separately from checkout-only tests in scripts/verify-suites.json"
     },
     "journeys": {
       "run": null,
