@@ -379,7 +379,9 @@ class RunnerIsolation(unittest.TestCase):
         self.home_canary = Path.home() / ".cache" / f"verify-test-canary-{os.getpid()}.txt"
         self.home_canary.parent.mkdir(exist_ok=True)
         self.home_canary.write_text("HOME-CANARY\n")
-        self.tmp_canary = Path("/private/tmp") / f"verify-test-canary-{os.getpid()}.txt"
+        # Keep fixture setup inside an outer runner's approved TMPDIR. This
+        # canary is still outside the nested PR job and must remain unreadable.
+        self.tmp_canary = Path(tempfile.gettempdir()).resolve() / f"verify-test-canary-{os.getpid()}.txt"
         self.tmp_canary.write_text("TMP-CANARY\n")
         (self.tmp / "vf-canary.txt").write_text("VF-CANARY\n")
         self.marker = self.tmp / "marker"
