@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 PATHS_FILE = ROOT / "realdata-paths.json"
 REPORT_NAME = "REALDATA-REPLAY.md"
+DENYLIST_ENV = "REALDATA_REPLAY_DENYLIST"
+DEFAULT_DENYLIST_RELATIVE = Path(".config/realdata-gate/tenant-labels.txt")
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 IDENTIFIERS = (
@@ -40,19 +42,46 @@ URI = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.I)
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     """Validate report structure, privacy and its footer."""
+    denylist_value = os.environ.get(DENYLIST_ENV)
+    denylist_path = (Path(denylist_value).expanduser() if denylist_value
+                     else Path.home() / DEFAULT_DENYLIST_RELATIVE)
+    try:
+        labels = [line.strip() for line in denylist_path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()]
+        label_check_skipped = False
+    except FileNotFoundError:
+        labels = []
+        label_check_skipped = True
+    except (OSError, UnicodeError):
+        return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
+
     for line_number, line in enumerate(text.splitlines(), start=1):
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):
-                return False, f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}", None
+                reason = f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}"
+                return False, _with_label_check_status(reason, label_check_skipped), None
+        for label in labels:
+            if re.search(rf"(?<!\w){re.escape(label)}(?!\w)", line, re.I):
+                reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {line_number}"
+                return False, _with_label_check_status(reason, label_check_skipped), None
         for match in URI.finditer(line):
             try:
                 parsed = urlsplit(match.group(0))
                 if parsed.username is not None or parsed.password is not None:
-                    return False, f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}", None
+                    reason = f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}"
+                    return False, _with_label_check_status(reason, label_check_skipped), None
             except ValueError:
-                return False, f"REALDATA-REPLAY.md contains malformed URI at line {line_number}", None
+                reason = f"REALDATA-REPLAY.md contains malformed URI at line {line_number}"
+                return False, _with_label_check_status(reason, label_check_skipped), None
 
-    return _validate_report_structure_and_digest(text)
+    valid, reason, digest = _validate_report_structure_and_digest(text)
+    return valid, _with_label_check_status(reason, label_check_skipped), digest
+
+
+def _with_label_check_status(reason: str, skipped: bool) -> str:
+    if skipped:
+        return f"{reason}; private tenant-label check skipped because the deny-list file is missing"
+    return reason
 
 
 def git(repo: Path, *args: str, timeout: float = 4) -> str:
@@ -225,9 +254,13 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "read-only production source": r"(?im)^\s*[-*]?\s*Production source:\s*read-only\b[^\n]*$",
         "counts-only privacy": r"(?im)^\s*[-*]?\s*Privacy:\s*counts only;? no (?:row )?(?:IDs|PII)\b[^\n]*$",
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
-        "blocked external-call rows": r"(?im)^\s*[-*]?\s*Blocked rows:\s*.+$",
+        "blocked external-call rows": r"(?m)^Blocked rows: \d+ \(.+\)$",
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
+    if "blocked external-call rows" in missing:
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
     rows = [line for line in text.splitlines() if line.strip().startswith("|")]
     has_result = any(any(cell.strip() and not set(cell.strip()) <= {"-", ":"}
                          for cell in line.strip().strip("|").split("|")) for line in rows[2:])

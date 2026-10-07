@@ -32,7 +32,7 @@ def replay_report(candidate_count: int = 3, note: str = "", reason: str = "sourc
 - Local copy: Mac-local database bound to loopback only; production data never leaves the Mac.
 - Production source: read-only; no production writes were performed.
 - Privacy: counts only; no row IDs or PII are included.
-- Blocked rows: {2 if blocked or prose_blocked else 0}; external provider boundary was not needed for this replay.
+Blocked rows: {2 if blocked or prose_blocked else 0} (external provider boundary was not needed for this replay)
 
 | Goal | Target rows | Control count | Candidate count | Verdict | Reason | Error class |
 |---|---:|---:|---:|---|---|---|
@@ -46,6 +46,10 @@ def replay_report(candidate_count: int = 3, note: str = "", reason: str = "sourc
 class RealdataReplayGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
+        self.original_denylist = os.environ.get("REALDATA_REPLAY_DENYLIST")
+        self.denylist = Path(self.temp.name) / "tenant-labels.txt"
+        self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        os.environ["REALDATA_REPLAY_DENYLIST"] = str(self.denylist)
         self.repo = Path(self.temp.name) / "pallium-app"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "develop")
@@ -64,6 +68,10 @@ class RealdataReplayGateTests(unittest.TestCase):
         git(self.repo, "commit", "-m", "data fix")
 
     def tearDown(self) -> None:
+        if self.original_denylist is None:
+            os.environ.pop("REALDATA_REPLAY_DENYLIST", None)
+        else:
+            os.environ["REALDATA_REPLAY_DENYLIST"] = self.original_denylist
         self.temp.cleanup()
 
     def check(self, action: str = "review", command: str = "pre-review.py",
@@ -278,6 +286,64 @@ sys.exit(2)
         self.assertTrue(passed_json["allowed"])
         self.assertEqual(passed_json["artifact"], "REALDATA-REPLAY.md")
         self.assertRegex(str(passed_json["sha256"]), r"^[0-9a-f]{64}$")
+
+    def test_report_rejects_private_tenant_label_without_echoing_it(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Persona: acme energy reviewer"))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("acme energy", reason.lower())
+
+    def test_private_tenant_label_uses_word_boundaries(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Persona: SuperAcme EnergyCo reviewer"))
+        self.assertTrue(valid, reason)
+
+    def test_report_rejects_objectid_without_echoing_it(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: 507f1f77bcf86cd799439011"))
+        self.assertFalse(valid)
+        self.assertIn("ObjectId-like token", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("507f1f77bcf86cd799439011", reason)
+
+    def test_report_rejects_email_without_echoing_it(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report(note="- Replay note: reviewer@example.invalid"))
+        self.assertFalse(valid)
+        self.assertIn("email address", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("reviewer@example.invalid", reason)
+
+    def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
+        text = replay_report().replace(
+            "Blocked rows: 0 (external provider boundary was not needed for this replay)\n",
+            "Blocked rows: 0; external provider boundary was not needed for this replay.\n")
+        # Keep the existing digest valid so this test reaches the required-field check.
+        body = "\n".join(text.splitlines()[:-1]) + "\n"
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        text = body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+        self.assertIn(f"line {len(text.splitlines()) + 1} (end of report)", reason)
+
+    def test_report_passes_with_clean_private_denylist(self) -> None:
+        valid, reason, digest = self.gate_module().validate_report_text(replay_report())
+        self.assertTrue(valid, reason)
+        self.assertIsNotNone(digest)
+
+    def test_missing_denylist_skips_label_check_but_runs_other_privacy_checks(self) -> None:
+        missing = Path(self.temp.name) / "missing-labels.txt"
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(missing)}):
+            clean, clean_reason, _ = self.gate_module().validate_report_text(replay_report())
+            object_id, object_reason, _ = self.gate_module().validate_report_text(
+                replay_report(note="- Replay note: 507f1f77bcf86cd799439011"))
+        self.assertTrue(clean, clean_reason)
+        self.assertIn("label check skipped", clean_reason.lower())
+        self.assertFalse(object_id)
+        self.assertIn("ObjectId-like token", object_reason)
 
     def test_local_clone_with_pallium_package_identity_is_gated(self) -> None:
         clone = Path(self.temp.name) / "repo"
