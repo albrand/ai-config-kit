@@ -24,7 +24,9 @@ HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
-    ("phone-like number", re.compile(r"(?<![A-Fa-f0-9])\+?\d(?:[\d\s().-]*\d){8,}(?![A-Fa-f0-9])")),
+    ("international phone number", re.compile(r"(?<![A-Za-z0-9])\+\d(?:[\s().-]*\d){8,}(?![A-Za-z0-9])")),
+    ("parenthesized phone number", re.compile(r"(?<!\d)\(\d{3}\)\s+\d{3}-\d{4}(?!\d)")),
+    ("grouped phone number", re.compile(r"(?<!\d)\d{3}(?P<separator>[-.])\d{3}(?P=separator)\d{4}(?!\d)")),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
     ("labelled personal field", re.compile(r"\b(?:(?:full|personal|first|last|patient|tenant|user|owner|client|contact|clinician|customer|member)[\s_-]*name|contact|email[\s_-]*address|phone(?:[\s_-]*number)?)\s*[:=]\s*[^\s,;|]+", re.I)),
     ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}", re.I)),
@@ -35,7 +37,7 @@ URI = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.I)
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
-    """Validate report structure, safe reason codes, privacy and its footer."""
+    """Validate report structure, privacy and its footer."""
     for line_number, line in enumerate(text.splitlines(), start=1):
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):

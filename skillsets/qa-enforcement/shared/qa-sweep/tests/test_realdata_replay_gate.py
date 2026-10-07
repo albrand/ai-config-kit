@@ -332,7 +332,22 @@ sys.exit(2)
         self.assert_sensitive_report_denied("123456789012")
 
     def test_phone_like_number_in_reason_cell_is_rejected(self) -> None:
-        self.assert_sensitive_report_denied("+1 (555) 123-4567")
+        for phone in ("+1 555 123 4567", "+44 20 7946 0958", "(555) 123-4567",
+                      "555-123-4567", "555.123.4567"):
+            with self.subTest(phone=phone):
+                self.assert_sensitive_report_denied(phone)
+
+    def test_ordinary_dates_and_counts_are_allowed_in_reason_cells(self) -> None:
+        for text in ("Copy time 2026-10-07 03:41Z", "window (2026-10-06) 21:59",
+                     "counts 1 2 3 4 5 6 7 8 9", "10 12 22 25 2 0"):
+            with self.subTest(text=text):
+                report = replay_report(reason=text)
+                (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+                git(self.repo, "add", "REALDATA-REPLAY.md")
+                git(self.repo, "commit", "-m", "commit report with ordinary dates or counts")
+                allowed, payload = self.check()
+                self.assertEqual(allowed.returncode, 0, payload["reason"])
+                self.assertTrue(payload["allowed"])
 
     def test_secret_patterns_in_report_are_rejected(self) -> None:
         for marker in ("Bearer abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9.payload.signature",
