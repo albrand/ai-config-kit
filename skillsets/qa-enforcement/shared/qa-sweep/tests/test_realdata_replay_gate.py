@@ -150,12 +150,11 @@ sys.exit(2)
     def test_pr_info_fails_closed_when_every_logged_in_account_fails(self) -> None:
         env, _ = self.install_account_gh_stub("all-fail")
         env["GH_TOKEN"] = "ambient-token"
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with patch.dict(os.environ, env, clear=True), redirect_stdout(stdout), redirect_stderr(stderr):
-            info = self.gate_module().pull_request_info(
-                self.repo, "gh pr ready 1701 -R palliumai-com/pallium-app")
-        self.assertIsNone(info)
-        self.assertNotIn("token-", stdout.getvalue() + stderr.getvalue())
+        result, payload = self.check("pr", "gh pr ready 1701 -R palliumai-com/pallium-app", env)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("cannot read the target PR's changed files", payload["reason"])
+        self.assertNotIn("token-", result.stdout + result.stderr)
 
     def test_missing_artifact_fails_then_valid_artifact_passes(self) -> None:
         missing, missing_json = self.check()
