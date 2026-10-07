@@ -467,6 +467,39 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_form_encoded_plus_in_url_queries_is_space_for_label_scan(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        refusing = (
+            ("html_href_value", '- Replay note: <a href="https://example.test/?tenant=Test+Tenant">safe</a>', "line 14"),
+            ("entity_html_href_value", '- Replay note: &lt;a href=&quot;https://example.test/?tenant=Test+Tenant&quot;&gt;safe&lt;/a&gt;', "line 14"),
+            ("markdown_value", "- Replay note: [safe](https://example.test/?tenant=Test+Tenant)", "line 14"),
+            ("css_attribute_value", '- Replay note: <div style="background:url(https://example.test/?tenant=Test+Tenant)">safe</div>', "line 14"),
+            ("css_style_element_value", '- Replay note: <style>.x{background:url(https://example.test/?tenant=Test+Tenant)}</style>', "line 14"),
+            ("query_name", '- Replay note: <a href="https://example.test/?Test+Tenant=value">safe</a>', "line 14"),
+            ("multiline_value", '- Replay note: <a href="https://example.test/?tenant=\nTest+Tenant">safe</a>', "line 15"),
+        )
+        for case_name, note, expected_line in refusing:
+            with self.subTest(url_query=case_name):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Test Tenant", reason)
+
+        controls = (
+            "- Replay note: [safe](https://example.test/?tenant=PreTest+TenantSuffix)",
+            "- Replay note: [safe](https://example.test/Test+Tenant)",
+            "- Replay note: [safe](https://example.test/?tenant=Test%2BTenant)",
+            "- Replay note: [safe](https://example.test/#tenant=Test+Tenant)",
+            '- Replay note: <div style="--note:Test+Tenant">safe</div>',
+            '- Replay note: <style>.x{content:"Test+Tenant"}</style>',
+        )
+        for note in controls:
+            with self.subTest(url_query="literal plus or non-query control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_css_url_values_are_scanned_without_decoding_other_style_text(self) -> None:
         gate = self.gate_module()
         self.denylist.write_text("Test Tenant\n", encoding="utf-8")

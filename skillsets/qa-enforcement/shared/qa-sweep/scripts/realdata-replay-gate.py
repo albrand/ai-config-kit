@@ -17,7 +17,7 @@ import sys
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS_FILE = ROOT / "realdata-paths.json"
@@ -173,6 +173,21 @@ def _url_list_spans(value: str, start: int, *, srcset: bool = False) -> list[tup
         if url:
             spans.append((url, start + token.start() + left_trim, True))
     return spans
+
+
+def _decode_url_form_query(value: str) -> str:
+    """Decode form-style plus and percent escapes inside a URL query only."""
+    query_start = value.find("?")
+    fragment_start = value.find("#")
+    if query_start < 0 or (fragment_start >= 0 and fragment_start < query_start):
+        return value
+
+    query_end = fragment_start if fragment_start >= 0 else len(value)
+    query = value[query_start + 1:query_end]
+    # Escaped newlines are decoded whitespace, not source-line boundaries.
+    query = re.sub(r"(?i)%0d%0a|%0a|%0d", " ", query)
+    decoded_query = unquote_plus(query)
+    return value[:query_start + 1] + decoded_query + value[query_end:]
 
 
 def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
@@ -509,6 +524,9 @@ def _normalize_nonrendered_label_texts(text: str) -> list[str]:
             decoded = unquote(decoded)
             if decoded != value:
                 values.append(decoded)
+            form_decoded = _decode_url_form_query(value)
+            if form_decoded != value and form_decoded not in values:
+                values.append(form_decoded)
         for candidate in values:
             normalized.append(_normalize_label_text(
                 prefix + candidate, preserve_line_numbers=True))
