@@ -56,6 +56,21 @@ command-produced SHA-256 values for those live files.
 | OpenCode | `935d2be4fa6c0c629b066b231bb298f7660b8ce07f7b34881894dcedc190f2b8` |
 | bb | `db5d8261357900775c7ccdc3d73e2936c945c8e62a75e4dd038d57349d073dd1` |
 
+### Accepted live profile: #51 render at f9e6837 (installed before #56)
+
+Verified byte-for-byte on 2026-10-06: all four live homes equal the output of
+`python3 scripts/render-standing-homes.py --output-dir <dir>` at f9e6837, the
+last commit before #56. #56 replaced this bb digest in the current rendered
+profile without keeping it as an accepted one, so the installer refused the
+very homes it had installed.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `cf5ca4009d0473f55dfcbe7fb3f0c860f12300581f12e6663bcc252406832fa5` |
+| Codex | `e593b4903f6264d813a09ce84c554349e042c193886f4e7ef1b89b44758fe1e7` |
+| OpenCode | `ed6919d94821b5c4003c6a603c62783d81350481e7abce90c4d5a7a59d1ec68d` |
+| bb | `ec2131079c52a46015df40c4bb53b52d05988b08e82bffc4c61cc46f39e5d1eb` |
+
 ### Current rendered profile: follow-through PR candidate based on 192f652a
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
