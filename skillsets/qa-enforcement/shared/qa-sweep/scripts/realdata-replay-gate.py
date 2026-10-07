@@ -208,8 +208,127 @@ def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
     return spans
 
 
+def _css_escape(value: str, index: int) -> tuple[str, int]:
+    """Decode one CSS escape and retain markers for consumed source newlines."""
+    next_index = index + 1
+    if next_index >= len(value):
+        return "\ufffd", next_index
+    char = value[next_index]
+    if char in "\r\n\f":
+        if char == "\r" and next_index + 1 < len(value) and value[next_index + 1] == "\n":
+            next_index += 2
+        else:
+            next_index += 1
+        return LABEL_LINE_MARKER if char in "\r\n" else "", next_index
+    if char in "0123456789abcdefABCDEF":
+        end = next_index
+        while end < len(value) and end - next_index < 6 and value[end] in "0123456789abcdefABCDEF":
+            end += 1
+        codepoint = int(value[next_index:end], 16)
+        decoded = ("\ufffd" if codepoint == 0 or codepoint > 0x10FFFF
+                   or 0xD800 <= codepoint <= 0xDFFF else chr(codepoint))
+        line_marker = ""
+        if end < len(value) and value[end] in " \t\r\n\f":
+            if value[end] == "\r" and end + 1 < len(value) and value[end + 1] == "\n":
+                end += 2
+                line_marker = LABEL_LINE_MARKER
+            else:
+                if value[end] in "\r\n":
+                    line_marker = LABEL_LINE_MARKER
+                end += 1
+        # Escaped CSS newlines are visible whitespace, but are not source lines.
+        if decoded in "\r\n\f":
+            decoded = " "
+        return decoded + line_marker, end
+    return char, next_index + 1
+
+
+def _css_ident_start(char: str) -> bool:
+    return char in "-_\\" or char.isalpha() or ord(char) >= 0x80
+
+
+def _css_ident_char(char: str) -> bool:
+    return char in "-_" or char.isalnum() or ord(char) >= 0x80
+
+
+def _css_consume_ident(value: str, start: int) -> tuple[str, int]:
+    chars: list[str] = []
+    index = start
+    while index < len(value):
+        char = value[index]
+        if _css_ident_char(char):
+            chars.append(char)
+            index += 1
+        elif char == "\\" and index + 1 < len(value) and value[index + 1] not in "\r\n\f":
+            decoded, index = _css_escape(value, index)
+            chars.append(decoded)
+        else:
+            break
+    return "".join(chars), index
+
+
+def _css_skip_string(value: str, start: int, quote: str) -> int:
+    index = start + 1
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            if value[index + 1] in "\r\n\f":
+                _, index = _css_escape(value, index)
+            elif value[index + 1] in "0123456789abcdefABCDEF":
+                _, index = _css_escape(value, index)
+            else:
+                index += 2
+        elif value[index] == quote:
+            return index + 1
+        elif value[index] in "\r\n\f":
+            return index
+        else:
+            index += 1
+    return index
+
+
+def _css_url_payload(value: str, opening: int) -> tuple[str, int, int] | None:
+    """Read a quoted or unquoted CSS URL payload starting at its opening paren."""
+    index = opening + 1
+    while index < len(value) and value[index] in " \t\r\n\f":
+        index += 1
+    if index >= len(value) or value[index] == ")":
+        return None
+
+    quote = value[index] if value[index] in "\"'" else None
+    payload_start = index + 1 if quote else index
+    index = payload_start
+    decoded: list[str] = []
+    while index < len(value):
+        char = value[index]
+        if quote and char == quote:
+            payload_end = index
+            index += 1
+            while index < len(value) and value[index] in " \t\r\n\f":
+                index += 1
+            if index < len(value) and value[index] == ")" and decoded:
+                return "".join(decoded), payload_start, index + 1
+            return None
+        if not quote and char == ")":
+            while decoded and decoded[-1] in " \t\r\n\f":
+                decoded.pop()
+            return ("".join(decoded), payload_start, index + 1) if decoded else None
+        if char == "\\" and index + 1 < len(value):
+            if value[index + 1] in "\r\n\f" or value[index + 1] in "0123456789abcdefABCDEF":
+                escaped, index = _css_escape(value, index)
+                decoded.append(escaped)
+                continue
+            decoded.append(value[index + 1])
+            index += 2
+            continue
+        if quote and char in "\r\n\f":
+            return None
+        decoded.append(char)
+        index += 1
+    return None
+
+
 def _css_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
-    """Extract CSS url() payloads, ignoring comments and unrelated strings."""
+    """Extract CSS url() payloads, decoding CSS escapes only in URL consumers."""
     spans: list[tuple[str, int, bool]] = []
     index = 0
     while index < len(value):
@@ -218,64 +337,20 @@ def _css_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
             index = len(value) if comment_end < 0 else comment_end + 2
             continue
         if value[index] in "\"'":
-            quote = value[index]
-            index += 1
-            while index < len(value):
-                if value[index] == "\\":
-                    index += 2
-                elif value[index] == quote:
-                    index += 1
-                    break
-                else:
-                    index += 1
+            index = _css_skip_string(value, index, value[index])
             continue
-
-        if value[index:index + 3].lower() != "url" or (
-                index > 0 and (value[index - 1].isalnum() or value[index - 1] in "_-")):
-            index += 1
+        if _css_ident_start(value[index]):
+            ident, end = _css_consume_ident(value, index)
+            if ident.replace(LABEL_LINE_MARKER, "").lower() == "url" and end < len(value) and value[end] == "(":
+                payload = _css_url_payload(value, end)
+                if payload is not None:
+                    decoded, payload_start, next_index = payload
+                    spans.append((decoded, start + payload_start, True))
+                    index = next_index
+                    continue
+            index = max(end, index + 1)
             continue
-        opening = index + 3
-        while opening < len(value) and value[opening].isspace():
-            opening += 1
-        if opening >= len(value) or value[opening] != "(":
-            index += 3
-            continue
-
-        cursor = opening + 1
-        while cursor < len(value) and value[cursor].isspace():
-            cursor += 1
-        if cursor < len(value) and value[cursor] in "\"'":
-            quote = value[cursor]
-            payload_start = cursor + 1
-            cursor = payload_start
-            while cursor < len(value):
-                if value[cursor] == "\\":
-                    cursor += 2
-                elif value[cursor] == quote:
-                    payload_end = cursor
-                    cursor += 1
-                    while cursor < len(value) and value[cursor].isspace():
-                        cursor += 1
-                    if cursor < len(value) and value[cursor] == ")" and payload_end > payload_start:
-                        spans.append((value[payload_start:payload_end], start + payload_start, True))
-                    break
-                else:
-                    cursor += 1
-        else:
-            payload_start = cursor
-            while cursor < len(value):
-                if value[cursor] == "\\":
-                    cursor += 2
-                elif value[cursor] == ")":
-                    payload_end = cursor
-                    while payload_end > payload_start and value[payload_end - 1].isspace():
-                        payload_end -= 1
-                    if payload_end > payload_start:
-                        spans.append((value[payload_start:payload_end], start + payload_start, True))
-                    break
-                else:
-                    cursor += 1
-        index = cursor + 1
+        index += 1
     return spans
 
 

@@ -501,6 +501,43 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_css_escaped_url_identifiers_and_payloads_keep_source_lines(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Test Tenant\n", encoding="utf-8")
+        refusing = (
+            ("escaped function", '- Replay note: <div style="background-image:u\\72l(https://example.test/Test%20Tenant)">safe</div>', "line 14"),
+            ("simple escaped function name", '- Replay note: <div style="background-image:\\url(https://example.test/Test%20Tenant)">safe</div>', "line 14"),
+            ("encoded tag escaped function", '- Replay note: &lt;div style=&quot;background-image:u\\72l(https://example.test/Test%20Tenant)&quot;&gt;safe&lt;/div&gt;', "line 14"),
+            ("hex terminator in function name", '- Replay note: <style>.a{background-image:u\\72 l(https://example.test/Test%20Tenant)}</style>', "line 14"),
+            ("escaped percent", '- Replay note: <style>.a{background-image:url(https://example.test/Test\\25 20Tenant)}</style>', "line 14"),
+            ("escaped label character", '- Replay note: <div style="background-image:url(https://example.test/T\\65 st%20Tenant)">safe</div>', "line 14"),
+            ("simple escaped label character", '- Replay note: <div style="background-image:url(https://example.test/Te\\st%20Tenant)">safe</div>', "line 14"),
+            ("physical CRLF function terminator", '- Replay note: <style>.a{background-image:u\\72\r\nl(https://example.test/Test%20Tenant)}</style>', "line 15"),
+            ("physical CRLF payload terminator", '- Replay note: <div style="background-image:url(https://example.test/T\\65\r\nst%20Tenant)">safe</div>', "line 14"),
+            ("quoted URL line continuation", "- Replay note: <div style='background-image:url(\"https://example.test/\\\r\nTest%20Tenant\")'>safe</div>", "line 15"),
+            ("entity newline terminator", '- Replay note: <style>.a{background-image:url(https://example.test/T\\65&#10;st%20Tenant)}</style>', "line 14"),
+        )
+        for case_name, note, expected_line in refusing:
+            with self.subTest(css_escape=case_name):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn(expected_line, reason)
+                self.assertNotIn("Test Tenant", reason)
+
+        passing = (
+            '- Replay note: <style>.a{background-image:u\\72l(https://example.test/ordinary)}</style>',
+            '- Replay note: <style>.a{background-image:\\url(https://example.test/ordinary)}</style>',
+            '- Replay note: <div style="background-image:url(https://example.test/SuperTest%20TenantCo)">safe</div>',
+            '- Replay note: <div style="--label:Test%20Tenant">safe</div>',
+            '- Replay note: <style>.a{content:"url(https://example.test/Test%20Tenant)"}</style>',
+            '- Replay note: <div style="/* u\\72l(https://example.test/Test%20Tenant) */ background:none">safe</div>',
+        )
+        for note in passing:
+            with self.subTest(css_escape="clean or non-URL control"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
     def test_percent_encoded_url_newline_is_not_a_source_line_break(self) -> None:
         notes = (
             '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',
