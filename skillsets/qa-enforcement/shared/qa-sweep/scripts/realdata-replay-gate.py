@@ -125,8 +125,7 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True,
     def keep_source_lines(visible: str, source: str) -> str:
         removed_lines = source.count("\n") - visible.count("\n")
         removed_markers = source.count(LABEL_LINE_MARKER) - visible.count(LABEL_LINE_MARKER)
-        return (visible + "\n" * max(0, removed_lines)
-                + LABEL_LINE_MARKER * max(0, removed_markers))
+        return visible + LABEL_LINE_MARKER * (max(0, removed_lines) + max(0, removed_markers))
 
     text = re.sub(r"!\[([^\]]*)\]\([^)]*\)",
                   lambda match: keep_source_lines(match.group(1), match.group(0)), text)
@@ -136,8 +135,8 @@ def _normalize_label_text(text: str, *, cf_as_space: bool = True,
                   lambda match: keep_source_lines(match.group(1), match.group(0)), text)
     text = re.sub(r"<((?:https?://|mailto:)[^\s>]+)>", r"\1", text, flags=re.I)
     text = re.sub(r"</?[A-Za-z][^>]*>",
-                  lambda match: ("\n" * match.group(0).count("\n")
-                                 + LABEL_LINE_MARKER * match.group(0).count(LABEL_LINE_MARKER)), text)
+                  lambda match: LABEL_LINE_MARKER * (
+                      match.group(0).count("\n") + match.group(0).count(LABEL_LINE_MARKER)), text)
     text = re.sub(r"[*_`~]", "", text)
     text = text.replace("|", " ")
     return re.sub(r"[^\S\n]+", " ", text)
@@ -197,7 +196,7 @@ def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Patter
     marker = re.escape(LABEL_LINE_MARKER)
     marker_gap = f"(?:{marker})*"
     words_with_markers = [marker_gap.join(re.escape(char) for char in word) for word in words]
-    separator = rf"(?:\s|{marker})+"
+    separator = r"\s+"
     expression = (rf"(?<![\w{marker}]){marker}*(?P<label_start>"
                   + separator.join(words_with_markers) + ")"
                   + rf"(?![\w{marker}])")

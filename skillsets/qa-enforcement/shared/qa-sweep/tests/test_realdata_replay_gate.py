@@ -435,6 +435,66 @@ sys.exit(2)
         self.assertIn("line 14", reason)
         self.assertNotIn("Acme Energy", reason)
 
+    def test_private_label_split_by_multiline_opening_html_tag_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Ac<b\n>me Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_after_multiline_opening_html_tag_reports_its_line(self) -> None:
+        text = replay_report(note="- Replay note: <b\n>Acme Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_split_by_multiline_closing_html_tag_is_rejected(self) -> None:
+        text = replay_report(note="- Replay note: Ac</b\n>me Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_private_label_split_by_multiline_link_title_is_rejected(self) -> None:
+        text = replay_report(note='- Replay note: [Ac](https://example.invalid "title\nline")me Energy')
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 14", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_hidden_comment_and_link_newlines_do_not_create_label_spaces(self) -> None:
+        gate = self.gate_module()
+        self.denylist.write_text("Ac Energy\n", encoding="utf-8")
+        comment_report = replay_report(note="- Replay note: Ac<!--\n -->Energy")
+        comment_valid, comment_reason, _ = gate.validate_report_text(comment_report)
+        self.assertTrue(comment_valid, comment_reason)
+
+        self.denylist.write_text("Ac me Energy\n", encoding="utf-8")
+        link_report = replay_report(note='- Replay note: [Ac](https://example.invalid "title\nline")me Energy')
+        link_valid, link_reason, _ = gate.validate_report_text(link_report)
+        self.assertTrue(link_valid, link_reason)
+
+    def test_private_label_after_multiline_link_title_reports_its_line(self) -> None:
+        text = replay_report(note='- Replay note: [hidden](https://example.invalid "title\nline") Acme Energy')
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_adjacent_multiline_opening_and_closing_tags_preserve_rendered_adjacency(self) -> None:
+        text = replay_report(note="- Replay note: <span\n>Ac</span\n>me Energy")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("Acme Energy", reason)
+
     def test_report_requires_explicit_blocked_rows_boundary(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0; no boundary")
         valid, reason, _ = self.gate_module().validate_report_text(text)
