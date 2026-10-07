@@ -128,17 +128,40 @@ class ReviewSkillSourceTests(unittest.TestCase):
 
     def test_review_skill_carries_the_hermes_pass_for_both_acts(self) -> None:
         text = re.sub(r"\s+", " ", CODEX_SKILL.read_text(encoding="utf-8"))
-        self.assertIn("## Hermes advisor pass", text)
-        self.assertIn("mandatory to attempt", text)
-        self.assertIn("never a publish blocker", text)
-        self.assertIn("bb fleet validate", text)
-        self.assertIn("A defect it names blocks the merge until it is fixed", text)
-        self.assertIn("does not block", text)
+        # Each rule must sit where it applies, not merely somewhere in the file (Hermes 2026-10-06,
+        # kit-review-skill-merge r3): the section, and within it the block for each act.
+        self.assertEqual(text.count("## Hermes advisor pass"), 1)
+        section = text.split("## Hermes advisor pass", 1)[1].split(" ## ", 1)[0]
+        self.assertEqual(section.count("**Reviewing someone else's PR:**"), 1)
+        self.assertEqual(section.count("**Merging our own PR:**"), 1)
+        others = section.split("**Reviewing someone else's PR:**", 1)[1].split("**Merging our own PR:**", 1)[0]
+        own = section.split("**Merging our own PR:**", 1)[1].split("**Fresh head.**", 1)[0]
+        self.assertIn("bb fleet validate", section)
+        for rule in (
+            "Hermes is an advisor, mandatory to attempt and never a publish blocker",
+            "If it does not answer (transport fault, capacity, timeout), post your independently evidenced verdict unchanged",
+            "Do not downgrade `REQUEST_CHANGES` to `COMMENT` or soften a finding",
+            "Record `Hermes gate: BLOCKED` in the operator close-out only",
+            "Hermes being down is not a reason to leave an item unacknowledged",
+        ):
+            with self.subTest(act="someone else's PR", rule=rule):
+                self.assertIn(rule, others)
+        for rule in (
+            "Hermes reviews every one of our PRs before merge",
+            "A defect it names blocks the merge until it is fixed and Hermes, on the same topic, no longer names it",
+            "An objection about evidence or method that names no defect does not block",
+            "fix the transport and resend rather than merging unreviewed",
+        ):
+            with self.subTest(act="our own PR", rule=rule):
+                self.assertIn(rule, own)
+        # Posting a review of someone else's PR never waits on Hermes: no blocking or gate wording in that block.
+        self.assertNotIn("blocks", others)
+        self.assertEqual(gate_sentences(others), [])
         # The retired skill's rules that still apply, the stale-head rule among them (Hermes 2026-10-06,
-        # kit-review-skill-merge r1 and r2): one assertion per phrase.
+        # kit-review-skill-merge r1 and r2): one assertion per phrase, inside the section.
         for item in CHALLENGE_ITEMS + RETAINED_RULES:
             with self.subTest(rule=item):
-                self.assertIn(item, text)
+                self.assertIn(item, section)
         # The folded-in skill is retired; nothing may send an agent to it.
         self.assertNotIn("hermes-assisted-pr-review", text)
 
