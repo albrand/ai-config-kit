@@ -201,7 +201,25 @@ CONTEXTS = {
     "closed on its line after a blank": "x=$(cat <<{W} )\n{P}\n{T}", "closed on its line by ;": "x=$(cat <<{W};)\n{P}\n{T}",
     "bash ends the body at T)": "x=$(cat <<{W}\n{B}\n{T})\n{P}\n{T}\n)", "in ${...}": "echo ${x:-<<{W} }\n{P}\n{T}",
 }
-SHELLS = [s for s in ("/bin/bash", "/bin/zsh", "/bin/sh") if os.path.exists(s)]
+SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh")
+
+
+def shell_versions():
+    """Every oracle shell is required: a missing one would let a green run skip that shell's reading (Hermes r12)."""
+    missing = [s for s in SHELLS if not os.access(s, os.X_OK)]
+    if missing:
+        sys.exit(f"BAD required shell missing: {', '.join(missing)}; the oracle needs all of {', '.join(SHELLS)}")
+    out = {}
+    for s in SHELLS:
+        r = subprocess.run([s, "-c", 'echo "${ZSH_VERSION:-${BASH_VERSION:-no version variable}}"'],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode:
+            sys.exit(f"BAD required shell {s} does not run: rc {r.returncode}")
+        out[s] = r.stdout.strip()
+    return ", ".join(f"{s} {v}" for s, v in out.items())
+
+
+VERSIONS = shell_versions()
 
 
 def unquote(w):
@@ -262,7 +280,8 @@ for wname in READABLE:
             if seen != (want == 2):
                 print(f"BAD oracle {name} ship_scan with a <<{wname} body sees a push {seen}, want {want == 2}: {cmd!r}")
 bad += oracle_bad
-print(f"real-shell oracle: {oracle_cases} cases on {len(SHELLS)} shells, {oracle_hooks} hook runs, {oracle_bad} bad")
+print(f"real-shell oracle: {oracle_cases} cases on {len(SHELLS)} shells ({VERSIONS}), {oracle_hooks} hook runs, "
+      f"{oracle_bad} bad")
 agree = total = 0
 for cmd in LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE:
     for ascii_only in (True, False):

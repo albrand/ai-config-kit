@@ -25,8 +25,26 @@ spec = importlib.util.spec_from_file_location("gate", os.path.join(HOOKS, "..", 
                                                                    "ship-gate.py"))
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
-SHELLS = [s for s in ("/bin/bash", "/bin/zsh", "/bin/sh") if os.path.exists(s)]
+SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh")
 PUSH = "git push origin main"
+
+
+def shell_versions():
+    """Every oracle shell is required: a missing one would let a green run skip that shell's reading (Hermes r12)."""
+    missing = [s for s in SHELLS if not os.access(s, os.X_OK)]
+    if missing:
+        sys.exit(f"BAD required shell missing: {', '.join(missing)}; the oracle needs all of {', '.join(SHELLS)}")
+    out = {}
+    for s in SHELLS:
+        r = subprocess.run([s, "-c", 'echo "${ZSH_VERSION:-${BASH_VERSION:-no version variable}}"'],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode:
+            sys.exit(f"BAD required shell {s} does not run: rc {r.returncode}")
+        out[s] = r.stdout.strip()
+    return ", ".join(f"{s} {v}" for s, v in out.items())
+
+
+VERSIONS = shell_versions()
 
 
 def corpus():
@@ -170,7 +188,7 @@ for i, w in enumerate(read):
 agree = sum(t is not None for t in shells)
 print(f"heredoc words: {len(words)} generated, {agree} read alike by {len(SHELLS)} shells at top level and in a merge "
       f"body; the gate and awk read {len(read)}, decline {len(residual)} of those (residual: a merge using one is "
-      f"denied), {bad} bad")
+      f"denied), {bad} bad\nshells: {VERSIONS}")
 for w in residual[:20]:
     print(f"  residual {w!r}")
 sys.exit(1 if bad else 0)
