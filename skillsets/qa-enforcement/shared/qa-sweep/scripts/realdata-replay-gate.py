@@ -102,12 +102,38 @@ def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
     return paths
 
 
-def committed_changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
-    """Return only paths changed in the committed base-to-head range."""
-    if base is None:
-        base = "refs/remotes/origin/develop"
-        git(repo, "rev-parse", "--verify", f"{base}^{{commit}}")
-    return set(filter(None, git(repo, "diff", "--name-only", f"{base}...{head}").splitlines()))
+def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str | None:
+    """Require every production-data commit to precede the newest report commit."""
+    commit_range = f"{base}..{head}"
+    report_commit = git(repo, "log", "-1", "--format=%H", commit_range, "--", REPORT_NAME)
+    if not report_commit:
+        return f"{REPORT_NAME} report inherited from base; replay this change"
+
+    log = git(repo, "log", "--no-merges", "--format=%H", "--name-only", commit_range)
+    commits: list[tuple[str, set[str]]] = []
+    current_commit: str | None = None
+    current_paths: set[str] = set()
+    for line in log.splitlines():
+        if re.fullmatch(r"[0-9a-f]{40,64}", line, re.I):
+            if current_commit is not None:
+                commits.append((current_commit, current_paths))
+            current_commit, current_paths = line, set()
+        elif line and current_commit is not None:
+            current_paths.add(line)
+    if current_commit is not None:
+        commits.append((current_commit, current_paths))
+
+    for commit, paths in commits:
+        if not production_paths(paths):
+            continue
+        result = subprocess.run(["git", "merge-base", "--is-ancestor", commit, report_commit],
+                                cwd=repo, text=True, capture_output=True, timeout=4)
+        if result.returncode == 1:
+            return ("a production-data change postdates REALDATA-REPLAY.md; "
+                    f"replay this change (commit {commit[:8]})")
+        if result.returncode:
+            raise RuntimeError(f"cannot verify production-data commit ancestry for {commit[:8]}")
+    return None
 
 
 def production_paths(paths: set[str]) -> set[str]:
@@ -331,7 +357,7 @@ def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
     target_repo = repo_flag(args) or github_repo_slug(repo)
     if target_repo:
         query.extend(["--repo", target_repo])
-    query.extend(["--json", "body,headRefOid,files"])
+    query.extend(["--json", "body,headRefOid,baseRefOid,files"])
     try:
         result = subprocess.run(query, cwd=repo, text=True, capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
@@ -374,7 +400,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
         return True, "not the Pallium app repository", set(), None
     pr_info: dict[str, Any] | None = None
     diff_paths: set[str]
-    report_diff_paths: set[str]
+    report_range_base: str
     try:
         if action == "pr":
             pr_info = pull_request_info(repo, command)
@@ -382,7 +408,9 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
                 return False, "cannot read the target PR's changed files; refusing to guess", set(), None
             diff_paths = {str(item.get("path")) for item in pr_info["files"]
                           if isinstance(item, dict) and item.get("path")}
-            report_diff_paths = diff_paths
+            report_range_base = str(pr_info.get("baseRefOid") or "")
+            if not report_range_base:
+                return False, "cannot establish the target PR's base commit; refusing to guess", set(), None
             impacted = production_paths(diff_paths)
         elif action == "release":
             production_base = "refs/remotes/origin/main"
@@ -392,18 +420,15 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
                 return False, ("cannot resolve production branch refs/remotes/origin/main "
                                "for release diff"), set(), None
             diff_paths = changed_paths(repo, production_base, head)
-            report_diff_paths = committed_changed_paths(repo, production_base, head)
+            report_range_base = production_base
             if base is not None and base != production_base:
                 # Explicit bases may broaden the release scope, but must never
                 # hide paths changed since production's current branch.
                 diff_paths.update(changed_paths(repo, base, head))
-                # Report ownership is anchored only to the production-to-head
-                # range. An older explicit base can make the production report
-                # look newly added, even when the candidate inherited it.
             impacted = production_paths(diff_paths)
         else:
             diff_paths = changed_paths(repo, base, head)
-            report_diff_paths = committed_changed_paths(repo, base, head)
+            report_range_base = base or "refs/remotes/origin/develop"
             impacted = production_paths(diff_paths)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return False, f"cannot establish the Pallium production-data diff: {exc}", set(), None
@@ -414,8 +439,12 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     valid, reason, digest = validate_report(repo, head)
     if not valid or digest is None:
         return False, reason, impacted, digest
-    if REPORT_NAME not in report_diff_paths:
-        return False, f"{REPORT_NAME} report inherited from base; replay this change", impacted, digest
+    try:
+        ownership_failure = report_ownership_failure(repo, report_range_base, head)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return False, f"cannot establish REALDATA-REPLAY.md ownership: {exc}", impacted, digest
+    if ownership_failure:
+        return False, ownership_failure, impacted, digest
     if action == "review":
         # pre-review creates the packet that cites the report; Hermes itself must attach it.
         if "pre-review.py" not in command and not report_attached(command, cwd, digest):

@@ -110,10 +110,10 @@ if args[:3] == ["auth", "token", "--user"]:
 if args[:2] == ["pr", "view"]:
     record()
     if mode == "ambient-then-second" and os.environ.get("GH_TOKEN") == "token-second-account":
-        print(json.dumps({"body":"report cited", "headRefOid":"abc", "files":[{"path":"src/server/ingestion/job.ts"}]}))
+        print(json.dumps({"body":"report cited", "headRefOid":"abc", "baseRefOid":"base", "files":[{"path":"src/server/ingestion/job.ts"}]}))
         sys.exit(0)
     if mode == "ambient-success" and not os.environ.get("GH_TOKEN"):
-        print(json.dumps({"body":"report cited", "headRefOid":"abc", "files":[{"path":"src/server/ingestion/job.ts"}]}))
+        print(json.dumps({"body":"report cited", "headRefOid":"abc", "baseRefOid":"base", "files":[{"path":"src/server/ingestion/job.ts"}]}))
         sys.exit(0)
     print("denied", file=sys.stderr)
     sys.exit(1)
@@ -363,6 +363,105 @@ sys.exit(2)
         self.assertEqual(allowed.returncode, 0, payload["reason"])
         self.assertTrue(payload["allowed"])
 
+    def test_stacked_child_must_refresh_inherited_parent_report(self) -> None:
+        git(self.repo, "reset", "--hard", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
+        source = self.repo / "src/server/ingestion/worker.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("parent data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "parent production-data change")
+        parent_code = git(self.repo, "rev-parse", "HEAD")
+
+        parent_report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(parent_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "parent replay report")
+        source.write_text("child data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "stacked child production-data change")
+        child_code = git(self.repo, "rev-parse", "HEAD")
+
+        parent_digest = parent_report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {parent_digest}\n"
+            "Read-back +30 min counts: affected goals and blocked rows.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        release_denied, release_payload = self.check(
+            "release", f"release-request --body-file {request}", default_base=True)
+        self.assertEqual(release_denied.returncode, 2)
+        self.assertIn(child_code[:8], release_payload["reason"])
+        review_denied, review_payload = self.check("review", "pre-review.py", default_base=True)
+        self.assertEqual(review_denied.returncode, 2)
+        self.assertIn(child_code[:8], review_payload["reason"])
+
+        child_report = replay_report(note="- Refreshed for the stacked child production-data change.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(child_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "stacked child replay report")
+        child_digest = child_report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {child_digest}\n"
+            "Read-back +30 min counts: affected goals and blocked rows.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        release_allowed, release_payload = self.check(
+            "release", f"release-request --body-file {request}", default_base=True)
+        self.assertEqual(release_allowed.returncode, 0, release_payload["reason"])
+        review_allowed, review_payload = self.check("review", "pre-review.py", default_base=True)
+        self.assertEqual(review_allowed.returncode, 0, review_payload["reason"])
+        self.assertTrue(review_payload["allowed"])
+
+    def test_production_data_commit_after_report_is_denied(self) -> None:
+        git(self.repo, "reset", "--hard", self.base)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
+        source = self.repo / "src/server/projections/account.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("first data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/projections/account.ts")
+        git(self.repo, "commit", "-m", "first production-data change")
+        report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "replay report")
+        source.write_text("second data change after replay\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/projections/account.ts")
+        git(self.repo, "commit", "-m", "production-data change after replay")
+        late_code = git(self.repo, "rev-parse", "HEAD")
+        denied, payload = self.check("review", "pre-review.py", default_base=True)
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("a production-data change postdates REALDATA-REPLAY.md", payload["reason"])
+        self.assertIn(late_code[:8], payload["reason"])
+
+    def test_develop_merge_data_commits_do_not_make_report_stale(self) -> None:
+        git(self.repo, "reset", "--hard", self.base)
+        git(self.repo, "checkout", "-b", "feature")
+        feature_source = self.repo / "src/server/ingestion/worker.ts"
+        feature_source.parent.mkdir(parents=True, exist_ok=True)
+        feature_source.write_text("feature data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "feature production-data change")
+        report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "feature replay report")
+
+        git(self.repo, "branch", "-f", "develop", self.base)
+        git(self.repo, "checkout", "develop")
+        develop_source = self.repo / "src/server/projections/develop-owned.ts"
+        develop_source.parent.mkdir(parents=True, exist_ok=True)
+        develop_source.write_text("develop data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/projections/develop-owned.ts")
+        git(self.repo, "commit", "-m", "develop production-data change")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+        git(self.repo, "checkout", "feature")
+        git(self.repo, "merge", "--no-ff", "develop", "-m", "merge develop")
+
+        allowed, payload = self.check("review", "pre-review.py", default_base=True)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
     def test_review_default_base_remains_origin_develop(self) -> None:
         git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
         denied, payload = self.check("review", "pre-review.py", default_base=True)
@@ -548,7 +647,7 @@ sys.exit(2)
         fake_bin.mkdir()
         gh = fake_bin / "gh"
         head = git(self.repo, "rev-parse", "HEAD")
-        response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head,
+        response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head, "baseRefOid": self.base,
                                "files": [{"path": "src/server/ingestion/worker.ts"},
                                          {"path": "REALDATA-REPLAY.md"}]})
         gh.write_text(f"#!/bin/sh\nprintf '%s\\n' '{response}'\n", encoding="utf-8")
@@ -570,7 +669,7 @@ sys.exit(2)
         fake_bin.mkdir()
         gh = fake_bin / "gh"
         head = git(self.repo, "rev-parse", "HEAD")
-        response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head,
+        response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head, "baseRefOid": self.base,
                                "files": [{"path": "src/server/ingestion/worker.ts"},
                                          {"path": report_path.name}]})
         gh.write_text(f"#!/bin/sh\nprintf '%s\\n' '{response}'\n", encoding="utf-8")
