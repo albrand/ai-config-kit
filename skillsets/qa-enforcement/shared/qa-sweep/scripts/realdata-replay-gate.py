@@ -397,7 +397,9 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
                 # Explicit bases may broaden the release scope, but must never
                 # hide paths changed since production's current branch.
                 diff_paths.update(changed_paths(repo, base, head))
-                report_diff_paths.update(committed_changed_paths(repo, base, head))
+                # Report ownership is anchored only to the production-to-head
+                # range. An older explicit base can make the production report
+                # look newly added, even when the candidate inherited it.
             impacted = production_paths(diff_paths)
         else:
             diff_paths = changed_paths(repo, base, head)

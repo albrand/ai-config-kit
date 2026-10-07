@@ -318,6 +318,51 @@ sys.exit(2)
         self.assertFalse(payload["allowed"])
         self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
 
+    def test_release_older_explicit_base_cannot_admit_inherited_production_report(self) -> None:
+        git(self.repo, "reset", "--hard", self.base)
+        source = self.repo / "src/server/repositories/integrations/ingestion-work-auto-rearm.repository.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("export const fixture = 0;\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/repositories/integrations/ingestion-work-auto-rearm.repository.ts")
+        git(self.repo, "commit", "-m", "older base without report")
+        older = git(self.repo, "rev-parse", "HEAD")
+
+        production_report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(production_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "production report")
+        production = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", production)
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", production)
+
+        source.write_text("export const fixture = 1;\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/repositories/integrations/ingestion-work-auto-rearm.repository.ts")
+        git(self.repo, "commit", "-m", "candidate source change inheriting report")
+        inherited_digest = production_report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {inherited_digest}\n"
+            "Read-back +30 min counts: affected goals, blocked rows, reasons and error classes.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+
+        denied, payload = self.check("release", f"release-request --body-file {request}", base_arg=older)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("report inherited from base; replay this change", payload["reason"])
+
+        candidate_report = replay_report(note="- Own candidate replay for this release.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(candidate_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "candidate-owned report")
+        candidate_digest = candidate_report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {candidate_digest}\n"
+            "Read-back +30 min counts: affected goals, blocked rows, reasons and error classes.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        allowed, payload = self.check("release", f"release-request --body-file {request}", base_arg=older)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
     def test_review_default_base_remains_origin_develop(self) -> None:
         git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)
         denied, payload = self.check("review", "pre-review.py", default_base=True)
