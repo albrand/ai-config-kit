@@ -59,10 +59,12 @@ HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 HTML_REFERENCE = re.compile(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;?)")
 HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>", re.S)
 HTML_ATTRIBUTE_VALUE = re.compile(
-    r'''(?:^|\s)[^\s=<>/]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))'''
+    r'''(?:^|\s)([^\s=<>/]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))'''
 )
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)", re.S)
 MARKDOWN_REFERENCE_DEFINITION = re.compile(r"(?m)^\s{0,3}\[[^\]]+\]:\s*(.+)$")
+MARKDOWN_DESTINATION = re.compile(r"^\s*(?:<([^>\r\n]*)>|((?:\\.|[^\s()<>])+))")
+URL_ATTRIBUTES = {"href", "src", "action", "formaction", "xlink:href", "poster"}
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -170,15 +172,29 @@ def _normalize_nonrendered_label_texts(text: str) -> list[str]:
         attribute_text = tag[name.end():]
         attribute_offset = match.start() + name.end()
         for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
-            group = next(index for index in range(1, 4)
+            attribute_name = attribute.group(1).lower()
+            group = next(index for index in range(2, 5)
                          if attribute.group(index) is not None)
             spans.append((attribute.group(group),
-                          attribute_offset + attribute.start(group), False))
+                          attribute_offset + attribute.start(group),
+                          attribute_name in URL_ATTRIBUTES))
 
     for match in MARKDOWN_LINK.finditer(text):
-        spans.append((match.group(1), match.start(1), True))
+        payload = match.group(1)
+        spans.append((payload, match.start(1), False))
+        destination = MARKDOWN_DESTINATION.match(payload)
+        if destination:
+            group = 1 if destination.group(1) is not None else 2
+            spans.append((destination.group(group),
+                          match.start(1) + destination.start(group), True))
     for match in MARKDOWN_REFERENCE_DEFINITION.finditer(text):
-        spans.append((match.group(1), match.start(1), True))
+        payload = match.group(1)
+        spans.append((payload, match.start(1), False))
+        destination = MARKDOWN_DESTINATION.match(payload)
+        if destination:
+            group = 1 if destination.group(1) is not None else 2
+            spans.append((destination.group(group),
+                          match.start(1) + destination.start(group), True))
 
     source_line_starts = [0]
     source_line_starts.extend(match.end() for match in re.finditer(r"\r\n?|\n", text))
@@ -186,15 +202,18 @@ def _normalize_nonrendered_label_texts(text: str) -> list[str]:
     for value, start, decode_url in spans:
         line_offset = bisect_right(source_line_starts, start) - 1
         prefix = LABEL_LINE_MARKER * line_offset
-        normalized.append(_normalize_label_text(
-            prefix + value, preserve_line_numbers=True))
+        values = [value]
         if decode_url:
             # Decode hidden URL text too, without treating escaped line breaks as source lines.
             decoded = re.sub(r"(?i)%0d%0a|%0a|%0d", " ", value)
             decoded = unquote(decoded)
             if decoded != value:
-                normalized.append(_normalize_label_text(
-                    prefix + decoded, preserve_line_numbers=True))
+                values.append(decoded)
+        for candidate in values:
+            normalized.append(_normalize_label_text(
+                prefix + candidate, preserve_line_numbers=True))
+            normalized.append(_normalize_label_text(
+                prefix + candidate, cf_as_space=False, preserve_line_numbers=True))
     return normalized
 
 

@@ -403,6 +403,60 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(replay_report(note=note))
                 self.assertTrue(valid, reason)
 
+    def test_hidden_consumers_apply_both_format_character_normalizations(self) -> None:
+        gate = self.gate_module()
+
+        def encode_url_spaces(value: str) -> str:
+            return value.replace(" ", "%20")
+
+        consumers = (
+            ("html title", lambda value: f'<span title="{value}">safe</span>', "line 14"),
+            ("html unquoted attribute", lambda value: f"<span title={value.replace(' ', '&#32;')}>safe</span>", "line 14"),
+            ("html href", lambda value: f'<a href="https://example.test/{encode_url_spaces(value)}">safe</a>', "line 14"),
+            ("html src", lambda value: f'<img src="https://example.test/{encode_url_spaces(value)}">', "line 14"),
+            ("html action", lambda value: f'<form action="https://example.test/{encode_url_spaces(value)}">safe</form>', "line 14"),
+            ("markdown destination", lambda value: f'[safe](https://example.test/{encode_url_spaces(value)})', "line 14"),
+            ("markdown title", lambda value: f'[safe](https://example.test "{value}")', "line 14"),
+            ("html comment", lambda value: f"<!-- {value} -->safe", "line 14"),
+            ("reference destination", lambda value: f"[safe][r]\n\n[r]: https://example.test/{encode_url_spaces(value)}", "line 16"),
+        )
+        format_variants = ("Ac\u200bme Energy", "Acme\u200bEnergy")
+        for consumer_name, render, expected_line in consumers:
+            for value in format_variants:
+                note = "- Replay note: " + render(value)
+                with self.subTest(hidden_consumer=consumer_name, format_variant="zero width"):
+                    valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                    self.assertFalse(valid)
+                    self.assertIn("private tenant label", reason)
+                    self.assertIn(expected_line, reason)
+                    self.assertNotIn("Acme Energy", reason)
+
+    def test_percent_decoding_is_limited_to_hidden_url_values(self) -> None:
+        gate = self.gate_module()
+        notes = (
+            '- Replay note: <span title="Acme%20Energy">safe</span>',
+            '- Replay note: <span data-note="Acme%20Energy">safe</span>',
+            '- Replay note: [safe](https://example.test "Acme%20Energy")',
+            "- Replay note: <!-- Acme%20Energy -->safe",
+        )
+        for note in notes:
+            with self.subTest(non_url_text="percent-encoded space"):
+                valid, reason, _ = gate.validate_report_text(replay_report(note=note))
+                self.assertTrue(valid, reason)
+
+    def test_percent_encoded_url_newline_is_not_a_source_line_break(self) -> None:
+        notes = (
+            '- Replay note: <a href="https://example.test/%0AAcme%20Energy">safe</a>',
+            "- Replay note: [safe](https://example.test/%0AAcme%20Energy)",
+        )
+        for note in notes:
+            with self.subTest(encoded_newline="URL percent escape"):
+                valid, reason, _ = self.gate_module().validate_report_text(replay_report(note=note))
+                self.assertFalse(valid)
+                self.assertIn("private tenant label", reason)
+                self.assertIn("line 14", reason)
+                self.assertNotIn("Acme Energy", reason)
+
     def test_private_tenant_label_rejects_zero_width_character(self) -> None:
         self.assert_private_label_variant_denied("- Persona: Acme\u200bEnergy reviewer")
 
