@@ -5,6 +5,7 @@ Each shell is identified as what actually runs: zsh, bash (and whether POSIX mod
 variables; otherwise (dash, busybox) the resolved binary's name, its package version where dpkg or rpm can tell, and
 always a hash of the binary.
 Usage: shell_oracle.py [shell...]   prints the identity of each (default: the four required shells)"""
+import atexit
 import hashlib
 import os
 import shutil
@@ -23,11 +24,19 @@ SHELL_STATE = ("ZSH_VERSION", "BASH_VERSION", "KSH_VERSION", "SHELLOPTS", "BASHO
                "POSIXLY_CORRECT", "IFS", "CDPATH")
 
 
+EMPTY = tempfile.mkdtemp(prefix="shell-oracle-home-")  # HOME and ZDOTDIR for every probe and measured run
+atexit.register(shutil.rmtree, EMPTY, True)
+
+
 def shell_env():
     """The environment the oracles measure the shells in: this one, without variables that would change how a shell
     reads a script or which shell it claims to be (an inherited SHELLOPTS=posix switches bash to POSIX mode, BASH_ENV
-    runs a file first). The locale and the rest stay, as in the agents' own shells."""
-    return {k: v for k, v in os.environ.items() if k not in SHELL_STATE}
+    runs a file first), and with HOME and ZDOTDIR at an empty directory, so no user startup file runs: zsh sources
+    ~/.zshenv even under -c, and one that sets RC_QUOTES reads 'a''b' as a'b (Hermes 2026-10-07 r15). The locale
+    and the rest stay, as in the agents' own shells. /etc/zshenv, which zsh always reads, is outside this control."""
+    env = {k: v for k, v in os.environ.items() if k not in SHELL_STATE}
+    env.update(HOME=EMPTY, ZDOTDIR=EMPTY)
+    return env
 
 
 def package_version(real):
@@ -51,9 +60,8 @@ def identify(s):
     SHELLOPTS would switch bash's options (Hermes 2026-10-07 r14). HOME and ZDOTDIR point at an empty directory, so
     no user startup file runs."""
     real = os.path.realpath(s)
-    with tempfile.TemporaryDirectory(prefix="shell-oracle-") as empty:
-        env = {"PATH": "/usr/bin:/bin", "HOME": empty, "ZDOTDIR": empty, "LC_ALL": "C"}
-        r = subprocess.run([s, "-c", PROBE], capture_output=True, text=True, timeout=10, env=env, cwd=empty)
+    env = {"PATH": "/usr/bin:/bin", "HOME": EMPTY, "ZDOTDIR": EMPTY, "LC_ALL": "C"}
+    r = subprocess.run([s, "-c", PROBE], capture_output=True, text=True, timeout=10, env=env, cwd=EMPTY)
     if r.returncode:
         sys.exit(f"BAD required shell {s} does not run: rc {r.returncode}")
     name = r.stdout.strip()

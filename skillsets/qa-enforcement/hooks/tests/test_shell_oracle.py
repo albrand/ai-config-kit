@@ -3,6 +3,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -36,6 +37,27 @@ class ShellIdentityTests(unittest.TestCase):
                            env=env)
         self.assertNotIn(":posix:", r.stdout.replace(" :", ":"))  # bash measured as bash, not in POSIX mode
         self.assertNotIn("bogus", r.stdout)
+
+    def test_user_startup_files_do_not_change_what_is_measured(self):
+        # zsh sources $ZDOTDIR/.zshenv (default ~) even under -c; RC_QUOTES makes 'a''b' the word a'b, so a heredoc
+        # delimited by <<'a''b' would end at a different line. BASH_ENV runs a file before any bash -c script.
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, ".zshenv").write_text("setopt RC_QUOTES\n")
+            Path(home, "bash_env").write_text("set -o posix\n")
+            script = "cat <<'a''b'\nBODY\nab\necho RAN"
+            hostile = {**os.environ, "HOME": home, "ZDOTDIR": home, "BASH_ENV": str(Path(home, "bash_env"))}
+            control = subprocess.run(["/bin/zsh", "-c", script], capture_output=True, text=True, env=hostile)
+            self.assertNotEqual(control.stdout, "BODY\nRAN\n")  # the startup file really changes the reading
+            with patch.dict(os.environ, hostile):
+                env = oracle.shell_env()
+            self.assertEqual(subprocess.run(["/bin/zsh", "-c", script], capture_output=True, text=True,
+                                            env=env).stdout, "BODY\nRAN\n")
+            self.assertNotEqual(env["HOME"], home)
+            posix = subprocess.run(["/bin/bash", "-c", 'echo ":$SHELLOPTS:"'], capture_output=True, text=True,
+                                   env=hostile).stdout
+            self.assertIn(":posix:", posix)  # control: BASH_ENV switches bash to POSIX mode
+            self.assertNotIn(":posix:", subprocess.run(["/bin/bash", "-c", 'echo ":$SHELLOPTS:"'],
+                                                       capture_output=True, text=True, env=env).stdout)
 
     def test_a_missing_shell_fails_naming_it(self):
         with self.assertRaises(SystemExit) as cm:
