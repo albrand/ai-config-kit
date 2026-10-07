@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,39 @@ class CommittedSnapshotTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(manifest), 2, "keep both the installed baseline and current render")
         self.assertEqual(expected, manifest[-1])
+
+    def test_every_current_profile_in_history_stays_recorded(self) -> None:
+        # #56 replaced the current bb digest without keeping the old one as an accepted profile, so the
+        # installer refused the very homes it had installed. A past current profile must stay accepted,
+        # or be kept under an explicit "(history only)" superseded heading.
+        rel = "proposals/card21/live-home-hashes.md"
+
+        def sections(text: str) -> dict[str, frozenset[str]]:
+            out, header = {}, None
+            for line in text.splitlines():
+                if line.startswith("### "):
+                    header = line[4:]
+                    out[header] = frozenset()
+                elif header is not None:
+                    found = re.findall(r"`([0-9a-f]{64})`", line)
+                    out[header] = out[header] | frozenset(found)
+            return out
+
+        log = subprocess.run(["git", "-C", str(RENDERER.ROOT), "log", "--format=%H", "--", rel],
+                             capture_output=True, text=True)
+        if log.returncode != 0 or not log.stdout.split():
+            self.skipTest("no git history for the fingerprint manifest")
+        now = sections((RENDERER.ROOT / rel).read_text(encoding="utf-8"))
+        kept = {d for h, d in now.items() if h.startswith(("Accepted live profile", "Current rendered profile"))}
+        history_only = {d for h, d in now.items() if h.startswith("Superseded profile") and "(history only)" in h}
+        for commit in log.stdout.split():
+            old = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show", f"{commit}:{rel}"],
+                                 capture_output=True, text=True).stdout
+            for header, digests in sections(old).items():
+                if header.startswith("Current rendered profile") and len(digests) == 4:
+                    with self.subTest(commit=commit[:8]):
+                        self.assertTrue(digests in kept or digests in history_only,
+                                        f"{commit[:8]}'s current profile is no longer recorded: {sorted(d[:12] for d in digests)}")
 
     def test_installer_accepts_only_a_complete_known_home_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
