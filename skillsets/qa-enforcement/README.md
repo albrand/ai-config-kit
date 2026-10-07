@@ -18,11 +18,13 @@ from the qa-speed-quality research report §2 (report at
 
 Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
 Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
-The hook blocks pre-review/Hermes submission until a valid `REALDATA-REPLAY.md`
-is present and cited; PR-ready and merge require the current PR body to cite
-the report and digest, and release requests must cite it too. Hermes review
-must attach the report itself as `--evidence`; `pre-review.py` adds the artifact
-path and SHA-256 to both review packets. Install with
+The gate checks a valid root `REALDATA-REPLAY.md` before review. Hermes
+submission requires the report itself attached as `--evidence` with its digest;
+`pre-review.py` adds the artifact path and SHA-256 to both review packets. PR
+creation requires the report committed and its name and digest in the creation
+request. PR-ready and merge require the committed report and verify that the
+current PR body cites its name and digest. Release requests require the
+committed report and a citation in the request. Install with
 `hooks/install-realdata-replay-gate.sh`; it backs up and updates only the new
 gate files, installed pre-review runners, and QA ship-hook adapter, preserving
 each home's existing QA sweep gate.
