@@ -25,24 +25,9 @@ spec = importlib.util.spec_from_file_location("gate", os.path.join(HOOKS, "..", 
                                                                    "ship-gate.py"))
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
-SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh")
 PUSH = "git push origin main"
-
-
-def shell_versions():
-    """Every oracle shell is required: a missing one would let a green run skip that shell's reading (Hermes r12)."""
-    missing = [s for s in SHELLS if not os.access(s, os.X_OK)]
-    if missing:
-        sys.exit(f"BAD required shell missing: {', '.join(missing)}; the oracle needs all of {', '.join(SHELLS)}")
-    out = {}
-    for s in SHELLS:
-        r = subprocess.run([s, "-c", 'echo "${ZSH_VERSION:-${BASH_VERSION:-no version variable}}"'],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode:
-            sys.exit(f"BAD required shell {s} does not run: rc {r.returncode}")
-        out[s] = r.stdout.strip()
-    return ", ".join(f"{s} {v}" for s, v in out.items())
-
+sys.path.insert(0, HOOKS)
+from shell_oracle import SHELLS, shell_versions  # noqa: E402  all three required, each identified
 
 VERSIONS = shell_versions()
 
