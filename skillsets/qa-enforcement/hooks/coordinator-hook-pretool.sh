@@ -210,14 +210,16 @@ ship_scan() {
     }
     return seg
   }
-  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line, re) {
+  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line, re, u, uc, uw) {
     # The command without heredocs, or SFAIL = 1 when one is not read exactly. Same contract as the ship-gate.py
     # _strip_heredoc_bodies (Hermes r10, r11): a real << is code, not quoted, escaped, commented, arithmetic or in
-    # ${...} / $[...]; <<< is a here-string. Its delimiter must be a plain word ending at a blank, ; & | < > or a
-    # newline, its context must still be open where the body starts, a terminator line must exist, and no body
-    # line may start with the delimiter and go on. Anything else is unreadable, so the raw text is scanned.
+    # ${...} / $[...]; <<< is a here-string. Its delimiter must be a word the shells read alike (the same
+    # HEREDOC_WORD: plain letters, digits and _ . + , : @ % / ! ^ -, a backslash before any character, or a quoted
+    # run, as in EOF! in single quotes) ending at a blank, ; & | < > or a newline, its context must still be open
+    # where the body starts, a terminator line must exist, and no body line may start with the delimiter and go
+    # on. Anything else is unreadable, so the raw text is scanned.
     out = ""; st = ""; np = 0; hp = 1; w = 0; n = length(s); SFAIL = 0
-    re = "^([A-Za-z0-9_.-]|\\\\[A-Za-z0-9_.-]|" sq "[A-Za-z0-9_. -]+" sq "|\"[A-Za-z0-9_. -]+\")+"
+    re = "^([A-Za-z0-9_.+,:@%/!^-]|\\\\[^\n]|" sq "[^" sq "\n]+" sq "|\"[^\"\\\\$`\n]+\")+"
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1); nx = substr(s, i + 1, 1); top = substr(st, length(st), 1)
       if (top == sq) { out = out c; if (c == sq) st = substr(st, 1, length(st) - 1); continue }
@@ -259,7 +261,14 @@ ship_scan() {
         if (!match(substr(s, j), re)) { SFAIL = 1; return "" }
         k = j + RLENGTH
         if (k <= n && !index(" \t\n;&|<>", substr(s, k, 1))) { SFAIL = 1; return "" }
-        dl = substr(s, j, RLENGTH); gsub(sq, "", dl); gsub(/"/, "", dl); gsub(/\\/, "", dl)
+        dl = substr(s, j, RLENGTH); uw = ""
+        for (u = 1; u <= length(dl); u++) {
+          uc = substr(dl, u, 1)
+          if (uc == sq || uc == "\"") { for (u++; substr(dl, u, 1) != uc; u++) uw = uw substr(dl, u, 1) }
+          else if (uc == "\\") { u++; uw = uw substr(dl, u, 1) }
+          else uw = uw uc
+        }
+        dl = uw
         np++; pd[np] = dash; pw[np] = dl; ps[np] = st; i = k - 1; w = 1; continue
       }
       out = out c

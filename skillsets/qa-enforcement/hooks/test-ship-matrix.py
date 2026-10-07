@@ -182,8 +182,10 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
 # PR merge whose body heredoc has a plain delimiter must still be allowed on both paths.
 PUSH, RAN = "git push origin main", "echo ORACLE-RAN"
 WORDS = ["EOF", "'EOF'", '"EOF"', "\\EOF", "E'O'F", '"E O F"', "$(echo E)", '$(echo "E")', "`echo E`", "$((1))",
-         "E$(x)F", "E(x)", "E)", "${X}", "$X", "E{a,b}", "E*", "E=x"]
-PLAIN = WORDS[:6]
+         "E$(x)F", "E(x)", "E)", "${X}", "$X", "E{a,b}", "E*", "E=x",
+         # read alike by every shell (Hermes r10: <<'EOF!' is valid), so a merge body using one is allowed
+         "EOF!", "!EOF", "a:b/c@d%e+f,g^h", "'EOF!'", '"EOF!"', "\\!EOF", "'a b$c'", "'a\"b'", "'a\\b'", "E\\ x"]
+READABLE = WORDS[:6] + WORDS[18:]
 CONTEXTS = {
     "top": "cat <<{W}\n{B}\n{T}\n{P}", "sub": "x=$(cat <<{W}\n{B}\n{T}\n)\n{P}",
     "quoted sub": 'x="$(cat <<{W}\n{B}\n{T}\n)"\n{P}', "backtick": "x=`cat <<{W}\n{B}\n{T}\n`\n{P}",
@@ -199,7 +201,8 @@ SHELLS = [s for s in ("/bin/bash", "/bin/zsh", "/bin/sh") if os.path.exists(s)]
 
 
 def unquote(w):
-    return w.replace("'", "").replace('"', "").replace("\\", "")
+    """The delimiter the shells read from a word: quotes removed in one pass, a backslash keeps the next character."""
+    return re.sub(r"'([^']*)'|\"([^\"]*)\"|\\(.)", lambda m: m.group(m.lastindex), w)
 
 
 oracle_cases = oracle_bad = oracle_hooks = 0
@@ -232,14 +235,24 @@ for wname in WORDS:
                 if not ok:
                     print(f"BAD oracle {cname} <<{wname} terminator {term!r}: ran in {ran}, gate segments see the push "
                           f"{seen_gate}, fallback scan sees it {seen_shell}: {scanned!r}")
-for wname in PLAIN:
+# Both awk copies of the fallback scanner, each called directly, besides the hook that runs one of them.
+coord_func = re.search(r"^ship_scan\(\) \{\n.*?^\}\n", open(os.path.join(HOOKS, "coordinator-hook-pretool.sh")).read(),
+                       re.S | re.M).group(0)
+for wname in READABLE:
     merge = f'gh pr merge 5 --body "$(cat <<{wname}\n{PUSH}\n{unquote(wname)}\n)"'
-    for mode in ("gate", "fallback"):
-        oracle_hooks += 1
-        got = run(mode, merge, O)
-        oracle_bad += got != 0
-        if got != 0:
-            print(f"BAD oracle merge with a plain <<{wname} body: {mode} rc {got}, want allow")
+    for cmd, want in ((merge, 0), (merge + f"\n{PUSH}", 2)):  # the body is allowed; a push after it is not
+        for mode in ("gate", "fallback"):
+            oracle_hooks += 1
+            got = run(mode, cmd, O)
+            oracle_bad += got != want
+            if got != want:
+                print(f"BAD oracle merge with a <<{wname} body: {mode} rc {got}, want {want}: {cmd!r}")
+        payload = json.dumps({"tool_input": {"command": cmd}, "cwd": N})
+        for name, f in (("qa-ship-gate-hook.sh", func), ("coordinator-hook-pretool.sh", coord_func)):
+            seen = sh(f"input=$(cat)\n{f}ship_scan", N, payload).stdout.split()[:1] == ["1"]
+            oracle_bad += seen != (want == 2)
+            if seen != (want == 2):
+                print(f"BAD oracle {name} ship_scan with a <<{wname} body sees a push {seen}, want {want == 2}: {cmd!r}")
 bad += oracle_bad
 print(f"real-shell oracle: {oracle_cases} cases on {len(SHELLS)} shells, {oracle_hooks} hook runs, {oracle_bad} bad")
 agree = total = 0

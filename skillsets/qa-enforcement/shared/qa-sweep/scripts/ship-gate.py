@@ -1325,7 +1325,9 @@ def flat_words(text):
     return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
 
 
-HEREDOC_WORD = re.compile(r"(?:[A-Za-z0-9_.-]|\\[A-Za-z0-9_.-]|'[A-Za-z0-9_. -]+'|\"[A-Za-z0-9_. -]+\")+")
+# A delimiter word the shells read alike: plain characters none of bash, zsh or sh treats as special in a word,
+# a backslash before any character, or a single- or double-quoted run (no \\, $ or backtick inside double quotes).
+HEREDOC_WORD = re.compile(r"""(?:[A-Za-z0-9_.+,:@%/!^-]|\\[^\n]|'[^'\n]+'|"[^"\\$`\n]+")+""")
 
 
 def _strip_heredoc_bodies(command):
@@ -1338,8 +1340,9 @@ def _strip_heredoc_bodies(command):
     or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
     terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
     hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
-      - the delimiter is a plain word: letters, digits, `_ . -`, a backslash before one, or quoted `'...'`/`"..."`
-        of those and spaces, and it ends at a blank, `; & | < >` or a newline;
+      - the delimiter is a word the shells read alike (HEREDOC_WORD: plain letters, digits and `_ . + , : @ % / ! ^ -`,
+        a backslash before any character, or quoted `'EOF!'`/`"a b"`), and it ends at a blank, `; & | < >` or a
+        newline (Hermes r10: `<<'EOF!'` is a valid delimiter, so a merge body using it is read, not denied);
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
       - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
@@ -1423,8 +1426,7 @@ def _strip_heredoc_bodies(command):
             k = m.end() if m else j
             if not m or (k < n and command[k] not in " \t\n;&|<>"):
                 return None  # not a plain word: $(...), `...`, $((...)), zsh E(x), E), an empty word
-            delim = re.sub(r"\\(.)", r"\1", re.sub(r"'([^']*)'|\"([^\"]*)\"", lambda q: q.group(1) or q.group(2) or "",
-                                                  m.group(0)))
+            delim = re.sub(r"'([^']*)'|\"([^\"]*)\"|\\(.)", lambda q: q.group(q.lastindex), m.group(0))
             pending.append((dash, delim, list(stack)))
             i, word = k, True
             continue
