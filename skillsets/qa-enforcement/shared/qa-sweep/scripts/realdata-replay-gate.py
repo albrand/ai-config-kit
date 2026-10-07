@@ -24,6 +24,8 @@ HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
+    ("SSN-like number", re.compile(r"(?<!\d)\d{3}(?P<separator>[- ])\d{2}(?P=separator)\d{4}(?!\d)")),
+    ("labelled SSN field", re.compile(r"\b(?:ssn(?:[\s_-]*number)?|social[\s_-]*security(?:[\s_-]*number)?)\s*[:=]\s*[^\s,;|]+", re.I)),
     ("international phone number", re.compile(r"(?<![A-Za-z0-9])\+\d(?:[\s().-]*\d){8,}(?![A-Za-z0-9])")),
     ("parenthesized phone number", re.compile(r"(?<!\d)\(\d{3}\)\s+\d{3}-\d{4}(?!\d)")),
     ("grouped phone number", re.compile(r"(?<!\d)\d{3}(?P<separator>[-.])\d{3}(?P=separator)\d{4}(?!\d)")),
@@ -220,23 +222,6 @@ def report_attached(command: str, cwd: Path, digest: str) -> bool:
     return REPORT_NAME in attached_paths and any(digest in text for text in texts)
 
 
-def committed_report_has_blocked_rows(repo: Path, head: str) -> bool | None:
-    try:
-        result = subprocess.run(["git", "show", f"{head}:{REPORT_NAME}"], cwd=repo,
-                                text=True, capture_output=True, timeout=4)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode:
-        return None
-    for line in result.stdout.splitlines():
-        if not line.strip().startswith("|"):
-            continue
-        cells = [cell.strip().upper() for cell in line.strip().strip("|").split("|")]
-        if "BLOCKED" in cells:
-            return True
-    return False
-
-
 def release_request_texts(command: str, cwd: Path) -> list[str]:
     texts: list[str] = []
     try:
@@ -416,11 +401,8 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
         if action == "release":
-            blocked_rows = committed_report_has_blocked_rows(repo, head)
-            if blocked_rows is None:
-                return False, f"cannot determine whether committed {REPORT_NAME} contains blocked rows", impacted, digest
-            if blocked_rows and not release_readback_and_rollback_cited(command, cwd):
-                return False, ("release request for blocked rows must name the post-release read-back offset and counts, "
+            if not release_readback_and_rollback_cited(command, cwd):
+                return False, ("release request must name the post-release read-back offset and counts, "
                                "plus a rollback SHA or deployment ID"), impacted, digest
         if action == "pr" and not (REPORT_NAME in str(pr_info.get("body") or "")
                                     and digest in str(pr_info.get("body") or "")):

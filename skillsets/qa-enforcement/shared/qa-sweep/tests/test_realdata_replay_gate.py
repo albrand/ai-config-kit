@@ -22,7 +22,8 @@ def git(repo: Path, *args: str) -> str:
 
 
 def replay_report(candidate_count: int = 3, note: str = "", reason: str = "source_revision_conflict",
-                  error_class: str = "none", blocked: bool = False) -> str:
+                  error_class: str = "none", blocked: bool = False,
+                  prose_blocked: bool = False) -> str:
     body = f"""# REALDATA-REPLAY
 
 - Copy time (UTC): 2026-10-06T23:00:00Z
@@ -31,12 +32,12 @@ def replay_report(candidate_count: int = 3, note: str = "", reason: str = "sourc
 - Local copy: Mac-local database bound to loopback only; production data never leaves the Mac.
 - Production source: read-only; no production writes were performed.
 - Privacy: counts only; no row IDs or PII are included.
-- Blocked rows: {2 if blocked else 0}; external provider boundary was not needed for this replay.
+- Blocked rows: {2 if blocked or prose_blocked else 0}; external provider boundary was not needed for this replay.
 
 | Goal | Target rows | Control count | Candidate count | Verdict | Reason | Error class |
 |---|---:|---:|---:|---|---|---|
 | repair ingestion projection | 3 | 0 | {candidate_count} | {"BLOCKED" if blocked else "PASS"} | {reason} | {error_class} |
-{note}'''
+{note or ('- A2 verdict: BLOCKED at page-member identity. Not run; blocked rows are held for read-back.' if prose_blocked else '')}'''
 """
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
@@ -239,8 +240,11 @@ sys.exit(2)
         git(self.repo, "add", "REALDATA-REPLAY.md")
         git(self.repo, "commit", "-m", "attach replay")
         request = self.repo / "release-request.md"
-        request.write_text(f"Evidence: {request.parent / 'REALDATA-REPLAY.md'} SHA-256 {digest}\n", encoding="utf-8")
-        allowed, _ = self.check("release", "release-request --evidence release-request.md")
+        request.write_text(
+            f"Evidence: {request.parent / 'REALDATA-REPLAY.md'} SHA-256 {digest}\n"
+            "Post-release read-back +30 minutes: affected-goal counts and reason/error-class counts.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        allowed, _ = self.check("release", "release-request --body-file release-request.md")
         self.assertEqual(allowed.returncode, 0)
 
     def test_release_defaults_to_origin_main_and_requires_replay(self) -> None:
@@ -306,7 +310,19 @@ sys.exit(2)
         self.assertEqual(allowed.returncode, 0, payload["reason"])
         self.assertTrue(payload["allowed"])
 
-    def test_report_without_blocked_rows_allows_digest_only_release_request(self) -> None:
+    def test_prose_blocked_rows_still_deny_digest_only_release(self) -> None:
+        report = replay_report(prose_blocked=True)
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with prose blocked rows")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest}\n", encoding="utf-8")
+        denied, payload = self.check("release", f"release-request --body-file {request}")
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("post-release read-back offset and counts", payload["reason"])
+
+    def test_report_without_blocked_rows_still_requires_release_plan(self) -> None:
         report = replay_report()
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
         git(self.repo, "add", "REALDATA-REPLAY.md")
@@ -314,8 +330,9 @@ sys.exit(2)
         digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
         request = self.repo / "release-request.md"
         request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest}\n", encoding="utf-8")
-        allowed, payload = self.check("release", f"release-request --body-file {request}")
-        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        denied, payload = self.check("release", f"release-request --body-file {request}")
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("post-release read-back offset and counts", payload["reason"])
 
     def test_pr_create_rejects_cited_unstaged_report_different_from_committed_blob(self) -> None:
         committed = replay_report(candidate_count=3)
@@ -427,7 +444,7 @@ sys.exit(2)
         allowed, _ = self.check("pr", "gh pr ready", env, default_base=True)
         self.assertEqual(allowed.returncode, 0)
 
-    def test_blocked_rows_do_not_add_readback_requirement_to_pr_ready(self) -> None:
+    def test_blocked_rows_do_not_add_readback_requirement_to_pr_ready_or_merge(self) -> None:
         report = replay_report(blocked=True)
         report_path = self.repo / "REALDATA-REPLAY.md"
         report_path.write_text(report, encoding="utf-8")
@@ -444,8 +461,27 @@ sys.exit(2)
         gh.chmod(0o755)
         env = os.environ.copy()
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-        allowed, payload = self.check("pr", "gh pr ready", env)
+        for command in ("gh pr ready 1701", "gh pr merge 1701"):
+            with self.subTest(command=command):
+                allowed, payload = self.check("pr", command, env)
+                self.assertEqual(allowed.returncode, 0, payload["reason"])
+
+    def test_ssn_identifiers_and_labelled_fields_are_rejected(self) -> None:
+        for marker in ("123-45-6789", "123 45 6789", "ssn: 123456789",
+                       "ssn_number: 123456789", "ssn-number: 123456789",
+                       "social security: 123456789", "social_security: 123456789",
+                       "social-security-number: 123456789"):
+            with self.subTest(marker=marker):
+                self.assert_sensitive_report_denied(marker)
+
+    def test_ssn_detector_allows_dates_shas_and_count_tables(self) -> None:
+        report = replay_report(reason="date 2026-10-07; timestamp 2026-10-07 03:41Z; counts 1 2 3")
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with ordinary dates and counts")
+        allowed, payload = self.check()
         self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
 
     def test_editable_path_inventory_matches_data_surfaces(self) -> None:
         from importlib.util import module_from_spec, spec_from_file_location
