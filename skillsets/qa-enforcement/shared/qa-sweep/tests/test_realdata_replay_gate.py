@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
@@ -18,7 +22,7 @@ def git(repo: Path, *args: str) -> str:
 
 
 def replay_report(candidate_count: int = 3, note: str = "", reason: str = "source_revision_conflict",
-                  error_class: str = "none") -> str:
+                  error_class: str = "none", blocked: bool = False) -> str:
     body = f"""# REALDATA-REPLAY
 
 - Copy time (UTC): 2026-10-06T23:00:00Z
@@ -27,11 +31,11 @@ def replay_report(candidate_count: int = 3, note: str = "", reason: str = "sourc
 - Local copy: Mac-local database bound to loopback only; production data never leaves the Mac.
 - Production source: read-only; no production writes were performed.
 - Privacy: counts only; no row IDs or PII are included.
-- Blocked rows: 0; external provider boundary was not needed for this replay.
+- Blocked rows: {2 if blocked else 0}; external provider boundary was not needed for this replay.
 
-| Goal | Target rows | Control count | Candidate count | Reason | Error class |
-|---|---:|---:|---:|---|---|
-| repair ingestion projection | 3 | 0 | {candidate_count} | {reason} | {error_class} |
+| Goal | Target rows | Control count | Candidate count | Verdict | Reason | Error class |
+|---|---:|---:|---:|---|---|---|
+| repair ingestion projection | 3 | 0 | {candidate_count} | {"BLOCKED" if blocked else "PASS"} | {reason} | {error_class} |
 {note}'''
 """
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
@@ -66,6 +70,92 @@ class RealdataReplayGateTests(unittest.TestCase):
                                  "--base", self.base, "--action", action, "--command", command, "--json"],
                                 text=True, capture_output=True, env=env)
         return result, json.loads(result.stdout)
+
+    def gate_module(self):
+        from importlib.util import module_from_spec, spec_from_file_location
+        spec = spec_from_file_location("realdata_gate_for_gh_tests", GATE)
+        assert spec and spec.loader
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def install_account_gh_stub(self, mode: str) -> tuple[dict[str, str], Path]:
+        fake_bin = self.repo / "account-gh-bin"
+        fake_bin.mkdir(exist_ok=True)
+        gh = fake_bin / "gh"
+        gh.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+mode = os.environ["GH_TEST_MODE"]
+log = Path(os.environ["GH_TEST_LOG"])
+def record():
+    rows = json.loads(log.read_text()) if log.exists() else []
+    rows.append({"args": args, "token_present": bool(os.environ.get("GH_TOKEN")),
+                 "second_account": os.environ.get("GH_TOKEN") == "token-second-account"})
+    log.write_text(json.dumps(rows))
+if args[:3] == ["auth", "status", "--hostname"]:
+    print("Logged in to github.com account first-account (keyring)\\nLogged in to github.com account second-account (keyring)")
+    sys.exit(0)
+if args[:3] == ["auth", "token", "--user"]:
+    print("token-" + args[3])
+    sys.exit(0)
+if args[:2] == ["pr", "view"]:
+    record()
+    if mode == "ambient-then-second" and os.environ.get("GH_TOKEN") == "token-second-account":
+        print(json.dumps({"body":"report cited", "headRefOid":"abc", "files":[{"path":"src/server/ingestion/job.ts"}]}))
+        sys.exit(0)
+    if mode == "ambient-success" and not os.environ.get("GH_TOKEN"):
+        print(json.dumps({"body":"report cited", "headRefOid":"abc", "files":[{"path":"src/server/ingestion/job.ts"}]}))
+        sys.exit(0)
+    print("denied", file=sys.stderr)
+    sys.exit(1)
+sys.exit(2)
+''', encoding="utf-8")
+        gh.chmod(0o755)
+        log = self.repo / "gh-calls.json"
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        env["GH_TEST_MODE"] = mode
+        env["GH_TEST_LOG"] = str(log)
+        return env, log
+
+    def test_pr_info_retries_second_logged_in_account_and_forwards_repo(self) -> None:
+        env, log = self.install_account_gh_stub("ambient-then-second")
+        env["GH_TOKEN"] = "ambient-token"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, env, clear=True), redirect_stdout(stdout), redirect_stderr(stderr):
+            info = self.gate_module().pull_request_info(
+                self.repo, "gh pr ready 1701 -R palliumai-com/pallium-app")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["files"], [{"path": "src/server/ingestion/job.ts"}])
+        calls = json.loads(log.read_text())
+        self.assertEqual(len(calls), 3)
+        self.assertIn(["--repo", "palliumai-com/pallium-app"],
+                      [calls[0]["args"][i:i + 2] for i in range(len(calls[0]["args"]) - 1)])
+        self.assertFalse(calls[1]["second_account"])
+        self.assertTrue(calls[2]["second_account"])
+        self.assertNotIn("token-second-account", stdout.getvalue() + stderr.getvalue() + json.dumps(info))
+
+    def test_pr_info_derives_github_repo_when_command_has_no_repo_flag(self) -> None:
+        env, log = self.install_account_gh_stub("ambient-success")
+        env.pop("GH_TOKEN", None)
+        with patch.dict(os.environ, env, clear=True):
+            info = self.gate_module().pull_request_info(self.repo, "gh pr ready 1701")
+        self.assertIsNotNone(info)
+        calls = json.loads(log.read_text())
+        self.assertIn(["--repo", "palliumai-com/pallium-app"],
+                      [calls[0]["args"][i:i + 2] for i in range(len(calls[0]["args"]) - 1)])
+
+    def test_pr_info_fails_closed_when_every_logged_in_account_fails(self) -> None:
+        env, _ = self.install_account_gh_stub("all-fail")
+        env["GH_TOKEN"] = "ambient-token"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, env, clear=True), redirect_stdout(stdout), redirect_stderr(stderr):
+            info = self.gate_module().pull_request_info(
+                self.repo, "gh pr ready 1701 -R palliumai-com/pallium-app")
+        self.assertIsNone(info)
+        self.assertNotIn("token-", stdout.getvalue() + stderr.getvalue())
 
     def test_missing_artifact_fails_then_valid_artifact_passes(self) -> None:
         missing, missing_json = self.check()
@@ -150,6 +240,44 @@ class RealdataReplayGateTests(unittest.TestCase):
         allowed, _ = self.check("release", "release-request --evidence release-request.md")
         self.assertEqual(allowed.returncode, 0)
 
+    def test_blocked_report_denies_digest_only_release_request(self) -> None:
+        report = replay_report(blocked=True)
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with blocked rows")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest}\n", encoding="utf-8")
+        denied, payload = self.check("release", f"release-request --body-file {request}")
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("post-release read-back offset and counts", payload["reason"])
+
+    def test_blocked_report_allows_release_with_readback_and_rollback(self) -> None:
+        report = replay_report(blocked=True)
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report with blocked rows")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {digest}\n"
+            "Post-release read-back +30 minutes: affected-goal counts, BLOCKED row counts, reason and error-class counts.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        allowed, payload = self.check("release", f"release-request --body-file {request}")
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
+    def test_report_without_blocked_rows_allows_digest_only_release_request(self) -> None:
+        report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit unblocked report")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest}\n", encoding="utf-8")
+        allowed, payload = self.check("release", f"release-request --body-file {request}")
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+
     def test_pr_create_rejects_cited_unstaged_report_different_from_committed_blob(self) -> None:
         committed = replay_report(candidate_count=3)
         (self.repo / "REALDATA-REPLAY.md").write_text(committed, encoding="utf-8")
@@ -195,6 +323,18 @@ class RealdataReplayGateTests(unittest.TestCase):
     def test_labelled_personal_name_in_reason_cell_is_rejected(self) -> None:
         self.assert_sensitive_report_denied("patient name: Example Person")
 
+    def test_underscore_patient_name_in_reason_cell_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("patient_name: Alice")
+
+    def test_hyphenated_patient_name_in_reason_cell_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("patient-name: Alice")
+
+    def test_long_numeric_identifier_in_reason_cell_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("123456789012")
+
+    def test_phone_like_number_in_reason_cell_is_rejected(self) -> None:
+        self.assert_sensitive_report_denied("+1 (555) 123-4567")
+
     def test_secret_patterns_in_report_are_rejected(self) -> None:
         for marker in ("Bearer abcdefghijklmnop", "eyJhbGciOiJIUzI1NiJ9.payload.signature",
                        "api_key=topsecret", "secret=topsecret", "password=topsecret", "key=topsecret"):
@@ -232,6 +372,26 @@ class RealdataReplayGateTests(unittest.TestCase):
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         allowed, _ = self.check("pr", "gh pr ready", env)
         self.assertEqual(allowed.returncode, 0)
+
+    def test_blocked_rows_do_not_add_readback_requirement_to_pr_ready(self) -> None:
+        report = replay_report(blocked=True)
+        report_path = self.repo / "REALDATA-REPLAY.md"
+        report_path.write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit blocked replay report")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        fake_bin = self.repo / "fake-gh-blocked-pr"
+        fake_bin.mkdir()
+        gh = fake_bin / "gh"
+        head = git(self.repo, "rev-parse", "HEAD")
+        response = json.dumps({"body": f"{report_path.name} {digest}", "headRefOid": head,
+                               "files": [{"path": "src/server/ingestion/worker.ts"}]})
+        gh.write_text(f"#!/bin/sh\nprintf '%s\\n' '{response}'\n", encoding="utf-8")
+        gh.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        allowed, payload = self.check("pr", "gh pr ready", env)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
 
     def test_editable_path_inventory_matches_data_surfaces(self) -> None:
         from importlib.util import module_from_spec, spec_from_file_location

@@ -23,8 +23,10 @@ HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
+    ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
+    ("phone-like number", re.compile(r"(?<![A-Fa-f0-9])\+?\d(?:[\d\s().-]*\d){8,}(?![A-Fa-f0-9])")),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
-    ("labelled personal name", re.compile(r"\b(?:full|personal|first|last|patient|tenant|user|owner|contact|clinician)\s+name\s*[:=]\s*[^\s,;|]+", re.I)),
+    ("labelled personal field", re.compile(r"\b(?:(?:full|personal|first|last|patient|tenant|user|owner|client|contact|clinician|customer|member)[\s_-]*name|contact|email[\s_-]*address|phone(?:[\s_-]*number)?)\s*[:=]\s*[^\s,;|]+", re.I)),
     ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}", re.I)),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")),
     ("secret assignment", re.compile(r"\b(?:api[_-]?key|key|secret|password)\s*=\s*['\"]?[^\s,'\";]{1,}", re.I)),
@@ -216,6 +218,107 @@ def report_attached(command: str, cwd: Path, digest: str) -> bool:
     return REPORT_NAME in attached_paths and any(digest in text for text in texts)
 
 
+def committed_report_has_blocked_rows(repo: Path, head: str) -> bool | None:
+    try:
+        result = subprocess.run(["git", "show", f"{head}:{REPORT_NAME}"], cwd=repo,
+                                text=True, capture_output=True, timeout=4)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode:
+        return None
+    for line in result.stdout.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [cell.strip().upper() for cell in line.strip().strip("|").split("|")]
+        if "BLOCKED" in cells:
+            return True
+    return False
+
+
+def release_request_texts(command: str, cwd: Path) -> list[str]:
+    texts: list[str] = []
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        return texts
+    for index, token in enumerate(args):
+        if token not in {"--body", "--body-file", "--notes", "--notes-file", "--message-file"} or index + 1 >= len(args):
+            continue
+        value = args[index + 1]
+        if token == "--body":
+            texts.append(value)
+            continue
+        path = Path(value)
+        path = path if path.is_absolute() else cwd / path
+        if path.is_file():
+            try:
+                texts.append(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError):
+                pass
+    return texts
+
+
+def release_readback_and_rollback_cited(command: str, cwd: Path) -> bool:
+    request = "\n".join(release_request_texts(command, cwd))
+    has_readback = re.search(r"\bread[- ]?back\b", request, re.I)
+    has_offset = re.search(r"\+\s*\d{1,3}\s*(?:min(?:ute)?s?)?\b", request, re.I)
+    has_counts = re.search(r"\bcounts?\b", request, re.I)
+    rollback_target = re.search(r"\brollback\b[^\n]*(?:\b[0-9a-f]{7,64}\b|\bdpl_[A-Za-z0-9]+\b)",
+                                request, re.I)
+    return bool(has_readback and has_offset and has_counts and rollback_target)
+
+
+def github_repo_slug(repo: Path) -> str | None:
+    try:
+        remote = git(repo, "remote", "get-url", "origin")
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        return None
+    if remote.startswith("git@github.com:"):
+        path = remote.split(":", 1)[1]
+    else:
+        parsed = urlsplit(remote)
+        if (parsed.hostname or "").lower() != "github.com":
+            return None
+        path = parsed.path.lstrip("/")
+    slug = path.removesuffix(".git").strip("/")
+    return slug if len(slug.split("/")) == 2 and all(slug.split("/")) else None
+
+
+def repo_flag(args: list[str]) -> str | None:
+    for index, token in enumerate(args):
+        if token in {"-R", "--repo"} and index + 1 < len(args):
+            return args[index + 1]
+        if token.startswith("--repo="):
+            return token.split("=", 1)[1]
+        if token.startswith("-R") and token != "-R":
+            return token[2:]
+    return None
+
+
+def gh_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any] | None:
+    if result.returncode:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("files"), list) else None
+
+
+def logged_in_github_accounts() -> list[str]:
+    clean_env = os.environ.copy()
+    clean_env.pop("GH_TOKEN", None)
+    clean_env.pop("GITHUB_TOKEN", None)
+    try:
+        result = subprocess.run(["gh", "auth", "status", "--hostname", "github.com"],
+                                text=True, capture_output=True, timeout=5, env=clean_env)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    status_text = result.stdout + "\n" + result.stderr
+    accounts = re.findall(r"(?im)^\s*[✓✔-]?\s*Logged in to github\.com account\s+([^\s(]+)", status_text)
+    return list(dict.fromkeys(accounts))
+
+
 def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
     try:
         args = shlex.split(command)
@@ -230,20 +333,43 @@ def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
     query = ["gh", "pr", "view"]
     if reference:
         query.append(reference)
+    target_repo = repo_flag(args) or github_repo_slug(repo)
+    if target_repo:
+        query.extend(["--repo", target_repo])
     query.extend(["--json", "body,headRefOid,files"])
     try:
         result = subprocess.run(query, cwd=repo, text=True, capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode:
-        return None
-    try:
-        data = json.loads(result.stdout)
-    except ValueError:
-        return None
-    if not isinstance(data, dict) or not isinstance(data.get("files"), list):
-        return None
-    return data
+        result = None
+    data = gh_json(result) if result is not None else None
+    if data is not None:
+        return data
+
+    clean_env = os.environ.copy()
+    clean_env.pop("GH_TOKEN", None)
+    clean_env.pop("GITHUB_TOKEN", None)
+    for login in logged_in_github_accounts():
+        try:
+            token_result = subprocess.run(["gh", "auth", "token", "--user", login],
+                                          text=True, capture_output=True, timeout=5, env=clean_env)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        token = token_result.stdout.strip() if token_result.returncode == 0 else ""
+        if not token:
+            continue
+        account_env = os.environ.copy()
+        account_env.pop("GITHUB_TOKEN", None)
+        account_env["GH_TOKEN"] = token
+        try:
+            result = subprocess.run(query, cwd=repo, text=True, capture_output=True,
+                                    timeout=5, env=account_env)
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        token = ""
+        data = gh_json(result) if result is not None else None
+        if data is not None:
+            return data
+    return None
 
 
 def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: Path | None = None,
@@ -280,6 +406,13 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
             git(repo, "cat-file", "-e", f"{head}:{REPORT_NAME}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
+        if action == "release":
+            blocked_rows = committed_report_has_blocked_rows(repo, head)
+            if blocked_rows is None:
+                return False, f"cannot determine whether committed {REPORT_NAME} contains blocked rows", impacted, digest
+            if blocked_rows and not release_readback_and_rollback_cited(command, cwd):
+                return False, ("release request for blocked rows must name the post-release read-back offset and counts, "
+                               "plus a rollback SHA or deployment ID"), impacted, digest
         if action == "pr" and not (REPORT_NAME in str(pr_info.get("body") or "")
                                     and digest in str(pr_info.get("body") or "")):
             return False, f"the current PR body must cite {REPORT_NAME} and its SHA-256", impacted, digest
