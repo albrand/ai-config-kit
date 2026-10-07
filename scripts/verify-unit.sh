@@ -14,6 +14,7 @@ run "context hygiene"    python3 -m unittest discover -s skillsets/agent-runtime
 run "qa-enforcement"     python3 -m unittest discover -s skillsets/qa-enforcement/hooks/tests -p "test_*.py"
 run "ship-gate selftest" python3 skillsets/qa-enforcement/shared/qa-sweep/scripts/ship-gate.py selftest
 run "ship matrix"        python3 skillsets/qa-enforcement/hooks/test-ship-matrix.py
+run "heredoc words"      python3 skillsets/qa-enforcement/hooks/test-heredoc-words.py
 run "verify"             python3 -m unittest discover -s skillsets/repo-bootstrap/shared/verify/scripts/tests -p "test_*.py"
 run "ui-ux-pro-max"      python3 -m unittest discover -s skillsets/ux-design-intelligence/shared/ui-ux-pro-max/scripts/tests -p "test_*.py"
 run "node tests"         node --test \
