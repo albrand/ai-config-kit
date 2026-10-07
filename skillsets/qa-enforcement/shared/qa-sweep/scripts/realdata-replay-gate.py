@@ -373,15 +373,20 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
             pr_paths = {str(item.get("path")) for item in pr_info["files"]
                         if isinstance(item, dict) and item.get("path")}
             impacted = production_paths(pr_paths)
+        elif action == "release":
+            production_base = "origin/main"
+            try:
+                git(repo, "rev-parse", "--verify", f"{production_base}^{{commit}}")
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                return False, "cannot resolve production branch origin/main for release diff", set(), None
+            release_paths = changed_paths(repo, production_base, head)
+            if base is not None and base != production_base:
+                # Explicit bases may broaden the release scope, but must never
+                # hide paths changed since production's current branch.
+                release_paths.update(changed_paths(repo, base, head))
+            impacted = production_paths(release_paths)
         else:
-            diff_base = base
-            if diff_base is None and action == "release":
-                diff_base = "origin/main"
-                try:
-                    git(repo, "rev-parse", "--verify", f"{diff_base}^{{commit}}")
-                except (OSError, RuntimeError, subprocess.TimeoutExpired):
-                    return False, "cannot resolve production branch origin/main for release diff", set(), None
-            impacted = production_paths(changed_paths(repo, diff_base, head))
+            impacted = production_paths(changed_paths(repo, base, head))
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return False, f"cannot establish the Pallium production-data diff: {exc}", set(), None
     if not impacted:

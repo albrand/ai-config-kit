@@ -57,6 +57,7 @@ class RealdataReplayGateTests(unittest.TestCase):
         git(self.repo, "commit", "-m", "base")
         self.base = git(self.repo, "rev-parse", "HEAD")
         git(self.repo, "branch", "origin/develop", self.base)
+        git(self.repo, "branch", "origin/main", self.base)
         (self.repo / "src/server/ingestion").mkdir(parents=True)
         (self.repo / "src/server/ingestion/worker.ts").write_text("candidate\n", encoding="utf-8")
         git(self.repo, "add", ".")
@@ -66,11 +67,12 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.temp.cleanup()
 
     def check(self, action: str = "review", command: str = "pre-review.py",
-              env: dict[str, str] | None = None, default_base: bool = False
+              env: dict[str, str] | None = None, default_base: bool = False,
+              base_arg: str | None = None
               ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
         args = [sys.executable, str(GATE), "check", "--repo", str(self.repo)]
         if not default_base:
-            args.extend(("--base", self.base))
+            args.extend(("--base", base_arg or self.base))
         args.extend(("--action", action, "--command", command, "--json"))
         result = subprocess.run(args,
                                 text=True, capture_output=True, env=env)
@@ -248,7 +250,7 @@ sys.exit(2)
         self.assertEqual(allowed.returncode, 0)
 
     def test_release_defaults_to_origin_main_and_requires_replay(self) -> None:
-        git(self.repo, "branch", "origin/main", self.base)
+        git(self.repo, "branch", "-f", "origin/main", self.base)
         git(self.repo, "branch", "-f", "origin/develop", "HEAD")
         denied, payload = self.check("release", "release-request", default_base=True)
         self.assertEqual(denied.returncode, 2)
@@ -270,11 +272,41 @@ sys.exit(2)
         self.assertTrue(payload["allowed"])
 
     def test_release_denies_when_origin_main_is_missing(self) -> None:
+        git(self.repo, "update-ref", "-d", "refs/heads/origin/main")
         git(self.repo, "branch", "-f", "origin/develop", "HEAD")
         denied, payload = self.check("release", "release-request", default_base=True)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
         self.assertIn("cannot resolve production branch origin/main", payload["reason"])
+
+    def test_release_explicit_base_cannot_hide_changes_since_origin_main(self) -> None:
+        # origin/main has no data-path change, while the explicit release base
+        # already contains it. The release check must still include main's diff.
+        git(self.repo, "branch", "-f", "origin/main", self.base)
+        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        denied, payload = self.check("release", "release-request", base_arg="HEAD")
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
+
+        report = replay_report()
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit replay for explicit-base release")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest}\n", encoding="utf-8")
+        denied_plan, payload = self.check("release", f"release-request --body-file {request}", base_arg="HEAD~1")
+        self.assertEqual(denied_plan.returncode, 2)
+        self.assertIn("post-release read-back offset and counts", payload["reason"])
+
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {digest}\n"
+            "Post-release read-back +30 minutes: affected-goal counts and reason/error-class counts.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        allowed, payload = self.check("release", f"release-request --body-file {request}", base_arg="HEAD~1")
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
 
     def test_review_default_base_remains_origin_develop(self) -> None:
         git(self.repo, "branch", "-f", "origin/develop", self.base)
