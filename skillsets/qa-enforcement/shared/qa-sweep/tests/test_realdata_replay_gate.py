@@ -114,6 +114,71 @@ class RealdataReplayGateTests(unittest.TestCase):
         git(self.repo, "commit", "-m", "resolve merge conflict")
         return develop_head, git(self.repo, "rev-parse", "HEAD")
 
+    def merge_develop_report_then_advance_develop(self) -> tuple[str, str]:
+        git(self.repo, "reset", "--hard", self.base)
+        git(self.repo, "checkout", "-b", "feature")
+        source = self.repo / "src/server/ingestion/worker.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("feature production-data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "feature production-data change")
+
+        git(self.repo, "checkout", "-b", "develop-source", self.base)
+        report = replay_report(note="- Develop replay report.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "develop replay report")
+
+        git(self.repo, "checkout", "feature")
+        git(self.repo, "merge", "--no-ff", "develop-source", "-m", "merge develop report")
+
+        git(self.repo, "checkout", "develop-source")
+        (self.repo / "README.md").write_text("develop advanced without changing report\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "advance develop without report change")
+        develop_head = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", develop_head)
+        git(self.repo, "checkout", "feature")
+        return develop_head, git(self.repo, "rev-parse", "HEAD")
+
+    def merge_with_report_conflict_resolution(self) -> tuple[str, str]:
+        git(self.repo, "reset", "--hard", self.base)
+        base_report = replay_report(note="- Base report.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(base_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "base replay report")
+        report_base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", report_base)
+
+        git(self.repo, "checkout", "-b", "feature")
+        source = self.repo / "src/server/ingestion/worker.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("feature production-data change\n", encoding="utf-8")
+        git(self.repo, "add", "src/server/ingestion/worker.ts")
+        git(self.repo, "commit", "-m", "feature production-data change")
+        feature_report = replay_report(note="- Feature report.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(feature_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "feature replay report")
+
+        git(self.repo, "checkout", "-b", "develop-source", report_base)
+        develop_report = replay_report(note="- Develop report.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(develop_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "develop replay report revision")
+        develop_head = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "update-ref", "refs/remotes/origin/develop", develop_head)
+
+        git(self.repo, "checkout", "feature")
+        merge = subprocess.run(["git", "merge", "--no-ff", "develop-source", "-m", "merge report revision"],
+                               cwd=self.repo, text=True, capture_output=True)
+        self.assertNotEqual(merge.returncode, 0, "report fixture must produce a merge conflict")
+        resolved_report = replay_report(note="- Replay report resolved at the merge.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(resolved_report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "resolve replay report conflict")
+        return develop_head, git(self.repo, "rev-parse", "HEAD")
+
     def gate_module(self):
         from importlib.util import module_from_spec, spec_from_file_location
         spec = spec_from_file_location("realdata_gate_for_gh_tests", GATE)
@@ -541,6 +606,31 @@ sys.exit(2)
         self.assertFalse(allowed)
         self.assertIn("cannot inspect merge resolution", reason)
         self.assertIn("--remerge-diff", reason)
+
+    def test_report_inherited_from_moved_develop_is_denied(self) -> None:
+        develop_head, _ = self.merge_develop_report_then_advance_develop()
+        denied, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("report inherited from base", payload["reason"])
+
+    def test_refreshed_report_after_develop_moves_is_allowed(self) -> None:
+        develop_head, _ = self.merge_develop_report_then_advance_develop()
+        refreshed = replay_report(note="- Feature-owned replay after develop advanced.")
+        (self.repo / "REALDATA-REPLAY.md").write_text(refreshed, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "feature refreshes replay report")
+        allowed, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
+    def test_manual_report_conflict_resolution_is_report_owner(self) -> None:
+        develop_head, merge_commit = self.merge_with_report_conflict_resolution()
+        changed_paths = git(self.repo, "show", "--remerge-diff", "--format=", "--name-only", merge_commit)
+        self.assertIn("REALDATA-REPLAY.md", changed_paths.splitlines())
+        allowed, payload = self.check("review", "pre-review.py", base_arg=develop_head)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
 
     def test_review_default_base_remains_origin_develop(self) -> None:
         git(self.repo, "update-ref", "refs/remotes/origin/develop", self.base)

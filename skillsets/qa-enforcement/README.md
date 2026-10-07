@@ -29,9 +29,13 @@ current PR body cites its name and digest. Release requests require the
 committed report and a citation in the request. For each checked range, every
 non-merge production-data commit and every merge commit whose `--remerge-diff`
 shows a production-path resolution difference must be an ancestor of the newest
-report-changing commit. Clean merges and resolutions limited to non-production
-paths do not make the report stale. If Git cannot compute a merge remerge diff,
-the gate denies the action. Install with
+report-changing commit. The report blob at the checked head must differ from the
+report blob at the checked base; an unchanged report inherited through a merge
+or a moved base is denied. A merge owns a report only when its merge-resolution
+comparison shows a change to `REALDATA-REPLAY.md`; path history alone does not
+establish ownership. Clean merges and resolutions limited to non-production
+paths do not make the report stale. If Git cannot compute a merge-resolution
+comparison, the gate denies the action. Install with
 `hooks/install-realdata-replay-gate.sh`; it backs up and updates only the new
 gate files, installed pre-review runners, and QA ship-hook adapter, preserving
 each home's existing QA sweep gate.

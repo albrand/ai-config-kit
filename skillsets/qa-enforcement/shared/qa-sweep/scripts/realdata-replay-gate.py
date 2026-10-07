@@ -105,9 +105,15 @@ def changed_paths(repo: Path, base: str | None, head: str = "HEAD") -> set[str]:
 def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str | None:
     """Require production-data changes and merge resolutions to precede the report."""
     commit_range = f"{base}..{head}"
-    report_commit = git(repo, "log", "-1", "--format=%H", commit_range, "--", REPORT_NAME)
-    if not report_commit:
-        return f"{REPORT_NAME} report inherited from base; replay this change"
+    head_blob = git(repo, "rev-parse", "--verify", f"{head}:{REPORT_NAME}")
+    base_report_path = git(repo, "ls-tree", "-r", "--name-only", base, "--", REPORT_NAME)
+    if REPORT_NAME in base_report_path.splitlines():
+        base_blob = git(repo, "rev-parse", "--verify", f"{base}:{REPORT_NAME}")
+        if base_blob == head_blob:
+            return f"{REPORT_NAME} report inherited from base; replay this change"
+
+    report_owners = set(filter(None, git(
+        repo, "log", "--no-merges", "--format=%H", commit_range, "--", REPORT_NAME).splitlines()))
 
     log = git(repo, "log", "--no-merges", "--format=%H", "--name-only", commit_range)
     commits: list[tuple[str, set[str]]] = []
@@ -123,6 +129,30 @@ def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str |
     if current_commit is not None:
         commits.append((current_commit, current_paths))
 
+    merge_commits = git(repo, "rev-list", "--merges", commit_range).splitlines()
+    merge_resolution_paths: dict[str, set[str]] = {}
+    for merge_commit in merge_commits:
+        try:
+            resolution_paths = set(filter(None, git(
+                repo, "show", "--remerge-diff", "--format=", "--name-only", merge_commit,
+                timeout=4).splitlines()))
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(
+                f"cannot inspect merge resolution for {merge_commit[:8]} with --remerge-diff: {exc}") from exc
+        merge_resolution_paths[merge_commit] = resolution_paths
+        if REPORT_NAME in resolution_paths:
+            report_owners.add(merge_commit)
+
+    if not report_owners:
+        return f"{REPORT_NAME} report inherited from base; replay this change"
+
+    # rev-list is newest-first; selecting from it avoids path-limited merge
+    # history, which can mistake an unchanged inherited report for ownership.
+    ordered_commits = git(repo, "rev-list", "--topo-order", commit_range).splitlines()
+    report_commit = next((commit for commit in ordered_commits if commit in report_owners), None)
+    if report_commit is None:
+        raise RuntimeError(f"cannot identify the commit that owns {REPORT_NAME}")
+
     for commit, paths in commits:
         if not production_paths(paths):
             continue
@@ -134,15 +164,7 @@ def report_ownership_failure(repo: Path, base: str, head: str = "HEAD") -> str |
         if result.returncode:
             raise RuntimeError(f"cannot verify production-data commit ancestry for {commit[:8]}")
 
-    merge_commits = git(repo, "rev-list", "--merges", commit_range).splitlines()
-    for merge_commit in merge_commits:
-        try:
-            resolution_paths = set(filter(None, git(
-                repo, "show", "--remerge-diff", "--format=", "--name-only", merge_commit,
-                timeout=4).splitlines()))
-        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError(
-                f"cannot inspect merge resolution for {merge_commit[:8]} with --remerge-diff: {exc}") from exc
+    for merge_commit, resolution_paths in merge_resolution_paths.items():
         if not production_paths(resolution_paths):
             continue
         result = subprocess.run(["git", "merge-base", "--is-ancestor", merge_commit, report_commit],
