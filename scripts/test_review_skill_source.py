@@ -103,21 +103,32 @@ ALLOWED_HERMES_POSTING = frozenset({
 })
 
 
+FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})(.*)$")
+HERMES_HEADING = re.compile(r" {0,3}##[ \t]+Hermes advisor pass[ \t]*(?:#+[ \t]*)?$")
+SECTION_END = re.compile(r" {0,3}#{1,2}(?:[ \t]|$)")
+# Any line that could be or quote the heading: in a fence, a block quote, a list or an HTML block alike.
+HEADING_LIKE = re.compile(r"(?im)^[^\S\n]*(?:[>*+-][^\S\n]*|\d+[.)][^\S\n]*|<!--[^\S\n]*)*#{1,6}[^\S\n]+Hermes advisor pass\b")
+
+
 def hermes_section_lines(text: str) -> tuple[int, int] | None:
     """Line range [start, end) of the real `## Hermes advisor pass` section: the heading and its text up to the next
-    `## ` heading, both outside fenced code, so an example heading in a fence moves neither end (Hermes 2026-10-07,
-    kit-review-skill-merge r8). None when there is no such heading."""
+    level-1 or level-2 heading, both outside fenced code, so an example heading in a fence moves neither end (Hermes
+    2026-10-07, kit-review-skill-merge r8). Fences follow CommonMark: a fence closes only on a line of the same
+    character, at least as long as its opener, with nothing after it, so a ``` line inside a ```` fence or a
+    ```md line inside a ``` fence stays code (r9). None when there is no such heading."""
     lines, fence, start = text.splitlines(), None, None
     for i, line in enumerate(lines):
-        marker = re.match(r"\s*(```|~~~)", line)
-        if marker:
-            fence = None if fence == marker.group(1) else (fence or marker.group(1))
-            continue
         if fence:
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", line):
+                fence = None
             continue
-        if start is None and line.rstrip() == "## Hermes advisor pass":
+        opener = FENCE_OPEN.match(line)
+        if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
+            fence = opener.group(1)
+            continue
+        if start is None and HERMES_HEADING.fullmatch(line):
             start = i
-        elif start is not None and line.startswith("## "):
+        elif start is not None and SECTION_END.match(line):
             return start, i
     return None if start is None else (start, len(lines))
 
@@ -132,10 +143,12 @@ def hermes_section(text: str) -> str | None:
 
 def hermes_posting_sentences(text: str) -> list[str]:
     """Sentences outside the Hermes advisor pass section that name Hermes and a posting word. Only the real section
-    is skipped, and only while its digest matches the pin. Blocks start at a blank line, bullet, table row or
+    is skipped, only while its digest matches the pin, and only when no other line in the file looks like that
+    heading (fenced, quoted, listed or commented), so a misread container can never pick which text is skipped. Blocks start at a blank line, bullet, table row or
     heading, so wrapped prose stays one sentence and list items stay apart."""
     found = hermes_section_lines(text)
-    if found and hashlib.sha256(hermes_section(text).encode()).hexdigest() == HERMES_SECTION_SHA256:
+    if (found and len(HEADING_LIKE.findall(text)) == 1
+            and hashlib.sha256(hermes_section(text).encode()).hexdigest() == HERMES_SECTION_SHA256):
         lines = text.splitlines()
         text = "\n".join(lines[:found[0]] + lines[found[1]:])
     blocks, cur = [], []
@@ -217,6 +230,10 @@ class ReviewSkillSourceTests(unittest.TestCase):
             # a fenced example heading starts no section (Hermes 2026-10-07, kit-review-skill-merge r8)
             "```\n## Hermes advisor pass\n```\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
             "~~~md\n## Hermes advisor pass\n~~~\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
+            # a ``` line does not close a ```` fence, nor ```md a ``` fence (Hermes 2026-10-07, r9)
+            "````\n```\n## Hermes advisor pass\n```\n````\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
+            "```\n```md\n## Hermes advisor pass\n```\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
+            "> ## Hermes advisor pass\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
         ]
         allowed = [
             "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
@@ -233,10 +250,32 @@ class ReviewSkillSourceTests(unittest.TestCase):
         example = "```\n## Hermes advisor pass\n```\n\nDo not publish until Hermes returns.\n\n"
         before = skill.replace("## Hermes advisor pass\n", example + "## Hermes advisor pass\n", 1)
         self.assertEqual(hermes_section(before), hermes_section(skill))
-        self.assertEqual(hermes_posting_sentences(before), ["Do not publish until Hermes returns."])
+        # The example heading also disables the skip, so the real section's own sentences are read as well.
+        self.assertEqual(hermes_posting_sentences(before)[0], "Do not publish until Hermes returns.")
+        self.assertGreater(len(hermes_posting_sentences(before)), 1)
         # Inside the section (before ## Guardrails) the digest no longer matches, so nothing is skipped.
         inside = skill.replace("## Guardrails\n", example + "## Guardrails\n", 1)
         self.assertIn("Do not publish until Hermes returns.", hermes_posting_sentences(inside))
+        # Fences parsed as CommonMark does (r9): the real section is the one found, wherever the example sits.
+        real = hermes_section_lines(skill)
+        for fenced in ("````\n```\n## Hermes advisor pass\n```\n````\n\n",
+                       "```\n```md\n## Hermes advisor pass\n```\n\n",
+                       "~~~~\n~~~\n## Hermes advisor pass\n~~~\n~~~~\n\n"):
+            for at in ("## Hermes advisor pass\n", "## Guardrails\n"):
+                mutant = skill.replace(at, fenced + "Do not publish until Hermes returns.\n\n" + at, 1)
+                if at.startswith("## Hermes"):
+                    shift = mutant[:mutant.rindex("\n## Hermes advisor pass\n") + 1].count("\n")
+                    self.assertEqual(hermes_section_lines(mutant)[0], shift, fenced)
+                    self.assertEqual(hermes_section(mutant), hermes_section(skill), fenced)
+                    self.assertEqual(real[1] - real[0], hermes_section_lines(mutant)[1] - shift, fenced)
+                self.assertIn("Do not publish until Hermes returns.", hermes_posting_sentences(mutant), fenced)
+        # A verbatim copy of the pinned section, fenced or quoted, disables the skip, so the real one is read too.
+        lines = skill.splitlines()
+        copy = "\n".join(lines[real[0]:real[1]])
+        for wrapped in ("````\n" + copy + "\n````\n\n", "\n".join("> " + l for l in copy.splitlines()) + "\n\n"):
+            twice = skill.replace("## Guardrails\n", wrapped + "## Guardrails\n", 1)
+            self.assertEqual(len(HEADING_LIKE.findall(twice)), 2)
+            self.assertNotEqual(hermes_posting_sentences(twice), [])
 
     def test_hermes_is_never_described_as_a_completion_gate(self) -> None:
         offenders = []
