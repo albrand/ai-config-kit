@@ -47,6 +47,12 @@ REQUIRED_FIELD_KEYS = (
 REQUIRED_TABLE_KEYS = {
     "goal", "target rows", "control count", "candidate count", "reason", "error class",
 }
+ARTIFACT_FOOTER_PREFIX = re.compile(
+    r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", re.I
+)
+ARTIFACT_FOOTER_LINE = re.compile(
+    r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", re.I
+)
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
@@ -124,20 +130,42 @@ def _exclude_gate_owned_label_keys(text: str) -> str:
     )
     normalized_table_keys = {_normalize_label_text(key).strip().lower()
                              for key in REQUIRED_TABLE_KEYS}
+    valid_footers = [index for index, line in enumerate(lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    footer_prefixes = [index for index, line in enumerate(lines)
+                       if ARTIFACT_FOOTER_PREFIX.match(line)]
+    actual_footer = (valid_footers[0] if len(valid_footers) == 1 and len(footer_prefixes) == 1
+                     else None)
+    table_header = _required_table_header_index(lines, normalized_table_keys)
     output: list[str] = []
-    for line in lines:
-        if re.match(r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", line, re.I):
+    for index, line in enumerate(lines):
+        if index == actual_footer:
             output.append("\n" if line.endswith("\n") else "")
             continue
         line = key_prefix.sub(r"\1", line, count=1)
-        if "|" in line:
+        if index == table_header and "|" in line:
             pieces = line.split("|")
-            for index, cell in enumerate(pieces):
+            for cell_index, cell in enumerate(pieces):
                 if _normalize_label_text(cell).strip().lower() in normalized_table_keys:
-                    pieces[index] = " "
+                    pieces[cell_index] = " "
             line = "|".join(pieces)
         output.append(line)
     return "".join(output)
+
+
+def _required_table_header_index(lines: list[str], required_keys: set[str]) -> int | None:
+    for index, line in enumerate(lines[:-1]):
+        if "|" not in line:
+            continue
+        separator_cells = lines[index + 1].strip().strip("|").split("|")
+        if not separator_cells or not all(
+                re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in separator_cells):
+            continue
+        header_cells = {_normalize_label_text(cell).strip().lower()
+                        for cell in line.strip().strip("|").split("|")}
+        if required_keys.issubset(header_cells):
+            return index
+    return None
 
 
 def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Pattern[str] | None:
@@ -306,8 +334,11 @@ def production_paths(paths: set[str]) -> set[str]:
 
 def normalized_report_hash(text: str) -> str:
     """Hash report bytes with the digest field omitted to avoid self-reference."""
-    lines = [line for line in text.splitlines(keepends=True)
-             if not re.match(r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", line, re.I)]
+    lines = text.splitlines(keepends=True)
+    valid_footers = [index for index, line in enumerate(lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    if len(valid_footers) == 1:
+        lines.pop(valid_footers[0])
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
@@ -359,9 +390,24 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         missing.append("at least one per-goal result row")
     if missing:
         return False, "REALDATA-REPLAY.md is missing required fields: " + ", ".join(missing), None
-    digest_match = re.search(r"(?im)^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", text)
-    if not digest_match:
-        return False, "REALDATA-REPLAY.md is missing its Artifact SHA-256 (excluding this line)", None
+    report_lines = text.splitlines(keepends=True)
+    footer_prefixes = [index for index, line in enumerate(report_lines)
+                       if ARTIFACT_FOOTER_PREFIX.match(line)]
+    valid_footers = [index for index, line in enumerate(report_lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    if len(footer_prefixes) != 1 or len(valid_footers) != 1:
+        if not footer_prefixes:
+            line_number = len(text.splitlines()) + 1
+            detail = f"is missing its Artifact SHA-256 footer at line {line_number}"
+        elif len(footer_prefixes) > 1:
+            line_number = footer_prefixes[1] + 1
+            detail = f"has an additional Artifact SHA-256 footer at line {line_number}"
+        else:
+            line_number = footer_prefixes[0] + 1
+            detail = f"has an invalid Artifact SHA-256 footer at line {line_number}"
+        return False, f"REALDATA-REPLAY.md {detail}", None
+    digest_match = ARTIFACT_FOOTER_LINE.fullmatch(report_lines[valid_footers[0]].rstrip("\r\n"))
+    assert digest_match is not None
     actual = normalized_report_hash(text)
     if digest_match.group(1).lower() != actual:
         return False, ("REALDATA-REPLAY.md artifact SHA-256 does not match its contents; likely stale footer after formatting. "

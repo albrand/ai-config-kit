@@ -466,6 +466,40 @@ sys.exit(2)
             replay_report(note="- Replay note: no additional boundary."))
         self.assertTrue(valid, reason)
 
+    def test_private_label_in_malformed_additional_footer_is_not_exempt(self) -> None:
+        text = replay_report() + "- Artifact SHA-256 (excluding this line): Acme Energy\n"
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 16", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_second_valid_looking_footer_is_refused(self) -> None:
+        report = replay_report()
+        footer = report.splitlines(keepends=True)[-1]
+        valid, reason, _ = self.gate_module().validate_report_text(report + footer)
+        self.assertFalse(valid)
+        self.assertIn("additional Artifact SHA-256 footer", reason)
+        self.assertIn("line 16", reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_hash_keeps_malformed_additional_footer_line(self) -> None:
+        report = replay_report()
+        lines = report.splitlines(keepends=True)
+        malformed = "- Artifact SHA-256 (excluding this line): not-a-digest\n"
+        expected_body = "".join(lines[:-1]) + malformed
+        actual = self.gate_module().normalized_report_hash(report + malformed)
+        self.assertEqual(actual, hashlib.sha256(expected_body.encode("utf-8")).hexdigest())
+
+    def test_malformed_sole_footer_is_refused(self) -> None:
+        lines = replay_report().splitlines(keepends=True)
+        lines[-1] = "- Artifact SHA-256 (excluding this line): not-a-digest\n"
+        valid, reason, _ = self.gate_module().validate_report_text("".join(lines))
+        self.assertFalse(valid)
+        self.assertIn("invalid Artifact SHA-256 footer", reason)
+        self.assertIn("line 15", reason)
+        self.assertNotIn("not-a-digest", reason)
+
     def test_required_blocked_rows_key_does_not_match_private_label(self) -> None:
         self.denylist.write_text("Blocked\n", encoding="utf-8")
         valid, reason, _ = self.gate_module().validate_report_text(
@@ -477,6 +511,14 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(
             replay_report(note="- Replay note: no additional boundary."))
         self.assertTrue(valid, reason)
+
+    def test_table_result_value_matching_header_word_is_still_checked(self) -> None:
+        self.denylist.write_text("Goal\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(replay_report(reason="Goal"))
+        self.assertFalse(valid)
+        self.assertIn("private tenant label", reason)
+        self.assertIn("line 13", reason)
+        self.assertNotIn("Goal", reason)
 
     def test_required_field_values_are_still_checked_for_private_labels(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0 (Acme Energy boundary)")
