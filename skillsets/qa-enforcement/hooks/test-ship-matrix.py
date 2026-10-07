@@ -202,9 +202,10 @@ CONTEXTS = {
     "bash ends the body at T)": "x=$(cat <<{W}\n{B}\n{T})\n{P}\n{T}\n)", "in ${...}": "echo ${x:-<<{W} }\n{P}\n{T}",
 }
 sys.path.insert(0, HOOKS)
-from shell_oracle import SHELLS, shell_versions  # noqa: E402  all three required, each identified
+from shell_oracle import SHELLS, shell_env, shell_versions  # noqa: E402  all four required, each identified
 
 VERSIONS = shell_versions()
+SHELL_ENV = shell_env()
 
 
 def unquote(w):
@@ -226,7 +227,7 @@ for wname in WORDS:
                 scanned, runnable = src.replace("{P}", PUSH), src.replace("{P}", RAN).replace("gh pr merge", ": gh pr merge")
                 ran = [s for s in SHELLS
                        if "ORACLE-RAN" in subprocess.run([s, "-c", runnable], cwd=N, capture_output=True, text=True,
-                                                         timeout=20).stdout.splitlines()]
+                                                         timeout=20, env=SHELL_ENV).stdout.splitlines()]
                 oracle_cases += 1
                 if not ran:
                     continue

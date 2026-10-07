@@ -10,12 +10,24 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 SHELLS = ("/bin/bash", "/bin/zsh", "/bin/sh", "/bin/dash")
 PROBE = ('if [ -n "${ZSH_VERSION:-}" ]; then echo "zsh $ZSH_VERSION"; '
          'elif [ -n "${BASH_VERSION:-}" ]; then case ":${SHELLOPTS:-}:" in '
          '*:posix:*) echo "bash $BASH_VERSION, POSIX mode";; *) echo "bash $BASH_VERSION";; esac; '
          'elif [ -n "${KSH_VERSION:-}" ]; then echo "ksh $KSH_VERSION"; fi')
+
+
+SHELL_STATE = ("ZSH_VERSION", "BASH_VERSION", "KSH_VERSION", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV",
+               "POSIXLY_CORRECT", "IFS", "CDPATH")
+
+
+def shell_env():
+    """The environment the oracles measure the shells in: this one, without variables that would change how a shell
+    reads a script or which shell it claims to be (an inherited SHELLOPTS=posix switches bash to POSIX mode, BASH_ENV
+    runs a file first). The locale and the rest stay, as in the agents' own shells."""
+    return {k: v for k, v in os.environ.items() if k not in SHELL_STATE}
 
 
 def package_version(real):
@@ -34,8 +46,14 @@ def package_version(real):
 
 
 def identify(s):
+    """The probe runs with an environment of its own, so the version variables it reads are the ones the shell sets
+    itself: an inherited ZSH_VERSION, BASH_VERSION or KSH_VERSION would name the wrong shell, and an inherited
+    SHELLOPTS would switch bash's options (Hermes 2026-10-07 r14). HOME and ZDOTDIR point at an empty directory, so
+    no user startup file runs."""
     real = os.path.realpath(s)
-    r = subprocess.run([s, "-c", PROBE], capture_output=True, text=True, timeout=10)
+    with tempfile.TemporaryDirectory(prefix="shell-oracle-") as empty:
+        env = {"PATH": "/usr/bin:/bin", "HOME": empty, "ZDOTDIR": empty, "LC_ALL": "C"}
+        r = subprocess.run([s, "-c", PROBE], capture_output=True, text=True, timeout=10, env=env, cwd=empty)
     if r.returncode:
         sys.exit(f"BAD required shell {s} does not run: rc {r.returncode}")
     name = r.stdout.strip()

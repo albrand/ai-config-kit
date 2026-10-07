@@ -27,9 +27,10 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 PUSH = "git push origin main"
 sys.path.insert(0, HOOKS)
-from shell_oracle import SHELLS, shell_versions  # noqa: E402  all three required, each identified
+from shell_oracle import SHELLS, shell_env, shell_versions  # noqa: E402  all four required, each identified
 
 VERSIONS = shell_versions()
+SHELL_ENV = shell_env()
 
 
 def corpus():
@@ -104,7 +105,7 @@ def ends_at(shell, ctx, w, t):
               f'x="$(cat <<{w}\nBODY\n{t}\n)"\necho "$x"\necho RAN')
     try:
         r = subprocess.run([shell, "-c", script], capture_output=True, text=True, errors="replace", timeout=10,
-                           cwd="/tmp")
+                           cwd="/tmp", env=SHELL_ENV)
     except subprocess.TimeoutExpired:
         return False
     return r.stdout == "BODY\nRAN\n"
