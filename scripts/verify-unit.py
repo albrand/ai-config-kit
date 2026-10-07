@@ -6,9 +6,16 @@ import json
 import re
 import subprocess
 import sys
+import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 TEST_NAME = re.compile(r'(?:test(?:[_-].*)?|.*(?:_test|\.test))\.(?:py|sh|mjs|js|cjs)$')
+UNITTEST_BASES = set()
+for exported in unittest.__all__:
+    value = getattr(unittest, exported)
+    if isinstance(value, type) and issubclass(value, unittest.TestCase):
+        UNITTEST_BASES.add(('unittest', exported))
+        UNITTEST_BASES.add(tuple(value.__module__.split('.')) + (value.__name__,))
 
 
 def python_markers(path):
@@ -88,7 +95,7 @@ def unittest_suites(repo, tracked):
                 key = module + (node.name,)
                 classes[key] = [target(base) for base in node.bases]
                 owners[key] = name
-    resolved = {key for key, bases in classes.items() if ('unittest', 'TestCase') in bases}
+    resolved = {key for key, bases in classes.items() if any(base in UNITTEST_BASES for base in bases)}
     while True:
         additions = {key for key, bases in classes.items() if key not in resolved and any(
             base and any(parent == base or len(parent) >= len(base) and parent[-len(base):] == base
