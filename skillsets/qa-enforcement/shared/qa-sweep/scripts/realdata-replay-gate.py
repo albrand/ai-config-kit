@@ -389,7 +389,14 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
                         if isinstance(item, dict) and item.get("path")}
             impacted = production_paths(pr_paths)
         else:
-            impacted = production_paths(changed_paths(repo, base, head))
+            diff_base = base
+            if diff_base is None and action == "release":
+                diff_base = "origin/main"
+                try:
+                    git(repo, "rev-parse", "--verify", f"{diff_base}^{{commit}}")
+                except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                    return False, "cannot resolve production branch origin/main for release diff", set(), None
+            impacted = production_paths(changed_paths(repo, diff_base, head))
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return False, f"cannot establish the Pallium production-data diff: {exc}", set(), None
     if not impacted:

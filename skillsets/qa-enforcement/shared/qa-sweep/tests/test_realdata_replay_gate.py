@@ -65,9 +65,13 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.temp.cleanup()
 
     def check(self, action: str = "review", command: str = "pre-review.py",
-              env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
-        result = subprocess.run([sys.executable, str(GATE), "check", "--repo", str(self.repo),
-                                 "--base", self.base, "--action", action, "--command", command, "--json"],
+              env: dict[str, str] | None = None, default_base: bool = False
+              ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        args = [sys.executable, str(GATE), "check", "--repo", str(self.repo)]
+        if not default_base:
+            args.extend(("--base", self.base))
+        args.extend(("--action", action, "--command", command, "--json"))
+        result = subprocess.run(args,
                                 text=True, capture_output=True, env=env)
         return result, json.loads(result.stdout)
 
@@ -239,6 +243,42 @@ sys.exit(2)
         allowed, _ = self.check("release", "release-request --evidence release-request.md")
         self.assertEqual(allowed.returncode, 0)
 
+    def test_release_defaults_to_origin_main_and_requires_replay(self) -> None:
+        git(self.repo, "branch", "origin/main", self.base)
+        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        denied, payload = self.check("release", "release-request", default_base=True)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
+
+        report = replay_report(blocked=True)
+        (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit release replay")
+        digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "release-request.md"
+        request.write_text(
+            f"REALDATA-REPLAY.md SHA-256 {digest}\n"
+            "Post-release read-back +30 minutes: affected-goal counts, BLOCKED row counts, reason and error-class counts.\n"
+            "Rollback target: d9038526c5436cdd24dd8ed2a7e5ca3b84416e06.\n", encoding="utf-8")
+        allowed, payload = self.check("release", f"release-request --body-file {request}", default_base=True)
+        self.assertEqual(allowed.returncode, 0, payload["reason"])
+        self.assertTrue(payload["allowed"])
+
+    def test_release_denies_when_origin_main_is_missing(self) -> None:
+        git(self.repo, "branch", "-f", "origin/develop", "HEAD")
+        denied, payload = self.check("release", "release-request", default_base=True)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("cannot resolve production branch origin/main", payload["reason"])
+
+    def test_review_default_base_remains_origin_develop(self) -> None:
+        git(self.repo, "branch", "-f", "origin/develop", self.base)
+        denied, payload = self.check("review", "pre-review.py", default_base=True)
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("missing REALDATA-REPLAY.md", payload["reason"])
+
     def test_blocked_report_denies_digest_only_release_request(self) -> None:
         report = replay_report(blocked=True)
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
@@ -384,7 +424,7 @@ sys.exit(2)
         import os
         env = os.environ.copy()
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-        allowed, _ = self.check("pr", "gh pr ready", env)
+        allowed, _ = self.check("pr", "gh pr ready", env, default_base=True)
         self.assertEqual(allowed.returncode, 0)
 
     def test_blocked_rows_do_not_add_readback_requirement_to_pr_ready(self) -> None:
