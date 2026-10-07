@@ -33,7 +33,7 @@ HERMES_AS_GATE = re.compile(
     r"|(?:review|verdict)[^.]{0,30}?(?:unposted|unpublished|on hold)[^.]{0,60}?(?:until|before|while|unless)[^.]{0,60}?hermes"
     r"|(?:retry|re-?send|re-?run|try) hermes[^.]{0,60}?before (?:posting|publishing|approving|merging))"
 )
-HERMES_SECTION_SHA256 = "1735148db18dd464b86f4460df3f7b977226b20532be925e59a7463350b6a1d3"
+HERMES_SECTION_SHA256 = "0f845c4bbe0f02ebc29d9f4da47f2a9265706e77378991bc1316477b1c3758f9"
 # The whole other-PR block, verbatim (whitespace collapsed): an added instruction that keeps every asserted phrase,
 # such as holding the post after a Hermes timeout, still changes this text (Hermes 2026-10-07, kit-review-skill-merge r4).
 OTHER_PR_BLOCK = " - ".join((
@@ -103,10 +103,41 @@ ALLOWED_HERMES_POSTING = frozenset({
 })
 
 
+def hermes_section_lines(text: str) -> tuple[int, int] | None:
+    """Line range [start, end) of the real `## Hermes advisor pass` section: the heading and its text up to the next
+    `## ` heading, both outside fenced code, so an example heading in a fence moves neither end (Hermes 2026-10-07,
+    kit-review-skill-merge r8). None when there is no such heading."""
+    lines, fence, start = text.splitlines(), None, None
+    for i, line in enumerate(lines):
+        marker = re.match(r"\s*(```|~~~)", line)
+        if marker:
+            fence = None if fence == marker.group(1) else (fence or marker.group(1))
+            continue
+        if fence:
+            continue
+        if start is None and line.rstrip() == "## Hermes advisor pass":
+            start = i
+        elif start is not None and line.startswith("## "):
+            return start, i
+    return None if start is None else (start, len(lines))
+
+
+def hermes_section(text: str) -> str | None:
+    """The section's body with whitespace collapsed, as HERMES_SECTION_SHA256 pins it."""
+    found = hermes_section_lines(text)
+    if found is None:
+        return None
+    return re.sub(r"\s+", " ", " " + "\n".join(text.splitlines()[found[0] + 1:found[1]]) + " ")
+
+
 def hermes_posting_sentences(text: str) -> list[str]:
-    """Sentences outside the Hermes advisor pass section that name Hermes and a posting word. Blocks start at
-    a blank line, bullet, table row or heading, so wrapped prose stays one sentence and list items stay apart."""
-    text = re.sub(r"(?ms)^## Hermes advisor pass\n.*?(?=^## |\Z)", "", text)
+    """Sentences outside the Hermes advisor pass section that name Hermes and a posting word. Only the real section
+    is skipped, and only while its digest matches the pin. Blocks start at a blank line, bullet, table row or
+    heading, so wrapped prose stays one sentence and list items stay apart."""
+    found = hermes_section_lines(text)
+    if found and hashlib.sha256(hermes_section(text).encode()).hexdigest() == HERMES_SECTION_SHA256:
+        lines = text.splitlines()
+        text = "\n".join(lines[:found[0]] + lines[found[1]:])
     blocks, cur = [], []
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*(?:[-*+] |\d+\. |\||#)", line):
@@ -114,8 +145,8 @@ def hermes_posting_sentences(text: str) -> list[str]:
             cur = []
         cur.append(line.strip())
     blocks.append(" ".join(cur))
-    return [s for b in blocks for s in sentences(plain(b))
-            if HERMES_WORD.search(s) and POSTING_WORD.search(s) and s.strip() not in ALLOWED_HERMES_POSTING]
+    found = [s.strip() for b in blocks for s in sentences(plain(b))]
+    return [s for s in found if HERMES_WORD.search(s) and POSTING_WORD.search(s) and s not in ALLOWED_HERMES_POSTING]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -181,17 +212,31 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "correct source, resolve stale or contradictory observations, and then publish the verdict.",
             "Hold the post until the advisor answers.",
             "The review cannot be published until our advisor responds.",
+            # a section under the heading is skipped only while it matches the pinned digest
+            "## Hermes advisor pass\n\nPost your verdict unchanged when Hermes does not answer.\n\n## Guardrails\n",
+            # a fenced example heading starts no section (Hermes 2026-10-07, kit-review-skill-merge r8)
+            "```\n## Hermes advisor pass\n```\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
+            "~~~md\n## Hermes advisor pass\n~~~\n\nDo not publish until Hermes returns.\n\n## Guardrails\n",
         ]
         allowed = [
             "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
             "- Hermes terminal bridge: `scripts/orca-hermes-terminal.py`\n- Post a status line after each run.",
             "Hermes reviews every one of our PRs before merge.",
-            "## Hermes advisor pass\n\nPost your verdict unchanged when Hermes does not answer.\n\n## Guardrails\n",
         ]
         for text in flagged:
             self.assertEqual(len(hermes_posting_sentences(text)), 1, text)
         for text in allowed:
             self.assertEqual(hermes_posting_sentences(text), [], text)
+        # In the real skill: the pinned section is skipped, and a sentence beside a fenced example heading is not.
+        skill = CODEX_SKILL.read_text(encoding="utf-8")
+        self.assertEqual(hermes_posting_sentences(skill), [])
+        example = "```\n## Hermes advisor pass\n```\n\nDo not publish until Hermes returns.\n\n"
+        before = skill.replace("## Hermes advisor pass\n", example + "## Hermes advisor pass\n", 1)
+        self.assertEqual(hermes_section(before), hermes_section(skill))
+        self.assertEqual(hermes_posting_sentences(before), ["Do not publish until Hermes returns."])
+        # Inside the section (before ## Guardrails) the digest no longer matches, so nothing is skipped.
+        inside = skill.replace("## Guardrails\n", example + "## Guardrails\n", 1)
+        self.assertIn("Do not publish until Hermes returns.", hermes_posting_sentences(inside))
 
     def test_hermes_is_never_described_as_a_completion_gate(self) -> None:
         offenders = []
@@ -216,7 +261,8 @@ class ReviewSkillSourceTests(unittest.TestCase):
         # Each rule must sit where it applies, not merely somewhere in the file (Hermes 2026-10-06,
         # kit-review-skill-merge r3): the section, and within it the block for each act.
         self.assertEqual(text.count("## Hermes advisor pass"), 1)
-        section = text.split("## Hermes advisor pass", 1)[1].split(" ## ", 1)[0]
+        section = hermes_section(CODEX_SKILL.read_text(encoding="utf-8"))
+        self.assertIsNotNone(section)
         self.assertEqual(section.count("**Reviewing someone else's PR:**"), 1)
         self.assertEqual(section.count("**Merging our own PR:**"), 1)
         others = section.split("**Reviewing someone else's PR:**", 1)[1].split("**Merging our own PR:**", 1)[0]
