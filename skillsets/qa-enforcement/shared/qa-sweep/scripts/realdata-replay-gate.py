@@ -85,14 +85,26 @@ def normalized_report_hash(text: str) -> str:
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
-def validate_report(repo: Path) -> tuple[bool, str, str | None]:
-    path = repo / REPORT_NAME
-    if not path.is_file():
-        return False, f"missing {REPORT_NAME} at repository root", None
+def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return False, f"cannot read {REPORT_NAME}: {exc}", None
+        result = subprocess.run(["git", "show", f"{head}:{REPORT_NAME}"], cwd=repo,
+                                capture_output=True, timeout=4)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"cannot read {REPORT_NAME} from reviewed head: {exc}", None
+    if result.returncode:
+        return False, f"missing {REPORT_NAME} at reviewed head", None
+    committed_bytes = result.stdout
+    path = repo / REPORT_NAME
+    if path.exists():
+        try:
+            if path.read_bytes() != committed_bytes:
+                return False, f"{REPORT_NAME} has uncommitted changes; commit the report before continuing", None
+        except OSError as exc:
+            return False, f"cannot compare working-tree {REPORT_NAME} with reviewed head: {exc}", None
+    try:
+        text = committed_bytes.decode("utf-8")
+    except UnicodeError as exc:
+        return False, f"cannot decode committed {REPORT_NAME}: {exc}", None
     required = {
         "copy time": r"(?im)^\s*[-*]?\s*Copy time \(UTC\):\s*\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)\s*$",
         "control SHA": r"(?im)^\s*[-*]?\s*Control SHA:\s*[0-9a-f]{40,64}\s*$",
@@ -226,7 +238,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
         return True, "no production-data paths changed", set(), None
     if action == "pr" and str(pr_info.get("headRefOid") or "").lower() != git(repo, "rev-parse", head).lower():
         return False, "run the PR-ready or merge gate from the worktree at the exact target PR head", impacted, None
-    valid, reason, digest = validate_report(repo)
+    valid, reason, digest = validate_report(repo, head)
     if not valid or digest is None:
         return False, reason, impacted, digest
     if action == "review":

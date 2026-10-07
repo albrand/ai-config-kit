@@ -17,8 +17,8 @@ def git(repo: Path, *args: str) -> str:
                           capture_output=True).stdout.strip()
 
 
-def replay_report() -> str:
-    body = """# REALDATA-REPLAY
+def replay_report(candidate_count: int = 3) -> str:
+    body = f"""# REALDATA-REPLAY
 
 - Copy time (UTC): 2026-10-06T23:00:00Z
 - Control SHA: 0123456789abcdef0123456789abcdef01234567
@@ -30,7 +30,7 @@ def replay_report() -> str:
 
 | Goal | Target rows | Control count | Candidate count | Reason | Error class |
 |---|---:|---:|---:|---|---|
-| repair ingestion projection | 3 | 0 | 3 | records now project | none |
+| repair ingestion projection | 3 | 0 | {candidate_count} | records now project | none |
 """
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
@@ -72,6 +72,8 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.assertIn("missing REALDATA-REPLAY.md", missing_json["reason"])
 
         (self.repo / "REALDATA-REPLAY.md").write_text(replay_report(), encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit valid report")
         passed, passed_json = self.check()
         self.assertEqual(passed.returncode, 0)
         self.assertTrue(passed_json["allowed"])
@@ -91,7 +93,7 @@ class RealdataReplayGateTests(unittest.TestCase):
         denied, payload = self.check()
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
-        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at repository root")
+        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at reviewed head")
         self.assertIn("src/server/ingestion/worker.ts", payload["affected_paths"])
 
     def test_package_name_identifies_clone_with_unrelated_local_remote(self) -> None:
@@ -106,11 +108,13 @@ class RealdataReplayGateTests(unittest.TestCase):
         denied, payload = self.check()
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(payload["allowed"])
-        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at repository root")
+        self.assertEqual(payload["reason"], "missing REALDATA-REPLAY.md at reviewed head")
 
     def test_hermes_must_attach_report_or_a_packet_that_cites_it(self) -> None:
         report = replay_report()
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit valid report")
         digest = report.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
         missing_citation, _ = self.check("review", "bb fleet validate 'review data fix'")
         self.assertEqual(missing_citation.returncode, 2)
@@ -124,6 +128,8 @@ class RealdataReplayGateTests(unittest.TestCase):
     def test_digest_tampering_fails(self) -> None:
         report = replay_report().replace("| 3 | 0 | 3 |", "| 3 | 0 | 4 |")
         (self.repo / "REALDATA-REPLAY.md").write_text(report, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit tampered report")
         result, payload = self.check()
         self.assertEqual(result.returncode, 2)
         self.assertIn("SHA-256 does not match", payload["reason"])
@@ -141,6 +147,30 @@ class RealdataReplayGateTests(unittest.TestCase):
         request.write_text(f"Evidence: {request.parent / 'REALDATA-REPLAY.md'} SHA-256 {digest}\n", encoding="utf-8")
         allowed, _ = self.check("release", "release-request --evidence release-request.md")
         self.assertEqual(allowed.returncode, 0)
+
+    def test_pr_create_rejects_cited_unstaged_report_different_from_committed_blob(self) -> None:
+        committed = replay_report(candidate_count=3)
+        (self.repo / "REALDATA-REPLAY.md").write_text(committed, encoding="utf-8")
+        git(self.repo, "add", "REALDATA-REPLAY.md")
+        git(self.repo, "commit", "-m", "commit report A")
+
+        unstaged = replay_report(candidate_count=4)
+        (self.repo / "REALDATA-REPLAY.md").write_text(unstaged, encoding="utf-8")
+        digest_b = unstaged.split("Artifact SHA-256 (excluding this line): ", 1)[1].strip()
+        request = self.repo / "pr-body.md"
+        request.write_text(f"REALDATA-REPLAY.md SHA-256 {digest_b}\n", encoding="utf-8")
+
+        denied, payload = self.check("pr-create", f"gh pr create --body-file {request}")
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("has uncommitted changes", payload["reason"])
+
+    def test_review_rejects_report_that_is_only_uncommitted(self) -> None:
+        (self.repo / "REALDATA-REPLAY.md").write_text(replay_report(), encoding="utf-8")
+        denied, payload = self.check("review", "bb fleet validate --evidence REALDATA-REPLAY.md")
+        self.assertEqual(denied.returncode, 2)
+        self.assertFalse(payload["allowed"])
+        self.assertIn("missing REALDATA-REPLAY.md at reviewed head", payload["reason"])
 
     def test_pr_ready_requires_report_digest_in_live_pr_body(self) -> None:
         report = replay_report()

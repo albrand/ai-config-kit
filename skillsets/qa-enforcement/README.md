@@ -18,7 +18,9 @@ from the qa-speed-quality research report §2 (report at
 
 Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
 Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
-The gate checks a valid root `REALDATA-REPLAY.md` before review. Hermes
+The gate reads and validates `REALDATA-REPLAY.md` from the reviewed commit,
+not from an unstaged working-tree copy; it denies every action if the report is
+missing from that commit or a present worktree copy differs. Hermes
 submission requires the report itself attached as `--evidence` with its digest;
 `pre-review.py` adds the artifact path and SHA-256 to both review packets. PR
 creation requires the report committed and its name and digest in the creation
