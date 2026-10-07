@@ -110,6 +110,10 @@ class CommittedSnapshotTests(unittest.TestCase):
         # holds this checkout's install sources, with HOME pointed at a temp dir, so the default target paths and
         # the writer lock resolve there and no live home is touched.
         self.require_full_history()
+        # Readable objects are not enough: a graft can cut f9e6837 out of HEAD's history and leave its blobs behind.
+        ancestor = subprocess.run(["git", "-C", str(RENDERER.ROOT), "merge-base", "--is-ancestor", "f9e6837", "HEAD"],
+                                  capture_output=True, text=True)
+        self.assertEqual(0, ancestor.returncode, f"f9e6837 is not reachable from HEAD: {ancestor.stderr!r}")
         files = {}
         for key, filename in RENDERER.NAMES.items():
             shown = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show",
