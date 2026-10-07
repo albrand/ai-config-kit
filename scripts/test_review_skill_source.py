@@ -87,17 +87,23 @@ def gate_sentences(text: str) -> list[str]:
     return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s)]
 
 
-# Wording-independent: outside the pinned Hermes advisor pass section, no sentence may tie Hermes to posting,
-# publishing or approval, so a hold in new words ("Publication remains pending until Hermes returns a verdict")
-# fails until it is moved into the section, where the digest pins it, or added verbatim below (Hermes 2026-10-07,
-# kit-review-skill-merge r5).
+# Wording-independent: outside the pinned Hermes advisor pass section, no sentence may name Hermes (or the advisor)
+# and posting, publishing or approval at all, at any distance, so a hold in new words ("Publication remains pending
+# until Hermes returns a verdict", or a long sentence that ends "and then publish the verdict") fails until it is
+# moved into the section, where the digest pins it, or added verbatim below (Hermes 2026-10-07, kit-review-skill-merge
+# r5 and r6).
 _POSTING = r"(?:\bpost(?:s|ed|ing)?\b|\bunposted\b|\bpublish\w*|\bpublication\b|\bapprov(?:e|es|ed|ing|al)\b(?! broker))"
-HERMES_NEAR_POSTING = re.compile(r"(?i)hermes.{0,100}?" + _POSTING + r"|" + _POSTING + r".{0,100}?hermes")
-ALLOWED_HERMES_POSTING: frozenset[str] = frozenset()
+POSTING_WORD = re.compile(r"(?i)" + _POSTING)
+HERMES_WORD = re.compile(r"(?i)\bhermes\b|\bthe advisor\b|\badvisor(?:'s)? (?:pass|calls?|answers?|verdict|result|help)\b")
+ALLOWED_HERMES_POSTING = frozenset({
+    # high-signal-pr-review's intro, which states the section's rule: never a publish blocker
+    "It is mandatory to attempt, best-effort to obtain, and never a publish blocker: if the advisor is unavailable, "
+    "publish the independently evidenced verdict unchanged and record the unadvised gap only in the operator close-out.",
+})
 
 
 def hermes_posting_sentences(text: str) -> list[str]:
-    """Sentences outside the Hermes advisor pass section that mention Hermes near a posting word. Blocks start at
+    """Sentences outside the Hermes advisor pass section that name Hermes and a posting word. Blocks start at
     a blank line, bullet, table row or heading, so wrapped prose stays one sentence and list items stay apart."""
     text = re.sub(r"(?ms)^## Hermes advisor pass\n.*?(?=^## |\Z)", "", text)
     blocks, cur = [], []
@@ -108,7 +114,7 @@ def hermes_posting_sentences(text: str) -> list[str]:
         cur.append(line.strip())
     blocks.append(" ".join(cur))
     return [s for b in blocks for s in sentences(plain(b))
-            if HERMES_NEAR_POSTING.search(s) and s.strip() not in ALLOWED_HERMES_POSTING]
+            if HERMES_WORD.search(s) and POSTING_WORD.search(s) and s.strip() not in ALLOWED_HERMES_POSTING]
 
 
 class ReviewSkillSourceTests(unittest.TestCase):
@@ -168,6 +174,11 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "The review gets posted once Hermes is back.",
             "- Hermes must approve the verdict first.",
             "When it is down, approval\nwaits for Hermes.",
+            "Wait for Hermes to return; meanwhile the local reviewer should independently reconcile every candidate "
+            "finding against the exact diff, recheck the current commit and live head, inspect required ticket "
+            "acceptance criteria, verify the complete test output, confirm each evidence item is attached to the "
+            "correct source, resolve stale or contradictory observations, and then publish the verdict.",
+            "Hold the post until the advisor answers.",
         ]
         allowed = [
             "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
