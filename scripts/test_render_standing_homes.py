@@ -40,6 +40,14 @@ class CommittedSnapshotTests(unittest.TestCase):
         self.assertGreaterEqual(len(manifest), 2, "keep both the installed baseline and current render")
         self.assertEqual(expected, manifest[-1])
 
+    def require_full_history(self) -> None:
+        # These tests read the manifest's past commits. A shallow or pruned checkout must fail, not pass vacuously
+        # or skip; the self-hosted runner makes full mirror clones (Hermes 2026-10-06, kit-standing-home-profile r3).
+        shallow = subprocess.run(["git", "-C", str(RENDERER.ROOT), "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True)
+        self.assertEqual(0, shallow.returncode, f"not a git checkout: {shallow.stderr!r}")
+        self.assertEqual("false", shallow.stdout.strip(), "shallow checkout; fetch the full history to run this test")
+
     def test_every_current_profile_in_history_stays_recorded(self) -> None:
         # #56 replaced the current bb digest without keeping the old one as an accepted profile, so the
         # installer refused the very homes it had installed. A past current profile must stay installable:
@@ -58,10 +66,11 @@ class CommittedSnapshotTests(unittest.TestCase):
                     out[header] = out[header] | frozenset(found)
             return out
 
+        self.require_full_history()
         log = subprocess.run(["git", "-C", str(RENDERER.ROOT), "log", "--format=%H", "--", rel],
                              capture_output=True, text=True)
-        if log.returncode != 0 or not log.stdout.split():
-            self.skipTest("no git history for the fingerprint manifest")
+        self.assertEqual(0, log.returncode, log.stderr)
+        self.assertTrue(log.stdout.split(), "no git history for the fingerprint manifest")
         now = sections((RENDERER.ROOT / rel).read_text(encoding="utf-8"))
         kept = {d for h, d in now.items() if h.startswith(("Accepted live profile", "Current rendered profile"))}
         installable = [frozenset(p.values()) for p in RENDERER.load_expected_hash_profiles()]
@@ -80,12 +89,12 @@ class CommittedSnapshotTests(unittest.TestCase):
         # `--install` must accept them and write the current render. The CLI runs from a clone whose origin/main
         # holds this checkout's install sources, with HOME pointed at a temp dir, so the default target paths and
         # the writer lock resolve there and no live home is touched.
+        self.require_full_history()
         files = {}
         for key, filename in RENDERER.NAMES.items():
             shown = subprocess.run(["git", "-C", str(RENDERER.ROOT), "show",
                                     f"f9e6837:proposals/card21/rendered-homes/{filename}"], capture_output=True)
-            if shown.returncode != 0:
-                self.skipTest("commit f9e6837 is not in this checkout's history")
+            self.assertEqual(0, shown.returncode, f"commit f9e6837 is not in this checkout: {shown.stderr!r}")
             files[key] = shown.stdout
         live_homes = {"claude": ".claude/CLAUDE.md", "codex": ".codex/AGENTS.md",
                       "opencode": ".config/opencode/AGENTS.md", "bb": ".bb/AGENTS.md"}
