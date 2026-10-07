@@ -27,6 +27,25 @@ HERMES_AS_GATE = re.compile(
     r"(?:until|before|without)[^.]{0,40}?hermes (?:returns|answers|responds|replies|approves|accepts|verdict|result)"
     r"|wait for hermes[^.]{0,40}?before (?:posting|publishing|approving|merging))"
 )
+# Each thing the review skill asks Hermes to challenge or name (Hermes 2026-10-06, kit-review-skill-merge r2:
+# assert every item, not the start of the sentence).
+CHALLENGE_ITEMS = (
+    "Ask Hermes to challenge business-rule coverage", "changed-path correctness", "auth, security, data and API contracts",
+    "regression risk", "validation sufficiency", "and each candidate finding",
+    "Ask it to name false positives, missing evidence and overlooked defects",
+)
+# The retired hermes-assisted-pr-review's other rules that still apply, each as its own phrase.
+RETAINED_RULES = (
+    "a verdict from `accept | revise | reject` with per-finding evidence", "any other shape counts as no verdict",
+    "Agreement between Hermes and your own separate judgment is a confidence source",
+    "Hermes saying it is sure is not",
+    "Acknowledge queued automation work normally once the review is confirmed posted",
+    "Skipping the attempt while Hermes is reachable leaves the review incomplete",
+    "Re-fetch the live head and review state just before you post, acknowledge, or merge",
+    "discard the advice as stale and run a fresh same-topic review of the delta",
+    "Never let advice about an older head support a post or a merge",
+    "the queue acknowledgement status, when the review came from a queue",
+)
 # Extra agent-loaded files to scan (e.g. installed skills with no kit source), os.pathsep-separated.
 CHAIN_ENV = "REVIEW_CHAIN_PATHS"
 
@@ -115,15 +134,11 @@ class ReviewSkillSourceTests(unittest.TestCase):
         self.assertIn("bb fleet validate", text)
         self.assertIn("A defect it names blocks the merge until it is fixed", text)
         self.assertIn("does not block", text)
-        # Stale advice: the retired skill's rule, kept (Hermes 2026-10-06, kit-review-skill-merge r1).
-        self.assertIn("Re-fetch the live head and review state just before you post, acknowledge, or merge", text)
-        self.assertIn("discard the advice as stale and run a fresh same-topic review of the delta", text)
-        self.assertIn("Never let advice about an older head support a post or a merge", text)
-        # The rest of the retired skill's rules that still apply.
-        self.assertIn("Ask Hermes to challenge business-rule coverage", text)
-        self.assertIn("Acknowledge queued automation work normally once the review is confirmed posted", text)
-        self.assertIn("Skipping the attempt while Hermes is reachable leaves the review incomplete", text)
-        self.assertIn("Hermes saying it is sure is not", text)
+        # The retired skill's rules that still apply, the stale-head rule among them (Hermes 2026-10-06,
+        # kit-review-skill-merge r1 and r2): one assertion per phrase.
+        for item in CHALLENGE_ITEMS + RETAINED_RULES:
+            with self.subTest(rule=item):
+                self.assertIn(item, text)
         # The folded-in skill is retired; nothing may send an agent to it.
         self.assertNotIn("hermes-assisted-pr-review", text)
 
