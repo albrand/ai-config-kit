@@ -87,14 +87,15 @@ def gate_sentences(text: str) -> list[str]:
     return [s for s in sentences(plain(text)) if HERMES_AS_GATE.search(s)]
 
 
-# Wording-independent: outside the pinned Hermes advisor pass section, no sentence may name Hermes (or the advisor)
+# Wording-independent: outside the pinned Hermes advisor pass section, no sentence may name Hermes (or any advisor)
 # and posting, publishing or approval at all, at any distance, so a hold in new words ("Publication remains pending
 # until Hermes returns a verdict", or a long sentence that ends "and then publish the verdict") fails until it is
 # moved into the section, where the digest pins it, or added verbatim below (Hermes 2026-10-07, kit-review-skill-merge
-# r5 and r6).
+# r5, r6 and r7). Not caught: a sentence that names neither, such as one about a counterpart or sidecar (those words
+# also mark ordinary approval rules elsewhere, so they are not matched).
 _POSTING = r"(?:\bpost(?:s|ed|ing)?\b|\bunposted\b|\bpublish\w*|\bpublication\b|\bapprov(?:e|es|ed|ing|al)\b(?! broker))"
 POSTING_WORD = re.compile(r"(?i)" + _POSTING)
-HERMES_WORD = re.compile(r"(?i)\bhermes\b|\bthe advisor\b|\badvisor(?:'s)? (?:pass|calls?|answers?|verdict|result|help)\b")
+HERMES_WORD = re.compile(r"(?i)\bhermes\b|(?<![-\w])advisor(?:s|'s)?\b(?!-)")
 ALLOWED_HERMES_POSTING = frozenset({
     # high-signal-pr-review's intro, which states the section's rule: never a publish blocker
     "It is mandatory to attempt, best-effort to obtain, and never a publish blocker: if the advisor is unavailable, "
@@ -179,6 +180,7 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "acceptance criteria, verify the complete test output, confirm each evidence item is attached to the "
             "correct source, resolve stale or contradictory observations, and then publish the verdict.",
             "Hold the post until the advisor answers.",
+            "The review cannot be published until our advisor responds.",
         ]
         allowed = [
             "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
