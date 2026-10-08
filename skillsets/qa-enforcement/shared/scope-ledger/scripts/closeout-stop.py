@@ -33,7 +33,11 @@ TRANSCRIPT_TAIL = 4 * 1024 * 1024
 BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(
-    r"^\s*(?:\[(bb |from |child of|fleet |qa-|scope-)|<|Stop hook feedback:|Tool loaded\.)", re.I
+    r"^\s*(?:\[(?:bb |from |child of|fleet |qa-|scope-|Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by)|"
+    r"<|Stop hook feedback:|Tool loaded\.|"
+    r"This session is being continued from a previous conversation that ran out of context\.|"
+    r"Base directory for this skill:)",
+    re.I,
 )
 GATE = os.path.join(HERE, "scope-gate.py")
 UNFINISHED = re.compile(

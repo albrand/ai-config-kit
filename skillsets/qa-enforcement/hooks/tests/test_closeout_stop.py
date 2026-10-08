@@ -206,8 +206,14 @@ class CloseoutStopTests(unittest.TestCase):
         cases = (
             ("Stop hook feedback:\n[scope-closeout] P5 remains open", None),
             ("Tool loaded.\n[ToolSearch] Loaded skill", None),
+            ("[Image: original 1179x2556, displayed at 923x2000. Multiply coordinates by 1.28]", None),
+            ("This session is being continued from a previous conversation that ran out of context. Summary follows.", None),
+            ("Base directory for this skill: /Users/example/.agents/skills/demo", None),
             ("[Request interrupted by user]", "2026-10-08T11:00:00Z"),
             ("Please answer the host question", "2026-10-08T11:00:00Z"),
+            ("I typed about [Image: original 10x20, displayed at 8x16. Multiply coordinates by 1.25], "
+             "This session is being continued from a previous conversation that ran out of context, and "
+             "Base directory for this skill: /example.", "2026-10-08T11:00:00Z"),
         )
         for text, expected in cases:
             with self.subTest(text=text):
