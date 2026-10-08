@@ -1097,6 +1097,13 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
+    def test_blocked_rows_accepts_no_neo4j_boundary_detail(self) -> None:
+        text = replay_report_with_blocked_line(
+            "Blocked rows: 8 (no Neo4j in the read-only copy)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+        self.assertNotIn("no Neo4j", reason)
+
     def test_blocked_rows_accepts_bulleted_count_with_short_noun_phrase(self) -> None:
         text = replay_report_with_blocked_line(
             "- Blocked rows: 1,145 graph observations (boundary reached: `graph_store_not_copied`). More context.")
@@ -1137,7 +1144,9 @@ sys.exit(2)
 
     def test_blocked_rows_rejects_negation_boundary(self) -> None:
         gate = self.gate_module()
-        for boundary in ("no boundary", "none", "n/a", "-"):
+        for boundary in (
+                "none", " nOnE ", "n/a", "NA", "-", "no boundary", "no boundary reached",
+                "not blocked", "nothing blocked", "not applicable"):
             text = replay_report_with_blocked_line(f"Blocked rows: 3 rows ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):

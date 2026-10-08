@@ -835,8 +835,8 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
             r"(?m)^(?:[-*] )?Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+)"
             r"(?: (?!(?i:not|no|none|never|were|was|are|is|succeeded|unblocked)\b)"
             r"[A-Za-z_-]+){0,3} "
-            r"\((?![ \t]*(?i:no[ \t]))"
-            r"(?![ \t]*(?i:none|n/a|-)[ \t]*\))"
+            r"\((?![ \t]*(?i:none|n/a|na|-|no boundary reached|no boundary|"
+            r"not blocked|nothing blocked|not applicable)[ \t]*\))"
             r"[^)\r\n]+\).*$"
         ),
     }
