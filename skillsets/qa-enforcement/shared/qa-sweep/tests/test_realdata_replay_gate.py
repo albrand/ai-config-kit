@@ -1091,6 +1091,39 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
+    def test_blocked_rows_accepts_bulleted_retry_wait_boundary(self) -> None:
+        text = replay_report_with_blocked_line(
+            "- Blocked rows: 8 (retry_wait) stop at the projector boundary, in both heads.")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_bulleted_count_with_short_noun_phrase(self) -> None:
+        text = replay_report_with_blocked_line(
+            "- Blocked rows: 1,145 graph observations (boundary reached: `graph_store_not_copied`). More context.")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_asterisk_bullet_and_six_word_phrase(self) -> None:
+        text = replay_report_with_blocked_line(
+            "* Blocked rows: 12 pending graph projector retry boundary observations (none)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_rejects_phrase_longer_than_six_words(self) -> None:
+        text = replay_report_with_blocked_line(
+            "- Blocked rows: 12 pending graph projector retry boundary observations today (none)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_rejects_semicolon_clause_before_boundary(self) -> None:
+        text = replay_report_with_blocked_line(
+            "- Blocked rows: 4,658 artifacts have no available chunks; "
+            "34,347 participant envelopes require a prohibited key; more context")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
     def test_blocked_rows_rejects_split_digit_count(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 8 992 (none)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
