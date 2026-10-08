@@ -109,7 +109,7 @@ recognized.
 | OpenCode | `1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a` |
 | bb | `72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8` |
 
-### Current rendered profile: credential lines removed (owner decision 2026-10-08)
+### Accepted live profile: #67 render at b31e8e2 (installed; credential lines removed, owner decision 2026-10-08)
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
 output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`. The
@@ -123,6 +123,79 @@ source, and each digest equals the live file's.
 | Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `25de6c4b8d6f2b005b585b6f22911cba94eb0a070cb27baee8925ab0ecff6731` |
+
+### Accepted live profile: model policy, first wording at 32c95f4 (never installed)
+
+This PR's first render was briefly the current profile, so it stays
+installable. Its bb line named only GPT children as escalating.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `a234705d098566d0dd9fed842e54a54008e35951e25fea611fe5199ab3bbbe8c` |
+
+### Accepted live profile: model policy, second wording at e072267 (never installed)
+
+This PR's second render was the current profile at 6a7d340 and e072267, so it
+stays installable. Its bb line omitted `--complexity`, `--started-at` and the
+light child's move to Sonnet.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `537986dc8fcbf1dd50555b50a7682e94ca5c7ddf9883e5e1d5a662f73da3005f` |
+
+### Accepted live profile: model policy, third wording at 180edac (never installed)
+
+This PR's third render was the current profile at 180edac, so it stays installable. Its bb line said Haiku for "light" research and bulk without saying low-complexity.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `181678bc32d18d24cf4a63d277e23e84bbc755814d62359f4957f3debc752245` |
+
+### Accepted live profile: model policy, fourth wording at 244621c (never installed)
+
+This PR's fourth render was the current profile at 244621c, so it stays installable. Its bb line did not say how an automation routes.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `c10cfb6ff935dde18fc1921bc8934b855d104c770293352e9619c89dbcdc039e` |
+
+### Accepted live profile: model policy, fifth wording at 1dc1d00 (never installed)
+
+This PR's fifth render was the current profile at 1dc1d00, so it stays installable. Its bb line said an automation routes with `--role reviewer`, though Fleet does not route automations.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `62e8de1b2642e5ee9eeedc17d38789f15677734cf4c6cfe7dec248830c3254ba` |
+
+### Current rendered profile: model policy by role, based on b31e8e2
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+Only the bb home changes: it gains the "Models by role" line (owner directive
+2026-10-08). GPT reviewers and automations escalate like GPT children. The
+other three equal #67's.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `7f98a5a5d12d9771ce7c38b95e9e56404a374f3907ccfa9ad1db01460aad29cb` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
