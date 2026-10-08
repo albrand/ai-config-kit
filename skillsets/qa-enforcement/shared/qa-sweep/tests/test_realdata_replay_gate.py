@@ -1173,7 +1173,7 @@ sys.exit(2)
 
     def test_blocked_rows_rejects_empty_or_whitespace_boundary(self) -> None:
         gate = self.gate_module()
-        for boundary in ("", "   "):
+        for boundary in ("", "   ", "\u200b"):
             text = replay_report_with_blocked_line(f"Blocked rows: 8 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
@@ -1184,7 +1184,9 @@ sys.exit(2)
         gate = self.gate_module()
         for boundary in (
                 "not blocked; eight calls stopped at the boundary", "Unblocked; rows ok",
-                " none blocked ", "n/a", "   "):
+                " none blocked ", "n/a", "   ", "\u00a0none\u00a0",
+                "\u2007not blocked\u202f; eight calls stopped", "\u200bnone\u200b",
+                "\ufeffN/A", "\uff4e\uff4f\uff4e\uff45", "\u3000-\u3000"):
             text = replay_report_with_blocked_line(f"Blocked rows: 8 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):

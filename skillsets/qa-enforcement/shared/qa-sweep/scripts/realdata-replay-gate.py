@@ -27,6 +27,15 @@ DENYLIST_ENV = "REALDATA_REPLAY_DENYLIST"
 DEFAULT_DENYLIST_RELATIVE = Path(".config/realdata-gate/tenant-labels.txt")
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
+BLOCKED_ROWS_PATTERN = re.compile(
+    r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) "
+    r"\((?P<boundary>[^)\r\n]+)\).*$"
+)
+BLOCKED_ROW_NEGATIONS = frozenset({
+    "none", "n/a", "na", "-", "no boundary", "no boundary reached",
+    "not blocked", "nothing blocked", "none blocked", "zero blocked",
+    "never blocked", "unblocked", "not applicable",
+})
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
@@ -822,6 +831,25 @@ def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
     return validate_report_text(text)
 
 
+def _normalize_blocked_boundary(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = "".join(
+        character for character in normalized
+        if unicodedata.category(character) != "Cf"
+    )
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized.casefold()
+
+
+def _blocked_boundary_is_valid(value: str) -> bool:
+    normalized = _normalize_blocked_boundary(value)
+    if not any(character.isalpha() or character.isdigit() for character in normalized):
+        return False
+    first_clause = _normalize_blocked_boundary(value.split(";", 1)[0])
+    return (normalized not in BLOCKED_ROW_NEGATIONS
+            and first_clause not in BLOCKED_ROW_NEGATIONS)
+
+
 def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | None]:
     required = {
         "copy time": r"(?im)^\s*[-*]?\s*Copy time \(UTC\):\s*\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)\s*$",
@@ -831,17 +859,12 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "read-only production source": r"(?im)^\s*[-*]?\s*Production source:\s*read-only\b[^\n]*$",
         "counts-only privacy": r"(?im)^\s*[-*]?\s*Privacy:\s*counts only;? no (?:row )?(?:IDs|PII)\b[^\n]*$",
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
-        "blocked external-call rows": (
-            r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) \("
-            r"(?=[^)\r\n]*[^\W_])"
-            r"(?![ \t]*(?i:none|n/a|na|-|no boundary reached|no boundary|not blocked|"
-            r"nothing blocked|none blocked|zero blocked|never blocked|unblocked|not applicable)"
-            r"[ \t]*(?:;|\)))"
-            r"[^)\r\n]+\).*$"
-        ),
+        "blocked external-call rows": BLOCKED_ROWS_PATTERN,
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
-    if "blocked external-call rows" in missing:
+    if ("blocked external-call rows" in missing
+            or not any(_blocked_boundary_is_valid(match.group("boundary"))
+                       for match in BLOCKED_ROWS_PATTERN.finditer(text))):
         line_number = len(text.splitlines()) + 1
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
                        f"at line {line_number} (end of report)"), None
