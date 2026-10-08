@@ -22,6 +22,9 @@ MAIN_BLOCKED_ROWS_PATTERN = re.compile(
 ACCEPTED_BLOCKED_ROW_LINES = (
     "Blocked rows: 0 (external provider boundary was not needed for this replay)",
     "Blocked rows: 8,992 (boundary reached: provider limit). Additional blocked boundaries: two",
+    "Blocked rows: 8 (no local requests were blocked; external calls were blocked by the provider limit)",
+    "Blocked rows: 8 (no local requests were blocked; 8 external calls stopped at the provider limit)",
+    "Blocked rows: 8 (rows unblocked after retry; 8 stopped at the provider limit)",
     "Blocked rows: 8 (no Neo4j in the read-only copy)",
     "Blocked rows: 0 (boundary reached: none needed)",
     "Blocked rows: 1,145 (graph_store_not_copied)",
@@ -1158,8 +1161,9 @@ sys.exit(2)
     def test_blocked_rows_rejects_negation_boundary(self) -> None:
         gate = self.gate_module()
         for boundary in (
-                "none", " nOnE ", "n/a", "NA", "-", "no boundary", "no boundary reached",
-                "not blocked", "nothing blocked", "not applicable"):
+                "none", " nOnE ", "n/a", "NA", "na", "-", "no boundary", "no boundary reached",
+                "not blocked", "nothing blocked", "none blocked", "zero blocked",
+                "never blocked", "unblocked", "not applicable"):
             text = replay_report_with_blocked_line(f"Blocked rows: 3 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
@@ -1179,9 +1183,8 @@ sys.exit(2)
     def test_blocked_rows_rejects_self_negating_boundary(self) -> None:
         gate = self.gate_module()
         for boundary in (
-                "no calls were blocked", "none were blocked", "nothing was blocked", "zero calls blocked",
-                "not blocked; eight calls stopped at the boundary", "never blocked; eight calls stopped",
-                "unblocked; rows ok"):
+                "not blocked; eight calls stopped at the boundary", "Unblocked; rows ok",
+                " none blocked ", "n/a", "   "):
             text = replay_report_with_blocked_line(f"Blocked rows: 8 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
