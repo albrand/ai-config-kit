@@ -5,14 +5,30 @@ import io
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+
+MAIN_BLOCKED_ROWS_PATTERN = re.compile(
+    r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) \([^)\r\n]+\).*$"
+)
+ACCEPTED_BLOCKED_ROW_LINES = (
+    "Blocked rows: 0 (external provider boundary was not needed for this replay)",
+    "Blocked rows: 8,992 (boundary reached: provider limit). Additional blocked boundaries: two",
+    "Blocked rows: 8 (no Neo4j in the read-only copy)",
+    "Blocked rows: 0 (boundary reached: none needed)",
+    "Blocked rows: 1,145 (graph_store_not_copied)",
+    "Blocked rows: 1,145 (graph_store_not_copied; graph observations)",
+    "Blocked rows: 1 (boundary reached: provider limit).",
+    "Blocked rows: 12345 (x)",
+)
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
 
@@ -1091,11 +1107,12 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_accepts_bulleted_retry_wait_boundary(self) -> None:
+    def test_blocked_rows_rejects_bulleted_retry_wait_boundary(self) -> None:
         text = replay_report_with_blocked_line(
             "- Blocked rows: 8 (retry_wait) stop at the projector boundary, in both heads.")
         valid, reason, _ = self.gate_module().validate_report_text(text)
-        self.assertTrue(valid, reason)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
 
     def test_blocked_rows_accepts_no_neo4j_boundary_detail(self) -> None:
         text = replay_report_with_blocked_line(
@@ -1104,11 +1121,21 @@ sys.exit(2)
         self.assertTrue(valid, reason)
         self.assertNotIn("no Neo4j", reason)
 
-    def test_blocked_rows_accepts_bulleted_grouped_count_with_boundary_code(self) -> None:
+    def test_blocked_rows_rejects_bulleted_grouped_count_with_boundary_code(self) -> None:
         text = replay_report_with_blocked_line(
             "* Blocked rows: 1,145 (graph_store_not_copied)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
-        self.assertTrue(valid, reason)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+
+    def test_every_accepted_blocked_row_matches_main_pattern(self) -> None:
+        gate = self.gate_module()
+        for line in ACCEPTED_BLOCKED_ROW_LINES:
+            with self.subTest(line=line):
+                self.assertRegex(line, MAIN_BLOCKED_ROWS_PATTERN)
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report_with_blocked_line(line))
+                self.assertTrue(valid, reason)
 
     def test_blocked_rows_rejects_free_text_qualifiers(self) -> None:
         gate = self.gate_module()
@@ -1189,6 +1216,12 @@ sys.exit(2)
 
     def test_blocked_rows_accepts_zero_with_none_boundary(self) -> None:
         text = replay_report_with_blocked_line("Blocked rows: 0 (boundary reached: none needed)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_accepts_semicolon_detail_inside_boundary(self) -> None:
+        text = replay_report_with_blocked_line(
+            "Blocked rows: 1,145 (graph_store_not_copied; graph observations)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
