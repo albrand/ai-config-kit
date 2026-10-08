@@ -84,6 +84,11 @@ the original floor, observed followups, acceptance evidence, source descendants,
 and native tool callbacks to be settled. Polling continues after closure to
 observe later work; `finished.json` records the latest completed round.
 
+Unavailable or timed-out native UI reads and title updates are recorded as
+failed surface operations. They do not discard source progress or prevent a
+sibling from being observed. A failed terminal read cannot attest its binding;
+source ownership and delivery admission still come from the BB control plane.
+
 Per-target scope baselines also survive independently of the main poll state.
 Losing that state cannot turn a retained unreceipted followup into old history.
 If both copies are absent after prior activity, the target remains unknown

@@ -525,6 +525,92 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
              admitted_notice.get('admitted') and not notice_item.get('nudgeReceipt') and
              sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
     notices.close()
+    # Native UI reads and title updates must not discard authoritative source
+    # progress or prevent an independent sibling from being observed.
+    surface_db_path = home / 'surface.db'
+    surface_db = sqlite3.connect(surface_db_path)
+    surface_db.execute('CREATE TABLE threads(id TEXT,parent_thread_id TEXT,status TEXT,provider_id TEXT,environment_id TEXT,archived_at INTEGER,deleted_at INTEGER)')
+    surface_db.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT,data TEXT,turn_id TEXT)')
+    surface_db.executemany('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', [
+        ('thr_surface', None, 'active', 'codex', 'env_surface', None, None),
+        ('thr_surface_sibling', None, 'idle', 'codex', 'env_sibling', None, None),
+        ('thr_surface_child', 'thr_surface', 'active', 'codex', 'env_child', None, None)])
+    surface_db.commit()
+    surface_db.close()
+    surface_scopes = home / 'surface-scopes'
+    surface_scopes.mkdir()
+    (surface_scopes / 'thr_surface.json').write_text(json.dumps({'purposes': [{'id': 'P1', 'status': 'open'}]}))
+    (surface_scopes / 'thr_surface_sibling.json').write_text(json.dumps({'purposes': [original]}))
+    codex_handle = 'term_11111111-2222-4333-8444-555555555556'
+    child_handle = 'term_11111111-2222-4333-8444-555555555555'
+    faults = [
+        ('Codex terminal read timeout', ['terminal', 'show'], codex_handle, 'timeout'),
+        ('Coordinator card rename timeout', ['canvas', 'rename'], 'chat_surface', 'timeout'),
+        ('Codex card rename timeout', ['canvas', 'rename'], 'codex_surface', 'timeout'),
+        ('Worker canvas inventory timeout', ['canvas', 'list'], 'id:ws_surface', 'timeout'),
+        ('Worker terminal inventory timeout', ['terminal', 'list'], 'id:ws_surface', 'timeout'),
+        ('Worker card rename timeout', ['canvas', 'rename'], 'worker_surface', 'timeout'),
+        ('Worker terminal rename timeout', ['terminal', 'rename'], child_handle, 'timeout'),
+        ('Unavailable native binary during worker update', ['terminal', 'rename'], child_handle, 'missing')]
+    for index, (label, prefix, identifier, failure_kind) in enumerate(faults):
+        fixture_root = home / ('surface-case-' + str(index))
+        jobs = fixture_root / 'jobs'
+        codex = jobs / 'codex-surface-coordinator'
+        codex.mkdir(parents=True)
+        (codex / 'binding.json').write_text(json.dumps({'project': 'surface', 'terminalHandle': codex_handle,
+                                                      'nodeId': 'codex_surface', 'runtimeId': 'surface-runtime'}))
+        surface_config = dict(config, stateRoot=str(fixture_root / 'state'), scopeRoot=str(surface_scopes),
+                              bbDatabase=str(surface_db_path), jobsRoot=str(jobs), lockFile=str(fixture_root / 'lock'))
+        surface_config['targets'] = [
+            {'thread': 'thr_surface', 'purposes': ['P1'], 'project': 'surface', 'workspace': 'ws_surface',
+             'node': 'chat_surface', 'providerJournalRoot': str(home / 'journals'),
+             'workerNodes': [{'thread': 'thr_surface_child', 'node': 'worker_surface', 'name': 'Worker'}]},
+            {'thread': 'thr_surface_sibling', 'purposes': ['P1'], 'project': 'surface_sibling',
+             'workspace': 'ws_sibling', 'node': 'chat_sibling', 'providerJournalRoot': str(home / 'journals')}]
+        surface_path = fixture_root / 'config.json'
+        surface_path.write_text(json.dumps(surface_config))
+        monitor.configure(surface_path)
+        attempted = []
+        fault_triggered = []
+
+        def surface_process(argv, **kwargs):
+            assert argv[0] == 'elyra', 'This slice authorizes only the non-billable native fixture'
+            attempted.append(argv[1:3])
+            if argv[1:3] == prefix and identifier in argv:
+                fault_triggered.append(True)
+                if failure_kind == 'missing':
+                    raise FileNotFoundError('Fixture native surface is unavailable')
+                raise subprocess.TimeoutExpired(argv, kwargs.get('timeout', 15))
+            workspace = 'ws_surface' if 'id:ws_surface' in argv else 'ws_sibling'
+            if argv[1:3] == ['chat', 'list']:
+                payload = {'ok': True, 'result': {'chats': [{'nodeId': 'chat_surface' if workspace == 'ws_surface' else 'chat_sibling',
+                                                          'title': 'old title', 'working': False}]}}
+            elif argv[1:3] == ['terminal', 'show']:
+                payload = {'ok': True, '_meta': {'runtimeId': 'surface-runtime'}, 'result': {'terminal': {
+                    'handle': codex_handle, 'worktreeId': 'ws_surface', 'connected': True}}}
+            elif argv[1:3] == ['canvas', 'list']:
+                payload = {'ok': True, 'result': {'nodes': [{'id': 'worker_surface', 'type': 'terminal',
+                    'title': 'old title', 'sessionId': 'surface-child-session'}]}}
+            elif argv[1:3] == ['terminal', 'list']:
+                payload = {'ok': True, 'result': {'terminals': [{'handle': child_handle, 'worktreeId': 'ws_surface',
+                    'tabId': 'surface-child-session', 'connected': True, 'title': 'old title'}]}}
+            else:
+                assert argv[1:3] in (['canvas', 'rename'], ['terminal', 'rename'])
+                payload = {'ok': True}
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload))
+
+        with patch.object(monitor, 'bb', side_effect=fake_bb), patch.object(monitor.subprocess, 'run', side_effect=surface_process), patch.object(monitor, 'native_review_state', return_value={'state': 'IDLE', 'pending': []}):
+            try:
+                observed = monitor.run(mutate=True)
+                exception = None
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                observed, exception = None, type(failure).__name__
+        states = {key: row['state'] for key, row in observed['targets'].items()} if observed else {}
+        goal(label + ' preserves source progress and the sibling in a durable poll receipt',
+             states == {'thr_surface': 'RUNNING', 'thr_surface_sibling': 'COMPLETE'}
+             and (fixture_root / 'state/monitor-state.json').exists() and prefix in attempted and bool(fault_triggered))
+        goals[-1]['observed'] = {'states': states, 'exception': exception, 'fault': label, 'faultTriggered': bool(fault_triggered)}
+    monitor.configure(config_path)
     spec = importlib.util.spec_from_file_location('controller_workflow', HERE / 'controller.py')
     controller = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(controller)
