@@ -27,6 +27,16 @@ DENYLIST_ENV = "REALDATA_REPLAY_DENYLIST"
 DEFAULT_DENYLIST_RELATIVE = Path(".config/realdata-gate/tenant-labels.txt")
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
+BLOCKED_ROWS_PATTERN = re.compile(
+    r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) "
+    r"\((?P<boundary>[^)\r\n]+)\).*$"
+)
+BLOCKED_ROW_NEGATIONS = frozenset({
+    "none", "n a", "na", "no boundary", "no boundary reached",
+    "not blocked", "nothing blocked", "none blocked", "zero blocked",
+    "never blocked", "unblocked", "not applicable",
+})
+HANGUL_FILLERS = frozenset({0x115f, 0x1160, 0x3164, 0xffa0})
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
@@ -822,6 +832,36 @@ def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
     return validate_report_text(text)
 
 
+def _blocked_boundary_has_disallowed_character(value: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", value)
+    for character in normalized:
+        codepoint = ord(character)
+        category = unicodedata.category(character)
+        if ((category.startswith("L") and codepoint > 0x7f)
+                or category.startswith("M")
+                or category in {"Cf", "Co", "Cn", "Cs"}
+                or codepoint in HANGUL_FILLERS):
+            return True
+    return False
+
+
+def _blocked_boundary_skeleton(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    skeleton = re.sub(r"[^a-z0-9]", " ", normalized)
+    skeleton = re.sub(r"\s+", " ", skeleton)
+    return skeleton.strip()
+
+
+def _normalized_blocked_boundary_is_valid(normalized: str) -> bool:
+    whole_skeleton = _blocked_boundary_skeleton(normalized)
+    first_clause = unicodedata.normalize("NFKC", normalized).split(";", 1)[0]
+    clause_skeleton = _blocked_boundary_skeleton(first_clause)
+    if not whole_skeleton or not clause_skeleton:
+        return False
+    return (whole_skeleton not in BLOCKED_ROW_NEGATIONS
+            and clause_skeleton not in BLOCKED_ROW_NEGATIONS)
+
+
 def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | None]:
     required = {
         "copy time": r"(?im)^\s*[-*]?\s*Copy time \(UTC\):\s*\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)\s*$",
@@ -831,12 +871,30 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "read-only production source": r"(?im)^\s*[-*]?\s*Production source:\s*read-only\b[^\n]*$",
         "counts-only privacy": r"(?im)^\s*[-*]?\s*Privacy:\s*counts only;? no (?:row )?(?:IDs|PII)\b[^\n]*$",
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
-        "blocked external-call rows": (
-            r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) \([^)\r\n]+\).*$"
-        ),
+        "blocked external-call rows": BLOCKED_ROWS_PATTERN,
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
-    if "blocked external-call rows" in missing:
+    blocked_lines = [line for line in text.splitlines()
+                     if line.startswith("Blocked rows:")]
+    if "blocked external-call rows" in missing or not blocked_lines:
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
+    blocked_matches = [BLOCKED_ROWS_PATTERN.fullmatch(line) for line in blocked_lines]
+    if any(match is None for match in blocked_matches):
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
+    normalized_boundaries = [
+        unicodedata.normalize("NFKC", match.group("boundary"))
+        for match in blocked_matches if match is not None
+    ]
+    if any(_blocked_boundary_has_disallowed_character(boundary)
+           for boundary in normalized_boundaries):
+        return False, (
+            "blocked-rows boundary contains non-ASCII letters or invisible marks"), None
+    if not all(_normalized_blocked_boundary_is_valid(boundary)
+               for boundary in normalized_boundaries if boundary is not None):
         line_number = len(text.splitlines()) + 1
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
                        f"at line {line_number} (end of report)"), None
