@@ -20,8 +20,12 @@ HERE = Path(__file__).resolve().parent
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(data, indent=2) + '\n')
-    temporary.chmod(0o600)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(json.dumps(data, indent=2) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
 
 
@@ -56,7 +60,7 @@ def artifact_digest():
 @contextmanager
 def deployment_lock(path):
     monitor, _, _ = bindings(path)
-    monitor.ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    monitor.private_root()
     with monitor.LOCK_FILE.open('a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -67,6 +71,7 @@ def deployment_lock(path):
 
 def run_once(path, observe_only=False):
     monitor, config, label = bindings(path)
+    monitor.private_root()
     try:
         result = monitor.run(mutate=not observe_only)
     except Exception as failure:

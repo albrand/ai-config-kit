@@ -11,6 +11,8 @@ import tempfile
 import shutil
 import io
 import plistlib
+import os
+import stat
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -37,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     scope = home / 'scopes'
     scope.mkdir()
     state = home / 'state'
-    state.mkdir()
+    state.mkdir(mode=0o700)
     database = home / 'bb.db'
     db = sqlite3.connect(database)
     db.execute('CREATE TABLE threads(id TEXT,parent_thread_id TEXT,status TEXT,provider_id TEXT,environment_id TEXT,archived_at INTEGER,deleted_at INTEGER)')
@@ -63,6 +65,25 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     config_path = home / 'config.json'
     config_path.write_text(json.dumps(config))
     monitor.configure(config_path)
+    original_umask = os.umask(0o022)
+    state.chmod(0o755)
+    try:
+        try:
+            monitor.run(mutate=True)
+            rejected = False
+        except ValueError:
+            rejected = True
+        goal('A permissive pre-existing state root is rejected before task text or a brief is written',
+             rejected and not (state / 'monitor-state.json').exists() and not list(state.glob('*brief*')))
+        state.chmod(0o700)
+        existing_brief = state / 'privacy-existing-brief.md'
+        existing_brief.write_text('old task text')
+        existing_brief.chmod(0o644)
+        monitor.private_text(existing_brief, 'updated private task text')
+        goal('Replacing an existing permissive brief makes the new bytes private under umask 022',
+             stat.S_IMODE(existing_brief.stat().st_mode) == 0o600 and existing_brief.read_text() == 'updated private task text')
+    finally:
+        os.umask(original_umask)
     calls = []
 
     def fake_bb(args):
@@ -441,6 +462,29 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             (frames / 'controller.py').write_bytes(b'')
             digest2 = controller.artifact_digest()
         goal('Different file boundaries cannot reuse the same installed artifact identity', digest1 != digest2)
+        fresh_config = dict(config)
+        fresh_state = home / 'fresh-state'
+        fresh_scopes = home / 'fresh-scopes'
+        fresh_scopes.mkdir()
+        fresh_database = home / 'fresh.db'
+        fresh_db = sqlite3.connect(fresh_database)
+        fresh_db.execute('CREATE TABLE threads(id TEXT,parent_thread_id TEXT,status TEXT,provider_id TEXT,environment_id TEXT,archived_at INTEGER,deleted_at INTEGER)')
+        fresh_db.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT)')
+        fresh_db.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', ('thr_newfixture', None, 'idle', 'codex', 'env_newfixture', None, None))
+        fresh_db.commit()
+        fresh_db.close()
+        (fresh_scopes / 'thr_newfixture.json').write_text(json.dumps({'purposes': [original]}))
+        fresh_config.update({'stateRoot': str(fresh_state), 'scopeRoot': str(fresh_scopes), 'bbDatabase': str(fresh_database),
+                             'lockFile': str(home / 'fresh.lock'), 'targets': [dict(config['targets'][0], thread='thr_newfixture')],
+                             'scheduler': {'label': 'local.agent-config-kit.fleet.freshfixture', 'intervalSeconds': 300}})
+        fresh_path = home / 'fresh-config.json'
+        fresh_path.write_text(json.dumps(fresh_config))
+        staged = controller.stage(fresh_path, home / 'fresh-installed')
+        fresh_monitor, _, _ = controller.bindings(fresh_path)
+        with patch.object(fresh_monitor, 'bb', return_value=[]), patch.object(fresh_monitor, 'surface', return_value=subprocess.CompletedProcess([], 0, stdout='{"ok":true,"result":{"chats":[]}}')), patch.object(fresh_monitor, 'native_review_state', return_value={'state': 'IDLE', 'pending': []}):
+            fresh_states = [fresh_monitor.run(mutate=False)['targets']['thr_newfixture']['state'] for _ in range(3)]
+        goal('Stage before the first poll creates a usable fresh baseline instead of locking into unknown',
+             fresh_states == ['COMPLETE'] * 3 and (fresh_state / 'scope-baselines/thr_newfixture.json').exists())
 
 packet = {'persona': 'Fleet operator', 'target': {'stack': 'Portable monitor and real metadata guard with disposable BB/provider fixtures',
           'monitorSha256': hashlib.sha256((HERE / 'monitor.py').read_bytes()).hexdigest()}, 'polls': polls,

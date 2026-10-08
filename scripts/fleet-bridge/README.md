@@ -36,6 +36,10 @@ exclusive idle owner and the exact admitted provider/session/turn epoch before
 enqueue. A changed owner or lease holds delivery. This is a delivery-time
 snapshot, not an atomic remote workspace reservation or a write-owner grant;
 the existing source owner and adapter remain responsible for execution fencing.
+An existing state root must be owned by the current user and have no group or
+other permissions (0700). A permissive root is rejected before task data is
+written. Briefs and structured records use private files before writing and
+atomic replacement, including when replacing an older permissive file.
 
 ## Install and exercise
 
@@ -84,8 +88,10 @@ Per-target scope baselines also survive independently of the main poll state.
 Losing that state cannot turn a retained unreceipted followup into old history.
 If both copies are absent after prior activity, the target remains unknown
 until its baseline is reconciled. A newer uncompleted adapter request prevents
-completion even when the source still appears idle. For a new schedule, run
-the initial observation before staging so its first baseline is recorded.
+completion even when the source still appears idle. Staging alone is not prior
+fleet activity: a fresh stage-first installation can record its first baseline
+on its initial poll. Running the initial observation before staging remains a
+useful check of operator bindings.
 
 The first scope snapshot records all existing purpose IDs. Later additions
 remain tracked even if added and completed between polls. Accepted revisions

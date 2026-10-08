@@ -7,6 +7,8 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
+import stat
 import sqlite3
 import subprocess
 import sys
@@ -413,10 +415,31 @@ def surface(args):
         return subprocess.CompletedProcess(ELYRA + args, 124, stdout='', stderr='Surface unavailable')
 
 def save(path, data):
+    private_text(path, json.dumps(data, indent=2) + '\n')
+
+def private_root():
+    ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    info = ROOT.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError('Task stateRoot must be owned by this user and private (0700); no task data was written')
+
+def private_text(path, value):
+    """Private bytes exist only in a private file, before atomic replacement."""
+    if path.is_symlink():
+        raise ValueError('Refuse a symlink at a task-owned artifact path')
     tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(data, indent=2) + '\n')
-    tmp.chmod(0o600)
+    descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(value)
+        stream.flush()
+        os.fsync(stream.fileno())
     tmp.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 def queue_admission(db, thread, environment):
     """Admit from actual BB adapter events; scope and prompt text are excluded."""
@@ -527,7 +550,7 @@ def queued_delivery(db, item, admitted, brief):
         item['state'] = 'DELIVERY_RECONCILIATION_PENDING'
 
 def run(mutate=False):
-    ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private_root()
     with LOCK_FILE.open('a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -565,7 +588,7 @@ def run(mutate=False):
             if prior_missing and baseline_path.exists() and not durable_error:
                 last = dict(durable)
                 has_previous = True
-            elif prior_missing and not baseline_path.exists() and ((ROOT / 'monitor-events.jsonl').exists() or (ROOT / 'installation.json').exists()):
+            elif prior_missing and not baseline_path.exists() and (ROOT / 'monitor-events.jsonl').exists():
                 has_previous = True
                 target_error = 'Prior scope state unexpectedly absent; baseline reconciliation required'
             # An upgrade cannot bless unknown IDs as old completed history.
@@ -681,7 +704,7 @@ def run(mutate=False):
             if mutate and counters_valid and not history['uncertain'] and (classification == 'RUNNABLE_IDLE' or reconcile or revision_reconcile) and item['nudges'] < 3 and time.time() - item['lastNudgeAt'] >= 1800:
                 file = ROOT / (thread + '-monitor-brief.md')
                 open_ids = [p['id'] for p in purposes if p['status'] == 'open']
-                file.write_text('serves: ' + ', '.join(open_ids) + '\n\nOriginal delivery remains unfinished. Continue every authorized runnable step for these purposes. Read the native delivery packets under ' + str(JOBS_ROOT) + '. Review actual source changes and exact-head evidence before integrating them. Do not substitute a context/tryout pass for the original workflow. Preserve every specific held gate, permission, source owner and later accepted scope revision. Do not retry held database gates, change cloud/DNS, read secrets, expose services or alter policy without the existing specific authorization. If every remaining step truly depends on the user, retain blocked-on-user with the exact pending decision after finishing independent preparation. Do not create duplicate workers or leave an open runnable purpose unattended.\n')
+                private_text(file, 'serves: ' + ', '.join(open_ids) + '\n\nOriginal delivery remains unfinished. Continue every authorized runnable step for these purposes. Read the native delivery packets under ' + str(JOBS_ROOT) + '. Review actual source changes and exact-head evidence before integrating them. Do not substitute a context/tryout pass for the original workflow. Preserve every specific held gate, permission, source owner and later accepted scope revision. Do not retry held database gates, change cloud/DNS, read secrets, expose services or alter policy without the existing specific authorization. If every remaining step truly depends on the user, retain blocked-on-user with the exact pending decision after finishing independent preparation. Do not create duplicate workers or leave an open runnable purpose unattended.\n')
                 with file.open('a') as stream:
                     for revision in pending_revisions:
                         stream.write('\nserves: revision "' + revision['quote'] + '"\n')
