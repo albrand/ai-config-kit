@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     def fake_process(argv, **kwargs):
         if argv[:3] == ['elyra', 'chat', 'list']:
             return subprocess.CompletedProcess(argv, 0, stdout='{"ok":true,"result":{"chats":[]}}')
-        if argv[:2] == ['python3', str(monitor.INPUT_GUARD)]:
+        if len(argv) > 1 and argv[1] == str(monitor.INPUT_GUARD):
             return real_run(argv, **kwargs)
         raise AssertionError('Unexpected process: ' + repr(argv))
 

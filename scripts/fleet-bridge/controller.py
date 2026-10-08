@@ -46,7 +46,12 @@ def artifact_digest():
 
 def run_once(path, observe_only=False):
     monitor, config, label = bindings(path)
-    result = monitor.run(mutate=not observe_only)
+    try:
+        result = monitor.run(mutate=not observe_only)
+    except Exception as failure:
+        write_json(monitor.ROOT / 'scheduler-last-failure.json', {'at': time.time(), 'label': label,
+                   'artifactSha256': artifact_digest(), 'errorType': type(failure).__name__})
+        raise
     receipt = {'label': label, 'at': time.time(), 'artifactSha256': artifact_digest(),
                'mode': 'observe' if observe_only else 'continue', 'result': result}
     write_json(monitor.ROOT / 'scheduler-last-run.json', receipt)
@@ -89,7 +94,16 @@ def stage(path, install_root):
               'StandardOutPath': str(logs / 'stdout.log'), 'StandardErrorPath': str(logs / 'stderr.log')}
     expected = plistlib.dumps(values)
     if plist.exists() and plist.read_bytes() != expected:
-        raise ValueError('A different scheduler already owns this label; do not overwrite it')
+        previous_path = monitor.ROOT / 'installation.json'
+        previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
+        prior_values = plistlib.loads(plist.read_bytes())
+        old_command = str(Path(previous.get('installPath', '/unowned')) / 'controller.py')
+        if previous.get('label') != label or previous.get('plist') != str(plist) or old_command not in prior_values.get('ProgramArguments', []):
+            raise ValueError('A different scheduler already owns this label; do not overwrite it')
+        loaded = subprocess.run(['launchctl', 'print', 'gui/' + str(os.getuid()) + '/' + label], capture_output=True, text=True)
+        if loaded.returncode == 0:
+            raise ValueError('Unload only this owned scheduler before changing its installed version')
+        shutil.copyfile(plist, monitor.ROOT / ('scheduler-' + previous['artifactSha256'] + '.plist.bak'))
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_bytes(expected)
     plist.chmod(0o600)

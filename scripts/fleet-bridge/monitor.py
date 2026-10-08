@@ -9,6 +9,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -328,6 +329,12 @@ def bb(args):
         raise RuntimeError('BB metadata/action refused: command=' + args[0] + ', exit=' + str(result.returncode))
     return json.loads(result.stdout)
 
+def surface(args):
+    try:
+        return subprocess.run(ELYRA + args, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(ELYRA + args, 124, stdout='', stderr='Surface unavailable')
+
 def save(path, data):
     tmp = path.with_suffix('.tmp')
     tmp.write_text(json.dumps(data, indent=2) + '\n')
@@ -356,7 +363,7 @@ def queue_admission(db, thread, environment):
     folder.mkdir(exist_ok=True, mode=0o700)
     packet = folder / (ident + '.json')
     save(packet, {'current_lease': lease, 'envelope': envelope})
-    guard = subprocess.run(['python3', str(INPUT_GUARD), '--input', str(packet)], capture_output=True, text=True, timeout=15)
+    guard = subprocess.run([sys.executable, str(INPUT_GUARD), '--input', str(packet)], capture_output=True, text=True, timeout=15)
     try:
         decision = json.loads(guard.stdout)
     except ValueError:
@@ -375,10 +382,10 @@ def run(mutate=False):
         prior_path = ROOT / 'monitor-state.json'
         prior = json.loads(prior_path.read_text()) if prior_path.exists() else {'targets': {}, 'allComplete': False}
         db = sqlite3.connect(DATABASE.as_uri() + '?mode=ro', uri=True)
-        native = subprocess.run(ELYRA + [ 'chat', 'list', '--json'], capture_output=True, text=True, timeout=15)
-        chats, chat_error = runtime_inventory(native, 'chats', 'Native chat')
         results = []
         for target in TARGETS:
+            native = surface(['chat', 'list', '--workspace', 'id:' + target['workspace'], '--json'])
+            chats, chat_error = runtime_inventory(native, 'chats', 'Native chat')
             thread = target['thread']
             s = bb(['thread', 'show', thread, '--json'])
             t, env = s['thread'], s['environment']
