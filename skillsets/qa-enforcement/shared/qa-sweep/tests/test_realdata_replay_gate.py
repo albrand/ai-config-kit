@@ -1174,6 +1174,26 @@ sys.exit(2)
                 self.assertFalse(valid)
                 self.assertIn("blocked external-call rows", reason)
 
+    def test_blocked_rows_rejects_non_ascii_boundary_characters(self) -> None:
+        for boundary in (
+                "none\ufe0f", "none\U000e0100", "n\u0336one", "n\u043ene",
+                "\u03bdone", "none\u034f", "\u3164none"):
+            text = replay_report_with_blocked_line(f"Blocked rows: 8 ({boundary})")
+            valid, reason, _ = self.gate_module().validate_report_text(text)
+            with self.subTest(boundary=boundary):
+                self.assertFalse(valid)
+                self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+
+    def test_malformed_blocked_rows_prefix_cannot_be_ignored(self) -> None:
+        valid_line = "Blocked rows: 8 (provider_limit)"
+        for malformed_line in (
+                "Blocked rows: eight (none)", "Blocked rows: 8 none"):
+            text = replay_report_with_blocked_lines(valid_line, malformed_line)
+            valid, reason, _ = self.gate_module().validate_report_text(text)
+            with self.subTest(malformed_line=malformed_line):
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
+
     def test_blocked_rows_lookalike_semicolons_are_normalized_before_clause_split(self) -> None:
         for punctuation in ("\uff1b", "\u037e"):
             text = replay_report_with_blocked_line(
@@ -1221,7 +1241,10 @@ sys.exit(2)
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
-                self.assertIn("blocked external-call rows", reason)
+                if boundary == "\u200b":
+                    self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+                else:
+                    self.assertIn("blocked external-call rows", reason)
 
     def test_blocked_rows_rejects_self_negating_boundary(self) -> None:
         gate = self.gate_module()
@@ -1234,7 +1257,10 @@ sys.exit(2)
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
-                self.assertIn("blocked external-call rows", reason)
+                if boundary in {"\u200bnone\u200b", "\ufeffN/A"}:
+                    self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+                else:
+                    self.assertIn("blocked external-call rows", reason)
                 self.assertNotIn(f"({boundary})", reason)
 
     def test_blocked_rows_rejects_semicolon_clause_before_boundary(self) -> None:

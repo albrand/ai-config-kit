@@ -831,18 +831,15 @@ def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
     return validate_report_text(text)
 
 
-def _normalize_blocked_boundary(value: str) -> str:
+def _normalize_blocked_boundary(value: str) -> str | None:
     normalized = unicodedata.normalize("NFKC", value)
-    normalized = "".join(
-        character for character in normalized
-        if unicodedata.category(character) != "Cf"
-    )
+    if any(not 0x20 <= ord(character) <= 0x7e for character in normalized):
+        return None
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized.casefold()
 
 
-def _blocked_boundary_is_valid(value: str) -> bool:
-    normalized = _normalize_blocked_boundary(value)
+def _normalized_blocked_boundary_is_valid(normalized: str) -> bool:
     if not any(character.isalpha() or character.isdigit() for character in normalized):
         return False
     first_clause = normalized.split(";", 1)[0].strip()
@@ -862,11 +859,25 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "blocked external-call rows": BLOCKED_ROWS_PATTERN,
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
-    blocked_matches = list(BLOCKED_ROWS_PATTERN.finditer(text))
-    if ("blocked external-call rows" in missing
-            or not blocked_matches
-            or not all(_blocked_boundary_is_valid(match.group("boundary"))
-                       for match in blocked_matches)):
+    blocked_lines = [line for line in text.splitlines()
+                     if line.startswith("Blocked rows:")]
+    if "blocked external-call rows" in missing or not blocked_lines:
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
+    blocked_matches = [BLOCKED_ROWS_PATTERN.fullmatch(line) for line in blocked_lines]
+    if any(match is None for match in blocked_matches):
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
+    normalized_boundaries = [
+        _normalize_blocked_boundary(match.group("boundary"))
+        for match in blocked_matches if match is not None
+    ]
+    if any(boundary is None for boundary in normalized_boundaries):
+        return False, "blocked-rows boundary must be plain ASCII", None
+    if not all(_normalized_blocked_boundary_is_valid(boundary)
+               for boundary in normalized_boundaries if boundary is not None):
         line_number = len(text.splitlines()) + 1
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
                        f"at line {line_number} (end of report)"), None
