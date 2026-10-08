@@ -31,6 +31,8 @@ ACCEPTED_BLOCKED_ROW_LINES = (
     "Blocked rows: 1,145 (graph_store_not_copied; graph observations)",
     "Blocked rows: 1 (boundary reached: provider limit).",
     "Blocked rows: 12345 (x)",
+    "Blocked rows: 8 (provider boundary — no key)",
+    "Blocked rows: 8 (boundary reached: “cursor_key_unavailable”)",
 )
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
@@ -1182,7 +1184,9 @@ sys.exit(2)
             valid, reason, _ = self.gate_module().validate_report_text(text)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
-                self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+                self.assertEqual(
+                    reason,
+                    "blocked-rows boundary contains non-ASCII letters or invisible marks")
 
     def test_malformed_blocked_rows_prefix_cannot_be_ignored(self) -> None:
         valid_line = "Blocked rows: 8 (provider_limit)"
@@ -1226,13 +1230,26 @@ sys.exit(2)
         for boundary in (
                 "none", " nOnE ", "n/a", "NA", "na", "-", "no boundary", "no boundary reached",
                 "not blocked", "nothing blocked", "none blocked", "zero blocked",
-                "never blocked", "unblocked", "not applicable"):
+                "never blocked", "unblocked", "not applicable", "none.", "not-blocked",
+                "no_boundary", "n / a", "None!", "'none'", "`none`", "(none)",
+                "— none —", "none…", "not—blocked", "—", "—; provider"):
             text = replay_report_with_blocked_line(f"Blocked rows: 3 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
                 self.assertIn("blocked external-call rows", reason)
                 self.assertNotIn(f"({boundary})", reason)
+
+    def test_blocked_rows_accepts_non_ascii_punctuation_and_symbols(self) -> None:
+        gate = self.gate_module()
+        for line in (
+                "Blocked rows: 8 (provider boundary — no key)",
+                "Blocked rows: 8 (boundary reached: “cursor_key_unavailable”)"):
+            with self.subTest(line=line):
+                self.assertRegex(line, MAIN_BLOCKED_ROWS_PATTERN)
+                valid, reason, _ = gate.validate_report_text(
+                    replay_report_with_blocked_line(line))
+                self.assertTrue(valid, reason)
 
     def test_blocked_rows_rejects_empty_or_whitespace_boundary(self) -> None:
         gate = self.gate_module()
@@ -1242,7 +1259,9 @@ sys.exit(2)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
                 if boundary == "\u200b":
-                    self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+                    self.assertEqual(
+                        reason,
+                        "blocked-rows boundary contains non-ASCII letters or invisible marks")
                 else:
                     self.assertIn("blocked external-call rows", reason)
 
@@ -1258,7 +1277,9 @@ sys.exit(2)
             with self.subTest(boundary=boundary):
                 self.assertFalse(valid)
                 if boundary in {"\u200bnone\u200b", "\ufeffN/A"}:
-                    self.assertEqual(reason, "blocked-rows boundary must be plain ASCII")
+                    self.assertEqual(
+                        reason,
+                        "blocked-rows boundary contains non-ASCII letters or invisible marks")
                 else:
                     self.assertIn("blocked external-call rows", reason)
                 self.assertNotIn(f"({boundary})", reason)

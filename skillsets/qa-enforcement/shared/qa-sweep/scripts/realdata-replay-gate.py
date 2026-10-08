@@ -32,10 +32,11 @@ BLOCKED_ROWS_PATTERN = re.compile(
     r"\((?P<boundary>[^)\r\n]+)\).*$"
 )
 BLOCKED_ROW_NEGATIONS = frozenset({
-    "none", "n/a", "na", "-", "no boundary", "no boundary reached",
+    "none", "n/a", "na", "no boundary", "no boundary reached",
     "not blocked", "nothing blocked", "none blocked", "zero blocked",
     "never blocked", "unblocked", "not applicable",
 })
+HANGUL_FILLERS = frozenset({0x115f, 0x1160, 0x3164, 0xffa0})
 IDENTIFIERS = (
     ("ObjectId-like token", re.compile(r"(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])", re.I)),
     ("long numeric identifier", re.compile(r"(?<![A-Fa-f0-9])\d{12,}(?![A-Fa-f0-9])")),
@@ -831,20 +832,35 @@ def validate_report(repo: Path, head: str) -> tuple[bool, str, str | None]:
     return validate_report_text(text)
 
 
-def _normalize_blocked_boundary(value: str) -> str | None:
+def _blocked_boundary_has_disallowed_character(value: str) -> bool:
     normalized = unicodedata.normalize("NFKC", value)
-    if any(not 0x20 <= ord(character) <= 0x7e for character in normalized):
-        return None
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return normalized.casefold()
+    for character in normalized:
+        codepoint = ord(character)
+        category = unicodedata.category(character)
+        if ((category.startswith("L") and codepoint > 0x7f)
+                or category.startswith("M")
+                or category in {"Cf", "Co", "Cn", "Cs"}
+                or codepoint in HANGUL_FILLERS):
+            return True
+    return False
+
+
+def _blocked_boundary_skeleton(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    skeleton = re.sub(r"[^a-z0-9/]", " ", normalized)
+    skeleton = re.sub(r"\s+", " ", skeleton)
+    skeleton = re.sub(r"\s*/\s*", "/", skeleton)
+    return skeleton.strip()
 
 
 def _normalized_blocked_boundary_is_valid(normalized: str) -> bool:
-    if not any(character.isalpha() or character.isdigit() for character in normalized):
+    whole_skeleton = _blocked_boundary_skeleton(normalized)
+    first_clause = unicodedata.normalize("NFKC", normalized).split(";", 1)[0]
+    clause_skeleton = _blocked_boundary_skeleton(first_clause)
+    if not whole_skeleton or not clause_skeleton:
         return False
-    first_clause = normalized.split(";", 1)[0].strip()
-    return (normalized not in BLOCKED_ROW_NEGATIONS
-            and first_clause not in BLOCKED_ROW_NEGATIONS)
+    return (whole_skeleton not in BLOCKED_ROW_NEGATIONS
+            and clause_skeleton not in BLOCKED_ROW_NEGATIONS)
 
 
 def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | None]:
@@ -871,11 +887,13 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
                        f"at line {line_number} (end of report)"), None
     normalized_boundaries = [
-        _normalize_blocked_boundary(match.group("boundary"))
+        unicodedata.normalize("NFKC", match.group("boundary"))
         for match in blocked_matches if match is not None
     ]
-    if any(boundary is None for boundary in normalized_boundaries):
-        return False, "blocked-rows boundary must be plain ASCII", None
+    if any(_blocked_boundary_has_disallowed_character(boundary)
+           for boundary in normalized_boundaries):
+        return False, (
+            "blocked-rows boundary contains non-ASCII letters or invisible marks"), None
     if not all(_normalized_blocked_boundary_is_valid(boundary)
                for boundary in normalized_boundaries if boundary is not None):
         line_number = len(text.splitlines()) + 1
