@@ -164,7 +164,12 @@ Blocked rows: 0 (external provider boundary was not needed for this replay)
             report + f"- Artifact SHA-256 (excluding this line): {digest}\n", encoding="utf-8")
         git(self.repo, "add", "REALDATA-REPLAY.md")
         git(self.repo, "commit", "-m", "commit valid replay report")
-        result, packet = self.run_pre_review("--skip-tests", "--skip-repo-lint", base=self.initial_sha)
+        # The gate's label check needs a deny-list; a synthetic one keeps the test off the host's private list,
+        # which a sandboxed job (or a fresh machine) does not have.
+        denylist = self.base / "tenant-labels.txt"
+        denylist.write_text("Example Tenant\n", encoding="utf-8")
+        result, packet = self.run_pre_review("--skip-tests", "--skip-repo-lint", base=self.initial_sha,
+                                             env={**os.environ, "REALDATA_REPLAY_DENYLIST": str(denylist)})
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["realdata_replay"]["artifact"], "REALDATA-REPLAY.md")
         self.assertEqual(packet["realdata_replay"]["sha256"], digest)
