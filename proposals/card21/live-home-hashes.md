@@ -136,6 +136,19 @@ installable. Its bb line named only GPT children as escalating.
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `a234705d098566d0dd9fed842e54a54008e35951e25fea611fe5199ab3bbbe8c` |
 
+### Accepted live profile: model policy, second wording at e072267 (never installed)
+
+This PR's second render was the current profile at 6a7d340 and e072267, so it
+stays installable. Its bb line omitted `--complexity`, `--started-at` and the
+light child's move to Sonnet.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `537986dc8fcbf1dd50555b50a7682e94ca5c7ddf9883e5e1d5a662f73da3005f` |
+
 ### Current rendered profile: model policy by role, based on b31e8e2
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
@@ -149,7 +162,7 @@ other three equal #67's.
 | Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
 | Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
-| bb | `537986dc8fcbf1dd50555b50a7682e94ca5c7ddf9883e5e1d5a662f73da3005f` |
+| bb | `181678bc32d18d24cf4a63d277e23e84bbc755814d62359f4957f3debc752245` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

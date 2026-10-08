@@ -90,10 +90,12 @@ default is the GPT ceiling, and Claude's is Opus.
   task in an old group starts at zero:
   - `gpt-6-luna` low → medium → high → xhigh
   - → `gpt-6.1-sol` high → xhigh, which is the ceiling.
-- **Never astra.** No agent work runs on any astra model; Fleet refuses such
-  a turn at dispatch, and also refuses any Codex turn whose model it cannot
-  determine, the owner's included. The ceiling also excludes `max` and
-  `ultra` (which delegates on its own).
+- **Never astra.** No agent work runs on any astra model. At dispatch, Fleet
+  refuses any turn that starts on one, and any Codex turn whose model it
+  cannot determine, the owner's included. bb skips that check by design for
+  Send now on a queued message, compaction, and an edited message's re-send,
+  so name the model before using any of them. The ceiling also excludes
+  `max` and `ultra` (which delegates on its own).
 - **Re-route before rework.** A running agent keeps its spawn model. When work
   is rejected, start its next attempt on the route the new count gives.
 - **Precedence.** This table takes precedence over the Max And Ultra Decision
