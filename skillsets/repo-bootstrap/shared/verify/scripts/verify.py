@@ -395,6 +395,21 @@ GH_STATE = {"pass": "success", "na": "success", "untouched": "success", "fail": 
             "missing": "error", "not-verified": "error", "pending": "pending"}
 
 
+UNSANDBOXED_PR = "unsandboxed PR job: its code could rewrite the verifier, so a pass is not trusted"
+
+
+def capped_post(post):
+    """`post` for a PR job run with --unsandboxed: nothing stops its code from rewriting a pinned verifier file
+    between stages, so no status it reports, per stage or overall, is ever green; a pass is reported as missing
+    with the reason. Fail stays fail. (PR code with host access could also post a status itself with the host's
+    forge credentials; that is the risk --unsandboxed accepts on a disposable machine.)"""
+    def capped(context, state, description):
+        if GH_STATE.get(state) == "success":
+            return post(context, "missing", f"{state}, not trusted: {UNSANDBOXED_PR}; {description}")
+        return post(context, state, description)
+    return capped
+
+
 def post_status(slug, sha, context, state, description):
     """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
     rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
@@ -955,6 +970,9 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             print(f"[serve] {slug} {label}: no OS sandbox here (macOS sandbox-exec, plus lsof for the port snapshot);"
                   " not running PR code. Use a disposable machine with --unsandboxed to accept host access.", flush=True)
             return "error"
+        unsandboxed_pr = not trusted and not wrap
+        if unsandboxed_pr:
+            post = capped_post(post)
         (job / "home").mkdir()
         (job / "tmp").mkdir()
         rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], timeout=900)
@@ -993,6 +1011,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             stages.append("mutation")
         verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline,
                                            withheld - set(FORGE_TOKENS))
+        if unsandboxed_pr and GH_STATE.get(verdict) == "success":
+            verdict, note = "missing", note + f" ({UNSANDBOXED_PR})"  # the artifact records what the status says
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
         art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "label": label, "base": base, "fork": fork,
@@ -1366,7 +1386,7 @@ def main(argv=None):
     p.add_argument("--allow-host-port", action="append", type=int,
                    help="host port jobs may reach (a test database the owner runs); all others listening are denied")
     p.add_argument("--unsandboxed", action="store_true",
-                   help="no OS sandbox: PR code gets host access. Only on a disposable machine")
+                   help="no OS sandbox: PR code gets host access, so PR jobs never report pass. Only on a disposable machine")
     for name in ("weaken-check", "mutation-targets"):
         p = sub.add_parser(name)
         p.add_argument("repo", nargs="?", default=".")

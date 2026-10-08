@@ -340,7 +340,7 @@ class PinnedVerifier(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(self.origin, ignore_errors=True)
 
-    def run_pr(self, change):
+    def run_pr(self, change, branch_job=False):
         change(self.origin)
         git(self.origin, "add", "-A")
         git(self.origin, "commit", "-q", "--allow-empty", "-m", "pr")
@@ -348,12 +348,15 @@ class PinnedVerifier(unittest.TestCase):
                              text=True).stdout.strip()
         mirror = self.tmp / f"mirror-{sha[:9]}.git"
         subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
-        posts = []
+        self.posts = []
         args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
-        rc, out = quiet(verify.run_job, "acme/app", mirror, sha, "main", "PR #1", args,
-                        lambda c, s, d: posts.append((c, s, d)) or True)
+        record = lambda c, s, d: self.posts.append((c, s, d)) or True  # noqa: E731
+        if branch_job:  # the head of an owner-listed branch: trusted, its own config and verifier
+            rc, out = quiet(verify.run_job, "acme/app", mirror, sha, None, "pr", args, record, False, "branch")
+        else:
+            rc, out = quiet(verify.run_job, "acme/app", mirror, sha, "main", "PR #1", args, record)
         self.assertEqual(rc, "done", out)
-        return posts[-1], out
+        return self.posts[-1], out
 
     def write(self, rel, text, mode=None):
         def change(repo):
@@ -409,10 +412,44 @@ class PinnedVerifier(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     verify.verifier_paths({"verifier": bad})
 
-    def test_a_pr_that_fixes_the_test_passes_and_names_no_verifier_edit(self):
+    def test_a_pr_that_fixes_the_test_passes_its_stages_but_unsandboxed_never_reports_pass(self):
         final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        self.assertEqual(final[1], "missing", final)  # --unsandboxed: a PR job's pass is not trusted
+        self.assertIn("unit=pass", final[2])
+        self.assertIn(verify.UNSANDBOXED_PR, final[2])
+        self.assertNotIn("PR's edit", final[2])
+
+    def test_an_unsandboxed_pr_job_that_rewrites_a_pinned_helper_between_stages_posts_no_pass(self):
+        # A later stage runs pinned scripts/native.sh (exit 1 on main). The PR's unit-stage test rewrites it to
+        # exit 0; with no sandbox nothing stops the write, so integration really passes. No status may be green.
+        git(self.origin, "checkout", "-q", "main")
+        (self.origin / "scripts/native.sh").write_text("exit 1\n")
+        cfg = json.loads((self.origin / ".verify/config.json").read_text())
+        cfg["verifier"].append("scripts/native.sh")
+        cfg["stages"]["integration"] = {"run": "sh scripts/native.sh"}
+        (self.origin / ".verify/config.json").write_text(json.dumps(cfg))
+        git(self.origin, "add", "-A")
+        git(self.origin, "commit", "-qm", "integration runs a pinned helper")
+        git(self.origin, "checkout", "-q", "pr")
+        git(self.origin, "merge", "-q", "main")
+
+        def change(repo):
+            (repo / "tests/widget.sh").write_text("exit 0\n")
+            (repo / "tests/zz-rewrite.sh").write_text("printf 'exit 0\\n' > scripts/native.sh\n")
+        final, _ = self.run_pr(change)
+        green = [p for p in self.posts if verify.GH_STATE.get(p[1]) == "success"]
+        self.assertEqual(green, [], self.posts)
+        integration = [p for p in self.posts if p[0] == "verify/integration" and p[1] != "pending"]
+        self.assertTrue(integration[-1][2].startswith("pass, not trusted"), integration)  # the attack worked
+        self.assertEqual(final[1], "missing", final)
+        self.assertIn(verify.UNSANDBOXED_PR, final[2])
+
+    def test_an_unsandboxed_branch_job_still_reports_pass(self):
+        # control: the cap is for PR jobs only; the head of an owner-listed branch runs its own trusted verifier
+        final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"), branch_job=True)
         self.assertEqual(final[1], "pass", final)
-        self.assertNotIn("verifier", final[2])
+        self.assertNotIn(verify.UNSANDBOXED_PR, final[2])
+        self.assertIn(("verify/unit", "pass", "exit 0"), [(c, s, d.split(" in ")[0]) for c, s, d in self.posts])
 
     def test_a_pinned_helper_keeps_the_base_mode(self):
         final, _ = self.run_pr(self.write("scripts/check.sh", "exit 0\n", 0o755))
