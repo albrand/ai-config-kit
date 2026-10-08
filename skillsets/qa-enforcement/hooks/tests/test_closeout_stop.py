@@ -2,6 +2,7 @@
 """Fixtures for the scope-ledger closeout check at Stop and its place in the stop chain."""
 import json
 from contextlib import closing
+import importlib.util
 import os
 import pathlib
 import shutil
@@ -15,6 +16,9 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SHARED = ROOT.parent / "shared"
 CLOSEOUT = SHARED / "scope-ledger/scripts/closeout-stop.py"
+SPEC = importlib.util.spec_from_file_location("closeout_stop", CLOSEOUT)
+CLOSEOUT_MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CLOSEOUT_MODULE)
 STOP = ROOT / "qa-stop-hook.sh"
 THREAD = "thr_fixturecoord"
 PURPOSE = "i ask for overall hardening on skills and directives so we can rely more on agent QAing things"
@@ -188,6 +192,27 @@ class CloseoutStopTests(unittest.TestCase):
         result = self.closeout({"transcript_path": answered})
         self.assertEqual(result["decision"], "block")
         self.assertIn("answered since", result["reason"])
+
+    def test_stop_hook_feedback_does_not_answer_a_blocked_purpose(self):
+        self.write_ledger(self.purpose(status="blocked-on-user", marked="2026-10-08T12:00:00Z"))
+        transcript = SHARED / "scope-ledger/tests/fixtures/stop-hook-self-answer.jsonl"
+        self.assertEqual(CLOSEOUT_MODULE.last_human_input_at(str(transcript)), "2026-10-08T11:00:00Z")
+        ledger = json.loads((self.ledgers / f"{THREAD}.json").read_text())
+        answered = CLOSEOUT_MODULE.pending_purposes(ledger, CLOSEOUT_MODULE.last_human_input_at(str(transcript)))
+        self.assertEqual(answered, [])
+        self.assertEqual(self.closeout({"transcript_path": str(transcript)})["decision"], "allow")
+
+    def test_harness_entries_are_ignored_but_interrupted_user_text_counts(self):
+        cases = (
+            ("Stop hook feedback:\n[scope-closeout] P5 remains open", None),
+            ("Tool loaded.\n[ToolSearch] Loaded skill", None),
+            ("[Request interrupted by user]", "2026-10-08T11:00:00Z"),
+            ("Please answer the host question", "2026-10-08T11:00:00Z"),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                transcript = self.transcript(("2026-10-08T11:00:00Z", text))
+                self.assertEqual(CLOSEOUT_MODULE.last_human_input_at(transcript), expected)
 
     def test_finished_ledger_allows(self):
         self.write_ledger(self.purpose(status="done"))
