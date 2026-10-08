@@ -84,7 +84,8 @@ stopping point: write the missing stage if you can, then run it.
      adds one, e.g. a shared `node_modules`). It writes only its job dir. It can't reach the
      keychain, the ssh-agent, Docker, or any port listening on the host when the job started
      (`--allow-host-port` opens one, e.g. a test database). There is no supported sandbox
-     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines.
+     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines, and
+     there a PR job never reports pass (its code could rewrite the verifier between stages).
    - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job, and forge tokens
      never reach them. Network egress stays open (installs and journeys need it), so PR code can
      send anything it sees. That is why PR jobs get no secrets. Values go in
