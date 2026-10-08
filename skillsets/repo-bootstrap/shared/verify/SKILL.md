@@ -76,6 +76,10 @@ stopping point: write the missing stage if you can, then run it.
      edits one gets the base's result, and the status says so; the edit is checked once merged. A
      listed path missing on the base fails the job. Run pinned Python helpers with `python3 -I`, so a
      module the PR adds beside them can't shadow an import.
+   - A PR is checked merged into the base commit its verifier comes from, and the statuses go on the
+     PR's head. A branch that predates a base change is then not failed by it, and only edits made
+     since the branch left the base are named. A PR that conflicts with the base gets `missing` and
+     runs nothing until it is merged with or rebased on the base.
    - A stage marked `"unconfined": "<why>"` needs a host without the runner's sandbox (it applies
      its own sandbox, say). The runner reports it `missing`, so the PR stays NOT VERIFIED until it
      runs with `verify.py run` on an unconfined host.

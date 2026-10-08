@@ -406,6 +406,41 @@ class PinnedVerifier(unittest.TestCase):
         final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
         self.assertEqual(final, ("verify", "fail", "verifier path scripts/not-there.sh is not on the base branch"))
 
+    def on_main_after_the_pr_branched(self, files, message):
+        git(self.origin, "checkout", "-q", "main")
+        for rel, text in files.items():
+            self.write(rel, text)(self.origin)
+        git(self.origin, "add", "-A")
+        git(self.origin, "commit", "-q", "-m", message)
+        git(self.origin, "checkout", "-q", "pr")
+
+    def test_a_pr_that_predates_a_new_suite_on_main_is_checked_merged_and_not_blamed_for_main_s_edits(self):
+        # main's verifier now refuses a listed suite that isn't in the tree, and lists one the PR's branch lacks
+        strict = "for f in $(cat scripts/suites/*); do [ \"$f\" = none ] || [ -f \"$f\" ] || { echo \"listed, missing: $f\"; exit 1; }; done\n"
+        cfg = json.loads((self.origin / ".verify/config.json").read_text())
+        cfg["timeout"] = 900
+        self.on_main_after_the_pr_branched({"scripts/check.sh": strict + self.CHECK, "tests/native.sh": "exit 0\n",
+                                            "scripts/suites/native": "tests/native.sh\n",
+                                            ".verify/config.json": json.dumps(cfg)}, "adds a native suite")
+        final, out = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        self.assertEqual(final[1], "missing", final)  # --unsandboxed caps the pass
+        self.assertIn("unit=pass", final[2])
+        self.assertNotIn("listed, missing", out)
+        self.assertNotIn("PR's edit", final[2])  # main changed check.sh, suites and config; the PR changed none
+
+    def test_a_pr_that_edits_the_verifier_after_main_moved_is_still_named(self):
+        self.on_main_after_the_pr_branched({"tests/other.sh": "exit 0\n"}, "unrelated main change")
+        final, _ = self.run_pr(self.write("scripts/check.sh", "exit 0\n"))
+        self.assertEqual(final[1], "fail", final)
+        self.assertIn("ran main's verifier, not this PR's edit of scripts/check.sh", final[2])
+
+    def test_a_pr_that_conflicts_with_main_is_reported_missing_and_runs_nothing(self):
+        self.on_main_after_the_pr_branched({"tests/widget.sh": "exit 2\n"}, "main edits the same line")
+        final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        self.assertEqual(final[:2], ("verify", "missing"), final)
+        self.assertIn("conflicts with main at", final[2])
+        self.assertEqual(len(self.posts), 1, self.posts)  # no stage ran
+
     def test_bad_verifier_paths_in_the_base_config_fail_closed(self):
         for bad in (["../x"], ["/etc/passwd"], [".git/config"], ["a//b"], "scripts", [3]):
             with self.subTest(bad=bad):
