@@ -912,7 +912,8 @@ sys.exit(2)
 
     def test_installed_hook_never_denies_a_merge_whatever_the_ship_gate_beside_it(self) -> None:
         # Through qa-ship-gate-hook.sh, as installed: it passes its own reading of the command (the awk view), which
-        # the gate uses when ship-gate.py is missing or broken, so a merge is never read as its body (Hermes r18).
+        # decides whatever ship-gate.py is beside the gate, so a merge is never read as its body (Hermes r18, r19):
+        # missing, failing to load, or loading with a ship_view that returns the raw command or nothing at all.
         hook = ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh"
         rows = (("ls", 0), ("gh pr merge 1701 --admin --squash", 0), ("gh pr ready 1701", 0),
                 ("gh pr merge 1701 --body 'notes on gh release create'", 0),
@@ -920,7 +921,9 @@ sys.exit(2)
                 ("gh pr merge 1701 && gh release create v1", 2), ('gh pr merge 1701 --body "$(bb fleet validate x)"', 2),
                 ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2))
         for name, source in (("working", (ROOT / "scripts/ship-gate.py").read_text(encoding="utf-8")),
-                             ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n")):
+                             ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n"),
+                             ("raw view", "def ship_view(command, depth=0):\n    return command\n"),
+                             ("empty view", "def ship_view(command, depth=0):\n    return ''\n")):
             home = Path(self.temp.name) / f"home-{name}"
             scripts = home / ".agents/skills/qa-sweep/scripts"
             scripts.mkdir(parents=True)

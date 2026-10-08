@@ -273,12 +273,15 @@ def command_action(command: str, hook_view: str | None = None) -> str | None:
     """The gated action a command takes: review, PR creation or release. A PR merge is never one, so this hook
     never denies `gh pr merge` (owner decision 2026-10-08), nor `gh pr ready`, since GitHub cannot merge a draft
     (the kit's rule for PR commands, 2026-10-06). `check --action pr` still checks a PR on request.
-    `hook_view`: the same reading by qa-ship-gate-hook.sh's awk scanner (test-ship-matrix.py checks the two agree),
-    used when ship-gate.py can't give one, so a broken ship gate never makes a merge read as its body (Hermes
-    2026-10-08 r18). Only a command neither can read ("FLAT ...") is classified from its raw text."""
-    view = ship_view(command)
-    if view is None and hook_view is not None and not hook_view.startswith("FLAT "):
-        view = hook_view
+    `hook_view`: the same reading by qa-ship-gate-hook.sh's awk scanner (test-ship-matrix.py checks the two agree).
+    When the hook supplies it, it decides, and ship-gate.py is not consulted: the scanner ships in the hook itself,
+    while the ship gate beside this gate may be missing, broken or wrong in any way (Hermes 2026-10-08 r18, r19).
+    A hook view of "FLAT ..." means the command can't be read, so the raw text is classified. ship-gate.py's
+    reading is used only for a direct call without a hook view."""
+    if hook_view is not None:
+        view = None if hook_view.startswith("FLAT ") else hook_view
+    else:
+        view = ship_view(command)
     if view is not None:
         command = view
     lower = command.lower()
