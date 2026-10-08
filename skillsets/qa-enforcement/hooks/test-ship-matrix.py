@@ -78,6 +78,7 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               # a push inside a shell's -c script after its options (Hermes r22)
               "sh -e -c 'git push origin main'", "bash -lc 'git push origin main'",
               "bash -o pipefail -c 'git push origin main'", "bash -c -e 'git push origin main'",
+              "zsh --emulate sh -c 'git push origin main'",
               "gh pr merge 5\ngit push origin main", 'gh pr merge 5 --subject "$(git push origin main)"',
               "gh pr merge 5 --subject `git push origin main`",
               # a push in a substitution runs, quoted or not
@@ -186,7 +187,8 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
         "sh -e -c 'gh pr merge 5 --body \"gh pr create\"'", "bash -lc 'gh pr merge 5 --body \"gh release create\"'",
         "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5 && gh pr create --fill'",
         "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'", "sh -c -- 'gh pr merge 5'",
-        "bash -o -c 'gh pr merge 5'", "bash -e 'gh pr merge 5'"]
+        "bash -o -c 'gh pr merge 5'", "bash -e 'gh pr merge 5'", "zsh --emulate sh -c 'gh pr merge 5 --body \"gh pr create\"'",
+        "zsh --emulate sh -o shwordsplit -c 'gh pr merge 5'"]
 
 # Real-shell oracle (Hermes 2026-10-07, kit-never-block-pr-merge r11): heredoc delimiter words crossed with the
 # contexts that hold them, run by every shell here with -c, as agents run commands. When a shell runs the line
@@ -314,6 +316,44 @@ for cmd in dict.fromkeys(LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE):
             print(f"BAD replay    empty view, but the replay gate does not read it as merges: {cmd!r}")
 bad += misread
 print(f"replay gate reads {merge_only - misread} of {merge_only} merge-only payloads as merges")
+# Which word a shell runs as its -c script, after its options, is checked against the real shells: each form runs
+# with `printf RAN` in the script slot, and every reader (ship-gate.py, the replay gate, the hook's awk) must pick
+# that word exactly when the shell prints RAN (Hermes 2026-10-08 r22, r23).
+SHELL_FORMS = [["sh", "-c", "S"], ["sh", "-e", "-c", "S"], ["bash", "-lc", "S"], ["bash", "-o", "pipefail", "-c", "S"],
+               ["bash", "-c", "-e", "S"], ["bash", "--norc", "-c", "S"], ["bash", "--rcfile", "/dev/null", "-c", "S"],
+               ["bash", "--login", "-c", "S"], ["bash", "-O", "extglob", "-c", "S"], ["sh", "-c", "--", "S"],
+               ["bash", "-c", "S", "arg0"], ["bash", "-e", "S"], ["bash", "-o", "-c", "S"], ["zsh", "+x", "-ec", "S"],
+               ["zsh", "--emulate", "sh", "-c", "S"], ["zsh", "-o", "shwordsplit", "-c", "S"], ["zsh", "-c", "-x", "S"],
+               ["dash", "-e", "-c", "S"], ["dash", "-c", "S"]]
+sh_bad = sh_cases = 0
+probe_home = tempfile.mkdtemp(prefix="shell-forms-")
+for form in SHELL_FORMS:
+    exe = shutil.which(form[0])
+    if not exe:
+        print(f"skip shell form (no {form[0]}): {form}")
+        continue
+    argv = [exe] + ["printf RAN" if w == "S" else w for w in form[1:]]
+    try:
+        real = subprocess.run(argv, capture_output=True, text=True, timeout=10, cwd=probe_home,
+                              env={"PATH": "/usr/bin:/bin", "HOME": probe_home}).stdout.endswith("RAN")
+    except subprocess.TimeoutExpired:
+        real = False
+    want = form.index("S") if real else None
+    words = ["printf RAN" if w == "S" else w for w in form]
+    py = gate.shell_script_index(words, 0)
+    rg = replay.shell_script_at(words, 0)
+    command = " ".join("'printf RAN'" if w == "S" else w for w in form)
+    shell_view = sh(f"input=$(cat)\n{func}ship_scan", N, json.dumps({"tool_input": {"command": command}, "cwd": N}),
+                    {**os.environ, "SHIP_SCAN_VIEW": "1"}).stdout.rstrip("\n")
+    awk_ok = (shell_view.strip() == "printf RAN") == real
+    ok = py == want and rg == want and awk_ok
+    sh_cases += 1
+    sh_bad += not ok
+    print(f"{'ok ' if ok else 'BAD'} shell form real {'runs S' if real else 'does not run S'}; ship-gate {py}, replay {rg}, "
+          f"awk view {shell_view.strip()!r}: {command}")
+shutil.rmtree(probe_home, ignore_errors=True)
+bad += sh_bad
+print(f"shell -c forms: {sh_cases} checked against the real shells, {sh_bad} bad")
 if md:
     print("| command | cwd | path | expected | observed |\n|---|---|---|---|---|")
     for c, w, m, e, o, ok in rows:

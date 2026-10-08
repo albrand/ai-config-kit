@@ -61,7 +61,7 @@ ship_scan() {
     for (j = k + 1; j <= nw; j++) {
       w = W[d, j]
       if (w == "--") { j++; break }
-      if (w ~ /^[-+][oO]$/ || w == "--rcfile" || w == "--init-file") { j++; continue }
+      if (w ~ /^[-+][oO]$/ || w == "--rcfile" || w == "--init-file" || w == "--emulate") { j++; continue }
       if (w ~ /^--./) continue
       if (w ~ /^-[A-Za-z]+$/) { if (w ~ /c/) c = 1; continue }
       if (w ~ /^\+[A-Za-z]+$/) continue

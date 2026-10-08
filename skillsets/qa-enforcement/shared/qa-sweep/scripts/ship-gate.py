@@ -1193,7 +1193,9 @@ SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 def shell_script_index(words, k):
     """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
-    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S` and `bash --norc -c S` all run S.
+    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S`, `bash --norc -c S` and
+    `zsh --emulate sh -c S` all run S; -o, -O, --rcfile, --init-file and --emulate take a value. test-ship-matrix.py
+    checks this reading against the real shells.
     None when no option holds c, or no word follows (Hermes 2026-10-08 r22)."""
     c, j = False, k + 1
     while j < len(words):
@@ -1201,7 +1203,7 @@ def shell_script_index(words, k):
         if w == "--":
             j += 1
             break
-        if re.fullmatch(r"[-+][oO]", w) or w in ("--rcfile", "--init-file"):
+        if re.fullmatch(r"[-+][oO]", w) or w in ("--rcfile", "--init-file", "--emulate"):
             j += 2
         elif w.startswith("--") and len(w) > 2:
             j += 1
