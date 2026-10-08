@@ -1236,14 +1236,58 @@ sys.exit(2)
 
     def test_unreadable_denylist_refuses_without_echoing_path_or_label(self) -> None:
         denylist_path = Path(self.temp.name) / "unreadable-labels.txt"
+        denylist_path.write_text("Test Tenant\n", encoding="utf-8")
         with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(denylist_path)}):
-            with patch.object(Path, "read_text", side_effect=PermissionError("synthetic read failure")):
+            with patch.object(os, "open", side_effect=PermissionError("synthetic read failure")):
                 valid, reason, _ = self.gate_module().validate_report_text(replay_report())
         self.assertFalse(valid)
         self.assertIn("deny-list unavailable", reason)
         self.assertIn("label check refused", reason)
         self.assertNotIn(str(denylist_path), reason)
         self.assertNotIn("Test Tenant", reason)
+
+    def test_symlink_to_unrelated_denylist_refuses_labelled_report(self) -> None:
+        target = Path(self.temp.name) / "other-labels.txt"
+        target.write_text("Someone Else\n", encoding="utf-8")
+        symlink = Path(self.temp.name) / "symlink-labels.txt"
+        symlink.symlink_to(target)
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(symlink)}):
+            valid, reason, _ = self.gate_module().validate_report_text(
+                replay_report(note="- Replay note: Test Tenant"))
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list file is not trusted; label check refused")
+        self.assertNotIn(str(symlink), reason)
+        self.assertNotIn("Test Tenant", reason)
+        self.assertNotIn("Someone Else", reason)
+
+    def test_symlink_to_real_denylist_refuses(self) -> None:
+        symlink = Path(self.temp.name) / "symlink-to-real-labels.txt"
+        symlink.symlink_to(self.denylist)
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(symlink)}):
+            valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list file is not trusted; label check refused")
+        self.assertNotIn(str(symlink), reason)
+        self.assertNotIn("Acme Energy", reason)
+
+    def test_group_writable_denylist_refuses(self) -> None:
+        denylist = Path(self.temp.name) / "group-writable-labels.txt"
+        denylist.write_text("Test Tenant\n", encoding="utf-8")
+        denylist.chmod(0o620)
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(denylist)}):
+            valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list file is not trusted; label check refused")
+        self.assertNotIn(str(denylist), reason)
+        self.assertNotIn("Test Tenant", reason)
+
+    def test_mode_600_regular_denylist_is_allowed(self) -> None:
+        denylist = Path(self.temp.name) / "private-labels.txt"
+        denylist.write_text("Acme Energy\n", encoding="utf-8")
+        denylist.chmod(0o600)
+        with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(denylist)}):
+            valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertTrue(valid, reason)
 
     def test_missing_denylist_refuses_clean_and_labelled_reports(self) -> None:
         missing = Path(self.temp.name) / "missing-labels.txt"

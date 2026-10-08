@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import unicodedata
@@ -72,6 +73,33 @@ URL_WHITESPACE_LIST_ATTRIBUTES = {"ping", "archive", "itemtype", "profile"}
 URL_SRCSET_ATTRIBUTES = {"srcset", "imagesrcset"}
 
 
+class _UntrustedDenylistError(Exception):
+    """The configured deny-list is not a safe regular file owned by this user."""
+
+
+def _read_trusted_denylist(path: Path) -> str:
+    path_info = os.lstat(path)
+    if stat.S_ISLNK(path_info.st_mode) or not stat.S_ISREG(path_info.st_mode):
+        raise _UntrustedDenylistError
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_info = os.fstat(descriptor)
+        same_file = (path_info.st_dev, path_info.st_ino) == (opened_info.st_dev, opened_info.st_ino)
+        safe_mode = not (stat.S_IMODE(opened_info.st_mode) & 0o022)
+        if (not same_file or not stat.S_ISREG(opened_info.st_mode)
+                or opened_info.st_uid != os.getuid() or not safe_mode):
+            raise _UntrustedDenylistError
+        stream = os.fdopen(descriptor, "r", encoding="utf-8")
+        descriptor = -1
+        with stream as denylist_file:
+            return denylist_file.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     """Validate report structure, privacy and its footer."""
     denylist_value = os.environ.get(DENYLIST_ENV)
@@ -84,10 +112,12 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         if not denylist_path.is_absolute():
             return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
     try:
-        labels = [line.strip() for line in denylist_path.read_text(encoding="utf-8").splitlines()
-                  if line.strip()]
+        denylist_text = _read_trusted_denylist(denylist_path)
+        labels = [line.strip() for line in denylist_text.splitlines() if line.strip()]
     except FileNotFoundError:
         return False, "private tenant-label deny-list missing; label check refused", None
+    except _UntrustedDenylistError:
+        return False, "private tenant-label deny-list file is not trusted; label check refused", None
     except (OSError, UnicodeError):
         return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
     if not labels:
