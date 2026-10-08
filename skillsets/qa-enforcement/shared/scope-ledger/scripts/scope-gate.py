@@ -893,6 +893,7 @@ VERB_EXEMPT = {
     "terminal send": "types into a terminal session (a shell), not a thread's conversation",
     "notify send": "a desktop notice to the person, not work for an agent",
     "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
+    "thread log": "read-only: its --message <seq> names a message to print, not text sent to a thread",
 }
 
 

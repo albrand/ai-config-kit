@@ -410,6 +410,31 @@ def words(text):
         return text.split()
 
 
+def shell_script_index(w, k):
+    """The index of the script a shell's -c runs, the shell being w[k]: the first word after its options, as in
+    qa-sweep's ship-gate.py (test-ship-matrix.py checks that reading against the real shells). So `bash -c -e S`,
+    `sh -c -- S`, `sh -e -c S`, `bash -o pipefail -c S` and `zsh --emulate sh -c S` all run S; -o, -O, --rcfile,
+    --init-file and --emulate take a value. None when no option holds c, or no word follows."""
+    c, j = False, k + 1
+    while j < len(w):
+        a = w[j]
+        if a == "--":
+            j += 1
+            break
+        if re.fullmatch(r"[-+][oO]", a) or a in ("--rcfile", "--init-file", "--emulate"):
+            j += 2
+        elif a.startswith("--") and len(a) > 2:
+            j += 1
+        elif re.fullmatch(r"-[A-Za-z]+", a):
+            c = c or "c" in a
+            j += 1
+        elif re.fullmatch(r"\+[A-Za-z]+", a):
+            j += 1
+        else:
+            break
+    return j if c and j < len(w) else None
+
+
 def _command_word(w):
     """Index of the command word after assignments, prefixes and wrappers."""
     i = 0
@@ -544,10 +569,17 @@ def dispatches(script, depth=0):
             if depth < MAX_DEPTH:
                 inner = None
                 if base in SHELLS:
-                    for j, a in enumerate(rest):
-                        if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
-                            inner = rest[j + 1] if j + 1 < len(rest) else None
-                            break
+                    # The script is the first word after the shell's options, not the word after -c: in
+                    # `bash -c -e S` the next word is -e. Where that reading finds none, the word after the first
+                    # -c flag is still read, which errs toward seeing a dispatch.
+                    s = shell_script_index(w, k)
+                    if s is not None:
+                        inner = w[s]
+                    else:
+                        for j, a in enumerate(rest):
+                            if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                                inner = rest[j + 1] if j + 1 < len(rest) else None
+                                break
                 if inner is not None:
                     scripts = [inner]
                 else:

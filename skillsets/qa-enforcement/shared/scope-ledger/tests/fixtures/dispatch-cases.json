@@ -230,6 +230,12 @@
     {"label": "#30 r1: help appending stdout and stderr to a file is not a dispatch", "want": 0, "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"},
     {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"},
     {"label": "#30 r2: help redirected into a process substitution that dispatches is denied", "want": 2, "command": "bb thread tell --help > >(bb thread tell thr_x \"also refactor it\")"},
-    {"label": "#30 r2: help redirected into a process substitution that only reads is allowed", "want": 0, "command": "bb thread spawn --help 2> >(cat)"}
+    {"label": "#30 r2: help redirected into a process substitution that only reads is allowed", "want": 0, "command": "bb thread spawn --help 2> >(cat)"},
+    {"label": "shell -c script after options: a shell option after -c: the script is the word after it", "want": 2, "command": "bash -c -e 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: -- after -c ends the options; the script follows it", "want": 2, "command": "sh -c -- 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: -x after -c, spawning", "want": 2, "command": "bash -c -x 'bb thread spawn --prompt x'"},
+    {"label": "shell -c script after options: a value option before -c (-o pipefail)", "want": 2, "command": "bash -o pipefail -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: zsh --emulate takes a value before -c", "want": 2, "command": "zsh --emulate sh -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: an option after -c with a brief line is allowed", "want": 0, "command": "bash -c -e 'bb thread tell thr_x \"serves: P1 hi\"'"}
   ]
 }
