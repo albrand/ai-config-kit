@@ -26,7 +26,6 @@ Never bypass a safety-hook block; it is the rule working, not a defect to route 
 Never symlink `node_modules`; below 20 GB free, start no installs or builds.
 One writer per PR, branch, and worktree. Never edit a sibling's worktree. On "Workspace collision detected", stop editing; survivor rereads `git diff` before committing.
 Automations single-flight per target; never treat their own agent's push as completion while its thread is still running.
-Never type, paste, or handle credentials.
 Never publicly expose a service or run bb connect expose without explicit approval. Close authorized shares before closeout.
 Use only bb's isolated browser for interactive work; never use a personal browser. Call `browser_instances` before any `browser_open`; never use `browser_open` as a standard first step. Close the owned instance before changing cookie isolation. Never access or close unowned, pre-existing, user-owned, or other-thread instances. Lookup, refresh, release, and close must never create a replacement tab. Close this thread's instance when its bounded browser slice passes, fails, is blocked, abandoned, or superseded.
 No feature flags or new off-by-default gates without an explicit ask; preserve auth, authorization, entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date.
@@ -57,7 +56,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
         candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
         self.assertEqual(missing, [])
-        self.assertEqual(count, 48)
+        # 48 before the owner retired the three credential rules on 2026-10-08.
+        self.assertEqual(count, 45)
 
         baseline_rules = [
             name for name, pattern in CHECKER.RULES.items()
@@ -70,14 +70,14 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 self.assertIn(name, missing)
 
     def test_baseline_without_a_retained_rule_fails(self):
-        baseline = "Never type, paste, or handle credentials."
+        baseline = "Never bypass a safety-hook block; it is the rule working, not a defect to route around."
         count, missing = CHECKER.check_baseline_preservation(baseline, baseline)
         self.assertGreater(count, 0)
         self.assertEqual(missing, [])
 
         damaged = ""
         _, missing = CHECKER.check_baseline_preservation(baseline, damaged)
-        self.assertIn("credentials-never-handle", missing)
+        self.assertIn("safety-hook-block-cannot-be-bypassed", missing)
 
     def test_baseline_entrypoint_returns_success_for_intact_source(self):
         baseline = (
@@ -148,9 +148,9 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_deleted_rule_fails(self):
         damaged = INTACT.replace(
-            "Never type, paste, or handle credentials.\n", ""
+            "Never bypass a safety-hook block; it is the rule working, not a defect to route around.\n", ""
         )
-        self.assertIn("credentials-never-type", CHECKER.missing_rules(damaged))
+        self.assertIn("safety-hook-block-cannot-be-bypassed", CHECKER.missing_rules(damaged))
 
     def test_delegate_output_evidence_and_capability_gap_rule_cannot_be_removed(self):
         clause = (
@@ -292,23 +292,12 @@ class StandingRuleCheckerTest(unittest.TestCase):
                         ),
                     )
 
-    def test_rendered_profiles_require_all_three_credential_bans(self):
+    def test_rendered_homes_pass_without_the_retired_credential_rules(self):
+        # The owner retired credentials-never-type/-paste/-handle on 2026-10-08. The rendered homes no longer carry
+        # those lines and pass; dropping any other required rule from them, such as the restart ban, still fails.
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
         names = ["CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"]
-        mutations = {
-            "credentials-never-type": (
-                "Never type, paste, or handle credentials",
-                "Typing credentials is allowed; never paste or handle credentials",
-            ),
-            "credentials-never-paste": (
-                "Never type, paste, or handle credentials",
-                "Never type credentials; pasting is allowed; never handle credentials",
-            ),
-            "credentials-never-handle": (
-                "Never type, paste, or handle credentials",
-                "Never type or paste credentials; handling them is allowed",
-            ),
-        }
+        self.assertFalse([name for name in CHECKER.RULES if name.startswith("credentials-never-")])
         with tempfile.TemporaryDirectory(prefix="card21-credentials-") as temp_dir:
             candidate_dir = Path(temp_dir) / "rendered-homes"
             candidate_dir.mkdir()
@@ -324,36 +313,19 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 )
 
             for path, content in zip(candidates, intact):
+                self.assertNotIn("handle credentials", content)
+                self.assertNotIn("types the credentials", content)
                 path.write_text(content, encoding="utf-8")
             result = run_checker()
-            self.assertEqual(0, result.returncode, result.stderr)
-            for rule, (original, weakened) in mutations.items():
-                with self.subTest(rule=rule):
-                    for path, content in zip(candidates, intact):
-                        self.assertIn(original, content)
-                        path.write_text(content.replace(original, weakened, 1), encoding="utf-8")
-                    result = run_checker()
-                    self.assertNotEqual(0, result.returncode, result.stdout)
-                    self.assertIn(rule, result.stdout + result.stderr)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
             for path, content in zip(candidates, intact):
-                self.assertIn("Never type, paste, or handle credentials", content)
-                path.write_text(
-                    content.replace(
-                        "Never type, paste, or handle credentials",
-                        "Never type, paste, or handle credentials unless the user asks you to log in",
-                        1,
-                    ),
-                    encoding="utf-8",
-                )
+                damaged = CHECKER.RULES["bb-app-never-restart"].sub("", content)
+                self.assertNotEqual(content, damaged)
+                path.write_text(damaged, encoding="utf-8")
             result = run_checker()
             self.assertNotEqual(0, result.returncode, result.stdout)
-            for rule in (
-                "credentials-never-type",
-                "credentials-never-paste",
-                "credentials-never-handle",
-            ):
-                self.assertIn(rule, result.stdout + result.stderr)
+            self.assertIn("bb-app-never-restart", result.stdout + result.stderr)
 
     def test_native_home_profiles_fail_closed_through_files_entrypoint(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -742,18 +714,6 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "safety-hook-block-cannot-be-bypassed": (
                 "Never bypass a safety-hook block; it is the rule working, not a defect to route around.",
                 "A safety-hook block may be bypassed to finish the task.",
-            ),
-            "credentials-never-type": (
-                "Never type, paste, or handle credentials.",
-                "Never paste or handle credentials.",
-            ),
-            "credentials-never-paste": (
-                "Never type, paste, or handle credentials.",
-                "Never type or handle credentials.",
-            ),
-            "credentials-never-handle": (
-                "Never type, paste, or handle credentials.",
-                "Never type or paste credentials.",
             ),
             "public-exposure": (
                 "Never publicly expose a service or run bb connect expose without explicit approval.",
