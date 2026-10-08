@@ -54,6 +54,21 @@ ship_scan() {
     return "\001"
   }
   function bare(w) { sub(/.*\//, "", w); return w }
+  function shscript(d, k, nw,   j, c, w) {
+    # The index of the script that the -c of a shell runs, after its options (sh -e -c, bash -lc, bash -o pipefail -c,
+    # bash -c -e, bash --norc -c), or 0. Same reading as ship-gate.py shell_script_index (Hermes r22).
+    c = 0
+    for (j = k + 1; j <= nw; j++) {
+      w = W[d, j]
+      if (w == "--") { j++; break }
+      if (w ~ /^[-+][oO]$/ || w == "--rcfile" || w == "--init-file") { j++; continue }
+      if (w ~ /^--./) continue
+      if (w ~ /^-[A-Za-z]+$/) { if (w ~ /c/) c = 1; continue }
+      if (w ~ /^\+[A-Za-z]+$/) continue
+      break
+    }
+    return (c && j <= nw) ? j : 0
+  }
   function emit(d, nw, seg, subs,   k, h, script, j) {
     k = 1
     while (k <= nw) {
@@ -69,8 +84,8 @@ ship_scan() {
     if (k > nw) return seg
     h = bare(W[d, k])
     if (h == "gh" && k + 2 <= nw && W[d, k + 1] == "pr" && W[d, k + 2] == "merge") return subs
-    if (d < 3 && (h == "sh" || h == "bash" || h == "zsh" || h == "dash") && k + 2 <= nw && W[d, k + 1] ~ /^-[A-Za-z]*c[A-Za-z]*$/)
-      return view(W[d, k + 2], d + 1) subs
+    if (d < 3 && (h == "sh" || h == "bash" || h == "zsh" || h == "dash") && (j = shscript(d, k, nw)))
+      return view(W[d, j], d + 1) subs
     if (d < 3 && h == "eval" && k < nw) {
       script = W[d, k + 1]
       for (j = k + 2; j <= nw; j++) script = script " " W[d, j]

@@ -885,6 +885,30 @@ MERGE_WRAPPERS = {"env": {"-u", "--unset", "-C", "--chdir"}, "command": set(), "
                   "time": set(), "sudo": {"-u", "--user", "-g", "--group"}, "nice": {"-n", "--adjustment"}}
 
 
+def shell_script_at(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
+    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S` and `bash --norc -c S` all run S.
+    None when no option holds c, or no word follows (Hermes 2026-10-08 r22)."""
+    c, j = False, k + 1
+    while j < len(words):
+        w = words[j]
+        if w == "--":
+            j += 1
+            break
+        if re.fullmatch(r"[-+][oO]", w) or w in ("--rcfile", "--init-file"):
+            j += 2
+        elif w.startswith("--") and len(w) > 2:
+            j += 1
+        elif re.fullmatch(r"-[A-Za-z]+", w):
+            c = c or "c" in w
+            j += 1
+        elif re.fullmatch(r"\+[A-Za-z]+", w):
+            j += 1
+        else:
+            break
+    return j if c and j < len(words) else None
+
+
 def only_merges(command: str) -> bool:
     """True when the raw command is nothing but `gh pr merge` calls, read here on its own, apart from both scanners:
     every segment between control operators, outside quotes and comments, is `gh [-R repo] pr merge ...` after any
@@ -961,8 +985,9 @@ def only_merges(command: str) -> bool:
             segment = segment[1:]
             while segment and segment[0].startswith("-"):
                 segment = segment[2:] if segment[0] in flags else segment[1:]
-        if segment and Path(segment[0]).name in ("sh", "bash", "zsh", "dash") and segment[1:2] == ["-c"]:
-            return len(segment) > 2 and only_merges(segment[2])
+        if segment and Path(segment[0]).name in ("sh", "bash", "zsh", "dash"):
+            j = shell_script_at(segment, 0)
+            return j is not None and only_merges(segment[j])
         if segment and segment[0] == "eval":
             return len(segment) > 1 and only_merges(" ".join(segment[1:]))
         if not segment or Path(segment[0]).name != "gh":

@@ -1188,6 +1188,30 @@ WRAPPER_ARG_FLAGS = ("-C", "-u", "-n", "--chdir", "--unset")
 SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
+def shell_script_index(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
+    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S` and `bash --norc -c S` all run S.
+    None when no option holds c, or no word follows (Hermes 2026-10-08 r22)."""
+    c, j = False, k + 1
+    while j < len(words):
+        w = words[j]
+        if w == "--":
+            j += 1
+            break
+        if re.fullmatch(r"[-+][oO]", w) or w in ("--rcfile", "--init-file"):
+            j += 2
+        elif w.startswith("--") and len(w) > 2:
+            j += 1
+        elif re.fullmatch(r"-[A-Za-z]+", w):
+            c = c or "c" in w
+            j += 1
+        elif re.fullmatch(r"\+[A-Za-z]+", w):
+            j += 1
+        else:
+            break
+    return j if c and j < len(words) else None
+
+
 def _view_segment(words, seg, subs, depth):
     """What one segment runs, for ship_view: a `gh pr merge` keeps only its substitutions,
     `sh -c SCRIPT` and `eval` are read as their script, anything else is kept as written."""
@@ -1207,9 +1231,9 @@ def _view_segment(words, seg, subs, depth):
     h = os.path.basename(words[k])
     if h == "gh" and words[k + 1:k + 3] == ["pr", "merge"]:
         return subs
-    if depth < 3 and h in ("sh", "bash", "zsh", "dash") and k + 2 < len(words) \
-            and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k + 1]):
-        inner = ship_view(words[k + 2], depth + 1)
+    j = shell_script_index(words, k) if depth < 3 and h in ("sh", "bash", "zsh", "dash") else None
+    if j is not None:
+        inner = ship_view(words[j], depth + 1)
         return None if inner is None else inner + subs
     if depth < 3 and h == "eval" and k + 1 < len(words):
         inner = ship_view(" ".join(words[k + 1:]), depth + 1)

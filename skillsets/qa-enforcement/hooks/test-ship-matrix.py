@@ -75,6 +75,9 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               "git \\\n  -c core.x=y \\\n  push origin main", "git pu\\\nsh origin main",
               # a merge that also runs something else is judged by what else it runs
               "gh pr merge 5; git push origin main", "gh pr merge 5 && git push origin main",
+              # a push inside a shell's -c script after its options (Hermes r22)
+              "sh -e -c 'git push origin main'", "bash -lc 'git push origin main'",
+              "bash -o pipefail -c 'git push origin main'", "bash -c -e 'git push origin main'",
               "gh pr merge 5\ngit push origin main", 'gh pr merge 5 --subject "$(git push origin main)"',
               "gh pr merge 5 --subject `git push origin main`",
               # a push in a substitution runs, quoted or not
@@ -178,7 +181,12 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
         # gated command, alone or beside a merge, keeps its words in the view both scanners give
         "gh pr merge 5 --body 'gh release create v1'", "gh pr merge 5 && gh pr create --fill",
         'gh pr merge 5 --body "$(bb fleet validate x)"', "gh pr create --fill", "gh release create v1",
-        "bb fleet validate --evidence x", "gh pr merge 5; gh pr merge 6 -t 'gh pr create'"]
+        "bb fleet validate --evidence x", "gh pr merge 5; gh pr merge 6 -t 'gh pr create'",
+        # a shell's -c script after its options (Hermes 2026-10-08 r22)
+        "sh -e -c 'gh pr merge 5 --body \"gh pr create\"'", "bash -lc 'gh pr merge 5 --body \"gh release create\"'",
+        "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5 && gh pr create --fill'",
+        "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'", "sh -c -- 'gh pr merge 5'",
+        "bash -o -c 'gh pr merge 5'", "bash -e 'gh pr merge 5'"]
 
 # Real-shell oracle (Hermes 2026-10-07, kit-never-block-pr-merge r11): heredoc delimiter words crossed with the
 # contexts that hold them, run by every shell here with -c, as agents run commands. When a shell runs the line

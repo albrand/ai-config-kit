@@ -2000,6 +2000,11 @@ sys.exit(2)
                 ("gh pr merge 1701 --body 'notes on gh release create'", 0),
                 ('gh pr merge 1701 --subject "bb fleet validate; gh pr create" --squash', 0),
                 ("gh pr merge 1701 && gh release create v1", 2), ('gh pr merge 1701 --body "$(bb fleet validate x)"', 2),
+                ("sh -e -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                ("bash -lc 'gh pr merge 1701 --body \"gh release create v1\"'", 0),
+                ("bash -o pipefail -c 'gh pr merge 1701 -t \"bb fleet validate\"'", 0),
+                ("bash -c -e 'gh pr merge 1701 -t \"gh pr create\"'", 0),
+                ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2),
                 ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2))
         for name, source in (("working", (ROOT / "scripts/ship-gate.py").read_text(encoding="utf-8")),
                              ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n"),
@@ -2036,7 +2041,10 @@ sys.exit(2)
                         "X=1 env Y=2 nohup gh pr merge 5", "gh pr merge 5 -t ${X}", 'gh pr merge 5 -t "${X:-y}"',
                         "sh -c 'gh pr merge 5 -t \"gh pr create\"'", "bash -c 'gh pr merge 5'",
                         "eval 'gh pr merge 5 -t \"git push\"'", "gh pr merge 5\n&& gh pr create",
-                        "gh pr merge 5\n  || gh release create v1"):
+                        "gh pr merge 5\n  || gh release create v1", "sh -e -c 'gh pr merge 5'",
+                        "bash -lc 'gh pr merge 5'", "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5'",
+                        "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'",
+                        "sh -c -- 'gh pr merge 5'", "zsh +x -ec 'gh pr merge 5'"):
             with self.subTest(command=command):
                 self.assertTrue(only(command))
         for command in ("", "ls", "gh pr merge 5 && gh pr create", "echo 'gh pr merge' && gh pr create",
@@ -2046,7 +2054,8 @@ sys.exit(2)
                         "gh -R pr merge 5", "npx gh pr merge 5", "env bash -c 'gh pr create'",
                         "gh pr merge 5 -t ${X:-$(id)}", "gh pr merge 5 -t ${X", "sudo gh pr create",
                         "sh -c 'gh pr merge 5 && gh pr create'", "bash -c", "eval 'gh pr create'",
-                        "gh pr merge 5 &&\n gh pr create",
+                        "gh pr merge 5 &&\n gh pr create", "bash -e 'gh pr merge 5'", "sh -e -c",
+                        "bash -o -c 'gh pr merge 5'", "bash -lc 'gh pr merge 5 && gh pr create'",
                         "gh pr merge 5 # x\ngh pr create"):
             with self.subTest(command=command):
                 self.assertFalse(only(command))
@@ -2075,7 +2084,13 @@ sys.exit(2)
                             ("echo 'gh pr merge 1701' && gh pr create --fill", 2),
                             ("gh pr merge 1701; bb fleet validate --evidence x", 2),
                             ("gh pr merge 1701 | gh release create v1", 2),
-                            ("gh pr merge 1701 # done\ngh release create v1", 2)):
+                            ("gh pr merge 1701 # done\ngh release create v1", 2),
+                            # a shell's -c script after its options (Hermes r22)
+                            ("sh -e -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                            ("bash -lc 'gh pr merge 1701 --body \"gh release create v1\"'", 0),
+                            ("bash -o pipefail -c 'gh pr merge 1701 -t \"bb fleet validate\"'", 0),
+                            ("bash -c -e 'gh pr merge 1701 -t \"gh pr create\"'", 0),
+                            ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2)):
             with self.subTest(command=command):
                 payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
                 result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
