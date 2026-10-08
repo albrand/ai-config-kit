@@ -174,13 +174,26 @@ class ContinuationInstallTests(unittest.TestCase):
 
     def test_install_updates_all_copies_and_preserves_backups_and_other_gates(self):
         result = installer.install(ROOT, self.home, self.backup)
-        self.assertEqual(result["installed_files"], 11)
+        self.assertEqual(result["installed_files"], 27)
         self.assertEqual((self.backup / "0").read_text(), "original stop wrapper\n")
         self.assertEqual((self.home / ".agent-hooks/other-safety-hook.sh").read_text(), "preserve this safety check\n")
         for provider_home in (".agents", ".bb", ".claude", ".codex"):
             root = self.home / provider_home / "skills/scope-ledger"
             for relative in ("SKILL.md", "scripts/closeout-stop.py"):
                 self.assertEqual((root / relative).read_bytes(), (ROOT / "shared/scope-ledger" / relative).read_bytes())
+
+    def test_scope_ledger_references_are_installed_in_every_provider_home(self):
+        references = sorted((ROOT / "shared/scope-ledger/references").glob("*.md"))
+        self.assertTrue(references, "scope-ledger references should exist")
+        installer.install(ROOT, self.home, self.backup)
+        manifest = json.loads((self.backup / "manifest.json").read_text())
+        for provider_home in (".agents", ".bb", ".claude", ".codex"):
+            root = self.home / provider_home / "skills/scope-ledger"
+            for reference in references:
+                target = root / "references" / reference.name
+                with self.subTest(provider=provider_home, reference=reference.name):
+                    self.assertEqual(target.read_bytes(), reference.read_bytes())
+                    self.assertTrue(any(item["target"] == str(target) for item in manifest))
 
     def test_helper_drift_refuses_before_changing_any_gate(self):
         helper = self.home / ".codex/skills/scope-ledger/scripts/scope-gate.py"
