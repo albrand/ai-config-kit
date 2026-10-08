@@ -2031,14 +2031,23 @@ sys.exit(2)
                         "gh pr merge 5 --body 'a && gh pr create; `x` $(y)'", 'gh pr merge 5 -t "a | b"',
                         "gh pr merge 5 \\\n  --squash", "gh pr merge 5 # && gh pr create", "X=1 gh pr merge 5",
                         "gh -R o/r pr merge 5", "gh --repo=o/r pr merge 5", "/opt/homebrew/bin/gh pr merge 5 2>&1",
-                        "(gh pr merge 5)", "gh pr merge 5 &>/dev/null"):
+                        "(gh pr merge 5)", "gh pr merge 5 &>/dev/null", "env gh pr merge 5", "env -i gh pr merge 5",
+                        "command gh pr merge 5", "sudo -u x gh pr merge 5", "nice -n 5 gh pr merge 5",
+                        "X=1 env Y=2 nohup gh pr merge 5", "gh pr merge 5 -t ${X}", 'gh pr merge 5 -t "${X:-y}"',
+                        "sh -c 'gh pr merge 5 -t \"gh pr create\"'", "bash -c 'gh pr merge 5'",
+                        "eval 'gh pr merge 5 -t \"git push\"'", "gh pr merge 5\n&& gh pr create",
+                        "gh pr merge 5\n  || gh release create v1"):
             with self.subTest(command=command):
                 self.assertTrue(only(command))
         for command in ("", "ls", "gh pr merge 5 && gh pr create", "echo 'gh pr merge' && gh pr create",
                         "gh pr merge 5 | tee x", "gh pr merge 5 & ls", "gh pr merge 5\nls", "gh pr view 5",
                         'gh pr merge 5 --body "$(cat x)"', "gh pr merge 5 --body `cat x`", "gh pr merge 5 <<EOF",
                         "gh pr merge 5 --body 'unclosed", "gh release create --notes pr merge", "echo gh pr merge",
-                        "gh -R pr merge 5", "command gh pr merge 5", "gh pr merge 5 # x\ngh pr create"):
+                        "gh -R pr merge 5", "npx gh pr merge 5", "env bash -c 'gh pr create'",
+                        "gh pr merge 5 -t ${X:-$(id)}", "gh pr merge 5 -t ${X", "sudo gh pr create",
+                        "sh -c 'gh pr merge 5 && gh pr create'", "bash -c", "eval 'gh pr create'",
+                        "gh pr merge 5 &&\n gh pr create",
+                        "gh pr merge 5 # x\ngh pr create"):
             with self.subTest(command=command):
                 self.assertFalse(only(command))
 

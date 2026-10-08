@@ -878,12 +878,18 @@ GATED_WORDS = re.compile(r"pre-review\.py|hermes-one|fleet\s+validate|gh\s+pr\s+
 
 EMPTY_VIEW = re.compile(r"[\s;]*")
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# Wrappers that run the command after them unchanged, with the flags that take a value; the scanners read
+# `env gh pr merge 5` or `sudo -u x gh pr merge 5` as the merge, so this reading does too. Kept here, apart from
+# ship-gate.py, so a missing or broken ship gate can't change it.
+MERGE_WRAPPERS = {"env": {"-u", "--unset", "-C", "--chdir"}, "command": set(), "exec": set(), "nohup": set(),
+                  "time": set(), "sudo": {"-u", "--user", "-g", "--group"}, "nice": {"-n", "--adjustment"}}
 
 
 def only_merges(command: str) -> bool:
     """True when the raw command is nothing but `gh pr merge` calls, read here on its own, apart from both scanners:
     every segment between control operators, outside quotes and comments, is `gh [-R repo] pr merge ...` after any
-    VAR=value prefixes. A command substitution, a backtick, a here-document, an unclosed quote or any other segment
+    VAR=value prefixes and wrappers (env, command, sudo, ...), or an `sh -c` / `eval` string that is. Like the
+    scanners, it stops at a line that starts with && or ||, where the shell stops. A command substitution, a backtick, a here-document, an unclosed quote or any other segment
     makes it False, so an empty view of such a command is not trusted (Hermes 2026-10-08 r21)."""
     text = command.replace("\\\n", "")
     segments, words, word, quote, i = [], [], None, None, 0
@@ -911,6 +917,12 @@ def only_merges(command: str) -> bool:
             quote, word = ch, word or ""
         elif ch == "`" or (ch == "$" and nxt == "(") or (ch == "<" and nxt == "<"):
             return False
+        elif ch == "$" and nxt == "{":
+            close = text.find("}", i)
+            if close < 0 or "$(" in text[i:close] or "`" in text[i:close]:
+                return False
+            word = (word or "") + text[i:close + 1]  # ${X} expands inside the word; its braces are not a group
+            i = close
         elif ch == "#" and word is None:
             while i + 1 < len(text) and text[i + 1] != "\n":
                 i += 1
@@ -926,6 +938,8 @@ def only_merges(command: str) -> bool:
             if words:
                 segments.append(words)
             words, word = [], None
+            if ch == "\n" and text[i + 1:].lstrip(" \t")[:2] in ("&&", "||"):
+                break  # a line that starts with && or || is a syntax error: the shell runs nothing after it
         else:
             word = (word or "") + ch
         i += 1
@@ -937,8 +951,20 @@ def only_merges(command: str) -> bool:
         segments.append(words)
 
     def is_merge(segment: list[str]) -> bool:
-        while segment and ASSIGNMENT.match(segment[0]):
+        while segment:
+            if ASSIGNMENT.match(segment[0]):
+                segment = segment[1:]
+                continue
+            flags = MERGE_WRAPPERS.get(Path(segment[0]).name)
+            if flags is None:
+                break
             segment = segment[1:]
+            while segment and segment[0].startswith("-"):
+                segment = segment[2:] if segment[0] in flags else segment[1:]
+        if segment and Path(segment[0]).name in ("sh", "bash", "zsh", "dash") and segment[1:2] == ["-c"]:
+            return len(segment) > 2 and only_merges(segment[2])
+        if segment and segment[0] == "eval":
+            return len(segment) > 1 and only_merges(" ".join(segment[1:]))
         if not segment or Path(segment[0]).name != "gh":
             return False
         rest = segment[1:]

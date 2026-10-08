@@ -289,6 +289,23 @@ for cmd in LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE:
             print(f"{'ok ' if ok else 'BAD'} scanners  gate {py!r} shell {shell[:120]!r} {cmd!r}")
         total += 1
 print(f"scanners agree on {agree} of {total} payloads")
+# The replay gate trusts an empty view only when its own reading of the raw command finds nothing but merges
+# (Hermes 2026-10-08 r21). Every payload the scanners read as merge-only must read so there too, or a merge whose
+# text names a gated command would be denied.
+rspec = importlib.util.spec_from_file_location("replay_gate", os.path.join(HOOKS, "..", "shared", "qa-sweep",
+                                                                          "scripts", "realdata-replay-gate.py"))
+replay = importlib.util.module_from_spec(rspec)
+rspec.loader.exec_module(replay)
+merge_only = misread = 0
+for cmd in dict.fromkeys(LOCAL_DENY + LOCAL_ALLOW + DENY + ALLOW + EDGE):
+    view = gate.ship_view(cmd)
+    if view is not None and re.fullmatch(r"[\s;]*", view):
+        merge_only += 1
+        if not replay.only_merges(cmd):
+            misread += 1
+            print(f"BAD replay    empty view, but the replay gate does not read it as merges: {cmd!r}")
+bad += misread
+print(f"replay gate reads {merge_only - misread} of {merge_only} merge-only payloads as merges")
 if md:
     print("| command | cwd | path | expected | observed |\n|---|---|---|---|---|")
     for c, w, m, e, o, ok in rows:
