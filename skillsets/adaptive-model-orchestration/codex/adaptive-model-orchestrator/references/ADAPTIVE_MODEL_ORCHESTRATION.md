@@ -81,19 +81,19 @@ default is the GPT ceiling, and Claude's is Opus.
 - **Claude children and reviewers.** Reasoning goes from low to high if and
   only if the work keeps being sent back: two rejections in a row, counting
   Hermes non-accepts and failed quality gates together. It never goes past
-  high. Light work that keeps coming back
-  moves from Haiku to Sonnet.
-- **GPT children, reviewers and automations.** They climb one step for each rejection in a row, and one
-  step each when this work has been going back and forth for 2 hours, then
-  for 6. That time is the work's own, counted from its first rejection since
-  its last accept (or its stated start); a new task in an old group starts at
-  zero:
+  high. A light child that keeps coming back moves from Haiku to Sonnet; a
+  reviewer or automation stays on Haiku.
+- **GPT children, reviewers and automations.** They climb one step for each
+  rejection in a row, and one step each when this work has been going back
+  and forth for 2 hours, then for 6. That time is the work's own, counted
+  from its first rejection since its last accept (or its stated start); a new
+  task in an old group starts at zero:
   - `gpt-6-luna` low → medium → high → xhigh
   - → `gpt-6.1-sol` high → xhigh, which is the ceiling.
 - **Never astra.** No agent work runs on any astra model; Fleet refuses such
-  a turn at dispatch, and also refuses an agent's Codex turn whose model it
-  cannot determine. The ceiling also excludes `max` and `ultra` (which
-  delegates on its own).
+  a turn at dispatch, and also refuses any Codex turn whose model it cannot
+  determine, the owner's included. The ceiling also excludes `max` and
+  `ultra` (which delegates on its own).
 - **Re-route before rework.** A running agent keeps its spawn model. When work
   is rejected, start its next attempt on the route the new count gives.
 - **Precedence.** This table takes precedence over the Max And Ultra Decision
