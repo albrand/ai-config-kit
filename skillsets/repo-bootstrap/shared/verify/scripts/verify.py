@@ -1386,7 +1386,7 @@ def main(argv=None):
     p.add_argument("--allow-host-port", action="append", type=int,
                    help="host port jobs may reach (a test database the owner runs); all others listening are denied")
     p.add_argument("--unsandboxed", action="store_true",
-                   help="no OS sandbox: PR code gets host access, so PR jobs never report pass. Only on a disposable machine")
+                   help="no OS sandbox: PR code gets host access, so the runner never posts a pass for a PR job (the code itself could still post one with the host's credentials). Only on a disposable machine")
     for name in ("weaken-check", "mutation-targets"):
         p = sub.add_parser(name)
         p.add_argument("repo", nargs="?", default=".")
