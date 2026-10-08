@@ -63,6 +63,37 @@ expensive to detect, evidence is weak or contradictory, or the work benefits
 from independent decomposition. Strong deterministic validation often makes a
 standard tier sufficient.
 
+## Model Policy (owner directive 2026-10-08)
+
+Pick the model and reasoning level from the agent's role. In bb, `bb fleet route`
+applies this table; pass `--topic`, `--rejections` and `--complexity` so it can.
+Elsewhere (Codex, Claude Code, Elyra cards), name the model and reasoning
+explicitly when you start an agent. Never leave it to a default: Codex's config
+default is the GPT ceiling, and Claude's is Opus.
+
+| Role | Claude | GPT (Codex) |
+| --- | --- | --- |
+| Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high |
+| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna` |
+| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for light research and bulk work; low | `gpt-6-luna`; low, medium or high by complexity |
+
+- **Claude children and reviewers.** Reasoning goes from low to high if and
+  only if the work keeps being sent back: two rejections in a row from quality
+  gates or Hermes. It never goes past high. Light work that keeps coming back
+  moves from Haiku to Sonnet.
+- **GPT children.** They climb one step for each rejection in a row, and one
+  step each when the orchestrator has run the work for 2 hours, then for 6:
+  - `gpt-6-luna` low → medium → high → xhigh
+  - → `gpt-6.1-sol` high → xhigh, which is the ceiling.
+- **Never astra.** No agent work runs on any astra model; Fleet refuses such
+  a turn at dispatch. The ceiling also excludes `max` and `ultra` (which
+  delegates on its own).
+- **Re-route before rework.** A running agent keeps its spawn model. When work
+  is rejected, start its next attempt on the route the new count gives.
+- **Precedence.** This table takes precedence over the Max And Ultra Decision
+  below for delegated agents. That section still applies to work the owner
+  starts and runs themselves.
+
 ## Role Matrix
 
 Keep role assignment capability-first within the routing policy above. Verify
