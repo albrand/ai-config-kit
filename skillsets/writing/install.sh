@@ -31,7 +31,7 @@ matches() {
 extra=$(cd "$SRC" && find . -mindepth 1 ! -path ./SKILL.md ! -path ./eval.md ! -path ./LICENSE -print | head -1)
 [ -z "$extra" ] || refuse "unexpected entry ${extra#./} in the vendored copy"
 
-STAGE=$(mktemp -d)
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/no-ai-slop.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
 for f in $FILES; do
   [ -f "$SRC/$f" ] && [ ! -L "$SRC/$f" ] || refuse "$f is missing or not a regular file"

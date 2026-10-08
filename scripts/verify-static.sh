@@ -3,7 +3,7 @@
 # source and rendered homes keep every standing rule. Reads nothing outside the checkout.
 cd "$(dirname "$0")/.." || exit 1
 fail=0
-tmp=$(mktemp -d) || exit 1
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/verify-static.XXXXXX") || exit 1
 trap 'rm -rf "$tmp"' EXIT
 git ls-files -z '*.py' | xargs -0 python3 -I -c '
 import ast, sys
