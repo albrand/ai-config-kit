@@ -75,8 +75,14 @@ URL_SRCSET_ATTRIBUTES = {"srcset", "imagesrcset"}
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     """Validate report structure, privacy and its footer."""
     denylist_value = os.environ.get(DENYLIST_ENV)
-    denylist_path = (Path(denylist_value).expanduser() if denylist_value
-                     else Path.home() / DEFAULT_DENYLIST_RELATIVE)
+    if denylist_value:
+        denylist_path = Path(denylist_value)
+        if not denylist_path.is_absolute():
+            return False, "private tenant-label deny-list override must be absolute; label check refused", None
+    else:
+        denylist_path = (Path("~") / DEFAULT_DENYLIST_RELATIVE).expanduser()
+        if not denylist_path.is_absolute():
+            return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
     try:
         labels = [line.strip() for line in denylist_path.read_text(encoding="utf-8").splitlines()
                   if line.strip()]
@@ -86,6 +92,10 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
     if not labels:
         return False, "private tenant-label deny-list is empty; label check refused", None
+    label_patterns = [pattern for label in labels for pattern in (
+        _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
+    if not any(pattern is not None for pattern in label_patterns):
+        return False, "private tenant-label deny-list is empty; label check refused", None
 
     # Check both deletion and word-separator forms so format marks cannot join or split label words.
     label_scan_text = _exclude_gate_owned_label_keys(text)
@@ -94,8 +104,6 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         _normalize_label_text(label_scan_text, cf_as_space=False, preserve_line_numbers=True),
     ]
     normalized_text.extend(_normalize_nonrendered_label_texts(label_scan_text))
-    label_patterns = [pattern for label in labels for pattern in (
-        _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
     for line_number, line in enumerate(text.splitlines(), start=1):
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):

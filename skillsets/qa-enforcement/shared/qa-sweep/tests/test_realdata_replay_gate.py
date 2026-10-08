@@ -1271,6 +1271,40 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(replay_report())
         self.assertTrue(valid, reason)
 
+    def test_relative_denylist_override_is_refused_even_when_file_exists_in_cwd(self) -> None:
+        cwd = Path(self.temp.name) / "caller-cwd"
+        cwd.mkdir()
+        (cwd / "relative-labels.txt").write_text("Test Tenant\n", encoding="utf-8")
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(cwd)
+            with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": "relative-labels.txt"}):
+                valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        finally:
+            os.chdir(original_cwd)
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list override must be absolute; label check refused")
+        self.assertNotIn("relative-labels.txt", reason)
+        self.assertNotIn("Test Tenant", reason)
+
+    def test_denylist_with_only_format_characters_refuses(self) -> None:
+        self.denylist.write_text("\u200b\n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list is empty; label check refused")
+
+    def test_effective_label_is_used_when_list_also_has_format_only_entry(self) -> None:
+        self.denylist.write_text("Test Tenant\n\u200b\n", encoding="utf-8")
+        gate = self.gate_module()
+        clean, clean_reason, _ = gate.validate_report_text(replay_report())
+        labelled, label_reason, _ = gate.validate_report_text(
+            replay_report(note="- Replay note: Test Tenant"))
+        self.assertTrue(clean, clean_reason)
+        self.assertFalse(labelled)
+        self.assertIn("private tenant label", label_reason)
+        self.assertIn("line 14", label_reason)
+        self.assertNotIn("Test Tenant", label_reason)
+
     def test_local_clone_with_pallium_package_identity_is_gated(self) -> None:
         clone = Path(self.temp.name) / "repo"
         self.repo.rename(clone)
