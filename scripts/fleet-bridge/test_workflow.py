@@ -82,6 +82,31 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         monitor.private_text(existing_brief, 'updated private task text')
         goal('Replacing an existing permissive brief makes the new bytes private under umask 022',
              stat.S_IMODE(existing_brief.stat().st_mode) == 0o600 and existing_brief.read_text() == 'updated private task text')
+        existing_json = state / 'privacy-existing-record.json'
+        existing_json.write_text('{"old":true}')
+        existing_json.chmod(0o644)
+        monitor.save(existing_json, {'private': 'new task receipt'})
+        goal('Replacing a permissive JSON record produces 0600 task data under umask 022',
+             stat.S_IMODE(existing_json.stat().st_mode) == 0o600 and json.loads(existing_json.read_text()) == {'private': 'new task receipt'})
+        actual_stat = Path.stat
+
+        def foreign_owner(path, *stat_args, **stat_kwargs):
+            measured = actual_stat(path, *stat_args, **stat_kwargs)
+            if path == state:
+                values = list(measured)
+                values[4] = os.getuid() + 1
+                return os.stat_result(values)
+            return measured
+
+        before_files = sorted(p.name for p in state.iterdir())
+        with patch.object(Path, 'stat', foreign_owner):
+            try:
+                monitor.run(mutate=True)
+                rejected = False
+            except ValueError:
+                rejected = True
+        goal('A foreign filesystem owner is rejected before task reads or new writes',
+             rejected and sorted(p.name for p in state.iterdir()) == before_files and not (state / 'monitor-state.json').exists())
     finally:
         os.umask(original_umask)
     calls = []
@@ -480,11 +505,15 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         fresh_path = home / 'fresh-config.json'
         fresh_path.write_text(json.dumps(fresh_config))
         staged = controller.stage(fresh_path, home / 'fresh-installed')
-        fresh_monitor, _, _ = controller.bindings(fresh_path)
+        staged_controller_path = Path(staged['installPath']) / 'controller.py'
+        spec = importlib.util.spec_from_file_location('staged_controller_consumer', staged_controller_path)
+        staged_controller = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(staged_controller)
+        fresh_monitor, _, _ = staged_controller.bindings(fresh_path)
         with patch.object(fresh_monitor, 'bb', return_value=[]), patch.object(fresh_monitor, 'surface', return_value=subprocess.CompletedProcess([], 0, stdout='{"ok":true,"result":{"chats":[]}}')), patch.object(fresh_monitor, 'native_review_state', return_value={'state': 'IDLE', 'pending': []}):
             fresh_states = [fresh_monitor.run(mutate=False)['targets']['thr_newfixture']['state'] for _ in range(3)]
         goal('Stage before the first poll creates a usable fresh baseline instead of locking into unknown',
-             fresh_states == ['COMPLETE'] * 3 and (fresh_state / 'scope-baselines/thr_newfixture.json').exists())
+             Path(fresh_monitor.__file__).parent == Path(staged['installPath']) and fresh_states == ['COMPLETE'] * 3 and (fresh_state / 'scope-baselines/thr_newfixture.json').exists())
 
 packet = {'persona': 'Fleet operator', 'target': {'stack': 'Portable monitor and real metadata guard with disposable BB/provider fixtures',
           'monitorSha256': hashlib.sha256((HERE / 'monitor.py').read_bytes()).hexdigest()}, 'polls': polls,
