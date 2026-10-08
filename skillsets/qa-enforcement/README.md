@@ -19,13 +19,16 @@ from the qa-speed-quality research report §2 (report at
 Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
 Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
 The gate reads and validates `REALDATA-REPLAY.md` from the reviewed commit,
-not from an unstaged working-tree copy; it denies every action if the report is
+not from an unstaged working-tree copy; it denies every gated action if the report is
 missing from that commit or a present worktree copy differs. Hermes
 submission requires the report itself attached as `--evidence` with its digest;
 `pre-review.py` adds the artifact path and SHA-256 to both review packets. PR
 creation requires the report committed and its name and digest in the creation
-request. PR-ready and merge require the committed report and verify that the
-current PR body cites its name and digest. Release requests require the
+request. The hook never denies a PR merge or `gh pr ready` (owner decision
+2026-10-08), whatever the merge's subject or body says; a command chained to a
+merge, or run in its `$(...)`, is still gated. `check --action pr` verifies on
+request that the current PR body cites the committed report's name and
+digest. Release requests require the
 committed report and a citation in the request. For each checked range, every
 non-merge production-data commit and every merge commit whose `--remerge-diff`
 shows a production-path resolution difference must be an ancestor of the newest
@@ -56,7 +59,7 @@ provider/model/key boundaries remain in the report as blocked rows.
 
 A repo opts in by committing `.qa/config.json`; from then the gate is ALWAYS
 ON for that repo (no flag, no off switch short of removing the opt-in — that
-is the design). Ship commands — v2: merges (`gh pr merge`/`gh pr ready`), pushes to protected
+is the design). Ship commands — v2: pushes to protected
 refs (default branch + `protected_branches`; refspec, `HEAD:dev`, upstream,
 `--all`/`--mirror`), production deploys (`--prod`/promote/fly), plus
 repo-configured regexes — are denied unless: every inventory row closed or fail-escalated with a
@@ -68,8 +71,8 @@ crashes allow except on ship commands in opted-in repos (fail closed).
 
 Layers: host PreToolUse (Claude Code + Codex via coordinator-hook-pretool.sh,
 which keeps its coordinator block unchanged), git pre-push template, CI
-required-check template (the unforgeable layer; agents self-attest the .qa
-files), and a Stop hook that keeps a turn alive while inventory rows are open
+check template (the layer agents cannot edit, since they self-attest the .qa
+files; required or advisory per repo, admin bypass kept), and a Stop hook that keeps a turn alive while inventory rows are open
 (Claude honors stop_hook_active + 8-block cap; Codex trust recorded 2026-09-24).
 
 The final-claim evidence nudge is default-on at Stop for every repository. It
@@ -112,8 +115,8 @@ for h in ~/.agents ~/.bb ~/.claude ~/.codex; do rm -rf "$h/skills/qa-sweep"; don
 1. `mkdir .qa && cp <config.example.json> .qa/config.json` (edit personas,
    workflows, deployed_check) and `cp <skill>/scripts/ship-gate.py .qa/bin/ship-gate.py`.
 2. Commit both; the gate is now on for everyone.
-3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`
-   as a required check).
+3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`;
+   required or not is the owner's call, and a required one keeps admin bypass on).
 4. `.qa/` task artifacts (workflow, inventory, clusters, plan, rewalk,
    evidence) are COMMITTED with each task branch: reviewers see the inventory
    and CI re-checks it at the pushed SHA; staleness is impossible to carry

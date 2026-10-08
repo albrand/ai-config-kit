@@ -17,6 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
 
 
+def _load_gate():
+    from importlib.util import module_from_spec, spec_from_file_location
+    spec = spec_from_file_location("realdata_gate_module", GATE)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+GATE_MODULE = _load_gate()
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=repo, check=True, text=True,
                           capture_output=True).stdout.strip()
@@ -1920,6 +1931,211 @@ sys.exit(2)
             with self.subTest(command=command):
                 allowed, payload = self.check("pr", command, env)
                 self.assertEqual(allowed.returncode, 0, payload["reason"])
+
+    def hook(self, command: str, gate: Path = GATE) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        """Run the hook on a production-data change with no replay report; gh calls are recorded, never made."""
+        fake_bin = self.repo / "hook-gh-bin"
+        fake_bin.mkdir(exist_ok=True)
+        log = self.repo / "hook-gh-calls.txt"
+        (fake_bin / "gh").write_text(f'#!/bin/sh\necho "$*" >> "{log}"\nexit 1\n', encoding="utf-8")
+        (fake_bin / "gh").chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+        result = subprocess.run([sys.executable, str(gate), "hook"], input=payload, text=True,
+                                capture_output=True, env=env)
+        return result, log.read_text().splitlines() if log.exists() else []
+
+    def test_hook_never_denies_a_pr_merge(self) -> None:
+        # Owner decision 2026-10-08: a PR merge is never denied, including for what its subject or body says;
+        # nor is gh pr ready, since GitHub cannot merge a draft.
+        for command in ("gh pr merge 1701 --admin --squash", "gh pr merge 1701", "gh pr ready 1701",
+                        "gh pr merge 1701 --body 'after bb fleet validate and gh release create v1'",
+                        'gh pr merge 1701 --subject "gh pr create; hermes-one.zsh" --squash',
+                        "GH_TOKEN= gh pr merge 1701 --body 'release-request pre-review.py'"):
+            with self.subTest(command=command):
+                result, calls = self.hook(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls, [])  # the PR is not even looked up
+
+    def test_hook_still_gates_what_runs_alongside_a_merge(self) -> None:
+        for command in ("gh pr merge 1701 && gh release create v1", "gh pr merge 1701 --body \"$(bb fleet validate x)\"",
+                        "gh pr create --fill", "bb fleet validate --evidence x", "gh release create v1"):
+            with self.subTest(command=command):
+                result, _ = self.hook(command)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("[realdata-replay-gate]", result.stdout)
+
+    def test_hook_without_ship_gate_beside_it_allows_merges_and_other_commands(self) -> None:
+        # The gate installs on its own; with no ship-gate.py next to it the raw command is classified.
+        alone = Path(self.temp.name) / "alone/scripts"
+        alone.mkdir(parents=True)
+        (alone / GATE.name).write_bytes(GATE.read_bytes())
+        (alone.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+        for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0), ("gh pr create --fill", 2)):
+            with self.subTest(command=command):
+                result, _ = self.hook(command, alone / GATE.name)
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
+    def test_hook_beside_a_broken_ship_gate_allows_merges_and_other_commands(self) -> None:
+        # A stale or broken ship-gate.py, even one that exits while loading, must not deny every command.
+        for name, source in (("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n"),
+                             ("no-view", "X = 1\n")):
+            scripts = Path(self.temp.name) / name / "scripts"
+            scripts.mkdir(parents=True)
+            (scripts / GATE.name).write_bytes(GATE.read_bytes())
+            (scripts / "ship-gate.py").write_text(source, encoding="utf-8")
+            (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+            for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0), ("gh pr create --fill", 2)):
+                with self.subTest(ship_gate=name, command=command):
+                    result, _ = self.hook(command, scripts / GATE.name)
+                    self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
+    def test_installed_hook_never_denies_a_merge_whatever_the_ship_gate_beside_it(self) -> None:
+        # Through qa-ship-gate-hook.sh, as installed: it passes its own reading of the command (the awk view), which
+        # decides whatever ship-gate.py is beside the gate, so a merge is never read as its body (Hermes r18, r19):
+        # missing, failing to load, or loading with a ship_view that returns the raw command or nothing at all.
+        hook = ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh"
+        rows = (("ls", 0), ("gh pr merge 1701 --admin --squash", 0), ("gh pr ready 1701", 0),
+                ("gh pr merge 1701 --body 'notes on gh release create'", 0),
+                ('gh pr merge 1701 --subject "bb fleet validate; gh pr create" --squash', 0),
+                ("gh pr merge 1701 && gh release create v1", 2), ('gh pr merge 1701 --body "$(bb fleet validate x)"', 2),
+                ("sh -e -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                ("bash -lc 'gh pr merge 1701 --body \"gh release create v1\"'", 0),
+                ("bash -o pipefail -c 'gh pr merge 1701 -t \"bb fleet validate\"'", 0),
+                ("bash -c -e 'gh pr merge 1701 -t \"gh pr create\"'", 0),
+                ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2),
+                ("zsh --emulate sh -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                ("zsh --emulate sh -c 'gh pr merge 1701 && gh pr create --fill'", 2),
+                ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2))
+        for name, source in (("working", (ROOT / "scripts/ship-gate.py").read_text(encoding="utf-8")),
+                             ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n"),
+                             ("raw view", "def ship_view(command, depth=0):\n    return command\n"),
+                             ("empty view", "def ship_view(command, depth=0):\n    return ''\n")):
+            home = Path(self.temp.name) / f"home-{name}"
+            scripts = home / ".agents/skills/qa-sweep/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / GATE.name).write_bytes(GATE.read_bytes())
+            (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+            if source is not None:
+                (scripts / "ship-gate.py").write_text(source, encoding="utf-8")
+            fake_bin = home / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "gh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            (fake_bin / "gh").chmod(0o755)
+            env = {**os.environ, "HOME": str(home), "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+            for command, rc in rows:
+                with self.subTest(ship_gate=name, command=command):
+                    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                    result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
+                    self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+                    if rc:
+                        self.assertIn("[realdata-replay-gate]", result.stderr)
+
+    def test_only_merges_reads_the_raw_command_on_its_own(self) -> None:
+        only = GATE_MODULE.only_merges
+        for command in ("gh pr merge 5", "gh pr merge 5 --admin --squash", "gh pr merge 5; gh pr merge 6",
+                        "gh pr merge 5 --body 'a && gh pr create; `x` $(y)'", 'gh pr merge 5 -t "a | b"',
+                        "gh pr merge 5 \\\n  --squash", "gh pr merge 5 # && gh pr create", "X=1 gh pr merge 5",
+                        "gh -R o/r pr merge 5", "gh --repo=o/r pr merge 5", "/opt/homebrew/bin/gh pr merge 5 2>&1",
+                        "(gh pr merge 5)", "gh pr merge 5 &>/dev/null", "env gh pr merge 5", "env -i gh pr merge 5",
+                        "command gh pr merge 5", "sudo -u x gh pr merge 5", "nice -n 5 gh pr merge 5",
+                        "X=1 env Y=2 nohup gh pr merge 5", "gh pr merge 5 -t ${X}", 'gh pr merge 5 -t "${X:-y}"',
+                        "sh -c 'gh pr merge 5 -t \"gh pr create\"'", "bash -c 'gh pr merge 5'",
+                        "eval 'gh pr merge 5 -t \"git push\"'", "gh pr merge 5\n&& gh pr create",
+                        "gh pr merge 5\n  || gh release create v1", "sh -e -c 'gh pr merge 5'",
+                        "bash -lc 'gh pr merge 5'", "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5'",
+                        "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'",
+                        "sh -c -- 'gh pr merge 5'", "zsh +x -ec 'gh pr merge 5'", "zsh --emulate sh -c 'gh pr merge 5'"):
+            with self.subTest(command=command):
+                self.assertTrue(only(command))
+        for command in ("", "ls", "gh pr merge 5 && gh pr create", "echo 'gh pr merge' && gh pr create",
+                        "gh pr merge 5 | tee x", "gh pr merge 5 & ls", "gh pr merge 5\nls", "gh pr view 5",
+                        'gh pr merge 5 --body "$(cat x)"', "gh pr merge 5 --body `cat x`", "gh pr merge 5 <<EOF",
+                        "gh pr merge 5 --body 'unclosed", "gh release create --notes pr merge", "echo gh pr merge",
+                        "gh -R pr merge 5", "npx gh pr merge 5", "env bash -c 'gh pr create'",
+                        "gh pr merge 5 -t ${X:-$(id)}", "gh pr merge 5 -t ${X", "sudo gh pr create",
+                        "sh -c 'gh pr merge 5 && gh pr create'", "bash -c", "eval 'gh pr create'",
+                        "gh pr merge 5 &&\n gh pr create", "bash -e 'gh pr merge 5'", "sh -e -c",
+                        "bash -o -c 'gh pr merge 5'", "bash -lc 'gh pr merge 5 && gh pr create'",
+                        "gh pr merge 5 # x\ngh pr create"):
+            with self.subTest(command=command):
+                self.assertFalse(only(command))
+
+    def test_installed_hook_with_an_empty_view_still_denies_gated_commands(self) -> None:
+        # The real hook, its view forced empty (as a scanner fault would give): gated commands are denied from their
+        # raw text, and a merge, whose empty view is its true reading, stays allowed.
+        source = (ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh").read_text(encoding="utf-8")
+        forced = 'realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "'
+        self.assertEqual(source.count(forced), 1)
+        hook = Path(self.temp.name) / "empty-view-hook.sh"
+        hook.write_text(source.replace(forced, 'realdata_view=""'), encoding="utf-8")
+        home = Path(self.temp.name) / "home-empty-view"
+        scripts = home / ".agents/skills/qa-sweep/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / GATE.name).write_bytes(GATE.read_bytes())
+        (scripts / "ship-gate.py").write_bytes((ROOT / "scripts/ship-gate.py").read_bytes())
+        (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+        env = {**os.environ, "HOME": str(home)}
+        for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0),
+                            ("gh pr merge 1701 --body 'notes on gh release create'", 0),
+                            ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2),
+                            ("gh release create v1", 2),
+                            # a merge beside a gated command, and a quoted `gh pr merge` that is not one (r21)
+                            ("gh pr merge 1701 && gh pr create --fill", 2),
+                            ("echo 'gh pr merge 1701' && gh pr create --fill", 2),
+                            ("gh pr merge 1701; bb fleet validate --evidence x", 2),
+                            ("gh pr merge 1701 | gh release create v1", 2),
+                            ("gh pr merge 1701 # done\ngh release create v1", 2),
+                            # a shell's -c script after its options (Hermes r22)
+                            ("sh -e -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                            ("bash -lc 'gh pr merge 1701 --body \"gh release create v1\"'", 0),
+                            ("bash -o pipefail -c 'gh pr merge 1701 -t \"bb fleet validate\"'", 0),
+                            ("bash -c -e 'gh pr merge 1701 -t \"gh pr create\"'", 0),
+                            ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2),
+                            ("zsh --emulate sh -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                            ("zsh --emulate sh -c 'gh pr merge 1701 && gh pr create --fill'", 2)):
+            with self.subTest(command=command):
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
+    def test_hook_uses_a_supplied_view_only_when_the_command_was_read(self) -> None:
+        # A view of "FLAT ..." means the hook could not read the command either: the raw text is classified.
+        scripts = Path(self.temp.name) / "viewed/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / GATE.name).write_bytes(GATE.read_bytes())
+        (scripts / "ship-gate.py").write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+        (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+        merge = "gh pr merge 1701 --body 'notes on gh release create'"
+        for command, view, rc in ((merge, "", 0), (merge, " ; ", 0),
+                                  (merge, "FLAT gh pr merge 1701 --body notes on gh release create", 2),
+                                  ("gh pr create --fill", "FLAT ls", 2),
+                                  # an empty view of a command with no merge is not a reading of it (Hermes r20)
+                                  ("gh pr create --fill", "", 2), ("gh pr create --fill", " ; ", 2),
+                                  ("bb fleet validate --evidence x", "", 2), ("gh release create v1", "", 2),
+                                  # an empty view of a merge beside a gated command is not a reading of it (r21)
+                                  ("gh pr merge 5 && gh pr create --fill", "", 2),
+                                  ("echo 'gh pr merge' && gh pr create --fill", "", 2),
+                                  ("gh pr merge 5 | gh release create v1", "", 2),
+                                  ("gh pr merge 5 & bb fleet validate --evidence x", "", 2),
+                                  ("gh pr merge 5\ngh pr create --fill", "", 2),
+                                  ('gh pr merge 5 --body "$(bb fleet validate x)"', "", 2),
+                                  ("gh pr merge 5 --body 'gh release create v1' 2>&1", "", 0),
+                                  ("GH_REPO=o/r gh -R o/r pr merge 5 -t 'gh pr create'", "", 0)):
+            with self.subTest(command=command, view=view):
+                read, write = os.pipe()
+                os.write(write, (view + "\n").encode())
+                os.close(write)
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                result = subprocess.run([sys.executable, str(scripts / GATE.name), "hook", f"--view-fd={read}"],
+                                        input=payload, text=True, capture_output=True, pass_fds=(read,))
+                os.close(read)
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
+    def test_hook_reads_a_gated_command_across_a_line_continuation(self) -> None:
+        result, _ = self.hook("gh pr \\\n  create --fill")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
     def test_ssn_identifiers_and_labelled_fields_are_rejected(self) -> None:
         for marker in ("123-45-6789", "123 45 6789", "ssn: 123456789",
