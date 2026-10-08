@@ -127,3 +127,13 @@ that receipt's plist. Keep project sessions, worktrees, and journals intact.
 This helper does not port BB's credential issuer, provide an Elyra SDK launch
 hook, transfer provider sessions, or replace BB-only PR automation. Report
 each of those outcomes separately using its actual installed runtime.
+
+## Review bytes
+
+Before review, run `python3 export-review.py --commit <full-commit-sha>` from the
+source package. Its JSON contains only the five maintained package files from
+that exact Git commit, with byte counts, SHA256 digests and base64 bytes. It
+does not read operator configuration, task state, environment files or journals.
+Reviewers decode the records and hash the decoded bytes instead of reconstructing
+source from rendered Markdown. The exporter is a source preparation tool;
+the runtime installer still copies only monitor, controller and README.
