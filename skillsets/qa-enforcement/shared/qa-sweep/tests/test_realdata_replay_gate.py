@@ -17,6 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
 
 
+def _load_gate():
+    from importlib.util import module_from_spec, spec_from_file_location
+    spec = spec_from_file_location("realdata_gate_module", GATE)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+GATE_MODULE = _load_gate()
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=repo, check=True, text=True,
                           capture_output=True).stdout.strip()
@@ -2014,6 +2025,23 @@ sys.exit(2)
                     if rc:
                         self.assertIn("[realdata-replay-gate]", result.stderr)
 
+    def test_only_merges_reads_the_raw_command_on_its_own(self) -> None:
+        only = GATE_MODULE.only_merges
+        for command in ("gh pr merge 5", "gh pr merge 5 --admin --squash", "gh pr merge 5; gh pr merge 6",
+                        "gh pr merge 5 --body 'a && gh pr create; `x` $(y)'", 'gh pr merge 5 -t "a | b"',
+                        "gh pr merge 5 \\\n  --squash", "gh pr merge 5 # && gh pr create", "X=1 gh pr merge 5",
+                        "gh -R o/r pr merge 5", "gh --repo=o/r pr merge 5", "/opt/homebrew/bin/gh pr merge 5 2>&1",
+                        "(gh pr merge 5)", "gh pr merge 5 &>/dev/null"):
+            with self.subTest(command=command):
+                self.assertTrue(only(command))
+        for command in ("", "ls", "gh pr merge 5 && gh pr create", "echo 'gh pr merge' && gh pr create",
+                        "gh pr merge 5 | tee x", "gh pr merge 5 & ls", "gh pr merge 5\nls", "gh pr view 5",
+                        'gh pr merge 5 --body "$(cat x)"', "gh pr merge 5 --body `cat x`", "gh pr merge 5 <<EOF",
+                        "gh pr merge 5 --body 'unclosed", "gh release create --notes pr merge", "echo gh pr merge",
+                        "gh -R pr merge 5", "command gh pr merge 5", "gh pr merge 5 # x\ngh pr create"):
+            with self.subTest(command=command):
+                self.assertFalse(only(command))
+
     def test_installed_hook_with_an_empty_view_still_denies_gated_commands(self) -> None:
         # The real hook, its view forced empty (as a scanner fault would give): gated commands are denied from their
         # raw text, and a merge, whose empty view is its true reading, stays allowed.
@@ -2032,7 +2060,13 @@ sys.exit(2)
         for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0),
                             ("gh pr merge 1701 --body 'notes on gh release create'", 0),
                             ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2),
-                            ("gh release create v1", 2)):
+                            ("gh release create v1", 2),
+                            # a merge beside a gated command, and a quoted `gh pr merge` that is not one (r21)
+                            ("gh pr merge 1701 && gh pr create --fill", 2),
+                            ("echo 'gh pr merge 1701' && gh pr create --fill", 2),
+                            ("gh pr merge 1701; bb fleet validate --evidence x", 2),
+                            ("gh pr merge 1701 | gh release create v1", 2),
+                            ("gh pr merge 1701 # done\ngh release create v1", 2)):
             with self.subTest(command=command):
                 payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
                 result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
@@ -2051,7 +2085,16 @@ sys.exit(2)
                                   ("gh pr create --fill", "FLAT ls", 2),
                                   # an empty view of a command with no merge is not a reading of it (Hermes r20)
                                   ("gh pr create --fill", "", 2), ("gh pr create --fill", " ; ", 2),
-                                  ("bb fleet validate --evidence x", "", 2), ("gh release create v1", "", 2)):
+                                  ("bb fleet validate --evidence x", "", 2), ("gh release create v1", "", 2),
+                                  # an empty view of a merge beside a gated command is not a reading of it (r21)
+                                  ("gh pr merge 5 && gh pr create --fill", "", 2),
+                                  ("echo 'gh pr merge' && gh pr create --fill", "", 2),
+                                  ("gh pr merge 5 | gh release create v1", "", 2),
+                                  ("gh pr merge 5 & bb fleet validate --evidence x", "", 2),
+                                  ("gh pr merge 5\ngh pr create --fill", "", 2),
+                                  ('gh pr merge 5 --body "$(bb fleet validate x)"', "", 2),
+                                  ("gh pr merge 5 --body 'gh release create v1' 2>&1", "", 0),
+                                  ("GH_REPO=o/r gh -R o/r pr merge 5 -t 'gh pr create'", "", 0)):
             with self.subTest(command=command, view=view):
                 read, write = os.pipe()
                 os.write(write, (view + "\n").encode())

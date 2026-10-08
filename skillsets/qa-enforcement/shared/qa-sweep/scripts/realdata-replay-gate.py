@@ -877,7 +877,78 @@ GATED_WORDS = re.compile(r"pre-review\.py|hermes-one|fleet\s+validate|gh\s+pr\s+
 
 
 EMPTY_VIEW = re.compile(r"[\s;]*")
-MERGE_WORDS = re.compile(r"\bpr\s+merge\b", re.I)
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def only_merges(command: str) -> bool:
+    """True when the raw command is nothing but `gh pr merge` calls, read here on its own, apart from both scanners:
+    every segment between control operators, outside quotes and comments, is `gh [-R repo] pr merge ...` after any
+    VAR=value prefixes. A command substitution, a backtick, a here-document, an unclosed quote or any other segment
+    makes it False, so an empty view of such a command is not trusted (Hermes 2026-10-08 r21)."""
+    text = command.replace("\\\n", "")
+    segments, words, word, quote, i = [], [], None, None, 0
+    while i < len(text):
+        ch, nxt = text[i], text[i + 1:i + 2]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            else:
+                word += ch
+        elif quote == '"':
+            if ch == "\\" and nxt in ('"', "\\", "$", "`"):
+                word += nxt
+                i += 1
+            elif ch == '"':
+                quote = None
+            elif ch == "`" or (ch == "$" and nxt == "("):
+                return False
+            else:
+                word += ch
+        elif ch == "\\":
+            word = (word or "") + nxt
+            i += 1
+        elif ch in "'\"":
+            quote, word = ch, word or ""
+        elif ch == "`" or (ch == "$" and nxt == "(") or (ch == "<" and nxt == "<"):
+            return False
+        elif ch == "#" and word is None:
+            while i + 1 < len(text) and text[i + 1] != "\n":
+                i += 1
+        elif ch == "&" and (nxt == ">" or text[i - 1:i] in ("<", ">")):
+            word = (word or "") + ch  # a redirection such as 2>&1 or &>file, not a control operator
+        elif ch in " \t\r":
+            if word is not None:
+                words.append(word)
+            word = None
+        elif ch in ";&|\n(){}":
+            if word is not None:
+                words.append(word)
+            if words:
+                segments.append(words)
+            words, word = [], None
+        else:
+            word = (word or "") + ch
+        i += 1
+    if quote is not None:
+        return False
+    if word is not None:
+        words.append(word)
+    if words:
+        segments.append(words)
+
+    def is_merge(segment: list[str]) -> bool:
+        while segment and ASSIGNMENT.match(segment[0]):
+            segment = segment[1:]
+        if not segment or Path(segment[0]).name != "gh":
+            return False
+        rest = segment[1:]
+        if rest[:1] in (["-R"], ["--repo"]):
+            rest = rest[2:]
+        elif rest and (rest[0].startswith("--repo=") or (rest[0].startswith("-R") and len(rest[0]) > 2)):
+            rest = rest[1:]
+        return rest[:2] == ["pr", "merge"]
+
+    return bool(segments) and all(is_merge(segment) for segment in segments)
 
 
 def ship_view(command: str) -> str | None:
@@ -908,12 +979,12 @@ def command_action(command: str, hook_view: str | None = None) -> str | None:
     When the hook supplies it, it decides, and ship-gate.py is not consulted: the scanner ships in the hook itself,
     while the ship gate beside this gate may be missing, broken or wrong in any way (Hermes 2026-10-08 r18, r19).
     A hook view of "FLAT ..." means the command can't be read, so the raw text is classified. An empty view is the
-    reading of a command made only of merges (each keeps just its substitutions), so it is trusted only for a command
-    that holds a merge; any other empty view counts as unreadable (Hermes 2026-10-08 r20). ship-gate.py's reading is
-    used only for a direct call without a hook view."""
+    reading of a command made only of merges (each keeps just its substitutions), so it is trusted only when
+    only_merges() reads the raw command as merges and nothing else; any other empty view counts as unreadable
+    (Hermes 2026-10-08 r20, r21). ship-gate.py's reading is used only for a direct call without a hook view."""
     if hook_view is not None:
         unread = hook_view.startswith("FLAT ") or (EMPTY_VIEW.fullmatch(hook_view) is not None
-                                                  and not MERGE_WORDS.search(command.replace("\\\n", "")))
+                                                  and not only_merges(command))
         view = None if unread else hook_view
     else:
         view = ship_view(command)
