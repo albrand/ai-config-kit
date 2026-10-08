@@ -89,7 +89,7 @@ def stage(path, install_root):
     plist = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
     values = {'Label': label, 'ProgramArguments': [sys.executable, str(destination / 'controller.py'), 'run', '--config', str(path)],
               'WorkingDirectory': str(destination), 'StartInterval': config['scheduler']['intervalSeconds'],
-              'RunAtLoad': True, 'ProcessType': 'Background',
+              'RunAtLoad': True, 'ProcessType': 'Standard',
               'EnvironmentVariables': {'PATH': config['scheduler'].get('path', '/usr/bin:/bin:/usr/sbin:/sbin')},
               'StandardOutPath': str(logs / 'stdout.log'), 'StandardErrorPath': str(logs / 'stderr.log')}
     expected = plistlib.dumps(values)
