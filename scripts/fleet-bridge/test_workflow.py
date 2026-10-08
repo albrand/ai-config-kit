@@ -148,6 +148,17 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         ledger.write_text(json.dumps({'purposes': [original, closed_followup, late], 'accepted_revisions': [older]}))
         row = poll()
         goal('Original evidenced acceptance preserves older completed revision history', row['state'] == 'COMPLETE' and not row['pendingAcceptedRevisions'])
+        prior = json.loads((state / 'monitor-state.json').read_text())
+        prior['targets']['thr_fixture'].pop('knownPurposeIds')
+        (state / 'monitor-state.json').write_text(json.dumps(prior))
+        upgrade_goal = {'id': 'P4', 'status': 'done', 'evidence': []}
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal]}))
+        row = poll()
+        goal('Legacy-state upgrade cannot bless an untracked closed goal without evidence', 'P4' in row['trackedPurposeIds'] and row['state'] != 'COMPLETE')
+        upgrade_goal['evidence'] = ['accepted upgraded goal']
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal]}))
+        row = poll()
+        goal('A legacy-upgrade goal stays tracked after its evidence arrives', 'P4' in row['trackedPurposeIds'] and row['state'] == 'COMPLETE')
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')

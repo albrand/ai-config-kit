@@ -71,6 +71,10 @@ newer than original closure also block completion. The source owner records
 `status: "done"` and actual `evidence` on each addressed revision in its own
 ledger; the bridge only reads those receipts. Older revisions already covered
 by the original goals' evidenced closure do not reopen completed history.
+An upgrade from a snapshot without the complete ID baseline conservatively
+requires every untracked current ID. It cannot distinguish undocumented older
+history from a new closed goal; its source owner reconciles evidence before
+closure rather than silently discarding that uncertainty.
 
 To remove a task-owned schedule after its bounded trial, inspect its label and
 installation receipt, run `launchctl bootout gui/<uid>/<label>`, and remove only

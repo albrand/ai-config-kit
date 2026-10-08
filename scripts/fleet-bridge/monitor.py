@@ -431,7 +431,9 @@ def run(mutate=False):
             ledger_path = SCOPE_ROOT / (thread + '.json')
             ledger, ledger_error = read_scope_ledger(ledger_path)
             last = prior.get('targets', {}).get(thread, {})
-            purposes, purposes_valid = source_purposes(ledger, target['purposes'], last.get('trackedPurposeIds', []), last.get('knownPurposeIds'))
+            # An upgrade cannot bless unknown IDs as old completed history.
+            known = last.get('knownPurposeIds', last.get('trackedPurposeIds', target['purposes'])) if last else None
+            purposes, purposes_valid = source_purposes(ledger, target['purposes'], last.get('trackedPurposeIds', []), known)
             pending_revisions, revision_error = revision_state(ledger, target['purposes'])
             observed_purpose_ids = [p['id'] for p in purposes] or target['purposes']
             queue = bb(['thread', 'queue', 'list', thread, '--json'])
