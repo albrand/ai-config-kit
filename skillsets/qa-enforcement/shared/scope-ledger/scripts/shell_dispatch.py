@@ -410,6 +410,37 @@ def words(text):
         return text.split()
 
 
+def shell_script_index(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: the first word after its options, as in
+    qa-sweep's ship-gate.py (test-ship-matrix.py checks that reading against the real shells). So `bash -c -e S`,
+    `sh -c -- S`, `bash -eo pipefail -c S`, `bash -c -oc pipefail S` and `zsh --emulate sh -c S` all run S: each o in
+    an option cluster takes a value, in order (bash's O too; zsh takes the rest of the cluster after o when there is
+    one), and so do --rcfile, --init-file and --emulate. None when no option holds c, or no word follows."""
+    zsh = words[k].rsplit("/", 1)[-1] == "zsh"
+    c, j = False, k + 1
+    while j < len(words):
+        w = words[j]
+        j += 1
+        if w == "--":
+            break
+        if w in ("--rcfile", "--init-file", "--emulate"):
+            j += 1
+        elif w.startswith("--") and len(w) > 2:
+            pass
+        elif re.fullmatch(r"[-+][A-Za-z]+", w):
+            for i, ch in enumerate(w[1:], 2):
+                if ch == "c" and w[0] == "-":
+                    c = True
+                elif ch == "o" or (ch == "O" and not zsh):
+                    if zsh and i < len(w):
+                        break  # zsh: -oshwordsplit, the rest of the cluster is the value
+                    j += 1  # the next word is this option's value: -eo pipefail, -oc pipefail S
+        else:
+            j -= 1
+            break
+    return j if c and j < len(words) else None
+
+
 def _command_word(w):
     """Index of the command word after assignments, prefixes and wrappers."""
     i = 0
@@ -544,10 +575,17 @@ def dispatches(script, depth=0):
             if depth < MAX_DEPTH:
                 inner = None
                 if base in SHELLS:
-                    for j, a in enumerate(rest):
-                        if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
-                            inner = rest[j + 1] if j + 1 < len(rest) else None
-                            break
+                    # The script is the first word after the shell's options, not the word after -c: in
+                    # `bash -c -e S` the next word is -e. Where that reading finds none, the word after the first
+                    # -c flag is still read, which errs toward seeing a dispatch.
+                    s = shell_script_index(w, k)
+                    if s is not None:
+                        inner = w[s]
+                    else:
+                        for j, a in enumerate(rest):
+                            if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                                inner = rest[j + 1] if j + 1 < len(rest) else None
+                                break
                 if inner is not None:
                     scripts = [inner]
                 else:

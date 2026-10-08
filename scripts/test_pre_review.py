@@ -153,7 +153,7 @@ class PreReviewTests(unittest.TestCase):
 - Local copy: Mac-local database bound to loopback only; production data never leaves the Mac.
 - Production source: read-only; no production writes were performed.
 - Privacy: counts only; no row IDs or PII are included.
-- Blocked rows: 0; external provider boundary was not needed for this replay.
+Blocked rows: 0 (external provider boundary was not needed for this replay)
 
 | Goal | Target rows | Control count | Candidate count | Reason | Error class |
 |---|---:|---:|---:|---|---|

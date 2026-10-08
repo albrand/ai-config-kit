@@ -872,14 +872,189 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
     return True, "REALDATA-REPLAY.md fields and SHA-256 are valid", actual
 
 
-def command_action(command: str) -> str | None:
+GATED_WORDS = re.compile(r"pre-review\.py|hermes-one|fleet\s+validate|gh\s+pr\s+create|gh\s+release|release[- ]request",
+                         re.I)
+
+
+EMPTY_VIEW = re.compile(r"[\s;]*")
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# Wrappers that run the command after them unchanged, with the flags that take a value; the scanners read
+# `env gh pr merge 5` or `sudo -u x gh pr merge 5` as the merge, so this reading does too. Kept here, apart from
+# ship-gate.py, so a missing or broken ship gate can't change it.
+MERGE_WRAPPERS = {"env": {"-u", "--unset", "-C", "--chdir"}, "command": set(), "exec": set(), "nohup": set(),
+                  "time": set(), "sudo": {"-u", "--user", "-g", "--group"}, "nice": {"-n", "--adjustment"}}
+
+
+def shell_script_at(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
+    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S`, `bash --norc -c S` and
+    `zsh --emulate sh -c S` all run S; --rcfile, --init-file and --emulate take a value, and so does each o in an
+    option cluster, in order (bash's O too): `bash -eo pipefail -c S` and `bash -c -oc pipefail S` run S. zsh takes
+    the rest of a cluster after o as the value when there is one (`zsh -oshwordsplit -c S`); its -O takes none.
+    test-ship-matrix.py checks this reading against the real shells.
+    None when no option holds c, or no word follows (Hermes 2026-10-08 r22; kit-shell-dispatch-script-word r1)."""
+    zsh = words[k].rsplit("/", 1)[-1] == "zsh"
+    c, j = False, k + 1
+    while j < len(words):
+        w = words[j]
+        j += 1
+        if w == "--":
+            break
+        if w in ("--rcfile", "--init-file", "--emulate"):
+            j += 1
+        elif w.startswith("--") and len(w) > 2:
+            pass
+        elif re.fullmatch(r"[-+][A-Za-z]+", w):
+            for i, ch in enumerate(w[1:], 2):
+                if ch == "c" and w[0] == "-":
+                    c = True
+                elif ch == "o" or (ch == "O" and not zsh):
+                    if zsh and i < len(w):
+                        break  # zsh: -oshwordsplit, the rest of the cluster is the value
+                    j += 1  # the next word is this option's value: -eo pipefail, -oc pipefail S
+        else:
+            j -= 1
+            break
+    return j if c and j < len(words) else None
+
+
+def only_merges(command: str) -> bool:
+    """True when the raw command is nothing but `gh pr merge` calls, read here on its own, apart from both scanners:
+    every segment between control operators, outside quotes and comments, is `gh [-R repo] pr merge ...` after any
+    VAR=value prefixes and wrappers (env, command, sudo, ...), or an `sh -c` / `eval` string that is. Like the
+    scanners, it stops at a line that starts with && or ||, where the shell stops. A command substitution, a backtick, a here-document, an unclosed quote or any other segment
+    makes it False, so an empty view of such a command is not trusted (Hermes 2026-10-08 r21)."""
+    text = command.replace("\\\n", "")
+    segments, words, word, quote, i = [], [], None, None, 0
+    while i < len(text):
+        ch, nxt = text[i], text[i + 1:i + 2]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            else:
+                word += ch
+        elif quote == '"':
+            if ch == "\\" and nxt in ('"', "\\", "$", "`"):
+                word += nxt
+                i += 1
+            elif ch == '"':
+                quote = None
+            elif ch == "`" or (ch == "$" and nxt == "("):
+                return False
+            else:
+                word += ch
+        elif ch == "\\":
+            word = (word or "") + nxt
+            i += 1
+        elif ch in "'\"":
+            quote, word = ch, word or ""
+        elif ch == "`" or (ch == "$" and nxt == "(") or (ch == "<" and nxt == "<"):
+            return False
+        elif ch == "$" and nxt == "{":
+            close = text.find("}", i)
+            if close < 0 or "$(" in text[i:close] or "`" in text[i:close]:
+                return False
+            word = (word or "") + text[i:close + 1]  # ${X} expands inside the word; its braces are not a group
+            i = close
+        elif ch == "#" and word is None:
+            while i + 1 < len(text) and text[i + 1] != "\n":
+                i += 1
+        elif ch == "&" and (nxt == ">" or text[i - 1:i] in ("<", ">")):
+            word = (word or "") + ch  # a redirection such as 2>&1 or &>file, not a control operator
+        elif ch in " \t\r":
+            if word is not None:
+                words.append(word)
+            word = None
+        elif ch in ";&|\n(){}":
+            if word is not None:
+                words.append(word)
+            if words:
+                segments.append(words)
+            words, word = [], None
+            if ch == "\n" and text[i + 1:].lstrip(" \t")[:2] in ("&&", "||"):
+                break  # a line that starts with && or || is a syntax error: the shell runs nothing after it
+        else:
+            word = (word or "") + ch
+        i += 1
+    if quote is not None:
+        return False
+    if word is not None:
+        words.append(word)
+    if words:
+        segments.append(words)
+
+    def is_merge(segment: list[str]) -> bool:
+        while segment:
+            if ASSIGNMENT.match(segment[0]):
+                segment = segment[1:]
+                continue
+            flags = MERGE_WRAPPERS.get(Path(segment[0]).name)
+            if flags is None:
+                break
+            segment = segment[1:]
+            while segment and segment[0].startswith("-"):
+                segment = segment[2:] if segment[0] in flags else segment[1:]
+        if segment and Path(segment[0]).name in ("sh", "bash", "zsh", "dash"):
+            j = shell_script_at(segment, 0)
+            return j is not None and only_merges(segment[j])
+        if segment and segment[0] == "eval":
+            return len(segment) > 1 and only_merges(" ".join(segment[1:]))
+        if not segment or Path(segment[0]).name != "gh":
+            return False
+        rest = segment[1:]
+        if rest[:1] in (["-R"], ["--repo"]):
+            rest = rest[2:]
+        elif rest and (rest[0].startswith("--repo=") or (rest[0].startswith("-R") and len(rest[0]) > 2)):
+            rest = rest[1:]
+        return rest[:2] == ["pr", "merge"]
+
+    return bool(segments) and all(is_merge(segment) for segment in segments)
+
+
+def ship_view(command: str) -> str | None:
+    """What the command would run, read by the sibling ship-gate.py's ship_view: a `gh pr merge` keeps only its
+    $(...) and backtick substitutions, so neither the merge nor its quoted subject or body is classified. None
+    when the command can't be read, or ship-gate.py is missing or has no ship_view (this gate installs on its own,
+    next to whatever ship gate a home has); command_action then uses the hook's view. Loaded here, not at import, and
+    only for a command the raw text could gate, so a broken ship gate (one that even exits while loading) never
+    makes this hook fail, and `ls` never loads it."""
+    if not GATED_WORDS.search(command.replace("\\\n", "")):  # as the view, which drops line continuations
+        return command
+    try:
+        from importlib.util import module_from_spec, spec_from_file_location
+        spec = spec_from_file_location("ship_gate_view", Path(__file__).with_name("ship-gate.py"))
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        view = module.ship_view(command)
+    except BaseException:
+        return None
+    return view if isinstance(view, str) else None
+
+
+def command_action(command: str, hook_view: str | None = None) -> str | None:
+    """The gated action a command takes: review, PR creation or release. A PR merge is never one, so this hook
+    never denies `gh pr merge` (owner decision 2026-10-08), nor `gh pr ready`, since GitHub cannot merge a draft
+    (the kit's rule for PR commands, 2026-10-06). `check --action pr` still checks a PR on request.
+    `hook_view`: the same reading by qa-ship-gate-hook.sh's awk scanner (test-ship-matrix.py checks the two agree).
+    When the hook supplies it, it decides, and ship-gate.py is not consulted: the scanner ships in the hook itself,
+    while the ship gate beside this gate may be missing, broken or wrong in any way (Hermes 2026-10-08 r18, r19).
+    A hook view of "FLAT ..." means the command can't be read, so the raw text is classified. An empty view is the
+    reading of a command made only of merges (each keeps just its substitutions), so it is trusted only when
+    only_merges() reads the raw command as merges and nothing else; any other empty view counts as unreadable
+    (Hermes 2026-10-08 r20, r21). ship-gate.py's reading is used only for a direct call without a hook view."""
+    if hook_view is not None:
+        unread = hook_view.startswith("FLAT ") or (EMPTY_VIEW.fullmatch(hook_view) is not None
+                                                  and not only_merges(command))
+        view = None if unread else hook_view
+    else:
+        view = ship_view(command)
+    if view is not None:
+        command = view
     lower = command.lower()
     if re.search(r"(?:^|[/\\ ])pre-review\.py(?:\s|$)", command):
         return "review"
     if re.search(r"\bhermes-one(?:\.zsh)?\b|\bbb\s+fleet\s+validate\b", lower):
         return "review"
-    if re.search(r"\bgh\s+pr\s+(?:ready|merge)\b", lower):
-        return "pr"
     if re.search(r"\bgh\s+pr\s+create\b", lower):
         return "pr-create"
     if re.search(r"\b(?:gh\s+release\s+(?:create|edit)|release[- ]request)\b", lower):
@@ -1016,7 +1191,7 @@ def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
         args = []
     reference: str | None = None
     for index in range(max(0, len(args) - 1)):
-        if args[index:index + 2] == ["pr", "ready"] or args[index:index + 2] == ["pr", "merge"]:
+        if args[index:index + 2] == ["pr", "ready"]:
             if index + 2 < len(args) and not args[index + 2].startswith("-"):
                 reference = args[index + 2]
             break
@@ -1104,7 +1279,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     if not impacted:
         return True, "no production-data paths changed", set(), None
     if action == "pr" and str(pr_info.get("headRefOid") or "").lower() != git(repo, "rev-parse", head).lower():
-        return False, "run the PR-ready or merge gate from the worktree at the exact target PR head", impacted, None
+        return False, "run the PR-ready gate from the worktree at the exact target PR head", impacted, None
     valid, reason, digest = validate_report(repo, head)
     if not valid or digest is None:
         return False, reason, impacted, digest
@@ -1122,7 +1297,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
         try:
             git(repo, "cat-file", "-e", f"{head}:{REPORT_NAME}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
+            return False, f"{REPORT_NAME} must be committed for PR creation, PR-ready, or release", impacted, digest
         if action == "release":
             if not release_readback_and_rollback_cited(command, cwd):
                 return False, ("release request must name the post-release read-back offset and counts, "
@@ -1135,7 +1310,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     return True, "real production-data replay evidence and citation are present", impacted, digest
 
 
-def hook() -> int:
+def hook(view: str | None = None) -> int:
     try:
         payload: dict[str, Any] = json.loads(sys.stdin.read() or "{}")
     except ValueError:
@@ -1144,7 +1319,7 @@ def hook() -> int:
         return 2
     tool_input = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
     command = str(tool_input.get("command") or tool_input.get("cmd") or "")
-    action = command_action(command)
+    action = command_action(command, view)
     if not action:
         return 0
     cwd = Path(str(payload.get("cwd") or payload.get("working_directory") or os.getcwd())).resolve()
@@ -1165,7 +1340,7 @@ def hook() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     subs = parser.add_subparsers(dest="mode", required=True)
-    subs.add_parser("hook")
+    subs.add_parser("hook").add_argument("--view-fd", type=int, help="descriptor carrying the hook's reading of the command")
     check = subs.add_parser("check")
     check.add_argument("--repo", type=Path, required=True)
     check.add_argument("--base")
@@ -1176,7 +1351,14 @@ def main() -> int:
     check.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if args.mode == "hook":
-        return hook()
+        view = None
+        if args.view_fd is not None:
+            try:
+                with os.fdopen(args.view_fd, encoding="utf-8", errors="replace") as fh:
+                    view = fh.read().rstrip("\n")
+            except OSError:
+                view = None
+        return hook(view)
     repo = repo_root(args.repo.resolve())
     if repo is None:
         print("[realdata-replay-gate] not inside a git worktree", file=sys.stderr)
