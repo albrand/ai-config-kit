@@ -4,21 +4,27 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import fnmatch
 import hashlib
+import html
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS_FILE = ROOT / "realdata-paths.json"
 REPORT_NAME = "REALDATA-REPLAY.md"
+DENYLIST_ENV = "REALDATA_REPLAY_DENYLIST"
+DEFAULT_DENYLIST_RELATIVE = Path(".config/realdata-gate/tenant-labels.txt")
 HEX_SHA = re.compile(r"^[0-9a-f]{40,64}$", re.I)
 HEX_256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 IDENTIFIERS = (
@@ -36,23 +42,620 @@ IDENTIFIERS = (
     ("secret assignment", re.compile(r"\b(?:api[_-]?key|key|secret|password)\s*=\s*['\"]?[^\s,'\";]{1,}", re.I)),
 )
 URI = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.I)
+REQUIRED_FIELD_KEYS = (
+    "Copy time (UTC)", "Control SHA", "Candidate SHA", "Local copy",
+    "Production source", "Privacy", "Blocked rows",
+)
+REQUIRED_TABLE_KEYS = {
+    "goal", "target rows", "control count", "candidate count", "reason", "error class",
+}
+ARTIFACT_FOOTER_PREFIX = re.compile(
+    r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", re.I
+)
+ARTIFACT_FOOTER_LINE = re.compile(
+    r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", re.I
+)
+LABEL_LINE_MARKER = "\ue000"
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+HTML_REFERENCE = re.compile(r"&(?:#[xX][0-9a-fA-F]+;?|#[0-9]+;?|[A-Za-z][A-Za-z0-9]+;?)")
+HTML_TAG = re.compile(r'''</?[A-Za-z](?:[^'">]|"[^"]*"|'[^']*')*>''', re.S)
+HTML_ATTRIBUTE_VALUE = re.compile(
+    r'''(?:^|\s)([^\s=<>/]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))'''
+)
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]*)\)", re.S)
+MARKDOWN_REFERENCE_DEFINITION = re.compile(r"(?m)^\s{0,3}\[[^\]]+\]:\s*(.+)$")
+MARKDOWN_DESTINATION = re.compile(r"^\s*(?:<([^>\r\n]*)>|((?:\\.|[^\s()<>])+))")
+URL_SINGLE_ATTRIBUTES = {
+    "href", "src", "action", "formaction", "cite", "data", "poster", "xlink:href",
+    "manifest", "background", "codebase", "classid", "longdesc", "usemap", "itemid",
+}
+URL_WHITESPACE_LIST_ATTRIBUTES = {"ping", "archive", "itemtype", "profile"}
+URL_SRCSET_ATTRIBUTES = {"srcset", "imagesrcset"}
+
+
+class _UntrustedDenylistError(Exception):
+    """The configured deny-list is not a safe regular file owned by this user."""
+
+
+def _read_trusted_denylist(path: Path) -> str:
+    path_info = os.lstat(path)
+    if stat.S_ISLNK(path_info.st_mode) or not stat.S_ISREG(path_info.st_mode):
+        raise _UntrustedDenylistError
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_info = os.fstat(descriptor)
+        same_file = (path_info.st_dev, path_info.st_ino) == (opened_info.st_dev, opened_info.st_ino)
+        safe_mode = not (stat.S_IMODE(opened_info.st_mode) & 0o022)
+        if (not same_file or not stat.S_ISREG(opened_info.st_mode)
+                or opened_info.st_uid != os.getuid() or not safe_mode):
+            raise _UntrustedDenylistError
+        stream = os.fdopen(descriptor, "r", encoding="utf-8")
+        descriptor = -1
+        with stream as denylist_file:
+            return denylist_file.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     """Validate report structure, privacy and its footer."""
+    denylist_value = os.environ.get(DENYLIST_ENV)
+    if denylist_value:
+        denylist_path = Path(denylist_value)
+        if not denylist_path.is_absolute():
+            return False, "private tenant-label deny-list override must be absolute; label check refused", None
+    else:
+        denylist_path = (Path("~") / DEFAULT_DENYLIST_RELATIVE).expanduser()
+        if not denylist_path.is_absolute():
+            return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
+    try:
+        denylist_text = _read_trusted_denylist(denylist_path)
+        labels = [line.strip() for line in denylist_text.splitlines() if line.strip()]
+    except FileNotFoundError:
+        return False, "private tenant-label deny-list missing; label check refused", None
+    except _UntrustedDenylistError:
+        return False, "private tenant-label deny-list file is not trusted; label check refused", None
+    except (OSError, UnicodeError):
+        return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
+    if not labels:
+        return False, "private tenant-label deny-list is empty; label check refused", None
+    label_patterns = [pattern for label in labels for pattern in (
+        _private_label_pattern(label), _private_label_pattern(label, cf_as_space=False))]
+    if not any(pattern is not None for pattern in label_patterns):
+        return False, "private tenant-label deny-list is empty; label check refused", None
+
+    # Check both deletion and word-separator forms so format marks cannot join or split label words.
+    label_scan_text = _exclude_gate_owned_label_keys(text)
+    normalized_text = [
+        _normalize_label_text(label_scan_text, preserve_line_numbers=True),
+        _normalize_label_text(label_scan_text, cf_as_space=False, preserve_line_numbers=True),
+    ]
+    normalized_text.extend(_normalize_nonrendered_label_texts(label_scan_text))
     for line_number, line in enumerate(text.splitlines(), start=1):
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):
-                return False, f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}", None
+                reason = f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}"
+                return False, reason, None
         for match in URI.finditer(line):
             try:
                 parsed = urlsplit(match.group(0))
                 if parsed.username is not None or parsed.password is not None:
-                    return False, f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}", None
+                    reason = f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}"
+                    return False, reason, None
             except ValueError:
-                return False, f"REALDATA-REPLAY.md contains malformed URI at line {line_number}", None
+                reason = f"REALDATA-REPLAY.md contains malformed URI at line {line_number}"
+                return False, reason, None
 
-    return _validate_report_structure_and_digest(text)
+    label_line = _private_label_line(normalized_text, label_patterns)
+    if label_line is not None:
+        reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {label_line}"
+        return False, reason, None
+
+    valid, reason, digest = _validate_report_structure_and_digest(text)
+    return valid, reason, digest
+
+
+def _normalize_label_text(text: str, *, cf_as_space: bool = True,
+                          preserve_line_numbers: bool = False) -> str:
+    if preserve_line_numbers:
+        text = HTML_COMMENT.sub(
+            lambda match: LABEL_LINE_MARKER * len(re.findall(r"\r\n?|\n", match.group())), text)
+        text = re.sub(r"\r\n?|\n", "\n", text)
+    else:
+        text = HTML_COMMENT.sub("", text)
+    text = unicodedata.normalize("NFKC", _unescape_without_source_newlines(text))
+    format_replacement = " " if cf_as_space else ""
+    text = "".join(format_replacement if unicodedata.category(char) == "Cf" else char
+                    for char in text)
+    text = re.sub(r"\\(.)", r"\1", text)
+
+    def keep_source_lines(visible: str, source: str) -> str:
+        removed_lines = source.count("\n") - visible.count("\n")
+        removed_markers = source.count(LABEL_LINE_MARKER) - visible.count(LABEL_LINE_MARKER)
+        return visible + LABEL_LINE_MARKER * (max(0, removed_lines) + max(0, removed_markers))
+
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
+    text = re.sub(r"\[([^\]]+)\]\[[^\]]*\]",
+                  lambda match: keep_source_lines(match.group(1), match.group(0)), text)
+    text = re.sub(r"<((?:https?://|mailto:)[^\s>]+)>", r"\1", text, flags=re.I)
+    text = HTML_TAG.sub(
+        lambda match: LABEL_LINE_MARKER * (
+            match.group().count("\n") + match.group().count(LABEL_LINE_MARKER)), text)
+    text = re.sub(r"[*_`~]", "", text)
+    text = text.replace("|", " ")
+    return re.sub(r"[^\S\n]+", " ", text)
+
+
+def _unescape_without_source_newlines(text: str) -> str:
+    """Decode HTML references while keeping decoded CR/LF from shifting source lines."""
+    def replace_reference(match: re.Match[str]) -> str:
+        return re.sub(r"\r\n?|\n", " ", html.unescape(match.group(0)))
+
+    return HTML_REFERENCE.sub(replace_reference, text)
+
+
+def _url_list_spans(value: str, start: int, *, srcset: bool = False) -> list[tuple[str, int, bool]]:
+    if srcset:
+        return _srcset_url_spans(value, start)
+    spans: list[tuple[str, int, bool]] = []
+    for token in re.finditer(r"[^ \t\n\r\f]+", value):
+        raw = token.group()
+        left_trim = len(raw) - len(raw.lstrip(","))
+        url = raw[left_trim:].rstrip(",")
+        if url:
+            spans.append((url, start + token.start() + left_trim, True))
+    return spans
+
+
+def _decode_url_form_query(value: str) -> str:
+    """Decode form-style plus and percent escapes inside a URL query only."""
+    query_start = value.find("?")
+    fragment_start = value.find("#")
+    if query_start < 0 or (fragment_start >= 0 and fragment_start < query_start):
+        return value
+
+    query_end = fragment_start if fragment_start >= 0 else len(value)
+    query = value[query_start + 1:query_end]
+    # Escaped newlines are decoded whitespace, not source-line boundaries.
+    query = re.sub(r"(?i)%0d%0a|%0a|%0d", " ", query)
+    decoded_query = unquote_plus(query)
+    return value[:query_start + 1] + decoded_query + value[query_end:]
+
+
+def _srcset_url_spans(value: str, start: int) -> list[tuple[str, int, bool]]:
+    """Extract URL tokens from srcset syntax without decoding descriptor text."""
+    spans: list[tuple[str, int, bool]] = []
+    index = 0
+    while index < len(value):
+        while index < len(value) and (value[index] in " \t\n\r\f" or value[index] == ","):
+            index += 1
+        if index == len(value):
+            break
+
+        url_start = index
+        while index < len(value) and value[index] not in " \t\n\r\f":
+            index += 1
+        url_end = index
+        while url_end > url_start and value[url_end - 1] == ",":
+            url_end -= 1
+        if url_end > url_start:
+            spans.append((value[url_start:url_end], start + url_start, True))
+
+        # A trailing comma on the URL token ends a candidate without descriptors.
+        if url_end < index:
+            continue
+
+        # Consume descriptors up to the candidate separator. Commas inside a
+        # data URL are part of the URL token above, before descriptor parsing.
+        while index < len(value):
+            if value[index] == ",":
+                index += 1
+                break
+            index += 1
+    return spans
+
+
+def _css_escape(value: str, index: int) -> tuple[str, int]:
+    """Decode one CSS escape and retain markers for consumed source newlines."""
+    next_index = index + 1
+    if next_index >= len(value):
+        return "\ufffd", next_index
+    char = value[next_index]
+    if char in "\r\n\f":
+        if char == "\r" and next_index + 1 < len(value) and value[next_index + 1] == "\n":
+            next_index += 2
+        else:
+            next_index += 1
+        return LABEL_LINE_MARKER if char in "\r\n" else "", next_index
+    if char in "0123456789abcdefABCDEF":
+        end = next_index
+        while end < len(value) and end - next_index < 6 and value[end] in "0123456789abcdefABCDEF":
+            end += 1
+        codepoint = int(value[next_index:end], 16)
+        decoded = ("\ufffd" if codepoint == 0 or codepoint > 0x10FFFF
+                   or 0xD800 <= codepoint <= 0xDFFF else chr(codepoint))
+        line_marker = ""
+        if end < len(value) and value[end] in " \t\r\n\f":
+            if value[end] == "\r" and end + 1 < len(value) and value[end + 1] == "\n":
+                end += 2
+                line_marker = LABEL_LINE_MARKER
+            else:
+                if value[end] in "\r\n":
+                    line_marker = LABEL_LINE_MARKER
+                end += 1
+        # Escaped CSS newlines are visible whitespace, but are not source lines.
+        if decoded in "\r\n\f":
+            decoded = " "
+        return decoded + line_marker, end
+    return char, next_index + 1
+
+
+def _css_ident_start(char: str) -> bool:
+    return char in "-_\\" or char.isalpha() or ord(char) >= 0x80
+
+
+def _css_ident_char(char: str) -> bool:
+    return char in "-_" or char.isalnum() or ord(char) >= 0x80
+
+
+def _css_consume_ident(value: str, start: int) -> tuple[str, int]:
+    chars: list[str] = []
+    index = start
+    while index < len(value):
+        char = value[index]
+        if _css_ident_char(char):
+            chars.append(char)
+            index += 1
+        elif char == "\\" and index + 1 < len(value) and value[index + 1] not in "\r\n\f":
+            decoded, index = _css_escape(value, index)
+            chars.append(decoded)
+        else:
+            break
+    return "".join(chars), index
+
+
+def _css_string_payload(value: str, opening: int) -> tuple[str, int, int]:
+    """Read one CSS string, decoding escapes while retaining source-line markers."""
+    quote = value[opening]
+    payload_start = opening + 1
+    decoded: list[str] = []
+    index = payload_start
+    while index < len(value):
+        char = value[index]
+        if char == quote:
+            return "".join(decoded), payload_start, index + 1
+        if char in "\r\n\f":
+            # A literal newline terminates a CSS string token as a bad string.
+            return "".join(decoded), payload_start, index
+        if char == "\\" and index + 1 < len(value):
+            escaped, index = _css_escape(value, index)
+            decoded.append(escaped)
+            continue
+        decoded.append(char)
+        index += 1
+    return "".join(decoded), payload_start, index
+
+
+def _css_url_payload(value: str, opening: int) -> tuple[str, int, int] | None:
+    """Read a quoted or unquoted CSS URL payload starting at its opening paren."""
+    index = opening + 1
+    while index < len(value) and value[index] in " \t\r\n\f":
+        index += 1
+    if index >= len(value) or value[index] == ")":
+        return None
+
+    quote = value[index] if value[index] in "\"'" else None
+    payload_start = index + 1 if quote else index
+    index = payload_start
+    decoded: list[str] = []
+    while index < len(value):
+        char = value[index]
+        if quote and char == quote:
+            payload_end = index
+            index += 1
+            while index < len(value) and value[index] in " \t\r\n\f":
+                index += 1
+            if index < len(value) and value[index] == ")" and decoded:
+                return "".join(decoded), payload_start, index + 1
+            return None
+        if not quote and char == ")":
+            while decoded and decoded[-1] in " \t\r\n\f":
+                decoded.pop()
+            return ("".join(decoded), payload_start, index + 1) if decoded else None
+        if char == "\\" and index + 1 < len(value):
+            if value[index + 1] in "\r\n\f" or value[index + 1] in "0123456789abcdefABCDEF":
+                escaped, index = _css_escape(value, index)
+                decoded.append(escaped)
+                continue
+            decoded.append(value[index + 1])
+            index += 2
+            continue
+        if quote and char in "\r\n\f":
+            return None
+        decoded.append(char)
+        index += 1
+    return None
+
+
+CSS_STRING_URL_FUNCTIONS = {"image-set", "-webkit-image-set", "image"}
+
+
+def _css_skip_space_and_comments(value: str, index: int) -> int:
+    while index < len(value):
+        if value[index] in " \t\r\n\f":
+            index += 1
+        elif value.startswith("/*", index):
+            comment_end = value.find("*/", index + 2)
+            if comment_end < 0:
+                return len(value)
+            index = comment_end + 2
+        else:
+            break
+    return index
+
+
+def _css_url_spans(value: str, start: int, *, stylesheet: bool = False) -> list[tuple[str, int, bool]]:
+    """Extract grammar-defined CSS URL values without decoding ordinary strings."""
+    spans: list[tuple[str, int, bool]] = []
+    index = 0
+    blocks: list[tuple[str, str | None]] = []
+    while index < len(value):
+        if value.startswith("/*", index):
+            comment_end = value.find("*/", index + 2)
+            index = len(value) if comment_end < 0 else comment_end + 2
+            continue
+        if value[index] in "\"'":
+            decoded, payload_start, end = _css_string_payload(value, index)
+            if blocks and blocks[-1][0] == "(" and blocks[-1][1] in CSS_STRING_URL_FUNCTIONS:
+                spans.append((decoded, start + payload_start, True))
+            index = max(end, index + 1)
+            continue
+        if stylesheet and value[index] == "@" and not blocks:
+            ident, end = _css_consume_ident(value, index + 1)
+            if ident.replace(LABEL_LINE_MARKER, "").lower() == "import":
+                next_token = _css_skip_space_and_comments(value, end)
+                if next_token < len(value) and value[next_token] in "\"'":
+                    decoded, payload_start, string_end = _css_string_payload(value, next_token)
+                    spans.append((decoded, start + payload_start, True))
+                    index = string_end
+                    continue
+            index = max(end, index + 1)
+            continue
+        if _css_ident_start(value[index]):
+            ident, end = _css_consume_ident(value, index)
+            function_name = ident.replace(LABEL_LINE_MARKER, "").lower()
+            if function_name == "url" and end < len(value) and value[end] == "(":
+                payload = _css_url_payload(value, end)
+                if payload is not None:
+                    decoded, payload_start, next_index = payload
+                    spans.append((decoded, start + payload_start, True))
+                    index = next_index
+                    continue
+            if end < len(value) and value[end] == "(":
+                blocks.append(("(", function_name))
+                index = end + 1
+                continue
+            index = max(end, index + 1)
+            continue
+        char = value[index]
+        if char in "([{":
+            blocks.append((char, None))
+        elif char in ")]}" and blocks:
+            expected = { ")": "(", "]": "[", "}": "{" }[char]
+            while blocks:
+                opening, _ = blocks.pop()
+                if opening == expected:
+                    break
+        index += 1
+    return spans
+
+
+def _css_style_element_url_spans(source: str) -> list[tuple[str, int, bool]]:
+    """Extract CSS URL values from style-element bodies with original offsets."""
+    spans: list[tuple[str, int, bool]] = []
+    content_start: int | None = None
+    for tag_match in HTML_TAG.finditer(source):
+        name = re.match(r"</?([A-Za-z][^\s/>]*)", tag_match.group())
+        if name is None or name.group(1).lower() != "style":
+            continue
+        if tag_match.group().startswith("</"):
+            if content_start is not None:
+                spans.extend(_css_url_spans(
+                    source[content_start:tag_match.start()], content_start, stylesheet=True))
+                content_start = None
+        elif content_start is None:
+            content_start = tag_match.end()
+    if content_start is not None:
+        spans.extend(_css_url_spans(source[content_start:], content_start, stylesheet=True))
+    return spans
+
+
+def _normalize_nonrendered_label_texts(text: str) -> list[str]:
+    """Scan raw and entity-decoded HTML values without changing rendered boundaries."""
+    # Decoded references can reveal tags, but decoded newlines stay spaces so line
+    # positions in either source view still correspond to literal source lines.
+    spans: list[tuple[str, int, bool]] = []
+    html_sources = dict.fromkeys((text, _unescape_without_source_newlines(text)))
+    for source in html_sources:
+        source_line_starts = [0]
+        source_line_starts.extend(match.end() for match in re.finditer(r"\r\n?|\n", source))
+
+        for match in HTML_COMMENT.finditer(source):
+            start = match.start() + 4
+            line_offset = bisect_right(source_line_starts, start) - 1
+            spans.append((source[start:match.end() - 3], line_offset, False))
+
+        for match in HTML_TAG.finditer(source):
+            tag = match.group()
+            name = re.match(r"</?([A-Za-z][^\s/>]*)", tag)
+            if name is None:
+                continue
+            tag_name = name.group(1).lower()
+            attribute_text = tag[name.end():]
+            attribute_offset = match.start() + name.end()
+            for attribute in HTML_ATTRIBUTE_VALUE.finditer(attribute_text):
+                attribute_name = attribute.group(1).lower()
+                group = next(index for index in range(2, 5)
+                             if attribute.group(index) is not None)
+                value = attribute.group(group)
+                value_start = attribute_offset + attribute.start(group)
+                line_offset = bisect_right(source_line_starts, value_start) - 1
+                if (attribute_name in URL_SINGLE_ATTRIBUTES
+                        and (attribute_name != "data" or tag_name == "object")):
+                    spans.append((value, line_offset, True))
+                elif attribute_name in URL_WHITESPACE_LIST_ATTRIBUTES:
+                    url_spans = _url_list_spans(value, value_start)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                elif attribute_name in URL_SRCSET_ATTRIBUTES:
+                    url_spans = _url_list_spans(value, value_start, srcset=True)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                elif attribute_name == "style":
+                    url_spans = _css_url_spans(value, value_start)
+                    spans.extend((url, bisect_right(source_line_starts, start) - 1, decode_url)
+                                 for url, start, decode_url in url_spans)
+                    spans.append((value, line_offset, False))
+                else:
+                    spans.append((value, line_offset, False))
+
+        for url, start, decode_url in _css_style_element_url_spans(source):
+            line_offset = bisect_right(source_line_starts, start) - 1
+            spans.append((url, line_offset, decode_url))
+
+    markdown_line_starts = [0]
+    markdown_line_starts.extend(item.end() for item in re.finditer(r"\r\n?|\n", text))
+    for match in MARKDOWN_LINK.finditer(text):
+        payload = match.group(1)
+        payload_line = bisect_right(markdown_line_starts, match.start(1)) - 1
+        spans.append((payload, payload_line, False))
+        destination = MARKDOWN_DESTINATION.match(payload)
+        if destination:
+            group = 1 if destination.group(1) is not None else 2
+            dest_start = match.start(1) + destination.start(group)
+            dest_line = bisect_right(markdown_line_starts, dest_start) - 1
+            spans.append((destination.group(group), dest_line, True))
+    for match in MARKDOWN_REFERENCE_DEFINITION.finditer(text):
+        payload = match.group(1)
+        payload_line = bisect_right(markdown_line_starts, match.start(1)) - 1
+        spans.append((payload, payload_line, False))
+        destination = MARKDOWN_DESTINATION.match(payload)
+        if destination:
+            group = 1 if destination.group(1) is not None else 2
+            dest_start = match.start(1) + destination.start(group)
+            dest_line = bisect_right(markdown_line_starts, dest_start) - 1
+            spans.append((destination.group(group), dest_line, True))
+
+    normalized: list[str] = []
+    for value, line_offset, decode_url in spans:
+        prefix = LABEL_LINE_MARKER * line_offset
+        values = [value]
+        if decode_url:
+            # Decode hidden URL text too, without treating escaped line breaks as source lines.
+            decoded = re.sub(r"(?i)%0d%0a|%0a|%0d", " ", value)
+            decoded = unquote(decoded)
+            if decoded != value:
+                values.append(decoded)
+            form_decoded = _decode_url_form_query(value)
+            if form_decoded != value and form_decoded not in values:
+                values.append(form_decoded)
+        for candidate in values:
+            normalized.append(_normalize_label_text(
+                prefix + candidate, preserve_line_numbers=True))
+            normalized.append(_normalize_label_text(
+                prefix + candidate, cf_as_space=False, preserve_line_numbers=True))
+    return normalized
+
+
+def _exclude_gate_owned_label_keys(text: str) -> str:
+    """Remove only validator-owned key text while preserving report values and line numbers."""
+    lines = text.splitlines(keepends=True)
+    key_prefix = re.compile(
+        r"^(\s*[-*]?\s*)(" + "|".join(re.escape(key) for key in REQUIRED_FIELD_KEYS) + r"):"
+    )
+    normalized_table_keys = {_normalize_label_text(key).strip().lower()
+                             for key in REQUIRED_TABLE_KEYS}
+    valid_footers = [index for index, line in enumerate(lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    footer_prefixes = [index for index, line in enumerate(lines)
+                       if ARTIFACT_FOOTER_PREFIX.match(line)]
+    actual_footer = (valid_footers[0] if len(valid_footers) == 1 and len(footer_prefixes) == 1
+                     else None)
+    table_header = _required_table_header_index(lines, normalized_table_keys)
+    output: list[str] = []
+    for index, line in enumerate(lines):
+        if index == actual_footer:
+            output.append("\n" if line.endswith("\n") else "")
+            continue
+        line = key_prefix.sub(r"\1", line, count=1)
+        if index == table_header and "|" in line:
+            pieces = line.split("|")
+            for cell_index, cell in enumerate(pieces):
+                if _normalize_label_text(cell).strip().lower() in normalized_table_keys:
+                    pieces[cell_index] = " "
+            line = "|".join(pieces)
+        output.append(line)
+    return "".join(output)
+
+
+def _required_table_header_index(lines: list[str], required_keys: set[str]) -> int | None:
+    for index, line in enumerate(lines[:-1]):
+        if "|" not in line:
+            continue
+        separator_cells = lines[index + 1].strip().strip("|").split("|")
+        if not separator_cells or not all(
+                re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in separator_cells):
+            continue
+        header_cells = {_normalize_label_text(cell).strip().lower()
+                        for cell in line.strip().strip("|").split("|")}
+        if required_keys.issubset(header_cells):
+            return index
+    return None
+
+
+def _private_label_pattern(label: str, *, cf_as_space: bool = True) -> re.Pattern[str] | None:
+    normalized = _normalize_label_text(label, cf_as_space=cf_as_space).strip()
+    words = normalized.split()
+    if not words:
+        return None
+    expression = (r"(?<!\w)(?P<label_start>"
+                  + r"\s+".join(re.escape(word) for word in words) + ")"
+                  + r"(?!\w)")
+    return re.compile(expression, re.I)
+
+
+def _private_label_line(text: list[str], patterns: list[re.Pattern[str] | None]) -> int | None:
+    active_patterns = [pattern for pattern in patterns if pattern is not None]
+    rendered_variants: list[tuple[str, list[int]]] = []
+    for variant in text:
+        visible: list[str] = []
+        source_lines: list[int] = []
+        source_line = 1
+        for char in variant:
+            if char == LABEL_LINE_MARKER:
+                source_line += 1
+                continue
+            visible.append(char)
+            source_lines.append(source_line)
+            if char == "\n":
+                source_line += 1
+        rendered_variants.append(("".join(visible), source_lines))
+
+    line_number: int | None = None
+    for pattern in active_patterns:
+        for rendered_text, source_lines in rendered_variants:
+            for match in pattern.finditer(rendered_text):
+                start = match.start("label_start")
+                matched_line = source_lines[start]
+                if line_number is None or matched_line < line_number:
+                    line_number = matched_line
+    return line_number
 
 
 def git(repo: Path, *args: str, timeout: float = 4) -> str:
@@ -188,8 +791,11 @@ def production_paths(paths: set[str]) -> set[str]:
 
 def normalized_report_hash(text: str) -> str:
     """Hash report bytes with the digest field omitted to avoid self-reference."""
-    lines = [line for line in text.splitlines(keepends=True)
-             if not re.match(r"^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):", line, re.I)]
+    lines = text.splitlines(keepends=True)
+    valid_footers = [index for index, line in enumerate(lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    if len(valid_footers) == 1:
+        lines.pop(valid_footers[0])
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
@@ -225,9 +831,15 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "read-only production source": r"(?im)^\s*[-*]?\s*Production source:\s*read-only\b[^\n]*$",
         "counts-only privacy": r"(?im)^\s*[-*]?\s*Privacy:\s*counts only;? no (?:row )?(?:IDs|PII)\b[^\n]*$",
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
-        "blocked external-call rows": r"(?im)^\s*[-*]?\s*Blocked rows:\s*.+$",
+        "blocked external-call rows": (
+            r"(?m)^Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+) \([^)\r\n]+\).*$"
+        ),
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
+    if "blocked external-call rows" in missing:
+        line_number = len(text.splitlines()) + 1
+        return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
+                       f"at line {line_number} (end of report)"), None
     rows = [line for line in text.splitlines() if line.strip().startswith("|")]
     has_result = any(any(cell.strip() and not set(cell.strip()) <= {"-", ":"}
                          for cell in line.strip().strip("|").split("|")) for line in rows[2:])
@@ -235,9 +847,24 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         missing.append("at least one per-goal result row")
     if missing:
         return False, "REALDATA-REPLAY.md is missing required fields: " + ", ".join(missing), None
-    digest_match = re.search(r"(?im)^\s*[-*]?\s*Artifact SHA-256 \(excluding this line\):\s*([0-9a-f]{64})\s*$", text)
-    if not digest_match:
-        return False, "REALDATA-REPLAY.md is missing its Artifact SHA-256 (excluding this line)", None
+    report_lines = text.splitlines(keepends=True)
+    footer_prefixes = [index for index, line in enumerate(report_lines)
+                       if ARTIFACT_FOOTER_PREFIX.match(line)]
+    valid_footers = [index for index, line in enumerate(report_lines)
+                     if ARTIFACT_FOOTER_LINE.fullmatch(line.rstrip("\r\n"))]
+    if len(footer_prefixes) != 1 or len(valid_footers) != 1:
+        if not footer_prefixes:
+            line_number = len(text.splitlines()) + 1
+            detail = f"is missing its Artifact SHA-256 footer at line {line_number}"
+        elif len(footer_prefixes) > 1:
+            line_number = footer_prefixes[1] + 1
+            detail = f"has an additional Artifact SHA-256 footer at line {line_number}"
+        else:
+            line_number = footer_prefixes[0] + 1
+            detail = f"has an invalid Artifact SHA-256 footer at line {line_number}"
+        return False, f"REALDATA-REPLAY.md {detail}", None
+    digest_match = ARTIFACT_FOOTER_LINE.fullmatch(report_lines[valid_footers[0]].rstrip("\r\n"))
+    assert digest_match is not None
     actual = normalized_report_hash(text)
     if digest_match.group(1).lower() != actual:
         return False, ("REALDATA-REPLAY.md artifact SHA-256 does not match its contents; likely stale footer after formatting. "
