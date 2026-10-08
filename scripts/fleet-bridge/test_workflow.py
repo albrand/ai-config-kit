@@ -284,6 +284,25 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         goal('A newer completed adapter turn cannot receive input admitted for the previous lease',
              row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
              sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
+        other = sqlite3.connect(database)
+        other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_requested3', 'thr_fixture', 'client/turn/requested', 7, '117471a8-1970-4376-8672-9de66c418579'))
+        other.commit()
+        other.close()
+        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        row = poll(mutate=True)
+        goal('A new unstarted request after completion blocks admission and enqueue despite idle status and empty queue',
+             not row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
+             sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
+        other = sqlite3.connect(database)
+        for suffix, kind, sequence in [('started3', 'turn/started', 8), ('completed3', 'turn/completed', 9)]:
+            other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+        other.commit()
+        other.close()
+        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        row = poll(mutate=True)
+        goal('Only a request followed by its start and completion can admit queued recovery',
+             row.get('inputAdmission', {}).get('admitted') and row.get('nudgeReceipt', {}).get('delivery') == 'queued' and
+             sum(args[:2] == ['thread', 'tell'] for args in calls) == before + 1)
     db = sqlite3.connect(database)
     db.execute('UPDATE threads SET status=? WHERE id=?', ('active', 'thr_sibling'))
     db.execute('UPDATE threads SET environment_id=? WHERE id=?', ('env_thr_fixture', 'thr_sibling'))

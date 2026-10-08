@@ -426,8 +426,8 @@ def queue_admission(db, thread, environment):
     requested = db.execute("SELECT id,sequence FROM events WHERE thread_id=? AND type='client/turn/requested' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
     ended = db.execute("SELECT sequence FROM events WHERE thread_id=? AND type='turn/completed' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
     owners = [r[0] for r in db.execute("SELECT id FROM threads WHERE environment_id=? AND status IN ('active','starting','stopping') AND archived_at IS NULL AND deleted_at IS NULL", (environment['id'],))]
-    if thread.get('status') != 'idle' or owners or not session or not started or not requested or not ended or ended[0] <= started[1]:
-        return {'admitted': False, 'reason': 'Completed adapter turn and exclusive idle workspace required'}
+    if thread.get('status') != 'idle' or owners or not session or not started or not requested or not ended or not requested[1] < started[1] < ended[0]:
+        return {'admitted': False, 'reason': 'Latest adapter request must precede its completed turn, with exclusive idle workspace'}
     lease = {'schema_version': 1, 'workspace_id': environment['id'], 'session_id': session[0],
              'lease_id': started[0], 'topic_id': requested[0], 'epoch': started[1],
              'status': 'completed', 'write_owner': ident}
