@@ -67,7 +67,8 @@ standard tier sufficient.
 
 Pick the model and reasoning level from the agent's role. In bb, `bb fleet route`
 applies this table; pass `--topic`, `--rejections`, `--complexity` and, when the
-work began before its first review, `--started-at` so it can.
+work began before its first review, `--started-at` so it can. Route an
+automation with `--role reviewer`, whatever its kind of work.
 Elsewhere (Codex, Claude Code, Elyra cards), name the model and reasoning
 explicitly when you start an agent. Never leave it to a default: Codex's config
 default is the GPT ceiling, and Claude's is Opus.
@@ -93,8 +94,9 @@ default is the GPT ceiling, and Claude's is Opus.
 - **Never astra.** No agent work runs on any astra model. At dispatch, Fleet
   refuses any turn that starts on one, and any Codex turn whose model it
   cannot determine, the owner's included. bb skips that check by design for
-  Send now on a queued message, compaction, and an edited message's re-send,
-  so name the model before using any of them. The ceiling also excludes
+  Send now on a queued message, compaction, and an edited message's re-send:
+  there Fleet enforces nothing, and only the model you named keeps the turn
+  off astra. The ceiling also excludes
   `max` and `ultra` (which delegates on its own).
 - **Re-route before rework.** A running agent keeps its spawn model. When work
   is rejected, start its next attempt on the route the new count gives.

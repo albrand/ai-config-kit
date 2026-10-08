@@ -160,6 +160,17 @@ This PR's third render was the current profile at 180edac, so it stays installab
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `181678bc32d18d24cf4a63d277e23e84bbc755814d62359f4957f3debc752245` |
 
+### Accepted live profile: model policy, fourth wording at 244621c (never installed)
+
+This PR's fourth render was the current profile at 244621c, so it stays installable. Its bb line did not say how an automation routes.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `c10cfb6ff935dde18fc1921bc8934b855d104c770293352e9619c89dbcdc039e` |
+
 ### Current rendered profile: model policy by role, based on b31e8e2
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
@@ -173,7 +184,7 @@ other three equal #67's.
 | Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
 | Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
-| bb | `c10cfb6ff935dde18fc1921bc8934b855d104c770293352e9619c89dbcdc039e` |
+| bb | `62e8de1b2642e5ee9eeedc17d38789f15677734cf4c6cfe7dec248830c3254ba` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
