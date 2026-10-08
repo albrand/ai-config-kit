@@ -241,6 +241,49 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
+        ledger.write_text(json.dumps({'purposes': [{'id': 'P1', 'status': 'open'}, closed_followup, late, upgrade_goal]}))
+        snapshot = json.loads((state / 'monitor-state.json').read_text())
+        snapshot['targets']['thr_fixture']['nudges'] = 0
+        snapshot['targets']['thr_fixture']['lastNudgeAt'] = 0
+        real_admission = monitor.queue_admission
+
+        def competing_owner_after_admission(connection, thread, environment):
+            admitted = real_admission(connection, thread, environment)
+            assert admitted['admitted']
+            other = sqlite3.connect(database)
+            other.execute('UPDATE threads SET status=?,environment_id=? WHERE id=?', ('active', 'env_thr_fixture', 'thr_sibling'))
+            other.commit()
+            other.close()
+            return admitted
+
+        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        before = sum(args[:2] == ['thread', 'tell'] for args in calls)
+        with patch.object(monitor, 'queue_admission', side_effect=competing_owner_after_admission):
+            row = poll(mutate=True)
+        goal('A competing owner appearing after admission blocks delivery with no queued message',
+             row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
+             sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
+        other = sqlite3.connect(database)
+        other.execute('UPDATE threads SET status=?,environment_id=? WHERE id=?', ('idle', 'env_thr_sibling', 'thr_sibling'))
+        other.commit()
+        other.close()
+
+        def changed_lease_after_admission(connection, thread, environment):
+            admitted = real_admission(connection, thread, environment)
+            assert admitted['admitted']
+            other = sqlite3.connect(database)
+            for suffix, kind, sequence in [('requested2', 'client/turn/requested', 4), ('started2', 'turn/started', 5), ('completed2', 'turn/completed', 6)]:
+                other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+            other.commit()
+            other.close()
+            return admitted
+
+        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        with patch.object(monitor, 'queue_admission', side_effect=changed_lease_after_admission):
+            row = poll(mutate=True)
+        goal('A newer completed adapter turn cannot receive input admitted for the previous lease',
+             row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
+             sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
     db = sqlite3.connect(database)
     db.execute('UPDATE threads SET status=? WHERE id=?', ('active', 'thr_sibling'))
     db.execute('UPDATE threads SET environment_id=? WHERE id=?', ('env_thr_fixture', 'thr_sibling'))

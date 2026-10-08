@@ -447,7 +447,31 @@ def queue_admission(db, thread, environment):
         return {'admitted': False, 'reason': 'Metadata admission returned invalid output', 'exitCode': guard.returncode}
     save(folder / (ident + '-result.json'), decision)
     return {'admitted': guard.returncode == 0 and decision.get('decision') == 'route_fresh',
-            'decision': decision.get('decision'), 'exitCode': guard.returncode}
+            'decision': decision.get('decision'), 'exitCode': guard.returncode,
+            'binding': {'threadId': ident, 'environmentId': environment['id'],
+                        'providerId': thread.get('providerId'), 'sessionId': session[0],
+                        'leaseId': started[0], 'topicId': requested[0],
+                        'epoch': started[1], 'completedSequence': ended[0]}}
+
+def delivery_binding_current(db, expected):
+    """Re-read the admitted owner and complete lease in one adapter DB snapshot.
+
+    Called after all external preflight operations, immediately before enqueue.
+    This check is not a remote workspace reservation or a write-owner grant.
+    """
+    if not isinstance(expected, dict):
+        return False
+    row = db.execute("""SELECT t.status,t.environment_id,t.provider_id,
+        (SELECT provider_thread_id FROM events WHERE thread_id=t.id AND provider_thread_id IS NOT NULL ORDER BY sequence DESC LIMIT 1),
+        (SELECT id FROM events WHERE thread_id=t.id AND type='turn/started' ORDER BY sequence DESC LIMIT 1),
+        (SELECT id FROM events WHERE thread_id=t.id AND type='client/turn/requested' ORDER BY sequence DESC LIMIT 1),
+        (SELECT sequence FROM events WHERE thread_id=t.id AND type='turn/started' ORDER BY sequence DESC LIMIT 1),
+        (SELECT sequence FROM events WHERE thread_id=t.id AND type='turn/completed' ORDER BY sequence DESC LIMIT 1),
+        EXISTS(SELECT 1 FROM threads o WHERE o.environment_id=t.environment_id AND o.status IN ('active','starting','stopping') AND o.archived_at IS NULL AND o.deleted_at IS NULL)
+        FROM threads t WHERE t.id=? AND t.archived_at IS NULL AND t.deleted_at IS NULL""", (expected.get('threadId'),)).fetchone()
+    return bool(row and row[0] == 'idle' and not row[8] and row[1:8] == (
+        expected.get('environmentId'), expected.get('providerId'), expected.get('sessionId'),
+        expected.get('leaseId'), expected.get('topicId'), expected.get('epoch'), expected.get('completedSequence')))
 
 def run(mutate=False):
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -596,14 +620,14 @@ def run(mutate=False):
                     item['inputAdmission'] = admitted
                     boundary = source_snapshot(db, thread)
                     boundary_queue = bb(['thread', 'queue', 'list', thread, '--json'])
-                    if admitted['admitted'] and boundary['thread'].get('status') == 'idle' and boundary['environment']['id'] == current['environment']['id'] and not boundary_queue:
+                    if admitted['admitted'] and boundary['thread'].get('status') == 'idle' and boundary['environment']['id'] == current['environment']['id'] and not boundary_queue and delivery_binding_current(db, admitted.get('binding')):
                         receipt = bb(['thread', 'tell', thread, '--message-file', str(file), '--mode', 'queue', '--json'])
                         item['nudgeReceipt'] = receipt
                         item['nudges'] += 1
                         item['lastNudgeAt'] = time.time()
                         item['state'] = 'QUEUED' if receipt.get('delivery') == 'queued' else 'RUNNING'
                     else:
-                        item['nudgeHeld'] = 'Metadata admission or fresh idle owner failed'
+                        item['nudgeHeld'] = 'Metadata admission or delivery-time owner/lease check failed'
                 else:
                     item['nudgeHeld'] = 'fresh idle owner and matching verified provider route required'
             title = target['project'] + ' coordinator — source ' + item['state'] + '; native ' + review_state['state'] + ' — ' + '/'.join(observed_purpose_ids)

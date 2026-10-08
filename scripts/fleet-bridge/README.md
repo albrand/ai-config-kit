@@ -31,6 +31,11 @@ supersession, grant write ownership, or approve a held action. Native handles
 used to synchronize titles never attest isolation for terminal/browser input.
 Nudges require a fresh idle source, no outstanding descendant work, matching
 verified provider route, metadata admission, and ordinary queued delivery.
+After external preflight calls, one canonical adapter DB snapshot rechecks the
+exclusive idle owner and the exact admitted provider/session/turn epoch before
+enqueue. A changed owner or lease holds delivery. This is a delivery-time
+snapshot, not an atomic remote workspace reservation or a write-owner grant;
+the existing source owner and adapter remain responsible for execution fencing.
 
 ## Install and exercise
 
