@@ -395,6 +395,21 @@ GH_STATE = {"pass": "success", "na": "success", "untouched": "success", "fail": 
             "missing": "error", "not-verified": "error", "pending": "pending"}
 
 
+UNSANDBOXED_PR = "unsandboxed PR job: its code could rewrite the verifier, so a pass is not trusted"
+
+
+def capped_post(post):
+    """`post` for a PR job run with --unsandboxed: nothing stops its code from rewriting a pinned verifier file
+    between stages, so no status it reports, per stage or overall, is ever green; a pass is reported as missing
+    with the reason. Fail stays fail. (PR code with host access could also post a status itself with the host's
+    forge credentials; that is the risk --unsandboxed accepts on a disposable machine.)"""
+    def capped(context, state, description):
+        if GH_STATE.get(state) == "success":
+            return post(context, "missing", f"{state}, not trusted: {UNSANDBOXED_PR}; {description}")
+        return post(context, state, description)
+    return capped
+
+
 def post_status(slug, sha, context, state, description):
     """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
     rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
@@ -516,6 +531,9 @@ def run_stage(repo, name, spec, strict, paths, env, wrap=None, withheld=()):
         return {**res, "status": "missing", "detail": spec.get("todo", "no command")}
     if not touched(paths, spec.get("paths")):
         return {**res, "status": "untouched", "detail": "no changed path matches " + ", ".join(spec["paths"])}
+    if wrap and spec.get("unconfined"):
+        return {**res, "status": "missing", "detail": "needs an unconfined host, so the runner's sandbox can't run it: "
+                + str(spec["unconfined"]) + "; run it locally with verify.py run"}
     senv = stage_env(env, spec)
     missing = [k for k in spec.get("env", []) if not senv.get(k)]
     secret = [k for k in missing if k in withheld]
@@ -643,6 +661,9 @@ def cmd_status(args):
 #
 # A job runs code from a PR, so the PR is untrusted:
 # - What runs comes from the base branch's .verify/config.json, read from the mirror before any PR code exists on disk.
+#   The files its commands run (the config's `verifier` paths) come from the base branch too, written into the job's
+#   checkout from the mirror, and the sandbox lets nothing in the job write, replace or rename them. A PR still
+#   controls its own code, tests and manifests; weaken-check is the control for tests.
 # - Every repo-controlled command runs in an OS sandbox (macOS sandbox-exec). It can't read /Users, /Volumes, /tmp,
 #   /var/folders or RUNNER_HOME, except its own job dir and toolchains. It can only write its job dir. It can't reach
 #   the keychain, the ssh-agent, the Docker socket, or any port that was listening on the host when the job started.
@@ -659,8 +680,10 @@ def sbpl(p):
     return '"' + str(p).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def sandbox_profile(job, home, runner_home, allow_read=(), deny_ports=()):
-    """macOS sandbox profile for one job. Later rules win, so each allow-back follows the deny it narrows."""
+def sandbox_profile(job, home, runner_home, allow_read=(), deny_ports=(), pinned=()):
+    """macOS sandbox profile for one job. Later rules win, so each allow-back follows the deny it narrows.
+    `pinned`: verifier paths in the job's checkout; nothing the job runs may write, replace or rename them or the
+    directories above them, so setup or an earlier stage can't swap the helper a later stage runs."""
     home, job, runner_home = (Path(x).resolve() for x in (home, job, runner_home))
     reads = [home / d for d in TOOLCHAIN_DIRS if (home / d).exists()] + [Path(p).expanduser().resolve() for p in allow_read]
     rules = ["(version 1)", "(allow default)",
@@ -679,6 +702,16 @@ def sandbox_profile(job, home, runner_home, allow_read=(), deny_ports=()):
               f" (remote unix-socket (subpath {sbpl(job)})))"]
     if deny_ports:
         rules.append("(deny network-outbound " + " ".join(f"(remote ip \"*:{p}\")" for p in sorted(deny_ports)) + ")")
+    work = job / "repo"
+    guarded = set()
+    for rel in pinned:
+        guarded.add(f"(subpath {sbpl(work / rel)})")
+        for up in (work / rel).parents:
+            guarded.add(f"(literal {sbpl(up)})")
+            if up == work:
+                break
+    if guarded:
+        rules.append("(deny file-write* " + " ".join(sorted(guarded)) + ")")
     return "\n".join(rules) + "\n"
 
 
@@ -690,7 +723,7 @@ def host_listen_ports():
     return {int(m.group(1)) for m in re.finditer(r"^n.*:(\d+)$", out, re.M)}
 
 
-def sandbox_wrap(job, args):
+def sandbox_wrap(job, args, pinned=()):
     """argv prefix that sandboxes a job's commands, [] when --unsandboxed, None when no sandbox is available."""
     if args.unsandboxed:
         return []
@@ -700,7 +733,7 @@ def sandbox_wrap(job, args):
     if ports is None:
         return None
     ports -= set(args.allow_host_port or [])
-    return [SANDBOX_EXEC, "-p", sandbox_profile(job, Path.home(), RUNNER_HOME, args.allow_read or [], ports)]
+    return [SANDBOX_EXEC, "-p", sandbox_profile(job, Path.home(), RUNNER_HOME, args.allow_read or [], ports, pinned)]
 
 
 def job_env_file(slug, pr, fork):
@@ -773,12 +806,26 @@ def ensure_mirror(slug, url):
 
 
 def pending_jobs(slug, mirror, args):
-    rc, out = sh(["gh", "pr", "list", "-R", slug, "--state", "open", "--limit", "50",
-                  "--json", "number,headRefOid,baseRefName,isCrossRepository"], timeout=60, merge=False)
+    selected = getattr(args, "pr", None)
+    if selected is not None:
+        if type(selected) is not int or selected < 1 or args.branch:
+            raise RuntimeError("--pr needs a positive PR number and cannot be combined with --branch")
+        command = ["gh", "pr", "view", str(selected), "-R", slug,
+                   "--json", "number,state,headRefOid,baseRefName,isCrossRepository"]
+    else:
+        command = ["gh", "pr", "list", "-R", slug, "--state", "open", "--limit", "50",
+                   "--json", "number,headRefOid,baseRefName,isCrossRepository"]
+    rc, out = sh(command, timeout=60, merge=False)
     if rc != 0:
-        raise RuntimeError(f"cannot list PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
+        raise RuntimeError(f"cannot read PRs for {slug} with the current gh auth: {out.strip()[-200:]}")
+    prs = json.loads(out or "[]")
+    if selected is not None:
+        if not isinstance(prs, dict) or type(prs.get("number")) is not int or prs["number"] != selected \
+                or prs.get("state") != "OPEN":
+            raise RuntimeError(f"{slug} PR #{selected}: response does not identify that open PR; not running")
+        prs = [prs]
     jobs = []
-    for p in json.loads(out or "[]"):
+    for p in prs:
         if not isinstance(p, dict):
             continue
         label, head, base = f"PR #{p.get('number')}", p.get("headRefOid"), p.get("baseRefName")
@@ -822,6 +869,72 @@ def trusted_config(mirror, sha, base):
     return cfg, ("" if mine == cfg else f" (ran {base}'s config, not this PR's edit)")
 
 
+def verifier_paths(cfg):
+    """The config's `verifier`: repo-relative files or directories its stage commands run (helper scripts, suite
+    lists, policy). A PR job runs the base branch's copy of each, so a PR can't change how it is checked; a change to
+    the verifier is checked once it is on the base branch. Raises ValueError for anything but plain relative paths."""
+    raw = cfg.get("verifier") or []
+    if not isinstance(raw, list):
+        raise ValueError("verifier must be a list of repo-relative paths")
+    paths = []
+    for p in raw:
+        parts = p.rstrip("/").split("/") if isinstance(p, str) else []
+        if not parts or p.startswith("/") or "\\" in p or parts[0] == ".git" \
+                or any(x in ("", ".", "..") for x in parts):
+            raise ValueError(f"verifier path {p!r} is not a plain repo-relative path")
+        paths.append("/".join(parts))
+    return paths
+
+
+def pin_verifier(mirror, ref, sha, work, paths):
+    """Replace each verifier path in the PR checkout `work` with its copy at `ref`, read from the mirror (no git runs
+    in the job dir). A directory is replaced whole, so the PR can add nothing under it. Runs before any PR code, and
+    never follows a link the PR planted: a path whose directory is a symlink in the PR is refused.
+    Returns (error, paths the PR edited)."""
+    work = Path(work).resolve()
+    edited = []
+    for rel in paths:
+        listing = subprocess.run(["git", "-C", str(mirror), "ls-tree", "-r", "-z", "--full-tree", ref, "--", rel],
+                                 capture_output=True, timeout=120)
+        entries = []
+        for item in listing.stdout.decode("utf-8", "surrogateescape").split("\0"):
+            if "\t" in item:
+                meta, path = item.split("\t", 1)
+                mode, kind, obj = meta.split()
+                if path == rel or path.startswith(rel + "/"):
+                    entries.append((mode, kind, obj, path))
+        if listing.returncode or not entries:
+            return f"verifier path {rel} is not on the base branch", edited
+        for mode, kind, _, path in entries:
+            if kind != "blob" or mode not in ("100644", "100755"):
+                return f"verifier path {path} is not a regular file on the base branch", edited
+        cur = work
+        for part in rel.split("/")[:-1]:
+            cur = cur / part
+            if cur.is_symlink() or (cur.exists() and not cur.is_dir()):
+                return f"{cur.relative_to(work)} is not a plain directory in this PR; the verifier can't be pinned", edited
+        target = work / rel
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+        for mode, _, obj, path in entries:
+            dest = work / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if os.path.commonpath([work, dest.parent.resolve()]) != str(work):
+                return f"verifier path {path} resolves outside the checkout", edited
+            data = subprocess.run(["git", "-C", str(mirror), "cat-file", "blob", obj], capture_output=True,
+                                  check=True, timeout=120).stdout
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o755 if mode == "100755" else 0o644)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        if git(mirror, "rev-parse", "--verify", "--quiet", f"{sha}:{rel}") != \
+                git(mirror, "rev-parse", "--verify", "--quiet", f"{ref}:{rel}"):
+            edited.append(rel)
+    return "", edited
+
+
 def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
     whose SHA is, right now, the head of the owner-listed branch named by `label`."""
@@ -845,14 +958,21 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         post(STATUS_PREFIX, "missing", f"no .verify/config.json on {base} yet; merge one there first" if base
              else "no .verify/config.json in this commit")
         return "done"
+    try:
+        pinned = [] if trusted else verifier_paths(cfg)
+    except ValueError as e:
+        return "done" if post(STATUS_PREFIX, "fail", f"{base}'s config: {e}") else "error"
     job = Path(tempfile.mkdtemp(prefix=f"{slug.split('/')[-1]}-{sha[:9]}-", dir=jobs)).resolve()
     work = job / "repo"
     try:
-        wrap = sandbox_wrap(job, args)
+        wrap = sandbox_wrap(job, args, pinned)
         if wrap is None:
             print(f"[serve] {slug} {label}: no OS sandbox here (macOS sandbox-exec, plus lsof for the port snapshot);"
                   " not running PR code. Use a disposable machine with --unsandboxed to accept host access.", flush=True)
             return "error"
+        unsandboxed_pr = not trusted and not wrap
+        if unsandboxed_pr:
+            post = capped_post(post)
         (job / "home").mkdir()
         (job / "tmp").mkdir()
         rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], timeout=900)
@@ -862,6 +982,15 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             return "error"
         # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
         paths = None if trusted else changed_paths(work, f"origin/{base}")
+        try:
+            problem, edited = pin_verifier(mirror, f"refs/heads/{base}", sha, work, pinned) if pinned else ("", [])
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            problem, edited = f"cannot pin {base}'s verifier: {e}", []
+        if problem:
+            print(f"[serve] {slug} {label}: {problem}; not running", flush=True)
+            return "done" if post(STATUS_PREFIX, "fail", problem) else "error"
+        if edited:
+            note += f" (ran {base}'s verifier, not this PR's edit of {', '.join(edited)})"
         env_file, withheld = job_env_file(slug, pr=not trusted, fork=fork)
         dropped = sorted(k for k in env_file if k in FORGE_TOKENS)
         if dropped:
@@ -882,9 +1011,11 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             stages.append("mutation")
         verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline,
                                            withheld - set(FORGE_TOKENS))
+        if unsandboxed_pr and GH_STATE.get(verdict) == "success":
+            verdict, note = "missing", note + f" ({UNSANDBOXED_PR})"  # the artifact records what the status says
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
-        art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "base": base, "fork": fork,
+        art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "label": label, "base": base, "fork": fork,
                "sandboxed": bool(wrap), "verdict": verdict, "stages": results}
         (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
@@ -1242,7 +1373,9 @@ def main(argv=None):
     p.add_argument("--sha")
     p = sub.add_parser("serve")
     p.add_argument("--repo", action="append", required=True, help="OWNER/NAME or a checkout path (read only)")
-    p.add_argument("--branch", action="append", help="also verify this branch head (e.g. develop)")
+    targets = p.add_mutually_exclusive_group()
+    targets.add_argument("--branch", action="append", help="also verify this branch head (e.g. develop)")
+    targets.add_argument("--pr", type=int, help="only verify this open PR; refuses a mismatched response")
     p.add_argument("--once", action="store_true")
     p.add_argument("--interval", type=int, default=300)
     p.add_argument("--max-jobs", type=int, default=2)
@@ -1253,7 +1386,7 @@ def main(argv=None):
     p.add_argument("--allow-host-port", action="append", type=int,
                    help="host port jobs may reach (a test database the owner runs); all others listening are denied")
     p.add_argument("--unsandboxed", action="store_true",
-                   help="no OS sandbox: PR code gets host access. Only on a disposable machine")
+                   help="no OS sandbox: PR code gets host access, so the runner never posts a pass for a PR job (the code itself could still post one with the host's credentials). Only on a disposable machine")
     for name in ("weaken-check", "mutation-targets"):
         p = sub.add_parser(name)
         p.add_argument("repo", nargs="?", default=".")

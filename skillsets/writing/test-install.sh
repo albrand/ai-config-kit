@@ -4,7 +4,7 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1 (want $2, got $3)"; fail=1; fi; }
-newhome() { h=$(mktemp -d); mkdir -p "$h/.claude/skills" "$h/.codex/skills"; echo "$h"; }
+newhome() { h=$(mktemp -d "${TMPDIR:-/tmp}/writing-test.XXXXXX"); mkdir -p "$h/.claude/skills" "$h/.codex/skills"; echo "$h"; }
 installed() { (cd "$1/no-ai-slop" 2>/dev/null && find . -mindepth 1 | sort | tr '\n' ' '); }
 
 # 1. A clean copy installs exactly the three pinned files into each existing home, and skips absent ones.
@@ -21,7 +21,7 @@ before=$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)
 # 2. Each tampered source is refused, and the copy already installed is unchanged.
 tamper() {
   name=$1; shift
-  W=$(mktemp -d); cp -R "$HERE" "$W/writing"
+  W=$(mktemp -d "${TMPDIR:-/tmp}/writing-test.XXXXXX"); cp -R "$HERE" "$W/writing"
   (cd "$W/writing/shared/no-ai-slop" && sh -c "$*")
   HOME=$H sh "$W/writing/install.sh" >/dev/null 2>&1; check "refuses: $name" 1 $?
   check "installed copy unchanged after: $name" "$before" "$(shasum -a 256 "$H"/.claude/skills/no-ai-slop/* | shasum -a 256)"
@@ -41,7 +41,7 @@ tamper "SKILL.md replaced by a link" 'mv SKILL.md real && ln -s real SKILL.md &&
 REAL_SHASUM=$(command -v shasum)
 midrun() {
   name=$1 target=$2 want_rc=$3
-  W=$(mktemp -d); cp -R "$HERE" "$W/writing"; mkdir "$W/bin"
+  W=$(mktemp -d "${TMPDIR:-/tmp}/writing-test.XXXXXX"); cp -R "$HERE" "$W/writing"; mkdir "$W/bin"
   cat > "$W/bin/shasum" <<EOF
 #!/bin/sh
 "$REAL_SHASUM" "\$@"; rc=\$?
@@ -70,7 +70,7 @@ midrun "checked copy changed before it is installed" hashed 1
 REAL_MV=$(command -v mv)
 before_mv() {
   name=$1 home=$2 action=$3
-  W=$(mktemp -d); mkdir "$W/bin"
+  W=$(mktemp -d "${TMPDIR:-/tmp}/writing-test.XXXXXX"); mkdir "$W/bin"
   cat > "$W/bin/mv" <<EOF
 #!/bin/sh
 case "\$1" in

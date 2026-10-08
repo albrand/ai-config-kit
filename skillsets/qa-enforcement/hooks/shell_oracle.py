@@ -26,6 +26,10 @@ SHELL_STATE = ("ZSH_VERSION", "BASH_VERSION", "KSH_VERSION", "SHELLOPTS", "BASHO
 
 EMPTY = tempfile.mkdtemp(prefix="shell-oracle-home-")  # HOME and ZDOTDIR for every probe and measured run
 atexit.register(shutil.rmtree, EMPTY, True)
+# zsh writes each here-document to a file named from TMPPREFIX (default /tmp/zsh); a sandboxed job may write only
+# under its own TMPDIR, and there zsh would read every heredoc as empty. shell_env() sets it, replacing any inherited one.
+ZSH_TMP = tempfile.mkdtemp(prefix="shell-oracle-zsh-")
+atexit.register(shutil.rmtree, ZSH_TMP, True)
 
 
 def shell_env():
@@ -35,7 +39,7 @@ def shell_env():
     ~/.zshenv even under -c, and one that sets RC_QUOTES reads 'a''b' as a'b (Hermes 2026-10-07 r15). The locale
     and the rest stay, as in the agents' own shells. /etc/zshenv, which zsh always reads, is outside this control."""
     env = {k: v for k, v in os.environ.items() if k not in SHELL_STATE}
-    env.update(HOME=EMPTY, ZDOTDIR=EMPTY)
+    env.update(HOME=EMPTY, ZDOTDIR=EMPTY, TMPPREFIX=os.path.join(ZSH_TMP, "zsh"))
     return env
 
 

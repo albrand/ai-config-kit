@@ -20,5 +20,5 @@ else
 fi
 
 echo "postdeploy: the deploy at $BASE_URL is broken ($failed)." >&2
-echo "postdeploy: to restore the previous deployment: ${ROLLBACK_HINT:-vercel rollback (or your platform's equivalent)}" >&2
+echo "postdeploy: to restore the previous deployment: ${ROLLBACK_HINT:-vercel rollback (or the equivalent on your platform)}" >&2
 exit 1

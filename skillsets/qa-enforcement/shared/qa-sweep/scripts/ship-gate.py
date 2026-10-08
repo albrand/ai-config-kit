@@ -3111,6 +3111,8 @@ def selftest(v4_gate=None, v4_templates=None):
     expect("no verdict" not in p.stderr, "real gate verdict restored after removing the noop override")
 
     # ---------------- pre-push template: real pushes to a bare remote ----------------
+    # The push repos run a copy of this file from .qa/bin, which finds no e2e gate beside it and would fall back to
+    # the host's installed skill; their configs name this run's own gate, so the selftest needs nothing installed.
     bare = os.path.join(tmp, "remote.git")
     sh("git init -q --bare -b main %s" % bare)
     r4 = os.path.join(tmp, "pushrepo")
@@ -3120,7 +3122,7 @@ def selftest(v4_gate=None, v4_templates=None):
     sh("git remote add origin %s && git remote set-head origin main" % bare, cwd=r4)
     os.makedirs(os.path.join(r4, ".qa", "bin"))
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "protected_branches": ["dev", "main"]},
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
               open(os.path.join(r4, ".qa", "config.json"), "w"))
     open(os.path.join(r4, "f.txt"), "w").write("x")
     sh("git add -A && git commit -qm init", cwd=r4)
@@ -3514,7 +3516,8 @@ def selftest(v4_gate=None, v4_templates=None):
     sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r5)
     os.makedirs(os.path.join(r5, ".qa"))
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "protected_branches": ["dev", "main"]}, open(os.path.join(r5, ".qa", "config.json"), "w"))
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
+              open(os.path.join(r5, ".qa", "config.json"), "w"))
     open(os.path.join(r5, "f.txt"), "w").write("x")
     sh("git add -A && git commit -qm base", cwd=r5)  # opt-in committed with the base
     sh("echo a >> f.txt && git add -A && git commit -qm codeA", cwd=r5)
@@ -3689,7 +3692,8 @@ def selftest(v4_gate=None, v4_templates=None):
     sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r9)
     os.makedirs(os.path.join(r9, ".qa"))
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "protected_branches": ["dev", "main"]}, open(os.path.join(r9, ".qa", "config.json"), "w"))
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
+              open(os.path.join(r9, ".qa", "config.json"), "w"))
     open(os.path.join(r9, "f.txt"), "w").write("x\n")
     sh("git add -A && git commit -qm base && echo w >> f.txt && git commit -qam codeW", cwd=r9)
     codeW = sh("git rev-parse HEAD", cwd=r9).stdout.strip()

@@ -65,15 +65,28 @@ stopping point: write the missing stage if you can, then run it.
 4. Copy [templates/AGENTS.repo.md](templates/AGENTS.repo.md) to the repo's `AGENTS.md` and fill it in.
 5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME` (add `--once` to a cron
    or bb automation). It runs open PR heads in throwaway clones and posts `verify/<stage>` statuses.
+   Add `--pr NUMBER` for one open PR; it reads that exact PR, refuses closed or mismatched replies,
+   and records its label with the result. This cannot be combined with `--branch`.
    Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
    - PR code is untrusted. A PR runs its base branch's `.verify/config.json`, so it can't change what
      is checked. A PR that adds the first config gets `missing` until that config is merged.
+   - List the files the stage commands run (helper scripts, suite lists, policy) in the config's
+     `verifier`, as repo-relative files or directories. A PR job runs the base branch's copy of each,
+     a directory replaced whole, and nothing in the job may write, replace or rename them. A PR that
+     edits one gets the base's result, and the status says so; the edit is checked once merged. A
+     listed path missing on the base fails the job. Run pinned Python helpers with `python3 -I`, so a
+     module the PR adds beside them can't shadow an import.
+   - A stage marked `"unconfined": "<why>"` needs a host without the runner's sandbox (it applies
+     its own sandbox, say). The runner reports it `missing`, so the PR stays NOT VERIFIED until it
+     runs with `verify.py run` on an unconfined host.
    - Every command a repo controls runs in a macOS `sandbox-exec` profile. It can't read `/Users`,
      `/Volumes`, `/tmp` or `/var/folders`, apart from its job dir and toolchains (`--allow-read`
      adds one, e.g. a shared `node_modules`). It writes only its job dir. It can't reach the
      keychain, the ssh-agent, Docker, or any port listening on the host when the job started
      (`--allow-host-port` opens one, e.g. a test database). There is no supported sandbox
-     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines.
+     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines, and
+     there the runner never posts a pass for a PR job: its code could rewrite the verifier between stages,
+     and with host access it could post a status itself, which no runner setting prevents.
    - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job, and forge tokens
      never reach them. Network egress stays open (installs and journeys need it), so PR code can
      send anything it sees. That is why PR jobs get no secrets. Values go in

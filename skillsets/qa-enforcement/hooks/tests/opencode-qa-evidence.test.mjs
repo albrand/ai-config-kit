@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { policy } from "../lib/qa-evidence-policy.mjs";
-import { server } from "../plugin/opencode-qa-evidence.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const evidenceScript = resolve(here, "../../shared/qa-sweep/scripts/evidence-stop.py");
@@ -38,6 +37,19 @@ test("OpenCode policy sees a real final claim as a block", () => {
 });
 
 test("OpenCode idle status injects one continuation for a final claim", async () => {
+  // The plugin reads the policy installed under HOME; give it this checkout's copy, not the host's.
+  const home = mkdtempSync(join(tmpdir(), "qa-evidence-home-"));
+  const installed = join(home, ".agents", "skills", "qa-sweep", "scripts");
+  mkdirSync(installed, { recursive: true });
+  copyFileSync(evidenceScript, join(installed, "evidence-stop.py"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  let server;
+  try {
+    ({ server } = await import(`../plugin/opencode-qa-evidence.js?home=${encodeURIComponent(home)}`));
+  } finally {
+    process.env.HOME = previousHome;
+  }
   const calls = [];
   const client = { session: {
     messages: async () => ({ data: [
