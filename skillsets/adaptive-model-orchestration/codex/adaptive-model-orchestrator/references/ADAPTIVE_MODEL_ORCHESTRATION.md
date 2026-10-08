@@ -76,12 +76,12 @@ default is the GPT ceiling, and Claude's is Opus.
 | --- | --- | --- |
 | Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high |
 | PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna`; low, medium or high by complexity |
-| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for light research and bulk work; low | `gpt-6-luna`; low, medium or high by complexity |
+| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for low-complexity research and bulk work (their default complexity); low | `gpt-6-luna`; low, medium or high by complexity |
 
 - **Claude children and reviewers.** Reasoning goes from low to high if and
   only if the work keeps being sent back: two rejections in a row, counting
   Hermes non-accepts and failed quality gates together. It never goes past
-  high. A light child that keeps coming back moves from Haiku to Sonnet; a
+  high. A Haiku child that keeps coming back moves to Sonnet; a
   reviewer or automation stays on Haiku.
 - **GPT children, reviewers and automations.** They climb one step for each
   rejection in a row, and one step each when this work has been going back
