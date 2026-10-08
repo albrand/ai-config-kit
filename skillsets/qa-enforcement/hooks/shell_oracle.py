@@ -21,13 +21,13 @@ PROBE = ('if [ -n "${ZSH_VERSION:-}" ]; then echo "zsh $ZSH_VERSION"; '
 
 
 SHELL_STATE = ("ZSH_VERSION", "BASH_VERSION", "KSH_VERSION", "SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV",
-               "POSIXLY_CORRECT", "IFS", "CDPATH", "TMPPREFIX")
+               "POSIXLY_CORRECT", "IFS", "CDPATH")
 
 
 EMPTY = tempfile.mkdtemp(prefix="shell-oracle-home-")  # HOME and ZDOTDIR for every probe and measured run
 atexit.register(shutil.rmtree, EMPTY, True)
 # zsh writes each here-document to a file named from TMPPREFIX (default /tmp/zsh); a sandboxed job may write only
-# under its own TMPDIR, and there zsh would read every heredoc as empty.
+# under its own TMPDIR, and there zsh would read every heredoc as empty. shell_env() sets it, replacing any inherited one.
 ZSH_TMP = tempfile.mkdtemp(prefix="shell-oracle-zsh-")
 atexit.register(shutil.rmtree, ZSH_TMP, True)
 
