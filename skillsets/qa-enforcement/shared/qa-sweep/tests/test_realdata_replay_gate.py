@@ -1103,18 +1103,47 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_accepts_asterisk_bullet_and_six_word_phrase(self) -> None:
+    def test_blocked_rows_accepts_asterisk_bullet_and_three_word_phrase(self) -> None:
         text = replay_report_with_blocked_line(
-            "* Blocked rows: 12 pending graph projector retry boundary observations (none)")
+            "* Blocked rows: 12 pending graph observations (boundary reached)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_rejects_phrase_longer_than_six_words(self) -> None:
+    def test_blocked_rows_rejects_phrase_longer_than_three_words(self) -> None:
         text = replay_report_with_blocked_line(
             "- Blocked rows: 12 pending graph projector retry boundary observations today (none)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertFalse(valid)
         self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_rejects_contradictory_qualifier(self) -> None:
+        text = replay_report_with_blocked_line(
+            "Blocked rows: 8 were not blocked and succeeded (no boundary)")
+        valid, reason, _ = self.gate_module().validate_report_text(text)
+        self.assertFalse(valid)
+        self.assertIn("blocked external-call rows", reason)
+        self.assertNotIn("were not blocked and succeeded", reason)
+
+    def test_blocked_rows_rejects_negation_tokens_in_qualifier(self) -> None:
+        gate = self.gate_module()
+        for token in ("not", "no", "none", "never", "were", "was", "are", "is", "succeeded", "unblocked"):
+            text = replay_report_with_blocked_line(
+                f"Blocked rows: 8 {token} items (boundary reached: provider limit)")
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(token=token):
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
+                self.assertNotIn(f"{token} items", reason)
+
+    def test_blocked_rows_rejects_negation_boundary(self) -> None:
+        gate = self.gate_module()
+        for boundary in ("no boundary", "none", "n/a", "-"):
+            text = replay_report_with_blocked_line(f"Blocked rows: 3 rows ({boundary})")
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(boundary=boundary):
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
+                self.assertNotIn(f"({boundary})", reason)
 
     def test_blocked_rows_rejects_semicolon_clause_before_boundary(self) -> None:
         text = replay_report_with_blocked_line(
@@ -1142,7 +1171,7 @@ sys.exit(2)
         self.assertTrue(valid, reason)
 
     def test_blocked_rows_accepts_zero_with_none_boundary(self) -> None:
-        text = replay_report_with_blocked_line("Blocked rows: 0 (none)")
+        text = replay_report_with_blocked_line("Blocked rows: 0 (boundary reached: none needed)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 

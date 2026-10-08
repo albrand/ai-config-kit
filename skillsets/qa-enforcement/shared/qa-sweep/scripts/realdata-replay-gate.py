@@ -833,7 +833,11 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
         "blocked external-call rows": (
             r"(?m)^(?:[-*] )?Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+)"
-            r"(?: [^\W\d_]+(?:[-'][^\W\d_]+)*){0,6} \([^)\r\n]+\).*$"
+            r"(?: (?!(?i:not|no|none|never|were|was|are|is|succeeded|unblocked)\b)"
+            r"[A-Za-z_-]+){0,3} "
+            r"\((?![ \t]*(?i:no[ \t]))"
+            r"(?![ \t]*(?i:none|n/a|-)[ \t]*\))"
+            r"[^)\r\n]+\).*$"
         ),
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
