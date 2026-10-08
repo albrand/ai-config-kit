@@ -1167,6 +1167,9 @@ def _inline_script(seg):
     if seg[0] == "eval":
         return " ".join(seg[1:]) or None
     if os.path.basename(seg[0]) in SHELLS:
+        j = shell_script_index(seg, 0)  # after the shell's options: bash -c -e S runs S (Hermes r22)
+        if j is not None:
+            return seg[j]
         for k, a in enumerate(seg[1:], 1):
             if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
                 return seg[k + 1] if k + 1 < len(seg) else None
