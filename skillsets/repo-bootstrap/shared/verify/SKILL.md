@@ -70,6 +70,15 @@ stopping point: write the missing stage if you can, then run it.
    Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
    - PR code is untrusted. A PR runs its base branch's `.verify/config.json`, so it can't change what
      is checked. A PR that adds the first config gets `missing` until that config is merged.
+   - List the files the stage commands run (helper scripts, suite lists, policy) in the config's
+     `verifier`, as repo-relative files or directories. A PR job runs the base branch's copy of each,
+     a directory replaced whole, and nothing in the job may write, replace or rename them. A PR that
+     edits one gets the base's result, and the status says so; the edit is checked once merged. A
+     listed path missing on the base fails the job. Run pinned Python helpers with `python3 -I`, so a
+     module the PR adds beside them can't shadow an import.
+   - A stage marked `"unconfined": "<why>"` needs a host without the runner's sandbox (it applies
+     its own sandbox, say). The runner reports it `missing`, so the PR stays NOT VERIFIED until it
+     runs with `verify.py run` on an unconfined host.
    - Every command a repo controls runs in a macOS `sandbox-exec` profile. It can't read `/Users`,
      `/Volumes`, `/tmp` or `/var/folders`, apart from its job dir and toolchains (`--allow-read`
      adds one, e.g. a shared `node_modules`). It writes only its job dir. It can't reach the

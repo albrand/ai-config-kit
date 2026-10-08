@@ -78,7 +78,14 @@ def python_markers(path):
 def registry(repo):
     path = repo / 'scripts/verify-suites.json'
     data = json.loads(path.read_text()) if path.exists() else {}
-    return data.get('selftests', {}), data.get('excluded', {})
+    return data.get('selftests', {}), {**data.get('excluded', {}), **data.get('native', {})}
+
+
+def native_suites(repo):
+    """Suites that apply their own OS sandbox, which a sandboxed job can't nest: the integration stage runs
+    them (--native), on a host without the runner's sandbox."""
+    path = repo / 'scripts/verify-suites.json'
+    return (json.loads(path.read_text()) if path.exists() else {}).get('native', {})
 
 
 def unittest_suites(repo, tracked):
@@ -174,12 +181,43 @@ def command(path, args=(), inherited_suite=False):
     return ['node', str(path), *args]
 
 
-def main():
+def shadowing(tracked):
+    """Tracked files that would run in place of the standard library: suites run with the repo root (or their own
+    directory) first on the path, so a PR's unittest.py or json.py would replace the module every suite uses."""
+    names = set(sys.stdlib_module_names) | {'sitecustomize', 'usercustomize'}
+    found = []
+    for name in tracked:
+        parts = Path(name).parts
+        if name.endswith('.py') and Path(name).stem in names:
+            found.append(name)
+        elif len(parts) > 1 and parts[-1] == '__init__.py' and parts[-2] in names:
+            found.append(name)
+    return found
+
+
+def main(argv=()):
     tests = inventory()
     selftests, excluded = registry(ROOT)
+    native = native_suites(ROOT)
+    for name, reason in native.items():
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f'invalid native suite: {name}')
+    if '--native' in argv:
+        if not native:
+            print('FAIL no native suites are registered', flush=True)
+            return 1
+        tests = [name for name in sorted(native) if name not in selftests]
+        selftests = {name: args for name, args in selftests.items() if name in native}
+        excluded = {}
+    else:
+        selftests = {name: args for name, args in selftests.items() if name not in native}
     # Include support modules so inheritance resolution sees imported bases too.
     tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')
     suites = unittest_suites(ROOT, [name for name in tracked if name])
+    shadows = shadowing([name for name in tracked if name])
+    if shadows:
+        print('FAIL tracked files shadow standard-library modules: ' + ', '.join(shadows), flush=True)
+        return 1
     if not tests and not selftests:
         print('FAIL empty self-contained test inventory', flush=True)
         return 1
@@ -195,7 +233,8 @@ def main():
             failure_log.parent.mkdir(parents=True, exist_ok=True)
             failure_log.write_text(result.stdout)
             failed.append((name, result.stdout, failure_log))
-    print(f'unit: {len(tests)} test files + {len(selftests)} CLI selftests; {len(failed)} failed', flush=True)
+    print(f"{'native' if '--native' in argv else 'unit'}: {len(tests)} test files + {len(selftests)} CLI selftests; "
+          f'{len(failed)} failed', flush=True)
     for name, output, failure_log in failed:
         print(f'failed suite: {name}', flush=True)
         print(f'failure output retained: {failure_log.relative_to(ROOT)}', flush=True)
@@ -206,4 +245,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

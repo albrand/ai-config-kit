@@ -1,5 +1,13 @@
 {
   "version": 1,
+  "verifier": [
+    "scripts/verify-static.sh",
+    "scripts/verify-unit.sh",
+    "scripts/verify-native.sh",
+    "scripts/verify-unit.py",
+    "scripts/verify-suites.json",
+    "scripts/check-standing-rules.py"
+  ],
   "stages": {
     "static": {
       "run": "sh scripts/verify-static.sh"
@@ -8,8 +16,8 @@
       "run": "sh scripts/verify-unit.sh"
     },
     "integration": {
-      "run": null,
-      "na": "no database, queue or service; installed hook-chain and live BB capability coverage require the host application/provider homes and are recorded separately from checkout-only tests in scripts/verify-suites.json"
+      "run": "sh scripts/verify-native.sh",
+      "unconfined": "its suites apply macOS sandbox-exec themselves, which a sandboxed job cannot nest; installed hook-chain and live BB capability coverage stay host checks, listed in scripts/verify-suites.json"
     },
     "journeys": {
       "run": null,

@@ -160,6 +160,70 @@ class UnitStageTests(unittest.TestCase):
             repaired = subprocess.run([sys.executable, 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
             self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
 
+    def test_native_suites_leave_the_unit_stage_and_run_only_with_native(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+            (root / 'checks').mkdir()
+            (root / 'checks/test_plain.py').write_text('print("PLAIN RAN")\n')
+            (root / 'checks/test_sandboxed.py').write_text('print("NATIVE RAN")\nraise SystemExit(1)\n')
+            (root / 'checks/gate.py').write_text('import sys\nprint("NATIVE SELFTEST", sys.argv[1:])\n')
+            (root / 'scripts/verify-suites.json').write_text(json.dumps({
+                'selftests': {'checks/gate.py': ['selftest']},
+                'native': {'checks/test_sandboxed.py': 'applies its own sandbox', 'checks/gate.py': 'same'}}))
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            unit = subprocess.run([sys.executable, '-I', 'scripts/verify-unit.py'], cwd=root, capture_output=True, text=True)
+            self.assertEqual(unit.returncode, 0, unit.stdout + unit.stderr)
+            self.assertIn('PLAIN RAN', unit.stdout)
+            self.assertNotIn('NATIVE', unit.stdout.replace('host-only check excluded', ''))
+            self.assertIn('unit: 1 test files + 0 CLI selftests; 0 failed', unit.stdout)
+            native = subprocess.run([sys.executable, '-I', 'scripts/verify-unit.py', '--native'], cwd=root,
+                                    capture_output=True, text=True)
+            self.assertEqual(native.returncode, 1, native.stdout + native.stderr)
+            self.assertIn('NATIVE RAN', native.stdout)
+            self.assertIn("NATIVE SELFTEST ['selftest']", native.stdout)
+            self.assertNotIn('PLAIN RAN', native.stdout)
+            self.assertIn('native: 1 test files + 1 CLI selftests; 1 failed', native.stdout)
+
+    def test_native_lane_with_nothing_registered_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+            (root / 'checks').mkdir()
+            (root / 'checks/test_plain.py').write_text('pass\n')
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            result = subprocess.run([sys.executable, '-I', 'scripts/verify-unit.py', '--native'], cwd=root,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('FAIL no native suites are registered', result.stdout)
+
+    def test_a_module_beside_the_helper_or_the_suites_cannot_replace_the_standard_library(self):
+        # The runner pins scripts/verify-unit.py from the base branch; the PR can still add files around it. Run
+        # isolated (as verify-unit.sh does), a scripts/json.py can't hijack the helper's own imports, and a tracked
+        # unittest.py, which `python -m unittest` would run from the repo root in place of the real one, fails.
+        for plant in ('scripts/json.py', 'scripts/subprocess.py', 'unittest.py', 'checks/unittest/__init__.py',
+                      'sitecustomize.py'):
+            with self.subTest(plant=plant), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                subprocess.run(['git', 'init', '-q', tmp], check=True)
+                (root / 'scripts').mkdir()
+                (root / 'scripts/verify-unit.py').write_text(Path(__file__).with_name('verify-unit.py').read_text())
+                (root / 'checks').mkdir()
+                (root / 'checks/test_audit.py').write_text(
+                    'import unittest\nclass Audit(unittest.TestCase):\n    def test_outcome(self):\n'
+                    '        self.assertTrue(False)\n')
+                (root / plant).parent.mkdir(parents=True, exist_ok=True)
+                (root / plant).write_text('import os\nprint("PLANT RAN")\nos._exit(0)\n')
+                subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+                result = subprocess.run([sys.executable, '-I', 'scripts/verify-unit.py'], cwd=root,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertNotIn('PLANT RAN', result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
