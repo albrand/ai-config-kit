@@ -329,6 +329,15 @@ def bb(args):
         raise RuntimeError('BB metadata/action refused: command=' + args[0] + ', exit=' + str(result.returncode))
     return json.loads(result.stdout)
 
+def source_snapshot(db, ident):
+    # Enriched `thread show` fetches PR/spend data. Lifecycle polling needs only
+    # canonical adapter metadata, already used for owners and descendants.
+    row = db.execute('SELECT id,status,provider_id,environment_id,archived_at,deleted_at FROM threads WHERE id=?', (ident,)).fetchone()
+    if row is None or row[4] is not None or row[5] is not None or not row[3]:
+        raise RuntimeError('Live source thread/environment binding unavailable')
+    return {'thread': {'id': row[0], 'status': row[1], 'providerId': row[2], 'environmentId': row[3]},
+            'environment': {'id': row[3]}}
+
 def surface(args):
     try:
         return subprocess.run(ELYRA + args, capture_output=True, text=True, timeout=15)
@@ -387,7 +396,7 @@ def run(mutate=False):
             native = surface(['chat', 'list', '--workspace', 'id:' + target['workspace'], '--json'])
             chats, chat_error = runtime_inventory(native, 'chats', 'Native chat')
             thread = target['thread']
-            s = bb(['thread', 'show', thread, '--json'])
+            s = source_snapshot(db, thread)
             t, env = s['thread'], s['environment']
             ledger_path = SCOPE_ROOT / (thread + '.json')
             ledger, ledger_error = read_scope_ledger(ledger_path)
@@ -470,7 +479,8 @@ def run(mutate=False):
                     if reconcile:
                         stream.write('\nYour source children are idle with unresolved receipt/scope metadata. Reconcile their actual results in your existing conversation and resume unfinished authorized work under those same owners. Do not create replacement writers or treat missing local scope metadata as completion or consent. Child control-plane metadata: ' + json.dumps(child_holds) + '\n')
                 # Fresh idle control-plane recheck at the delivery boundary.
-                current = bb(['thread', 'show', thread, '--json'])
+                current = source_snapshot(db, thread)
+                current['thread']['queuedMessageCount'] = len(bb(['thread', 'queue', 'list', thread, '--json']))
                 route = bb(['fleet', 'route', target.get('routeRole', 'implementation'), '--json'])
                 fresh_source_workers = active_descendants(db, thread)
                 fresh_child_holds = [x for x in descendant_work(db, thread) if x['hold'] != 'RUNNING']
@@ -483,8 +493,9 @@ def run(mutate=False):
                 elif can_nudge(current['thread'], route):
                     admitted = queue_admission(db, current['thread'], current['environment'])
                     item['inputAdmission'] = admitted
-                    boundary = bb(['thread', 'show', thread, '--json'])
-                    if admitted['admitted'] and boundary['thread'].get('status') == 'idle' and boundary['environment']['id'] == current['environment']['id'] and not boundary['thread'].get('queuedMessageCount'):
+                    boundary = source_snapshot(db, thread)
+                    boundary_queue = bb(['thread', 'queue', 'list', thread, '--json'])
+                    if admitted['admitted'] and boundary['thread'].get('status') == 'idle' and boundary['environment']['id'] == current['environment']['id'] and not boundary_queue:
                         receipt = bb(['thread', 'tell', thread, '--message-file', str(file), '--mode', 'queue', '--json'])
                         item['nudgeReceipt'] = receipt
                         item['nudges'] += 1
@@ -540,7 +551,8 @@ def run(mutate=False):
                   'classificationRule': 'worker exit and context import never close original purposes',
                   'boundedNudgesPerTarget': 3, 'minimumNudgeIntervalSeconds': 1800,
                   'ongoingMonitor': True, 'mutationsEnabled': mutate,
-                  'monitorSha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+                  'monitorSha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                  'sourceSnapshotAdapter': 'canonical BB SQLite metadata, read only'}
         save(prior_path, output)
         events_path = ROOT / 'monitor-events.jsonl'
         with events_path.open('a') as stream:
