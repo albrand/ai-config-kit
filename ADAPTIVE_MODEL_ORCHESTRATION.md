@@ -75,7 +75,7 @@ default is the GPT ceiling, and Claude's is Opus.
 | Role | Claude | GPT (Codex) |
 | --- | --- | --- |
 | Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high |
-| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna` |
+| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna`; low, medium or high by complexity |
 | Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for light research and bulk work; low | `gpt-6-luna`; low, medium or high by complexity |
 
 - **Claude children and reviewers.** Reasoning goes from low to high if and
@@ -83,7 +83,7 @@ default is the GPT ceiling, and Claude's is Opus.
   Hermes non-accepts and failed quality gates together. It never goes past
   high. Light work that keeps coming back
   moves from Haiku to Sonnet.
-- **GPT children.** They climb one step for each rejection in a row, and one
+- **GPT children, reviewers and automations.** They climb one step for each rejection in a row, and one
   step each when this work has been going back and forth for 2 hours, then
   for 6. That time is the work's own, counted from its first rejection since
   its last accept (or its stated start); a new task in an old group starts at
