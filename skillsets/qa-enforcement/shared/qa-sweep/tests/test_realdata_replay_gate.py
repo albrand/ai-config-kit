@@ -1152,7 +1152,8 @@ sys.exit(2)
     def test_blocked_rows_rejects_self_negating_boundary(self) -> None:
         gate = self.gate_module()
         for boundary in (
-                "no calls were blocked", "none were blocked", "nothing was blocked", "zero calls blocked"):
+                "no calls were blocked", "none were blocked", "nothing was blocked", "zero calls blocked",
+                "not blocked; eight calls stopped at the boundary", "unblocked; rows ok"):
             text = replay_report_with_blocked_line(f"Blocked rows: 8 ({boundary})")
             valid, reason, _ = gate.validate_report_text(text)
             with self.subTest(boundary=boundary):
