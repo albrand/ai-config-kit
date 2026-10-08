@@ -341,6 +341,20 @@ class ReviewSkillSourceTests(unittest.TestCase):
         # The folded-in skill is retired; nothing may send an agent to it.
         self.assertNotIn("hermes-assisted-pr-review", text)
 
+    def test_haiku_keep_working_note_keeps_the_no_post_path(self) -> None:
+        # The early-stop guidance for Haiku reviewers (2026-10-08) must not
+        # turn "finish the review" into "always post": draft/no-post mode and
+        # non-postable targets still end with a full report (Hermes, kit-p8-prompting r1).
+        text = re.sub(r"\s+", " ", CODEX_SKILL.read_text(encoding="utf-8"))
+        start = text.index("Reviewers run on Haiku 5.5 at low reasoning")
+        note = text[start:text.index("## Workflow", start)]
+        self.assertIn("keep working until the review is finished", note)
+        self.assertIn("draft/no-post mode", note)
+        self.assertIn("not a postable PR, reported in full", note)
+        self.assertNotIn("until the review is posted", note)
+        # The no-post exception itself is still stated in the skill's opening.
+        self.assertIn("Do not split analysis from posting unless the user explicitly asks for draft/no-post mode", text)
+
     def test_codex_contract_carries_the_pre_review_packet_rule(self) -> None:
         text = CODEX_CONTRACT.read_text(encoding="utf-8")
         self.assertIn("attach both JSON and Markdown packets", text)

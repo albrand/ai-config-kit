@@ -34,10 +34,11 @@ pass raw review text, diffs, source excerpts, secrets, or personal data.
 
 Reviewers run on Haiku 5.5 at low reasoning (owner model policy, 2026-10-08),
 where Anthropic reports that long agent prompts sometimes stop early and hand
-the task back. So: keep working until the review is posted, or until posting
-is blocked and you have said why; don't stop after reading the diff to report
-what you would check. When the review is posted, stop and report. Don't add
-fixes, files or refactors to the PR that weren't asked for.
+the task back. So keep working until the review is finished: posted, or, in
+draft/no-post mode or for a target that is not a postable PR, reported in
+full; or blocked, with the reason stated. Don't stop after reading the diff to
+report what you would check. When the review is finished, stop and report.
+Don't add fixes, files or refactors to the PR that weren't asked for.
 
 ## Workflow
 
