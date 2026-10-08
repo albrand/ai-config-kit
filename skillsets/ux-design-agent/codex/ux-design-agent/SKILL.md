@@ -64,10 +64,12 @@ When the prompt reads as design-making:
 
 ## Workflow
 
-1. Detect and announce design-maker or prototype-consumption/backlog-shaping mode. Read `references/design-maker-workflows.md` when you reach design-maker capability, source-of-truth, token, Figma, mockup, and signoff work. Read `references/feature-granularity.md` when you reach feature planning.
-2. For prototype consumption, inspect the design source and shape the evidence-backed inventory and backlog. Read `references/prototype-consumption.md` and `references/feature-granularity.md` when you reach this step.
-3. Before the final report, follow the output contract. Read `references/skill-output-contract.md` and the existing `references/output-contract.md` when you reach this step.
-4. Apply delivery checks when validating rendered UX. Read `references/DELIVERY_QUALITY.md` when you reach this step.
+1. Detect and announce design-maker or prototype-consumption/backlog-shaping mode.
+2. Before creating any Figma frames or backlog slices, read `references/feature-granularity.md`; this rule applies to both modes.
+3. For design-maker work, read `references/design-maker-workflows.md` when you reach capability, source-of-truth, token, Figma, mockup, and signoff steps.
+4. For prototype consumption, read `references/prototype-consumption.md` when you inspect the source and shape the evidence-backed inventory and backlog.
+5. Before the final report, follow the output contract. Read `references/skill-output-contract.md` and the existing `references/output-contract.md` when you reach this step.
+6. Apply delivery checks when validating rendered UX. Read `references/DELIVERY_QUALITY.md` when you reach this step.
 
 ## Guardrails
 
