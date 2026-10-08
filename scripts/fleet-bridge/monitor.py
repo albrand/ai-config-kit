@@ -441,20 +441,70 @@ def private_text(path, value):
     finally:
         os.close(directory)
 
+def completed_adapter_binding(db, ident):
+    """Read one consistent adapter snapshot, excluding only proven bookkeeping.
+
+    A system child-completed notice delivered within a completed turn never
+    supersedes its task. Every other post-start request remains a hold.
+    Prompt content is neither inspected nor used as authority.
+    """
+    db.execute('SAVEPOINT fleet_bridge_binding')
+    try:
+        thread = db.execute('SELECT status,environment_id,provider_id FROM threads WHERE id=? AND archived_at IS NULL AND deleted_at IS NULL', (ident,)).fetchone()
+        if not thread or thread[0] != 'idle':
+            return None
+        owners = db.execute("SELECT id FROM threads WHERE environment_id=? AND status IN ('active','starting','stopping') AND archived_at IS NULL AND deleted_at IS NULL", (thread[1],)).fetchall()
+        session = db.execute('SELECT provider_thread_id FROM events WHERE thread_id=? AND provider_thread_id IS NOT NULL ORDER BY sequence DESC LIMIT 1', (ident,)).fetchone()
+        started = db.execute("SELECT id,sequence,provider_thread_id FROM events WHERE thread_id=? AND type='turn/started' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
+        ended = db.execute("SELECT sequence,provider_thread_id FROM events WHERE thread_id=? AND type='turn/completed' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
+        if owners or not session or not started or not ended or started[1] >= ended[0] or session[0] != started[2] or session[0] != ended[1]:
+            return None
+        requested = db.execute("SELECT id,sequence FROM events WHERE thread_id=? AND type='client/turn/requested' AND sequence<? ORDER BY sequence DESC LIMIT 1", (ident, started[1])).fetchone()
+        if not requested:
+            return None
+        later = db.execute("SELECT id,sequence,data FROM events WHERE thread_id=? AND type='client/turn/requested' AND sequence>? ORDER BY sequence", (ident, started[1])).fetchall()
+        frame = [[requested[0], requested[1]]]
+        for event_id, sequence, raw in later:
+            if sequence >= ended[0]:
+                return None
+            try:
+                data = json.loads(raw)
+            except (TypeError, ValueError):
+                return None
+            if not isinstance(data, dict):
+                return None
+            target = data.get('target')
+            subject = data.get('systemMessageSubject')
+            request = data.get('request')
+            if (data.get('direction') != 'outbound' or data.get('source') != 'tell' or
+                    data.get('initiator') != 'system' or data.get('systemMessageKind') != 'child-completed' or
+                    not isinstance(target, dict) or target.get('kind') != 'auto' or
+                    not isinstance(target.get('expectedTurnId'), str) or not target['expectedTurnId'].strip() or
+                    not isinstance(subject, dict) or subject.get('kind') != 'thread' or
+                    not isinstance(subject.get('threadId'), str) or
+                    not isinstance(request, dict) or request.get('method') != 'turn/start'):
+                return None
+            child = db.execute('SELECT parent_thread_id FROM threads WHERE id=?', (subject['threadId'],)).fetchone()
+            if not child or child[0] != ident:
+                return None
+            frame.append([event_id, sequence, target['expectedTurnId'], subject['threadId']])
+        return {'threadId': ident, 'environmentId': thread[1], 'providerId': thread[2],
+                'sessionId': session[0], 'leaseId': started[0], 'topicId': requested[0],
+                'epoch': started[1], 'completedSequence': ended[0],
+                'requestFrameSha256': hashlib.sha256(json.dumps(frame, separators=(',', ':')).encode()).hexdigest()}
+    finally:
+        db.execute('RELEASE SAVEPOINT fleet_bridge_binding')
+
 def queue_admission(db, thread, environment):
     """Admit from actual BB adapter events; scope and prompt text are excluded."""
     ident = thread['id']
-    session = db.execute('SELECT provider_thread_id FROM events WHERE thread_id=? AND provider_thread_id IS NOT NULL ORDER BY sequence DESC LIMIT 1', (ident,)).fetchone()
-    started = db.execute("SELECT id,sequence FROM events WHERE thread_id=? AND type='turn/started' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
-    requested = db.execute("SELECT id,sequence FROM events WHERE thread_id=? AND type='client/turn/requested' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
-    ended = db.execute("SELECT sequence FROM events WHERE thread_id=? AND type='turn/completed' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
-    owners = [r[0] for r in db.execute("SELECT id FROM threads WHERE environment_id=? AND status IN ('active','starting','stopping') AND archived_at IS NULL AND deleted_at IS NULL", (environment['id'],))]
-    if thread.get('status') != 'idle' or owners or not session or not started or not requested or not ended or not requested[1] < started[1] < ended[0]:
-        return {'admitted': False, 'reason': 'Latest adapter request must precede its completed turn, with exclusive idle workspace'}
-    lease = {'schema_version': 1, 'workspace_id': environment['id'], 'session_id': session[0],
-             'lease_id': started[0], 'topic_id': requested[0], 'epoch': started[1],
+    binding = completed_adapter_binding(db, ident)
+    if thread.get('status') != 'idle' or not binding or binding['environmentId'] != environment['id'] or (thread.get('providerId') and binding['providerId'] != thread['providerId']):
+        return {'admitted': False, 'reason': 'Task request must precede its completed turn, with exclusive idle workspace and no unresolved inputs'}
+    lease = {'schema_version': 1, 'workspace_id': binding['environmentId'], 'session_id': binding['sessionId'],
+             'lease_id': binding['leaseId'], 'topic_id': binding['topicId'], 'epoch': binding['epoch'],
              'status': 'completed', 'write_owner': ident}
-    envelope = {'schema_version': 1, 'workspace_id': environment['id'], 'session_id': session[0],
+    envelope = {'schema_version': 1, 'workspace_id': binding['environmentId'], 'session_id': binding['sessionId'],
                 'lease_id': None, 'topic_id': None, 'input_class': 'handoff',
                 'attribution': {'kind': 'dispatch', 'authenticated': False, 'authority': None},
                 'resume_packet_ref': None, 'resume_packet_validated': False,
@@ -471,10 +521,7 @@ def queue_admission(db, thread, environment):
     save(folder / (ident + '-result.json'), decision)
     return {'admitted': guard.returncode == 0 and decision.get('decision') == 'route_fresh',
             'decision': decision.get('decision'), 'exitCode': guard.returncode,
-            'binding': {'threadId': ident, 'environmentId': environment['id'],
-                        'providerId': thread.get('providerId'), 'sessionId': session[0],
-                        'leaseId': started[0], 'topicId': requested[0],
-                        'epoch': started[1], 'completedSequence': ended[0]}}
+            'binding': binding}
 
 def delivery_binding_current(db, expected):
     """Re-read the admitted owner and complete lease in one adapter DB snapshot.
@@ -484,17 +531,7 @@ def delivery_binding_current(db, expected):
     """
     if not isinstance(expected, dict):
         return False
-    row = db.execute("""SELECT t.status,t.environment_id,t.provider_id,
-        (SELECT provider_thread_id FROM events WHERE thread_id=t.id AND provider_thread_id IS NOT NULL ORDER BY sequence DESC LIMIT 1),
-        (SELECT id FROM events WHERE thread_id=t.id AND type='turn/started' ORDER BY sequence DESC LIMIT 1),
-        (SELECT id FROM events WHERE thread_id=t.id AND type='client/turn/requested' ORDER BY sequence DESC LIMIT 1),
-        (SELECT sequence FROM events WHERE thread_id=t.id AND type='turn/started' ORDER BY sequence DESC LIMIT 1),
-        (SELECT sequence FROM events WHERE thread_id=t.id AND type='turn/completed' ORDER BY sequence DESC LIMIT 1),
-        EXISTS(SELECT 1 FROM threads o WHERE o.environment_id=t.environment_id AND o.status IN ('active','starting','stopping') AND o.archived_at IS NULL AND o.deleted_at IS NULL)
-        FROM threads t WHERE t.id=? AND t.archived_at IS NULL AND t.deleted_at IS NULL""", (expected.get('threadId'),)).fetchone()
-    return bool(row and row[0] == 'idle' and not row[8] and row[1:8] == (
-        expected.get('environmentId'), expected.get('providerId'), expected.get('sessionId'),
-        expected.get('leaseId'), expected.get('topicId'), expected.get('epoch'), expected.get('completedSequence')))
+    return completed_adapter_binding(db, expected.get('threadId')) == expected
 
 def delivery_history(ident):
     """Durable attempts survive an ambiguous CLI result or later poll failure."""

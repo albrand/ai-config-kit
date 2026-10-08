@@ -93,6 +93,13 @@ fleet activity: a fresh stage-first installation can record its first baseline
 on its initial poll. Running the initial observation before staging remains a
 useful check of operator bindings.
 
+For queued delivery, the bridge binds the request that preceded the completed
+turn. A control-plane `child-completed` notice from that thread's own child,
+delivered during the turn, does not replace the task. User input, unknown or
+malformed notices, foreign children, and all requests after completion keep
+delivery held. The final owner/lease check reads a consistent database snapshot
+and compares the request frame before enqueueing.
+
 The first scope snapshot records all existing purpose IDs. Later additions
 remain tracked even if added and completed between polls. Accepted revisions
 newer than original closure also block completion. The source owner records
