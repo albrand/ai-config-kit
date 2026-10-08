@@ -79,7 +79,9 @@ stopping point: write the missing stage if you can, then run it.
    - A PR is checked merged into the base commit its verifier comes from, and the statuses go on the
      PR's head. A branch that predates a base change is then not failed by it, and only edits made
      since the branch left the base are named. A PR that conflicts with the base gets `missing` and
-     runs nothing until it is merged with or rebased on the base.
+     runs nothing until it is merged with or rebased on the base. Git in a PR job runs without the
+     host's git config, so a PR's `.gitattributes` can't pick a host merge driver or filter; Git LFS
+     files stay pointers there.
    - A stage marked `"unconfined": "<why>"` needs a host without the runner's sandbox (it applies
      its own sandbox, say). The runner reports it `missing`, so the PR stays NOT VERIFIED until it
      runs with `verify.py run` on an unconfined host.

@@ -101,8 +101,8 @@ def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
     return p.returncode, out or ""
 
 
-def git(repo, *args, timeout=60):
-    rc, out = sh(["git", "-C", str(repo), *args], timeout=timeout, merge=False)
+def git(repo, *args, timeout=60, env=None):
+    rc, out = sh(["git", "-C", str(repo), *args], env=env, timeout=timeout, merge=False)
     return out.strip() if rc == 0 else ""
 
 
@@ -494,11 +494,11 @@ def skipped_count(output):
     return n
 
 
-def changed_paths(repo, base):
+def changed_paths(repo, base, env=None):
     if not base:
         return None
-    mb = git(repo, "merge-base", base, "HEAD")
-    out = git(repo, "diff", "--name-only", f"{mb or base}...HEAD")
+    mb = git(repo, "merge-base", base, "HEAD", env=env)
+    out = git(repo, "diff", "--name-only", f"{mb or base}...HEAD", env=env)
     return out.splitlines()
 
 
@@ -940,6 +940,16 @@ def pin_verifier(mirror, ref, sha, work, paths, since=None):
     return "", edited
 
 
+def job_git_env(job):
+    """Env for git in a PR job dir: no host global, system or XDG git config, so a PR's .gitattributes can't select
+    a merge driver or filter the host defines (git-lfs included), and no host hook, signing or credential helper
+    applies. GIT_* from the host is dropped too."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(HOME=str(job / "home"), XDG_CONFIG_HOME=str(job / "home" / ".config"), GIT_CONFIG_NOSYSTEM="1",
+               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull, GIT_TERMINAL_PROMPT="0")
+    return env
+
+
 def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
     whose SHA is, right now, the head of the owner-listed branch named by `label`."""
@@ -984,23 +994,25 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             post = capped_post(post)
         (job / "home").mkdir()
         (job / "tmp").mkdir()
-        rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], timeout=900)
-        rc = rc or sh(["git", "-C", str(work), "checkout", "--quiet", "--detach", sha], timeout=900)[0]
+        genv = None if trusted else job_git_env(job)
+        rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], env=genv,
+                   timeout=900)
+        rc = rc or sh(["git", "-C", str(work), "checkout", "--quiet", "--detach", sha], env=genv, timeout=900)[0]
         if rc != 0:
             print(f"[serve] {slug} {label}: cannot check out {sha[:9]}")
             return "error"
-        if base_sha:  # no hooks, no signing: nothing from the host's git setup runs in the job dir
+        if base_sha:  # genv: no host git config, so no host hook, signing, merge driver or filter runs here
             rc, out = sh(["git", "-C", str(work), "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
                           "-c", "user.name=verify runner", "-c", "user.email=verify-runner@localhost",
-                          "merge", "--quiet", "--no-ff", "--no-edit", base_sha], timeout=900)
+                          "merge", "--quiet", "--no-ff", "--no-edit", base_sha], env=genv, timeout=900)
             if rc != 0:
                 print(f"[serve] {slug} {label}: {sha[:9]} does not merge into {base} at {base_sha[:9]}:\n{out[-2000:]}",
                       flush=True)
                 return "done" if post(STATUS_PREFIX, "missing", f"not checked: conflicts with {base} at {base_sha[:9]};"
                                       f" merge or rebase on {base}") else "error"
-        checked = git(work, "rev-parse", "HEAD")
+        checked = git(work, "rev-parse", "HEAD", env=genv)
         # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
-        paths = None if trusted else changed_paths(work, base_sha)
+        paths = None if trusted else changed_paths(work, base_sha, genv)
         try:
             problem, edited = pin_verifier(mirror, base_sha, sha, work, pinned, since) if pinned else ("", [])
         except (OSError, ValueError, subprocess.SubprocessError) as e:

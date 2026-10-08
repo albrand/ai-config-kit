@@ -441,6 +441,32 @@ class PinnedVerifier(unittest.TestCase):
         self.assertIn("conflicts with main at", final[2])
         self.assertEqual(len(self.posts), 1, self.posts)  # no stage ran
 
+    def test_a_pr_s_gitattributes_cannot_run_a_merge_driver_or_filter_the_host_defines(self):
+        ran = self.tmp / "ran"
+        ran.mkdir()
+        host = self.tmp / "host.gitconfig"
+        host.write_text(f'[merge "probe"]\n\tdriver = touch {ran}/merge-driver\n'
+                        f'[filter "probe"]\n\tsmudge = touch {ran}/smudge-filter; cat\n')
+        git(self.origin, "checkout", "-q", "main")
+        self.write("shared.txt", "one\ntwo\nthree\n")(self.origin)
+        git(self.origin, "add", "-A")
+        git(self.origin, "commit", "-q", "-m", "shared file")
+        git(self.origin, "checkout", "-q", "-B", "pr")
+        self.on_main_after_the_pr_branched({"shared.txt": "ONE\ntwo\nthree\n"}, "main edits line 1")
+
+        def change(repo):  # both sides edit shared.txt, so the merge needs a content merge: the driver's moment
+            self.write("shared.txt", "one\ntwo\nTHREE\n")(repo)
+            self.write(".gitattributes", "*.txt merge=probe filter=probe\n")(repo)
+            self.write("tests/widget.sh", "exit 0\n")(repo)
+        saved = os.environ.get("GIT_CONFIG_GLOBAL")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(host)  # the host's own git config defines the drivers
+        try:
+            final, _ = self.run_pr(change)
+        finally:
+            os.environ.pop("GIT_CONFIG_GLOBAL") if saved is None else os.environ.update(GIT_CONFIG_GLOBAL=saved)
+        self.assertEqual(sorted(os.listdir(ran)), [])
+        self.assertIn("unit=pass", final[2])  # the job did check out, merge and run
+
     def test_bad_verifier_paths_in_the_base_config_fail_closed(self):
         for bad in (["../x"], ["/etc/passwd"], [".git/config"], ["a//b"], "scripts", [3]):
             with self.subTest(bad=bad):
