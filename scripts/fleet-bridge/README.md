@@ -88,6 +88,9 @@ Unavailable or timed-out native UI reads and title updates are recorded as
 failed surface operations. They do not discard source progress or prevent a
 sibling from being observed. A failed terminal read cannot attest its binding;
 source ownership and delivery admission still come from the BB control plane.
+Durable diagnostics distinguish timeout and OS errors and retain the error
+type, deadline or errno, and captured-output byte counts and digests. Raw
+partial output is excluded from task receipts.
 
 Per-target scope baselines also survive independently of the main poll state.
 Losing that state cannot turn a retained unreceipted followup into old history.

@@ -408,11 +408,24 @@ def source_snapshot(db, ident):
     return {'thread': {'id': row[0], 'status': row[1], 'providerId': row[2], 'environmentId': row[3]},
             'environment': {'id': row[3]}}
 
-def surface(args):
+def surface(args, failures=None):
     try:
         return subprocess.run(ELYRA + args, capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
-        return subprocess.CompletedProcess(ELYRA + args, 124, stdout='', stderr='Surface unavailable')
+    except (OSError, subprocess.TimeoutExpired) as error:
+        timed_out = isinstance(error, subprocess.TimeoutExpired)
+        code = 124 if timed_out else 127
+        def output_identity(value):
+            raw = value.encode() if isinstance(value, str) else value or b''
+            return {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+        diagnostic = {'operation': args[:2], 'cause': 'timeout' if timed_out else 'os_error',
+                      'errorType': type(error).__name__, 'returnCode': code,
+                      'timeoutSeconds': error.timeout if timed_out else None,
+                      'errno': getattr(error, 'errno', None),
+                      'stdout': output_identity(getattr(error, 'stdout', None)),
+                      'stderr': output_identity(getattr(error, 'stderr', None))}
+        if failures is not None:
+            failures.append(diagnostic)
+        return subprocess.CompletedProcess(ELYRA + args, code, stdout='', stderr='Surface unavailable')
 
 def save(path, data):
     private_text(path, json.dumps(data, indent=2) + '\n')
@@ -619,7 +632,8 @@ def run(mutate=False):
         db = sqlite3.connect(DATABASE.as_uri() + '?mode=ro', uri=True)
         results = []
         for target in TARGETS:
-            native = surface(['chat', 'list', '--workspace', 'id:' + target['workspace'], '--json'])
+            surface_failures = []
+            native = surface(['chat', 'list', '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
             chats, chat_error = runtime_inventory(native, 'chats', 'Native chat')
             thread = target['thread']
             s = source_snapshot(db, thread)
@@ -690,7 +704,7 @@ def run(mutate=False):
             codex_observed = False
             codex_error = None
             if codex_binding:
-                observed = surface(['terminal', 'show', '--terminal', codex_binding['terminalHandle'], '--json'])
+                observed = surface(['terminal', 'show', '--terminal', codex_binding['terminalHandle'], '--json'], surface_failures)
                 snapshot, codex_error = terminal_snapshot(observed)
                 if codex_error is None:
                     term = snapshot['terminal']
@@ -733,6 +747,7 @@ def run(mutate=False):
                 item['scopeBaselineUnreconciled'] = True
             if codex_error:
                 item['nativeCodexTerminalError'] = codex_error
+            item['nativeSurfaceFailures'] = surface_failures
             item['nudges'] = last.get('nudges', 0)
             item['lastNudgeAt'] = last.get('lastNudgeAt', 0)
             history = delivery_history(thread)
@@ -795,18 +810,18 @@ def run(mutate=False):
                     item['nudgeHeld'] = 'fresh idle owner and matching verified provider route required'
             title = target['project'] + ' coordinator — source ' + item['state'] + '; native ' + review_state['state'] + ' — ' + '/'.join(observed_purpose_ids)
             if mutate and native_chat is not None and native_chat.get('title') != title and target.get('node'):
-                change = surface(['canvas', 'rename', target['node'], '--title', title, '--workspace', 'id:' + target['workspace'], '--json'])
+                change = surface(['canvas', 'rename', target['node'], '--title', title, '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                 item['canvasUpdateExit'] = change.returncode
             if mutate and codex_observed and (item['state'] != last.get('state') or last.get('nativeCodexCoordinatorNode') != codex_binding['nodeId']):
                 title = target['project'] + ' Codex coordinator — ' + item['state'] + ' — source ' + '/'.join(observed_purpose_ids)
-                change = surface(['canvas', 'rename', codex_binding['nodeId'], '--title', title, '--workspace', 'id:' + target['workspace'], '--json'])
+                change = surface(['canvas', 'rename', codex_binding['nodeId'], '--title', title, '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                 item['codexCanvasUpdateExit'] = change.returncode
             if target.get('workerNodes'):
-                canvas = surface(['canvas', 'list', '--workspace', 'id:' + target['workspace'], '--json'])
+                canvas = surface(['canvas', 'list', '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                 nodes, canvas_error = runtime_inventory(canvas, 'nodes', 'Canvas')
                 if canvas_error:
                     item['canvasInventoryError'] = canvas_error
-                terminal_reply = surface(['terminal', 'list', '--workspace', 'id:' + target['workspace'], '--json'])
+                terminal_reply = surface(['terminal', 'list', '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                 terminals, terminal_error = terminal_inventory(terminal_reply)
                 if terminal_error:
                     item['terminalInventoryError'] = terminal_error
@@ -826,10 +841,10 @@ def run(mutate=False):
                         entry['terminalHandle'] = terminal['handle']
                         entry['terminalTitle'] = terminal.get('title')
                     if mutate and node.get('title') != label:
-                        changed = surface(['canvas', 'rename', worker['node'], '--title', label, '--workspace', 'id:' + target['workspace'], '--json'])
+                        changed = surface(['canvas', 'rename', worker['node'], '--title', label, '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                         entry['canvasTitleUpdateExit'] = changed.returncode
                     if mutate and terminal is not None and terminal.get('title') != label:
-                        changed = surface(['terminal', 'rename', '--terminal', terminal['handle'], '--title', label, '--workspace', 'id:' + target['workspace'], '--json'])
+                        changed = surface(['terminal', 'rename', '--terminal', terminal['handle'], '--title', label, '--workspace', 'id:' + target['workspace'], '--json'], surface_failures)
                         entry['terminalTitleUpdateExit'] = changed.returncode
                     item['sourceWorkerCards'].append(entry)
             results.append(item)

@@ -579,8 +579,8 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             if argv[1:3] == prefix and identifier in argv:
                 fault_triggered.append(True)
                 if failure_kind == 'missing':
-                    raise FileNotFoundError('Fixture native surface is unavailable')
-                raise subprocess.TimeoutExpired(argv, kwargs.get('timeout', 15))
+                    raise FileNotFoundError(2, 'Fixture native surface is unavailable')
+                raise subprocess.TimeoutExpired(argv, kwargs.get('timeout', 15), output=b'fixture partial output', stderr=b'fixture error detail')
             workspace = 'ws_surface' if 'id:ws_surface' in argv else 'ws_sibling'
             if argv[1:3] == ['chat', 'list']:
                 payload = {'ok': True, 'result': {'chats': [{'nodeId': 'chat_surface' if workspace == 'ws_surface' else 'chat_sibling',
@@ -606,10 +606,21 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             except (OSError, subprocess.TimeoutExpired) as failure:
                 observed, exception = None, type(failure).__name__
         states = {key: row['state'] for key, row in observed['targets'].items()} if observed else {}
+        diagnostics = observed['targets']['thr_surface'].get('nativeSurfaceFailures', []) if observed else []
+        diagnostic_ok = len(diagnostics) == 1 and diagnostics[0]['operation'] == prefix
+        if diagnostic_ok and failure_kind == 'timeout':
+            diagnostic_ok = (diagnostics[0]['cause'] == 'timeout' and diagnostics[0]['errorType'] == 'TimeoutExpired'
+                             and diagnostics[0]['returnCode'] == 124 and diagnostics[0]['timeoutSeconds'] == 15
+                             and diagnostics[0]['stdout'] == {'bytes': 22, 'sha256': hashlib.sha256(b'fixture partial output').hexdigest()}
+                             and diagnostics[0]['stderr'] == {'bytes': 20, 'sha256': hashlib.sha256(b'fixture error detail').hexdigest()})
+        elif diagnostic_ok:
+            diagnostic_ok = diagnostics[0]['cause'] == 'os_error' and diagnostics[0]['errorType'] == 'FileNotFoundError' and diagnostics[0]['returnCode'] == 127 and diagnostics[0]['errno'] == 2
+        durable_path = fixture_root / 'state/monitor-state.json'
+        durable_diagnostics = json.loads(durable_path.read_text())['targets']['thr_surface'].get('nativeSurfaceFailures', []) if durable_path.exists() else []
         goal(label + ' preserves source progress and the sibling in a durable poll receipt',
              states == {'thr_surface': 'RUNNING', 'thr_surface_sibling': 'COMPLETE'}
-             and (fixture_root / 'state/monitor-state.json').exists() and prefix in attempted and bool(fault_triggered))
-        goals[-1]['observed'] = {'states': states, 'exception': exception, 'fault': label, 'faultTriggered': bool(fault_triggered)}
+             and durable_diagnostics == diagnostics and prefix in attempted and bool(fault_triggered) and diagnostic_ok)
+        goals[-1]['observed'] = {'states': states, 'exception': exception, 'fault': label, 'faultTriggered': bool(fault_triggered), 'diagnostics': diagnostics}
     monitor.configure(config_path)
     spec = importlib.util.spec_from_file_location('controller_workflow', HERE / 'controller.py')
     controller = importlib.util.module_from_spec(spec)
