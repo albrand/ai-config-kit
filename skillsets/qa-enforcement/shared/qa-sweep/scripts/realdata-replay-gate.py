@@ -80,12 +80,12 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
     try:
         labels = [line.strip() for line in denylist_path.read_text(encoding="utf-8").splitlines()
                   if line.strip()]
-        label_check_skipped = False
     except FileNotFoundError:
-        labels = []
-        label_check_skipped = True
+        return False, "private tenant-label deny-list missing; label check refused", None
     except (OSError, UnicodeError):
         return False, "REALDATA-REPLAY.md private tenant-label deny-list unavailable; label check refused", None
+    if not labels:
+        return False, "private tenant-label deny-list is empty; label check refused", None
 
     # Check both deletion and word-separator forms so format marks cannot join or split label words.
     label_scan_text = _exclude_gate_owned_label_keys(text)
@@ -100,24 +100,24 @@ def validate_report_text(text: str) -> tuple[bool, str, str | None]:
         for label, pattern in IDENTIFIERS:
             if pattern.search(line):
                 reason = f"REALDATA-REPLAY.md contains disallowed {label} at line {line_number}"
-                return False, _with_label_check_status(reason, label_check_skipped), None
+                return False, reason, None
         for match in URI.finditer(line):
             try:
                 parsed = urlsplit(match.group(0))
                 if parsed.username is not None or parsed.password is not None:
                     reason = f"REALDATA-REPLAY.md contains credentialed URI at line {line_number}"
-                    return False, _with_label_check_status(reason, label_check_skipped), None
+                    return False, reason, None
             except ValueError:
                 reason = f"REALDATA-REPLAY.md contains malformed URI at line {line_number}"
-                return False, _with_label_check_status(reason, label_check_skipped), None
+                return False, reason, None
 
     label_line = _private_label_line(normalized_text, label_patterns)
     if label_line is not None:
         reason = f"REALDATA-REPLAY.md contains disallowed private tenant label at line {label_line}"
-        return False, _with_label_check_status(reason, label_check_skipped), None
+        return False, reason, None
 
     valid, reason, digest = _validate_report_structure_and_digest(text)
-    return valid, _with_label_check_status(reason, label_check_skipped), digest
+    return valid, reason, digest
 
 
 def _normalize_label_text(text: str, *, cf_as_space: bool = True,
@@ -618,12 +618,6 @@ def _private_label_line(text: list[str], patterns: list[re.Pattern[str] | None])
                 if line_number is None or matched_line < line_number:
                     line_number = matched_line
     return line_number
-
-
-def _with_label_check_status(reason: str, skipped: bool) -> str:
-    if skipped:
-        return f"{reason}; private tenant-label check skipped because the deny-list file is missing"
-    return reason
 
 
 def git(repo: Path, *args: str, timeout: float = 4) -> str:

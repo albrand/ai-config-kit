@@ -1245,20 +1245,31 @@ sys.exit(2)
         self.assertNotIn(str(denylist_path), reason)
         self.assertNotIn("Test Tenant", reason)
 
-    def test_missing_denylist_skips_label_check_but_runs_other_privacy_checks(self) -> None:
+    def test_missing_denylist_refuses_clean_and_labelled_reports(self) -> None:
         missing = Path(self.temp.name) / "missing-labels.txt"
         with patch.dict(os.environ, {"REALDATA_REPLAY_DENYLIST": str(missing)}):
             clean, clean_reason, _ = self.gate_module().validate_report_text(replay_report())
             label_only, label_reason, _ = self.gate_module().validate_report_text(
                 replay_report(note="- Replay note: Test Tenant"))
-            object_id, object_reason, _ = self.gate_module().validate_report_text(
-                replay_report(note="- Replay note: 507f1f77bcf86cd799439011"))
-        self.assertTrue(clean, clean_reason)
-        self.assertIn("label check skipped", clean_reason.lower())
-        self.assertTrue(label_only, label_reason)
-        self.assertIn("label check skipped", label_reason.lower())
-        self.assertFalse(object_id)
-        self.assertIn("ObjectId-like token", object_reason)
+        for report_kind, valid, reason in (
+            ("clean", clean, clean_reason), ("labelled", label_only, label_reason),
+        ):
+            with self.subTest(report=report_kind):
+                self.assertFalse(valid)
+                self.assertEqual(reason, "private tenant-label deny-list missing; label check refused")
+                self.assertNotIn(str(missing), reason)
+                self.assertNotIn("Test Tenant", reason)
+
+    def test_empty_denylist_refuses(self) -> None:
+        self.denylist.write_text("\n  \n", encoding="utf-8")
+        valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertFalse(valid)
+        self.assertEqual(reason, "private tenant-label deny-list is empty; label check refused")
+        self.assertNotIn("Test Tenant", reason)
+
+    def test_present_denylist_allows_clean_report(self) -> None:
+        valid, reason, _ = self.gate_module().validate_report_text(replay_report())
+        self.assertTrue(valid, reason)
 
     def test_local_clone_with_pallium_package_identity_is_gated(self) -> None:
         clone = Path(self.temp.name) / "repo"
