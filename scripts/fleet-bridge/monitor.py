@@ -82,6 +82,15 @@ def evidence_shape(value):
 def evidenced(value):
     return evidence_shape(value) and bool(value)
 
+def purpose_records(value):
+    if not isinstance(value, list) or not value:
+        return False
+    if any(not isinstance(p, dict) or not isinstance(p.get('id'), str) or not p['id'].strip()
+           or p.get('status') not in {'done', 'open', 'blocked-on-user'}
+           or (p.get('evidence') is not None and not evidence_shape(p['evidence'])) for p in value):
+        return False
+    return len({p['id'] for p in value}) == len(value)
+
 def classify(status, purposes, queued, owners, job_running):
     if not purposes:
         return 'UNKNOWN'
@@ -226,7 +235,7 @@ def descendant_work(db, thread, scope_root=None, queue_lookup=None):
                 if ledger.exists():
                     try:
                         purposes = json.loads(ledger.read_text())['purposes']
-                        if not isinstance(purposes, list) or any(not isinstance(p, dict) or p.get('status') not in {'done', 'open', 'blocked-on-user'} for p in purposes):
+                        if not purpose_records(purposes):
                             entry['hold'] = 'SCOPE_UNKNOWN'
                         else:
                             outstanding = [p for p in purposes if p['status'] != 'done' or not evidenced(p.get('evidence'))]

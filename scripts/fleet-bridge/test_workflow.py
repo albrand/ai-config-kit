@@ -219,6 +219,25 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         ledger.write_text(json.dumps({'purposes': [noted, closed_followup, late, upgrade_goal]}))
         row = poll()
         goal('Structured source-owner evidence remains compatible', row['state'] == 'COMPLETE')
+        child_db = sqlite3.connect(database)
+        child_db.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', ('thr_bad_child', 'thr_fixture', 'idle', 'codex', 'env_child', None, None))
+        child_db.commit()
+        child_db.close()
+        child_ledger = scope / 'thr_bad_child.json'
+        malformed_children = [[{'status': 'done', 'evidence': ['proof']}], [{'id': '', 'status': 'done', 'evidence': ['proof']}],
+                              [{'id': None, 'status': 'done', 'evidence': ['proof']}], [],
+                              [{'id': 'P1', 'status': 'done', 'evidence': ['proof']}, {'id': 'P1', 'status': 'done', 'evidence': ['proof']}],
+                              [{'id': 'P1', 'status': 'done', 'evidence': 'scalar'}]]
+        child_results = []
+        for malformed in malformed_children:
+            child_ledger.write_text(json.dumps({'purposes': malformed}))
+            row = poll()
+            child_results.append(row['state'] != 'COMPLETE' and row['sourceChildWorkHolds'][0]['hold'] == 'SCOPE_UNKNOWN')
+        goal('A child purpose without an ID cannot settle or close its parent', child_results[0])
+        goal('Malformed child purpose/evidence records all preserve the parent hold', all(child_results))
+        child_ledger.write_text(json.dumps({'purposes': [{'id': 'P1', 'status': 'done', 'evidence': ['accepted child goal']}]}))
+        row = poll()
+        goal('A properly evidenced child purpose can settle its parent', row['state'] == 'COMPLETE')
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
