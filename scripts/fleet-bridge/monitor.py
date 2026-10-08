@@ -144,6 +144,21 @@ def read_scope_ledger(path):
     except (ValueError, OSError):
         return {}, 'Source scope ledger unavailable or invalid'
 
+def previous_scope(last, required):
+    if not last:
+        return [], None, None
+    def valid(value):
+        return isinstance(value, list) and all(isinstance(x, str) and x for x in value) and len(set(value)) == len(value) and set(required).issubset(value)
+    tracked = last.get('trackedPurposeIds', list(required))
+    error = None
+    if not valid(tracked):
+        tracked = list(required)
+        error = 'Prior tracked scope invalid; completion cannot be inferred'
+    known = last.get('knownPurposeIds', tracked)
+    if not valid(known) or not set(tracked).issubset(known):
+        known = tracked
+    return tracked, known, error
+
 def can_nudge(thread, route):
     return bool(thread.get('status') == 'idle' and not thread.get('queuedMessageCount') and thread.get('providerId') in {'codex', 'claude-code'} and route.get('routable') and route.get('providerId') == thread.get('providerId'))
 
@@ -432,8 +447,8 @@ def run(mutate=False):
             ledger, ledger_error = read_scope_ledger(ledger_path)
             last = prior.get('targets', {}).get(thread, {})
             # An upgrade cannot bless unknown IDs as old completed history.
-            known = last.get('knownPurposeIds', last.get('trackedPurposeIds', target['purposes'])) if last else None
-            purposes, purposes_valid = source_purposes(ledger, target['purposes'], last.get('trackedPurposeIds', []), known)
+            tracked, known, baseline_error = previous_scope(last, target['purposes'])
+            purposes, purposes_valid = source_purposes(ledger, target['purposes'], tracked, known)
             pending_revisions, revision_error = revision_state(ledger, target['purposes'])
             observed_purpose_ids = [p['id'] for p in purposes] or target['purposes']
             queue = bb(['thread', 'queue', 'list', thread, '--json'])
@@ -480,12 +495,14 @@ def run(mutate=False):
                 classification = 'UNKNOWN'
             if revision_error:
                 classification = 'UNKNOWN'
+            if baseline_error:
+                classification = 'UNKNOWN'
             item = {'thread': thread, 'project': target['project'], 'state': classification,
                     'bbStatus': t['status'], 'queuedCount': len(queue), 'otherActiveOwners': owners,
                     'activeSourceDescendants': source_workers,
                     'sourceChildWorkHolds': child_holds,
-                    'trackedPurposeIds': sorted(set(target['purposes']) | set(last.get('trackedPurposeIds', [])) | {p['id'] for p in purposes}),
-                    'knownPurposeIds': sorted(set(last.get('knownPurposeIds', [])) | ({p['id'] for p in ledger['purposes']} if purposes_valid else set())),
+                    'trackedPurposeIds': sorted(set(target['purposes']) | set(tracked) | {p['id'] for p in purposes}),
+                    'knownPurposeIds': sorted(set(known or []) | ({p['id'] for p in ledger['purposes']} if purposes_valid else set())),
                     'pendingAcceptedRevisions': [{'sha256': hashlib.sha256(r['quote'].encode()).hexdigest(), 'acceptedAt': r.get('accepted_at')} for r in pending_revisions],
                     'purposes': [{'id': p['id'], 'status': p['status'], 'ask': p.get('ask'), 'evidence': p.get('evidence')} for p in purposes],
                     'nativeJobs': native_jobs, 'nativeCoordinatorWorking': native_active,
@@ -500,6 +517,8 @@ def run(mutate=False):
                 item['sourceScopeLedgerError'] = ledger_error
             if revision_error:
                 item['acceptedRevisionError'] = revision_error
+            if baseline_error:
+                item['priorScopeBaselineError'] = baseline_error
             if codex_error:
                 item['nativeCodexTerminalError'] = codex_error
             item['nudges'] = last.get('nudges', 0)

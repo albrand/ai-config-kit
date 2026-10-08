@@ -159,6 +159,23 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal]}))
         row = poll()
         goal('A legacy-upgrade goal stays tracked after its evidence arrives', 'P4' in row['trackedPurposeIds'] and row['state'] == 'COMPLETE')
+        base = json.loads((state / 'monitor-state.json').read_text())
+        malformed_results = []
+        newer = {'id': 'P5', 'status': 'done', 'evidence': []}
+        for malformed in [None, 'P1', {'P1': True}, ['P1', None], ['P1', 'P1'], [], ['other']]:
+            prior = json.loads(json.dumps(base))
+            prior['targets']['thr_fixture']['knownPurposeIds'] = malformed
+            (state / 'monitor-state.json').write_text(json.dumps(prior))
+            ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal, newer]}))
+            row = poll()
+            malformed_results.append(row['state'] != 'COMPLETE' and 'P5' in row['trackedPurposeIds'])
+        goal('Explicit null baseline cannot bless an untracked closed goal', malformed_results[0])
+        goal('Every malformed baseline shape conservatively retains the new goal', all(malformed_results))
+        prior = json.loads(json.dumps(base))
+        prior['targets']['thr_fixture']['trackedPurposeIds'] = None
+        (state / 'monitor-state.json').write_text(json.dumps(prior))
+        row = poll()
+        goal('Malformed tracked scope reports unknown without stopping the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
