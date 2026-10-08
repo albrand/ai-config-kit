@@ -45,7 +45,9 @@ class ShellIdentityTests(unittest.TestCase):
             Path(home, ".zshenv").write_text("setopt RC_QUOTES\n")
             Path(home, "bash_env").write_text("set -o posix\n")
             script = "cat <<'a''b'\nBODY\nab\necho RAN"
-            hostile = {**os.environ, "HOME": home, "ZDOTDIR": home, "BASH_ENV": str(Path(home, "bash_env"))}
+            # TMPPREFIX: zsh can write the heredoc here even in a sandboxed job, so the control differs only by RC_QUOTES
+            hostile = {**os.environ, "HOME": home, "ZDOTDIR": home, "BASH_ENV": str(Path(home, "bash_env")),
+                       "TMPPREFIX": str(Path(home, "zsh"))}
             control = subprocess.run(["/bin/zsh", "-c", script], capture_output=True, text=True, env=hostile)
             self.assertNotEqual(control.stdout, "BODY\nRAN\n")  # the startup file really changes the reading
             with patch.dict(os.environ, hostile):
