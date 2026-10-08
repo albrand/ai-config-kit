@@ -76,9 +76,8 @@ RULES: dict[str, re.Pattern[str]] = {
         r".{0,100}(?:rule working|not a defect|not a reason)|"
         r"PreToolUse hook enforces this.{0,160}rule working.{0,100}defect to route around"
     ),
-    "credentials-never-type": re.compile(r"(?is)never.{0,35}\btype\b.{0,50}credentials"),
-    "credentials-never-paste": re.compile(r"(?is)never.{0,35}\bpaste\b.{0,50}credentials"),
-    "credentials-never-handle": re.compile(r"(?is)never.{0,35}\bhandle\b.{0,50}credentials"),
+    # credentials-never-type/-paste/-handle were retired by the owner on 2026-10-08: the homes no longer carry
+    # them. Skill-level credential rules (verified-qa-e2e, finish-the-job, meaningful-tests) are unchanged.
     "public-exposure": re.compile(
         r"(?is)(?:(?:never|do not).{0,45}(?:publicly\s+expose|expose(?:\s+a)?\s+service|"
         r"run\s+`?bb connect expose`?).{0,140}(?:unless|without).{0,60}(?:explicit|user asks)|"
@@ -486,8 +485,6 @@ OPTIONAL_WHEN_ABSENT = {
     "public-exposure-current-conversation-service",
     "public-share-close-task-end",
     "public-share-closeout-audit",
-    "credentials-never-paste",
-    "credentials-never-handle",
     "no-pkill-pgrep-app-kill-path",
     "worktree-own-bb-environment",
     "no-gc-user-owned-state",
@@ -629,7 +626,6 @@ LIVE_HOME_RULES = {
         "typed-decisions-confidence-keeps-release-checks",
     },
     "bb": {
-        "credentials-never-paste", "credentials-never-handle",
         "safety-hook-block-cannot-be-bypassed",
         "browser-enumerate-before-open", "browser-close-every-slice-outcome",
         "browser-lifecycle-ops-noncreating", "worktree-own-bb-environment",
@@ -647,7 +643,6 @@ KIT_BASELINE_RULES = {
     "bb-app-never-quit", "bb-app-never-kill", "bb-app-never-replace", "bb-app-never-restart",
     "safety-hook-block-cannot-be-bypassed",
     "public-share-closeout-audit",
-    "credentials-never-paste", "credentials-never-handle",
     "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
     "browser-enumerate-before-open", "browser-leak-readonly-only",
     "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
@@ -722,10 +717,10 @@ LIVE_HOME_SHA256: dict[str, str] = {}
 # them (Hermes 2026-10-07, kit-one-page-baseline r4 and kit-session-input-scope r1).
 INSTALLED_HOME_SHA256: dict[str, str] = {}
 RENDERED_HOME_SHA256 = {
-    "2a13a95dee10b4c6d280c92d93ce66af876101dc86c379806de4701635acef52": "proposal-claude",
-    "76321ba05d277eb20c3f88515771e56fe77edf2923da01487048686cf182bdff": "proposal-codex",
-    "1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a": "proposal-opencode",
-    "72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8": "proposal-bb",
+    "15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92": "proposal-claude",
+    "ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf": "proposal-codex",
+    "5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6": "proposal-opencode",
+    "25de6c4b8d6f2b005b585b6f22911cba94eb0a070cb27baee8925ab0ecff6731": "proposal-bb",
 }
 
 
@@ -940,14 +935,6 @@ def contradicted_rule(name: str, text: str) -> bool:
         )
         if stale_consent.search(text):
             return True
-    if name.startswith("credentials-never-"):
-        credential_exception = re.compile(
-            r"(?is)never.{0,100}\b(?:type|paste|handle)\b.{0,100}credentials.{0,80}"
-            r"(?:unless|except when|except if|when).{0,100}"
-            r"(?:the user asks|user requested|user asks|login|log in)"
-        )
-        if credential_exception.search(text):
-            return True
     if name.startswith("email-"):
         email_approval_exception = re.compile(
             r"(?is)(?:(?:routine|standard|internal|automated|follow[- ]up|low[- ]risk)\s+)?"
@@ -1047,8 +1034,6 @@ def optional_present(name: str, text: str) -> bool:
     if name == "no-pkill-pgrep-app-kill-path":
         return bool(RULES[name].search(text))
     if name == "bb-app-never-restart":
-        return bool(RULES[name].search(text))
-    if name.startswith("credentials-never-"):
         return bool(RULES[name].search(text))
     if name.startswith("public-exposure-") or name.startswith("public-share-"):
         return bool(RULES[name].search(text))

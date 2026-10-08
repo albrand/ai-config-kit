@@ -3,7 +3,7 @@
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
 profiles. Accepted live profiles include the #47 and #49 renders and
-the #50, #51 and #60 renders; #60 is installed in all four homes. The current rendered profile is the
+the #50, #51 and #60 renders; the #62 and #63 renders are accepted too. The live homes match the current rendered profile. The current rendered profile is the
 output of this source revision; keeping it here means that after this revision
 is merged and installed, the next installer recognizes that complete set
 without weakening the live-edit guard.
@@ -97,10 +97,10 @@ Verified on 2026-10-07: `python3 scripts/render-standing-homes.py --check` at
 | OpenCode | `f64a39465e92c6701fcd4f908933368eac1589b320eeff790fe46561f8864ec0` |
 | bb | `c0c189a02da137b5915c99cffe1e353aa54374ee72109aad460f25bf412ff83c` |
 
-### Current rendered profile: session-input scope based on 296ae3b
+### Accepted live profile: #63 render at 8f106d7 (session-input scope)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+The previous current render, kept so an installer run over a #63 home is
+recognized.
 
 | Home | SHA-256 |
 |---|---|
@@ -108,6 +108,21 @@ output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
 | Codex | `76321ba05d277eb20c3f88515771e56fe77edf2923da01487048686cf182bdff` |
 | OpenCode | `1a57789639644225cf5688dd8162b1c1cc85297ab36a8e70871847fcba38012a` |
 | bb | `72753a302807c818ffa51fa22fa04fe0d5ef3e888a74532fd180531cc6fee3b8` |
+
+### Current rendered profile: credential lines removed (owner decision 2026-10-08)
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`. The
+owner removed the credential lines from all four live homes on 2026-10-07 and
+kept that removal on 2026-10-08; this render drops the same lines from the
+source, and each digest equals the live file's.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92` |
+| Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
+| OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
+| bb | `25de6c4b8d6f2b005b585b6f22911cba94eb0a070cb27baee8925ab0ecff6731` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
