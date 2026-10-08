@@ -944,6 +944,30 @@ sys.exit(2)
                     if rc:
                         self.assertIn("[realdata-replay-gate]", result.stderr)
 
+    def test_installed_hook_with_an_empty_view_still_denies_gated_commands(self) -> None:
+        # The real hook, its view forced empty (as a scanner fault would give): gated commands are denied from their
+        # raw text, and a merge, whose empty view is its true reading, stays allowed.
+        source = (ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh").read_text(encoding="utf-8")
+        forced = 'realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "'
+        self.assertEqual(source.count(forced), 1)
+        hook = Path(self.temp.name) / "empty-view-hook.sh"
+        hook.write_text(source.replace(forced, 'realdata_view=""'), encoding="utf-8")
+        home = Path(self.temp.name) / "home-empty-view"
+        scripts = home / ".agents/skills/qa-sweep/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / GATE.name).write_bytes(GATE.read_bytes())
+        (scripts / "ship-gate.py").write_bytes((ROOT / "scripts/ship-gate.py").read_bytes())
+        (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+        env = {**os.environ, "HOME": str(home)}
+        for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0),
+                            ("gh pr merge 1701 --body 'notes on gh release create'", 0),
+                            ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2),
+                            ("gh release create v1", 2)):
+            with self.subTest(command=command):
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
     def test_hook_uses_a_supplied_view_only_when_the_command_was_read(self) -> None:
         # A view of "FLAT ..." means the hook could not read the command either: the raw text is classified.
         scripts = Path(self.temp.name) / "viewed/scripts"
@@ -952,8 +976,12 @@ sys.exit(2)
         (scripts / "ship-gate.py").write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
         (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
         merge = "gh pr merge 1701 --body 'notes on gh release create'"
-        for command, view, rc in ((merge, "", 0), (merge, "FLAT gh pr merge 1701 --body notes on gh release create", 2),
-                                  ("gh pr create --fill", "FLAT ls", 2)):
+        for command, view, rc in ((merge, "", 0), (merge, " ; ", 0),
+                                  (merge, "FLAT gh pr merge 1701 --body notes on gh release create", 2),
+                                  ("gh pr create --fill", "FLAT ls", 2),
+                                  # an empty view of a command with no merge is not a reading of it (Hermes r20)
+                                  ("gh pr create --fill", "", 2), ("gh pr create --fill", " ; ", 2),
+                                  ("bb fleet validate --evidence x", "", 2), ("gh release create v1", "", 2)):
             with self.subTest(command=command, view=view):
                 read, write = os.pipe()
                 os.write(write, (view + "\n").encode())

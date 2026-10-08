@@ -249,6 +249,10 @@ GATED_WORDS = re.compile(r"pre-review\.py|hermes-one|fleet\s+validate|gh\s+pr\s+
                          re.I)
 
 
+EMPTY_VIEW = re.compile(r"[\s;]*")
+MERGE_WORDS = re.compile(r"\bpr\s+merge\b", re.I)
+
+
 def ship_view(command: str) -> str | None:
     """What the command would run, read by the sibling ship-gate.py's ship_view: a `gh pr merge` keeps only its
     $(...) and backtick substitutions, so neither the merge nor its quoted subject or body is classified. None
@@ -276,10 +280,14 @@ def command_action(command: str, hook_view: str | None = None) -> str | None:
     `hook_view`: the same reading by qa-ship-gate-hook.sh's awk scanner (test-ship-matrix.py checks the two agree).
     When the hook supplies it, it decides, and ship-gate.py is not consulted: the scanner ships in the hook itself,
     while the ship gate beside this gate may be missing, broken or wrong in any way (Hermes 2026-10-08 r18, r19).
-    A hook view of "FLAT ..." means the command can't be read, so the raw text is classified. ship-gate.py's
-    reading is used only for a direct call without a hook view."""
+    A hook view of "FLAT ..." means the command can't be read, so the raw text is classified. An empty view is the
+    reading of a command made only of merges (each keeps just its substitutions), so it is trusted only for a command
+    that holds a merge; any other empty view counts as unreadable (Hermes 2026-10-08 r20). ship-gate.py's reading is
+    used only for a direct call without a hook view."""
     if hook_view is not None:
-        view = None if hook_view.startswith("FLAT ") else hook_view
+        unread = hook_view.startswith("FLAT ") or (EMPTY_VIEW.fullmatch(hook_view) is not None
+                                                  and not MERGE_WORDS.search(command.replace("\\\n", "")))
+        view = None if unread else hook_view
     else:
         view = ship_view(command)
     if view is not None:

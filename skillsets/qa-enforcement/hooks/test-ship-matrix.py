@@ -173,7 +173,12 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
         "cat <<<word\ngit push origin main", "cat <<EOF\nnever ends\ngit push origin main",
         "cat <<\\EOF\ngit push\nEOF\ngit push origin main", "echo '<<x' \"<<y\" \\<<z # <<c\ngit push origin main",
         # unreadable on both scanners (Hermes r11): an operator on the last line, a context closed on its line
-        "gh pr merge 5; cat <<E", "x=$(cat <<E )\ngit push origin main\nE", "echo ${x:-<<E }\ngit push origin main\nE"]
+        "gh pr merge 5; cat <<E", "x=$(cat <<E )\ngit push origin main\nE", "echo ${x:-<<E }\ngit push origin main\nE",
+        # the replay gate's commands (Hermes 2026-10-08 r20): the view a merge-only command gets is empty, and every
+        # gated command, alone or beside a merge, keeps its words in the view both scanners give
+        "gh pr merge 5 --body 'gh release create v1'", "gh pr merge 5 && gh pr create --fill",
+        'gh pr merge 5 --body "$(bb fleet validate x)"', "gh pr create --fill", "gh release create v1",
+        "bb fleet validate --evidence x", "gh pr merge 5; gh pr merge 6 -t 'gh pr create'"]
 
 # Real-shell oracle (Hermes 2026-10-07, kit-never-block-pr-merge r11): heredoc delimiter words crossed with the
 # contexts that hold them, run by every shell here with -c, as agents run commands. When a shell runs the line
