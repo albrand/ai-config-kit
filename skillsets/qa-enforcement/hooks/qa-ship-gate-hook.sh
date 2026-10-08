@@ -25,25 +25,6 @@ if [ -f "$REALDATA_GATE" ]; then
     echo "[realdata-replay-gate] gate failed (exit $realdata_rc); command denied" >&2
     exit 2
   fi
-else
-  if printf '%s' "$input" | grep -qiE '"command"[^:]*:[^"]*"[^"]*(hermes-one\.zsh?|bb[[:space:]]+fleet[[:space:]]+validate|gh[[:space:]]+pr[[:space:]]+(create|ready|merge)|gh[[:space:]]+release|release[-[:space:]]request)'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the required gate is missing; review or release denied"}}'
-    echo "[realdata-replay-gate] required gate is missing; command denied" >&2
-    exit 2
-  fi
-fi
-set +e
-if [ -f "$GATE" ]; then
-  printf '%s' "$input" | python3 "$GATE" hook
-  rc=$?
-else
-  # v4: `python3 <missing file>` exits 2, which read as a DENY of every
-  # command (ls included); a missing gate goes to the shape fallback instead
-  rc=127
-fi
-set -e
-if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
-  exit "$rc"
 fi
 scope_flat() { printf '%s' "$input" | tr -d '\\"'"'"; }
 # --- opted-in shape (identical in coordinator-hook-pretool.sh and
@@ -290,6 +271,35 @@ qa_opted_in() {
   return 1
 }
 # --- end opted-in shape ---
+# A missing replay gate denies review, PR creation and release, read
+# from what the command would run (the awk view, in its own subshell so no
+# variable leaks into the shape checks below): a PR merge or ready, and whatever its
+# quoted subject or body says, is never denied (owner decision 2026-10-08). If
+# the command can't be read, the command field of the payload is matched.
+if [ ! -f "$REALDATA_GATE" ]; then
+  realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "
+  case $realdata_view in
+    "FLAT "*) printf '%s' "$input" | grep -qiE '"command"[^:]*:[^"]*"[^"]*(hermes-one\.zsh?|bb[[:space:]]+fleet[[:space:]]+validate|gh[[:space:]]+pr[[:space:]]+create|gh[[:space:]]+release|release[-[:space:]]request)' ;;
+    *) printf '%s' "$realdata_view" | grep -qiE '(hermes-one\.zsh?|bb fleet validate|gh pr create|gh release|release[- ]request)' ;;
+  esac && {
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the required gate is missing; review or release denied"}}'
+    echo "[realdata-replay-gate] required gate is missing; command denied" >&2
+    exit 2
+  }
+fi
+set +e
+if [ -f "$GATE" ]; then
+  printf '%s' "$input" | python3 "$GATE" hook
+  rc=$?
+else
+  # v4: `python3 <missing file>` exits 2, which read as a DENY of every
+  # command (ls included); a missing gate goes to the shape fallback instead
+  rc=127
+fi
+set -e
+if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
+  exit "$rc"
+fi
 # python missing or crashed before it could decide: decide by shape alone.
 # v4: releases (v5: gh release edit too), workflow dispatch and deployments-API
 # posts join the coarse shapes (any git push already covers tags/--tags/--mirror); the shapes match

@@ -19,13 +19,16 @@ from the qa-speed-quality research report §2 (report at
 Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
 Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
 The gate reads and validates `REALDATA-REPLAY.md` from the reviewed commit,
-not from an unstaged working-tree copy; it denies every action if the report is
+not from an unstaged working-tree copy; it denies every gated action if the report is
 missing from that commit or a present worktree copy differs. Hermes
 submission requires the report itself attached as `--evidence` with its digest;
 `pre-review.py` adds the artifact path and SHA-256 to both review packets. PR
 creation requires the report committed and its name and digest in the creation
-request. PR-ready and merge require the committed report and verify that the
-current PR body cites its name and digest. Release requests require the
+request. The hook never denies a PR merge or `gh pr ready` (owner decision
+2026-10-08), whatever the merge's subject or body says; a command chained to a
+merge, or run in its `$(...)`, is still gated. `check --action pr` verifies on
+request that the current PR body cites the committed report's name and
+digest. Release requests require the
 committed report and a citation in the request. For each checked range, every
 non-merge production-data commit and every merge commit whose `--remerge-diff`
 shows a production-path resolution difference must be an ancestor of the newest

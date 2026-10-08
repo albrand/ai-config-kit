@@ -283,6 +283,9 @@ $ship_cases
 EOF
 done
 # The adapter's own fallback (gate script missing, so python never decides).
+# Neither gate is installed here, so the missing replay gate's fallback decides
+# too: it never denies a PR merge or ready, and still denies review, PR
+# creation and release, including one chained after a merge (2026-10-08).
 cp "$HOOKS/qa-ship-gate-hook.sh" "$H/.agent-hooks/qa-ship-gate-hook.sh"
 while IFS='|' read -r want dir cmd; do
   bash_payload "$cmd" "$dir" | HOME="$H" sh "$H/.agent-hooks/qa-ship-gate-hook.sh" >/dev/null 2>&1
@@ -325,6 +328,12 @@ done <<EOF
 0|$H/plain|GIT_WORK_TREE=$H/optin git push origin main
 0|$H/plain|GIT_WORK_TREE=$H/optin gh pr merge 1 --admin
 0|$H/optin|ls -la
+0|$H/plain|gh pr merge 1701 --body 'after bb fleet validate and gh release create v1'
+0|$H/plain|gh pr merge 1701 --subject "gh pr create; hermes-one.zsh"
+2|$H/plain|gh pr merge 1701 && gh release create v1
+2|$H/plain|gh pr merge 1701 --body "\$(bb fleet validate x)"
+2|$H/plain|gh pr create --fill
+2|$H/plain|bb fleet validate --evidence x
 EOF
 echo "hook chain test: $([ $fails = 0 ] && echo "all pass" || echo "$fails FAIL") (config $CFG, timeout ${T}s, load $(sysctl -n vm.loadavg 2>/dev/null))"
 [ $fails = 0 ]

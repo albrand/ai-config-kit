@@ -245,14 +245,42 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
     return True, "REALDATA-REPLAY.md fields and SHA-256 are valid", actual
 
 
+GATED_WORDS = re.compile(r"pre-review\.py|hermes-one|fleet\s+validate|gh\s+pr\s+create|gh\s+release|release[- ]request",
+                         re.I)
+
+
+def ship_view(command: str) -> str | None:
+    """What the command would run, read by the sibling ship-gate.py's ship_view: a `gh pr merge` keeps only its
+    $(...) and backtick substitutions, so neither the merge nor its quoted subject or body is classified. None
+    when the command can't be read, or ship-gate.py is missing or has no ship_view (this gate installs on its own,
+    next to whatever ship gate a home has); the raw command is classified instead. Loaded here, not at import, and
+    only for a command the raw text could gate, so a broken ship gate (one that even exits while loading) never
+    makes this hook fail, and `ls` never loads it."""
+    if not GATED_WORDS.search(command.replace("\\\n", "")):  # as the view, which drops line continuations
+        return command
+    try:
+        from importlib.util import module_from_spec, spec_from_file_location
+        spec = spec_from_file_location("ship_gate_view", Path(__file__).with_name("ship-gate.py"))
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        view = module.ship_view(command)
+    except BaseException:
+        return None
+    return view if isinstance(view, str) else None
+
+
 def command_action(command: str) -> str | None:
+    """The gated action a command takes: review, PR creation or release. A PR merge is never one, so this hook
+    never denies `gh pr merge` (owner decision 2026-10-08), nor `gh pr ready`, since GitHub cannot merge a draft
+    (the kit's rule for PR commands, 2026-10-06). `check --action pr` still checks a PR on request."""
+    view = ship_view(command)
+    if view is not None:
+        command = view
     lower = command.lower()
     if re.search(r"(?:^|[/\\ ])pre-review\.py(?:\s|$)", command):
         return "review"
     if re.search(r"\bhermes-one(?:\.zsh)?\b|\bbb\s+fleet\s+validate\b", lower):
         return "review"
-    if re.search(r"\bgh\s+pr\s+(?:ready|merge)\b", lower):
-        return "pr"
     if re.search(r"\bgh\s+pr\s+create\b", lower):
         return "pr-create"
     if re.search(r"\b(?:gh\s+release\s+(?:create|edit)|release[- ]request)\b", lower):
@@ -389,7 +417,7 @@ def pull_request_info(repo: Path, command: str) -> dict[str, Any] | None:
         args = []
     reference: str | None = None
     for index in range(max(0, len(args) - 1)):
-        if args[index:index + 2] == ["pr", "ready"] or args[index:index + 2] == ["pr", "merge"]:
+        if args[index:index + 2] == ["pr", "ready"]:
             if index + 2 < len(args) and not args[index + 2].startswith("-"):
                 reference = args[index + 2]
             break
@@ -477,7 +505,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     if not impacted:
         return True, "no production-data paths changed", set(), None
     if action == "pr" and str(pr_info.get("headRefOid") or "").lower() != git(repo, "rev-parse", head).lower():
-        return False, "run the PR-ready or merge gate from the worktree at the exact target PR head", impacted, None
+        return False, "run the PR-ready gate from the worktree at the exact target PR head", impacted, None
     valid, reason, digest = validate_report(repo, head)
     if not valid or digest is None:
         return False, reason, impacted, digest
@@ -495,7 +523,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
         try:
             git(repo, "cat-file", "-e", f"{head}:{REPORT_NAME}")
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            return False, f"{REPORT_NAME} must be committed for PR-ready, merge, or release", impacted, digest
+            return False, f"{REPORT_NAME} must be committed for PR creation, PR-ready, or release", impacted, digest
         if action == "release":
             if not release_readback_and_rollback_cited(command, cwd):
                 return False, ("release request must name the post-release read-back offset and counts, "
