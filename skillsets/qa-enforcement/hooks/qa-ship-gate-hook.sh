@@ -13,19 +13,6 @@ input=$(cat)
 # Pallium production-data changes have an additional mandatory evidence gate,
 # independent of whether the repository opted into the general .qa pipeline.
 REALDATA_GATE="$HOME/.agents/skills/qa-sweep/scripts/realdata-replay-gate.py"
-if [ -f "$REALDATA_GATE" ]; then
-  set +e
-  printf '%s' "$input" | python3 "$REALDATA_GATE" hook
-  realdata_rc=$?
-  set -e
-  if [ "$realdata_rc" = 2 ]; then
-    exit 2
-  elif [ "$realdata_rc" != 0 ]; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the gate failed; retry after repairing the installed gate"}}'
-    echo "[realdata-replay-gate] gate failed (exit $realdata_rc); command denied" >&2
-    exit 2
-  fi
-fi
 scope_flat() { printf '%s' "$input" | tr -d '\\"'"'"; }
 # --- opted-in shape (identical in coordinator-hook-pretool.sh and
 # qa-ship-gate-hook.sh; test-hook-chain.sh checks the two copies match) ---
@@ -271,13 +258,29 @@ qa_opted_in() {
   return 1
 }
 # --- end opted-in shape ---
-# A missing replay gate denies review, PR creation and release, read
-# from what the command would run (the awk view, in its own subshell so no
-# variable leaks into the shape checks below): a PR merge or ready, and whatever its
-# quoted subject or body says, is never denied (owner decision 2026-10-08). If
-# the command can't be read, the command field of the payload is matched.
-if [ ! -f "$REALDATA_GATE" ]; then
-  realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "
+# The replay gate reads what the command would run: a PR merge or ready, and
+# whatever its quoted subject or body says, is never denied (owner decision
+# 2026-10-08). The awk view (in its own subshell, so no variable leaks into the
+# shape checks below) goes to the gate, which uses it when ship-gate.py can't
+# give its own reading (Hermes 2026-10-08 r18). A missing gate denies review,
+# PR creation and release, read from the same view; a command that can't be
+# read is matched in the payload's command field.
+realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "
+if [ -f "$REALDATA_GATE" ]; then
+  set +e
+  printf '%s' "$input" | python3 "$REALDATA_GATE" hook --view-fd=3 3<<REALDATA_VIEW
+$realdata_view
+REALDATA_VIEW
+  realdata_rc=$?
+  set -e
+  if [ "$realdata_rc" = 2 ]; then
+    exit 2
+  elif [ "$realdata_rc" != 0 ]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[realdata-replay-gate] the gate failed; retry after repairing the installed gate"}}'
+    echo "[realdata-replay-gate] gate failed (exit $realdata_rc); command denied" >&2
+    exit 2
+  fi
+else
   case $realdata_view in
     "FLAT "*) printf '%s' "$input" | grep -qiE '"command"[^:]*:[^"]*"[^"]*(hermes-one\.zsh?|bb[[:space:]]+fleet[[:space:]]+validate|gh[[:space:]]+pr[[:space:]]+create|gh[[:space:]]+release|release[-[:space:]]request)' ;;
     *) printf '%s' "$realdata_view" | grep -qiE '(hermes-one\.zsh?|bb fleet validate|gh pr create|gh release|release[- ]request)' ;;

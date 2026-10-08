@@ -905,11 +905,61 @@ sys.exit(2)
             (scripts / GATE.name).write_bytes(GATE.read_bytes())
             (scripts / "ship-gate.py").write_text(source, encoding="utf-8")
             (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
-            for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0),
-                                ("gh pr merge 1701 --body 'notes on gh release create'", 2), ("gh pr create --fill", 2)):
+            for command, rc in (("ls", 0), ("gh pr merge 1701 --admin", 0), ("gh pr create --fill", 2)):
                 with self.subTest(ship_gate=name, command=command):
                     result, _ = self.hook(command, scripts / GATE.name)
                     self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+
+    def test_installed_hook_never_denies_a_merge_whatever_the_ship_gate_beside_it(self) -> None:
+        # Through qa-ship-gate-hook.sh, as installed: it passes its own reading of the command (the awk view), which
+        # the gate uses when ship-gate.py is missing or broken, so a merge is never read as its body (Hermes r18).
+        hook = ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh"
+        rows = (("ls", 0), ("gh pr merge 1701 --admin --squash", 0), ("gh pr ready 1701", 0),
+                ("gh pr merge 1701 --body 'notes on gh release create'", 0),
+                ('gh pr merge 1701 --subject "bb fleet validate; gh pr create" --squash', 0),
+                ("gh pr merge 1701 && gh release create v1", 2), ('gh pr merge 1701 --body "$(bb fleet validate x)"', 2),
+                ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2))
+        for name, source in (("working", (ROOT / "scripts/ship-gate.py").read_text(encoding="utf-8")),
+                             ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n")):
+            home = Path(self.temp.name) / f"home-{name}"
+            scripts = home / ".agents/skills/qa-sweep/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / GATE.name).write_bytes(GATE.read_bytes())
+            (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+            if source is not None:
+                (scripts / "ship-gate.py").write_text(source, encoding="utf-8")
+            fake_bin = home / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "gh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            (fake_bin / "gh").chmod(0o755)
+            env = {**os.environ, "HOME": str(home), "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+            for command, rc in rows:
+                with self.subTest(ship_gate=name, command=command):
+                    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                    result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)
+                    self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
+                    if rc:
+                        self.assertIn("[realdata-replay-gate]", result.stderr)
+
+    def test_hook_uses_a_supplied_view_only_when_the_command_was_read(self) -> None:
+        # A view of "FLAT ..." means the hook could not read the command either: the raw text is classified.
+        scripts = Path(self.temp.name) / "viewed/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / GATE.name).write_bytes(GATE.read_bytes())
+        (scripts / "ship-gate.py").write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+        (scripts.parent / "realdata-paths.json").write_bytes((ROOT / "realdata-paths.json").read_bytes())
+        merge = "gh pr merge 1701 --body 'notes on gh release create'"
+        for command, view, rc in ((merge, "", 0), (merge, "FLAT gh pr merge 1701 --body notes on gh release create", 2),
+                                  ("gh pr create --fill", "FLAT ls", 2)):
+            with self.subTest(command=command, view=view):
+                read, write = os.pipe()
+                os.write(write, (view + "\n").encode())
+                os.close(write)
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
+                result = subprocess.run([sys.executable, str(scripts / GATE.name), "hook", f"--view-fd={read}"],
+                                        input=payload, text=True, capture_output=True, pass_fds=(read,))
+                os.close(read)
+                self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
 
     def test_hook_reads_a_gated_command_across_a_line_continuation(self) -> None:
         result, _ = self.hook("gh pr \\\n  create --fill")

@@ -253,7 +253,7 @@ def ship_view(command: str) -> str | None:
     """What the command would run, read by the sibling ship-gate.py's ship_view: a `gh pr merge` keeps only its
     $(...) and backtick substitutions, so neither the merge nor its quoted subject or body is classified. None
     when the command can't be read, or ship-gate.py is missing or has no ship_view (this gate installs on its own,
-    next to whatever ship gate a home has); the raw command is classified instead. Loaded here, not at import, and
+    next to whatever ship gate a home has); command_action then uses the hook's view. Loaded here, not at import, and
     only for a command the raw text could gate, so a broken ship gate (one that even exits while loading) never
     makes this hook fail, and `ls` never loads it."""
     if not GATED_WORDS.search(command.replace("\\\n", "")):  # as the view, which drops line continuations
@@ -269,11 +269,16 @@ def ship_view(command: str) -> str | None:
     return view if isinstance(view, str) else None
 
 
-def command_action(command: str) -> str | None:
+def command_action(command: str, hook_view: str | None = None) -> str | None:
     """The gated action a command takes: review, PR creation or release. A PR merge is never one, so this hook
     never denies `gh pr merge` (owner decision 2026-10-08), nor `gh pr ready`, since GitHub cannot merge a draft
-    (the kit's rule for PR commands, 2026-10-06). `check --action pr` still checks a PR on request."""
+    (the kit's rule for PR commands, 2026-10-06). `check --action pr` still checks a PR on request.
+    `hook_view`: the same reading by qa-ship-gate-hook.sh's awk scanner (test-ship-matrix.py checks the two agree),
+    used when ship-gate.py can't give one, so a broken ship gate never makes a merge read as its body (Hermes
+    2026-10-08 r18). Only a command neither can read ("FLAT ...") is classified from its raw text."""
     view = ship_view(command)
+    if view is None and hook_view is not None and not hook_view.startswith("FLAT "):
+        view = hook_view
     if view is not None:
         command = view
     lower = command.lower()
@@ -536,7 +541,7 @@ def evaluate(repo: Path, base: str | None, action: str, command: str = "", cwd: 
     return True, "real production-data replay evidence and citation are present", impacted, digest
 
 
-def hook() -> int:
+def hook(view: str | None = None) -> int:
     try:
         payload: dict[str, Any] = json.loads(sys.stdin.read() or "{}")
     except ValueError:
@@ -545,7 +550,7 @@ def hook() -> int:
         return 2
     tool_input = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
     command = str(tool_input.get("command") or tool_input.get("cmd") or "")
-    action = command_action(command)
+    action = command_action(command, view)
     if not action:
         return 0
     cwd = Path(str(payload.get("cwd") or payload.get("working_directory") or os.getcwd())).resolve()
@@ -566,7 +571,7 @@ def hook() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     subs = parser.add_subparsers(dest="mode", required=True)
-    subs.add_parser("hook")
+    subs.add_parser("hook").add_argument("--view-fd", type=int, help="descriptor carrying the hook's reading of the command")
     check = subs.add_parser("check")
     check.add_argument("--repo", type=Path, required=True)
     check.add_argument("--base")
@@ -577,7 +582,14 @@ def main() -> int:
     check.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if args.mode == "hook":
-        return hook()
+        view = None
+        if args.view_fd is not None:
+            try:
+                with os.fdopen(args.view_fd, encoding="utf-8", errors="replace") as fh:
+                    view = fh.read().rstrip("\n")
+            except OSError:
+                view = None
+        return hook(view)
     repo = repo_root(args.repo.resolve())
     if repo is None:
         print("[realdata-replay-gate] not inside a git worktree", file=sys.stderr)
