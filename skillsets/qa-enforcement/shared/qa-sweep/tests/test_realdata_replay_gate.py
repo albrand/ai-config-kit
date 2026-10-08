@@ -1162,6 +1162,18 @@ sys.exit(2)
             replay_report_with_blocked_lines(*blocked_lines))
         self.assertTrue(valid, reason)
 
+    def test_every_blocked_rows_line_requires_a_valid_boundary(self) -> None:
+        valid_line = "Blocked rows: 8 (provider_limit)"
+        for blocked_lines in (
+                (valid_line, "Blocked rows: 8 (none)"),
+                ("Blocked rows: 8 (none)", valid_line),
+                (valid_line, "Blocked rows: 8 (\u00a0n/a\u00a0)")):
+            with self.subTest(blocked_lines=blocked_lines):
+                valid, reason, _ = self.gate_module().validate_report_text(
+                    replay_report_with_blocked_lines(*blocked_lines))
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
+
     def test_blocked_rows_lookalike_semicolons_are_normalized_before_clause_split(self) -> None:
         for punctuation in ("\uff1b", "\u037e"):
             text = replay_report_with_blocked_line(

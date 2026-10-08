@@ -865,7 +865,7 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
     blocked_matches = list(BLOCKED_ROWS_PATTERN.finditer(text))
     if ("blocked external-call rows" in missing
             or not blocked_matches
-            or not any(_blocked_boundary_is_valid(match.group("boundary"))
+            or not all(_blocked_boundary_is_valid(match.group("boundary"))
                        for match in blocked_matches)):
         line_number = len(text.splitlines()) + 1
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
