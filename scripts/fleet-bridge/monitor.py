@@ -463,6 +463,7 @@ def completed_adapter_binding(db, ident):
         if not requested:
             return None
         later = db.execute("SELECT id,sequence,data FROM events WHERE thread_id=? AND type='client/turn/requested' AND sequence>? ORDER BY sequence", (ident, started[1])).fetchall()
+        accepted = db.execute("SELECT id,sequence,provider_thread_id,data FROM events WHERE thread_id=? AND type='turn/input/accepted' AND sequence>? AND sequence<? ORDER BY sequence", (ident, started[1], ended[0])).fetchall()
         frame = [[requested[0], requested[1]]]
         for event_id, sequence, raw in later:
             if sequence >= ended[0]:
@@ -478,6 +479,7 @@ def completed_adapter_binding(db, ident):
             request = data.get('request')
             if (data.get('direction') != 'outbound' or data.get('source') != 'tell' or
                     data.get('initiator') != 'system' or data.get('systemMessageKind') != 'child-completed' or
+                    not isinstance(data.get('requestId'), str) or not data['requestId'].strip() or
                     not isinstance(target, dict) or target.get('kind') != 'auto' or
                     not isinstance(target.get('expectedTurnId'), str) or not target['expectedTurnId'].strip() or
                     not isinstance(subject, dict) or subject.get('kind') != 'thread' or
@@ -487,7 +489,19 @@ def completed_adapter_binding(db, ident):
             child = db.execute('SELECT parent_thread_id FROM threads WHERE id=?', (subject['threadId'],)).fetchone()
             if not child or child[0] != ident:
                 return None
-            frame.append([event_id, sequence, target['expectedTurnId'], subject['threadId']])
+            receipts = []
+            for receipt_id, receipt_sequence, receipt_session, receipt_raw in accepted:
+                if receipt_sequence <= sequence or receipt_session != session[0]:
+                    continue
+                try:
+                    receipt = json.loads(receipt_raw)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(receipt, dict) and receipt.get('providerThreadId') == session[0] and receipt.get('clientRequestId') == data['requestId']:
+                    receipts.append([receipt_id, receipt_sequence])
+            if len(receipts) != 1:
+                return None
+            frame.append([event_id, sequence, target['expectedTurnId'], subject['threadId'], receipts[0]])
         return {'threadId': ident, 'environmentId': thread[1], 'providerId': thread[2],
                 'sessionId': session[0], 'leaseId': started[0], 'topicId': requested[0],
                 'epoch': started[1], 'completedSequence': ended[0],

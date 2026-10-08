@@ -443,11 +443,15 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     for ident, kind, sequence in [('notice_requested', 'client/turn/requested', 1), ('notice_started', 'turn/started', 2), ('notice_completed', 'turn/completed', 4)]:
         notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', (ident, 'thr_notices', kind, sequence, session, '{}'))
     notification = {'direction': 'outbound', 'source': 'tell', 'initiator': 'system',
+                    'requestId': 'creq_notice_fixture',
                     'systemMessageKind': 'child-completed',
                     'systemMessageSubject': {'kind': 'thread', 'threadId': 'thr_notice_child'},
                     'target': {'kind': 'auto', 'expectedTurnId': 'fixture-active-turn'},
                     'request': {'method': 'turn/start', 'params': {}}}
     notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', ('notice_midturn', 'thr_notices', 'client/turn/requested', 3, None, json.dumps(notification)))
+    notices.execute('UPDATE events SET sequence=? WHERE id=?', (5, 'notice_completed'))
+    acceptance = {'providerThreadId': session, 'clientRequestId': 'creq_notice_fixture'}
+    notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', ('notice_accepted', 'thr_notices', 'turn/input/accepted', 4, session, json.dumps(acceptance)))
     notices.commit()
     notice_thread = {'id': 'thr_notices', 'status': 'idle', 'providerId': 'codex'}
     notice_environment = {'id': 'env_notices'}
@@ -473,11 +477,23 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     notices.commit()
     decision = monitor.queue_admission(notices, notice_thread, notice_environment)
     goal('Malformed mid-turn control metadata fails closed', not decision.get('admitted'))
-    notices.execute('UPDATE events SET data=?,sequence=? WHERE id=?', (json.dumps(notification), 5, 'notice_midturn'))
+    notices.execute('UPDATE events SET data=?,sequence=? WHERE id=?', (json.dumps(notification), 6, 'notice_midturn'))
     notices.commit()
     decision = monitor.queue_admission(notices, notice_thread, notice_environment)
     goal('Even a recognized child notice after completion remains pending', not decision.get('admitted'))
     notices.execute('UPDATE events SET sequence=? WHERE id=?', (3, 'notice_midturn'))
+    notices.commit()
+    for label, update in [('Wrong provider acceptance', {'providerThreadId': 'foreign-session'}),
+                          ('Wrong request acceptance', {'clientRequestId': 'foreign-request'})]:
+        notices.execute('UPDATE events SET data=? WHERE id=?', (json.dumps(dict(acceptance, **update)), 'notice_accepted'))
+        notices.commit()
+        decision = monitor.queue_admission(notices, notice_thread, notice_environment)
+        goal(label + ' cannot prove a child notice was delivered in this completed turn', not decision.get('admitted'))
+    notices.execute('UPDATE events SET data=?,sequence=? WHERE id=?', (json.dumps(acceptance), 6, 'notice_accepted'))
+    notices.commit()
+    decision = monitor.queue_admission(notices, notice_thread, notice_environment)
+    goal('A child notice without an acceptance receipt before completion stays held', not decision.get('admitted'))
+    notices.execute('UPDATE events SET sequence=? WHERE id=?', (4, 'notice_accepted'))
     notices.commit()
     admitted_notice = monitor.queue_admission(notices, notice_thread, notice_environment)
     altered = dict(notification, initiator='user')

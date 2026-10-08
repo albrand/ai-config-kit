@@ -95,7 +95,8 @@ useful check of operator bindings.
 
 For queued delivery, the bridge binds the request that preceded the completed
 turn. A control-plane `child-completed` notice from that thread's own child,
-delivered during the turn, does not replace the task. User input, unknown or
+with a matching provider/request acceptance receipt during the turn, does not
+replace the task. User input, unknown or
 malformed notices, foreign children, and all requests after completion keep
 delivery held. The final owner/lease check reads a consistent database snapshot
 and compares the request frame before enqueueing.
