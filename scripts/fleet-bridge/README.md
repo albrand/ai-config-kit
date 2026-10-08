@@ -76,6 +76,12 @@ requires every untracked current ID. It cannot distinguish undocumented older
 history from a new closed goal; its source owner reconciles evidence before
 closure rather than silently discarding that uncertainty.
 
+Evidence is a nonempty list of nonempty strings or objects with a nonempty
+`note` string and an optional nonempty `at` string. An empty list is missing
+acceptance; scalar values, empty notes, and malformed records are invalid.
+This checks task-receipt structure, not the truth of a workflow claim. The
+source owner remains responsible for persona, target, outcomes and their proof.
+
 To remove a task-owned schedule after its bounded trial, inspect its label and
 installation receipt, run `launchctl bootout gui/<uid>/<label>`, and remove only
 that receipt's plist. Keep project sessions, worktrees, and journals intact.

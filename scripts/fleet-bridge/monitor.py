@@ -72,6 +72,16 @@ def configure(path):
     return config
 
 
+def evidence_shape(value):
+    return isinstance(value, list) and all(
+        (isinstance(row, str) and bool(row.strip())) or
+        (isinstance(row, dict) and isinstance(row.get('note'), str) and bool(row['note'].strip())
+         and ('at' not in row or (isinstance(row['at'], str) and bool(row['at'].strip()))))
+        for row in value)
+
+def evidenced(value):
+    return evidence_shape(value) and bool(value)
+
 def classify(status, purposes, queued, owners, job_running):
     if not purposes:
         return 'UNKNOWN'
@@ -83,7 +93,9 @@ def classify(status, purposes, queued, owners, job_running):
         return 'QUEUED'
     if owners:
         return 'OWNER_HOLD'
-    if all(p.get('status') == 'done' and p.get('evidence') for p in purposes):
+    if any(p.get('status') == 'done' and p.get('evidence') is not None and not evidence_shape(p['evidence']) for p in purposes):
+        return 'UNKNOWN'
+    if all(p.get('status') == 'done' and evidenced(p.get('evidence')) for p in purposes):
         return 'COMPLETE' if status == 'idle' else 'ERROR_HOLD'
     if any(p.get('status') == 'open' for p in purposes) and status == 'idle':
         return 'RUNNABLE_IDLE'
@@ -111,6 +123,8 @@ def revision_state(ledger, required):
     revisions = ledger.get('accepted_revisions', [])
     if not isinstance(revisions, list) or any(not isinstance(r, dict) or not isinstance(r.get('quote'), str) or not r['quote'].strip() for r in revisions):
         return [], 'Accepted revision metadata invalid'
+    if any(r.get('evidence') is not None and not evidence_shape(r['evidence']) for r in revisions):
+        return [], 'Accepted revision evidence invalid'
     def stamp(value):
         try:
             parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -122,12 +136,12 @@ def revision_state(ledger, required):
         return [], 'Source purpose metadata invalid'
     original = [p for p in rows if isinstance(p, dict) and p.get('id') in required]
     original_closure = None
-    if len(original) == len(required) and all(p.get('status') == 'done' and p.get('evidence') and stamp(p.get('status_marked_at')) is not None for p in original):
+    if len(original) == len(required) and all(p.get('status') == 'done' and evidenced(p.get('evidence')) and stamp(p.get('status_marked_at')) is not None for p in original):
         original_closure = min(stamp(p['status_marked_at']) for p in original)
     pending = []
     for revision in revisions:
         accepted = stamp(revision.get('accepted_at'))
-        explicit = revision.get('status') == 'done' and bool(revision.get('evidence'))
+        explicit = revision.get('status') == 'done' and evidenced(revision.get('evidence'))
         if explicit or (accepted is not None and original_closure is not None and accepted <= original_closure):
             continue
         pending.append(revision)
@@ -215,7 +229,7 @@ def descendant_work(db, thread, scope_root=None, queue_lookup=None):
                         if not isinstance(purposes, list) or any(not isinstance(p, dict) or p.get('status') not in {'done', 'open', 'blocked-on-user'} for p in purposes):
                             entry['hold'] = 'SCOPE_UNKNOWN'
                         else:
-                            outstanding = [p for p in purposes if p['status'] != 'done' or not p.get('evidence')]
+                            outstanding = [p for p in purposes if p['status'] != 'done' or not evidenced(p.get('evidence'))]
                             if outstanding:
                                 entry['hold'] = 'UNFINISHED_SCOPE'
                                 entry['purposeIds'] = [p.get('id') for p in outstanding]

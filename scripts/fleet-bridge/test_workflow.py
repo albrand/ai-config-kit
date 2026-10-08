@@ -201,6 +201,24 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         row = poll()
         goal('Corrupt persisted JSON reports both targets as unknown', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'UNKNOWN')
         (state / 'monitor-state.json').write_text(json.dumps(base))
+        malformed_evidence = ['not an evidence list', {'note': 'not a list'}, True, [''], [{}], [{'note': 1}], [{'note': 'proof', 'at': False}]]
+        purpose_results = []
+        revision_results = []
+        for malformed in malformed_evidence:
+            broken_original = dict(original, evidence=malformed)
+            ledger.write_text(json.dumps({'purposes': [broken_original, closed_followup, late, upgrade_goal]}))
+            row = poll()
+            purpose_results.append(row['state'] != 'COMPLETE')
+            broken_revision = {'quote': 'Accepted additional outcome', 'accepted_at': '2026-01-02T00:00:00Z', 'status': 'done', 'evidence': malformed}
+            ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal], 'accepted_revisions': [broken_revision]}))
+            row = poll()
+            revision_results.append(row['state'] == 'UNKNOWN')
+        goal('Malformed truthy purpose evidence cannot complete the workflow', all(purpose_results))
+        goal('Malformed truthy revision evidence cannot complete the workflow', all(revision_results))
+        noted = dict(original, evidence=[{'note': 'source owner acceptance', 'at': '2026-01-03T00:00:00Z'}])
+        ledger.write_text(json.dumps({'purposes': [noted, closed_followup, late, upgrade_goal]}))
+        row = poll()
+        goal('Structured source-owner evidence remains compatible', row['state'] == 'COMPLETE')
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
