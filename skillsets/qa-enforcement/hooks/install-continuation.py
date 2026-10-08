@@ -63,6 +63,13 @@ def install(source, home, backup):
             (source / "shared/scope-ledger/SKILL.md", root / "SKILL.md"),
             (source / "shared/scope-ledger/scripts/closeout-stop.py", root / "scripts/closeout-stop.py"),
         ))
+        references_dir = root / "references"
+        check_target(home, references_dir)
+        references_dir.mkdir(parents=True, exist_ok=True)
+        for reference in sorted((source / "shared/scope-ledger/references").glob("*.md")):
+            target = references_dir / reference.name
+            check_target(home, target)
+            pairs.append((reference, target))
     manifest = []
     for i, (origin, target) in enumerate(pairs):
         check_target(home, target)
