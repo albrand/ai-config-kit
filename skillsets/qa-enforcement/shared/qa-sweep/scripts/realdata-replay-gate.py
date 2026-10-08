@@ -888,25 +888,32 @@ MERGE_WRAPPERS = {"env": {"-u", "--unset", "-C", "--chdir"}, "command": set(), "
 def shell_script_at(words, k):
     """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
     options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S`, `bash --norc -c S` and
-    `zsh --emulate sh -c S` all run S; -o, -O, --rcfile, --init-file and --emulate take a value. test-ship-matrix.py
-    checks this reading against the real shells.
-    None when no option holds c, or no word follows (Hermes 2026-10-08 r22)."""
+    `zsh --emulate sh -c S` all run S; --rcfile, --init-file and --emulate take a value, and so does each o in an
+    option cluster, in order (bash's O too): `bash -eo pipefail -c S` and `bash -c -oc pipefail S` run S. zsh takes
+    the rest of a cluster after o as the value when there is one (`zsh -oshwordsplit -c S`); its -O takes none.
+    test-ship-matrix.py checks this reading against the real shells.
+    None when no option holds c, or no word follows (Hermes 2026-10-08 r22; kit-shell-dispatch-script-word r1)."""
+    zsh = words[k].rsplit("/", 1)[-1] == "zsh"
     c, j = False, k + 1
     while j < len(words):
         w = words[j]
+        j += 1
         if w == "--":
-            j += 1
             break
-        if re.fullmatch(r"[-+][oO]", w) or w in ("--rcfile", "--init-file", "--emulate"):
-            j += 2
+        if w in ("--rcfile", "--init-file", "--emulate"):
+            j += 1
         elif w.startswith("--") and len(w) > 2:
-            j += 1
-        elif re.fullmatch(r"-[A-Za-z]+", w):
-            c = c or "c" in w
-            j += 1
-        elif re.fullmatch(r"\+[A-Za-z]+", w):
-            j += 1
+            pass
+        elif re.fullmatch(r"[-+][A-Za-z]+", w):
+            for i, ch in enumerate(w[1:], 2):
+                if ch == "c" and w[0] == "-":
+                    c = True
+                elif ch == "o" or (ch == "O" and not zsh):
+                    if zsh and i < len(w):
+                        break  # zsh: -oshwordsplit, the rest of the cluster is the value
+                    j += 1  # the next word is this option's value: -eo pipefail, -oc pipefail S
         else:
+            j -= 1
             break
     return j if c and j < len(words) else None
 

@@ -54,17 +54,26 @@ ship_scan() {
     return "\001"
   }
   function bare(w) { sub(/.*\//, "", w); return w }
-  function shscript(d, k, nw,   j, c, w) {
+  function shscript(d, k, nw,   j, c, w, z, i, n, ch) {
     # The index of the script that the -c of a shell runs, after its options (sh -e -c, bash -lc, bash -o pipefail -c,
-    # bash -c -e, bash --norc -c), or 0. Same reading as ship-gate.py shell_script_index (Hermes r22).
-    c = 0
+    # bash -c -e, bash -eo pipefail -c, bash --norc -c), or 0. Each o in a cluster takes the next word, and so does
+    # an O except in zsh; zsh takes the rest of the cluster after o when there is one. Same reading as ship-gate.py
+    # shell_script_index (Hermes r22).
+    c = 0; z = (bare(W[d, k]) == "zsh")
     for (j = k + 1; j <= nw; j++) {
       w = W[d, j]
       if (w == "--") { j++; break }
-      if (w ~ /^[-+][oO]$/ || w == "--rcfile" || w == "--init-file" || w == "--emulate") { j++; continue }
+      if (w == "--rcfile" || w == "--init-file" || w == "--emulate") { j++; continue }
       if (w ~ /^--./) continue
-      if (w ~ /^-[A-Za-z]+$/) { if (w ~ /c/) c = 1; continue }
-      if (w ~ /^\+[A-Za-z]+$/) continue
+      if (w ~ /^[-+][A-Za-z]+$/) {
+        n = length(w)
+        for (i = 2; i <= n; i++) {
+          ch = substr(w, i, 1)
+          if (ch == "c" && substr(w, 1, 1) == "-") c = 1
+          else if (ch == "o" || (ch == "O" && !z)) { if (z && i < n) break; j++ }
+        }
+        continue
+      }
       break
     }
     return (c && j <= nw) ? j : 0
