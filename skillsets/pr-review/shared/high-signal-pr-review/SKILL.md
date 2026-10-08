@@ -32,6 +32,14 @@ After the Hermes result, use the finding labels and bounded summaries to run
 the Jev second-judge step below. Keep its packet local and allowlisted; do not
 pass raw review text, diffs, source excerpts, secrets, or personal data.
 
+Reviewers run on Haiku 5.5 at low reasoning (owner model policy, 2026-10-08),
+where Anthropic reports that long agent prompts sometimes stop early and hand
+the task back. So keep working until the review is finished: posted, or, in
+draft/no-post mode or for a target that is not a postable PR, reported in
+full; or blocked, with the reason stated. Don't stop after reading the diff to
+report what you would check. When the review is finished, stop and report.
+Don't add fixes, files or refactors to the PR that weren't asked for.
+
 ## Workflow
 
 1. Read and obey `references/pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
