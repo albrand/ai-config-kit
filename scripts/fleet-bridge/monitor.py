@@ -534,6 +534,7 @@ def run(mutate=False):
         except BlockingIOError:
             return {'status': 'SINGLE_FLIGHT_HELD'}
         prior_path = ROOT / 'monitor-state.json'
+        prior_missing = not prior_path.exists()
         prior, prior_error = read_scope_ledger(prior_path) if prior_path.exists() else ({'targets': {}}, None)
         prior_targets = prior.get('targets', {})
         if not isinstance(prior_targets, dict):
@@ -557,8 +558,27 @@ def run(mutate=False):
                 target_error = 'Prior target record invalid; baseline reconciliation required'
             if last.get('scopeBaselineUnreconciled'):
                 target_error = 'Prior scope baseline remains unreconciled'
+            baseline_path = ROOT / 'scope-baselines' / (thread + '.json')
+            durable, durable_error = read_scope_ledger(baseline_path) if baseline_path.exists() else ({}, None)
+            if durable_error:
+                target_error = 'Durable scope baseline invalid; reconciliation required'
+            if prior_missing and baseline_path.exists() and not durable_error:
+                last = dict(durable)
+                has_previous = True
+            elif prior_missing and not baseline_path.exists() and ((ROOT / 'monitor-events.jsonl').exists() or (ROOT / 'installation.json').exists()):
+                has_previous = True
+                target_error = 'Prior scope state unexpectedly absent; baseline reconciliation required'
             # An upgrade cannot bless unknown IDs as old completed history.
             tracked, known, baseline_error = previous_scope(last, target['purposes'], has_previous)
+            if baseline_path.exists() and not durable_error:
+                durable_tracked, durable_known, durable_shape_error = previous_scope(durable, target['purposes'], True)
+                if durable_shape_error:
+                    target_error = 'Durable scope baseline shape invalid; reconciliation required'
+                else:
+                    tracked = sorted(set(tracked) | set(durable_tracked))
+                    # An ID is historical only if both valid snapshots know it.
+                    if known is not None:
+                        known = sorted(set(known) & set(durable_known or []))
             baseline_error = target_error or baseline_error
             purposes, purposes_valid = source_purposes(ledger, target['purposes'], tracked, known)
             pending_revisions, revision_error = revision_state(ledger, target['purposes'])
@@ -609,6 +629,9 @@ def run(mutate=False):
                 classification = 'UNKNOWN'
             if baseline_error:
                 classification = 'UNKNOWN'
+            request_state = db.execute("SELECT (SELECT MAX(sequence) FROM events WHERE thread_id=? AND type='client/turn/requested'), (SELECT MAX(sequence) FROM events WHERE thread_id=? AND type='turn/completed')", (thread, thread)).fetchone()
+            if classification == 'COMPLETE' and request_state[0] is not None and (request_state[1] is None or request_state[0] > request_state[1]):
+                classification = 'SOURCE_REQUEST_PENDING'
             item = {'thread': thread, 'project': target['project'], 'state': classification,
                     'bbStatus': t['status'], 'queuedCount': len(queue), 'otherActiveOwners': owners,
                     'activeSourceDescendants': source_workers,
@@ -648,6 +671,9 @@ def run(mutate=False):
                     item['state'] = 'DELIVERY_RECONCILIATION_PENDING'
             if not counters_valid:
                 item['nudgeHeld'] = 'Prior attempt counters invalid; no automatic delivery'
+            if purposes_valid and not baseline_error:
+                baseline_path.parent.mkdir(exist_ok=True, mode=0o700)
+                save(baseline_path, {k: item[k] for k in ['trackedPurposeIds', 'knownPurposeIds', 'nudges', 'lastNudgeAt']})
             # Only fresh input to an idle target. No model call for a running,
             # queued, held, blocked or unknown target, and never send-now.
             reconcile = classification == 'CHILD_WORK_PENDING' and reconciliation_needed(t['status'], purposes, queue, owners, child_holds, pending_revisions)

@@ -174,12 +174,22 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         row = poll()
         goal('A legacy-upgrade goal stays tracked after its evidence arrives', 'P4' in row['trackedPurposeIds'] and row['state'] == 'COMPLETE')
         base = json.loads((state / 'monitor-state.json').read_text())
+        baseline_fixture = {p.name: p.read_bytes() for p in (state / 'scope-baselines').glob('*.json')}
+
+        def restore_snapshot(value):
+            # Reset both independent copies to the same controlled pre-case
+            # state. Production never discards a durable baseline this way.
+            for p in (state / 'scope-baselines').glob('*.json'):
+                p.unlink()
+            for name, raw in baseline_fixture.items():
+                (state / 'scope-baselines' / name).write_bytes(raw)
+            (state / 'monitor-state.json').write_text(json.dumps(value))
         malformed_results = []
         newer = {'id': 'P5', 'status': 'done', 'evidence': []}
         for malformed in [None, 'P1', {'P1': True}, ['P1', None], ['P1', 'P1'], [], ['other']]:
             prior = json.loads(json.dumps(base))
             prior['targets']['thr_fixture']['knownPurposeIds'] = malformed
-            (state / 'monitor-state.json').write_text(json.dumps(prior))
+            restore_snapshot(prior)
             ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal, newer]}))
             row = poll()
             malformed_results.append(row['state'] != 'COMPLETE' and 'P5' in row['trackedPurposeIds'])
@@ -187,27 +197,27 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         goal('Every malformed baseline shape conservatively retains the new goal', all(malformed_results))
         prior = json.loads(json.dumps(base))
         prior['targets']['thr_fixture']['trackedPurposeIds'] = None
-        (state / 'monitor-state.json').write_text(json.dumps(prior))
+        restore_snapshot(prior)
         row = poll()
         goal('Malformed tracked scope reports unknown without stopping the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
         malformed_target_results = []
         for malformed in [None, 'bad', [], 1, False]:
             prior = json.loads(json.dumps(base))
             prior['targets']['thr_fixture'] = malformed
-            (state / 'monitor-state.json').write_text(json.dumps(prior))
+            restore_snapshot(prior)
             row = poll()
             malformed_target_results.append(row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
         goal('Malformed persisted target records leave the valid sibling observable', all(malformed_target_results))
         malformed_container_results = []
         for malformed in [None, 'bad', [], 1, False]:
-            (state / 'monitor-state.json').write_text(json.dumps({'targets': malformed}))
+            restore_snapshot({'targets': malformed})
             row = poll()
             malformed_container_results.append(row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'UNKNOWN')
         goal('Malformed target containers still observe both targets without inventing a baseline', all(malformed_container_results))
         (state / 'monitor-state.json').write_text('{"targets":')
         row = poll()
         goal('Corrupt persisted JSON reports both targets as unknown', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'UNKNOWN')
-        (state / 'monitor-state.json').write_text(json.dumps(base))
+        restore_snapshot(base)
         malformed_evidence = ['not an evidence list', {'note': 'not a list'}, True, [''], [{}], [{'note': 1}], [{'note': 'proof', 'at': False}]]
         purpose_results = []
         revision_results = []
@@ -263,7 +273,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             other.close()
             return admitted
 
-        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        restore_snapshot(snapshot)
         before = sum(args[:2] == ['thread', 'tell'] for args in calls)
         with patch.object(monitor, 'queue_admission', side_effect=competing_owner_after_admission):
             row = poll(mutate=True)
@@ -285,7 +295,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             other.close()
             return admitted
 
-        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        restore_snapshot(snapshot)
         with patch.object(monitor, 'queue_admission', side_effect=changed_lease_after_admission):
             row = poll(mutate=True)
         goal('A newer completed adapter turn cannot receive input admitted for the previous lease',
@@ -295,7 +305,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_requested3', 'thr_fixture', 'client/turn/requested', 7, '117471a8-1970-4376-8672-9de66c418579'))
         other.commit()
         other.close()
-        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        restore_snapshot(snapshot)
         row = poll(mutate=True)
         goal('A new unstarted request after completion blocks admission and enqueue despite idle status and empty queue',
              not row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
@@ -305,7 +315,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
         other.commit()
         other.close()
-        (state / 'monitor-state.json').write_text(json.dumps(snapshot))
+        restore_snapshot(snapshot)
         row = poll(mutate=True)
         goal('Only a request followed by its start and completion can admit queued recovery',
              row.get('inputAdmission', {}).get('admitted') and row.get('nudgeReceipt', {}).get('delivery') == 'queued' and
@@ -343,6 +353,32 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             row = poll(mutate=True)
         goal('Spacing expiry cannot retry an ambiguous accepted delivery',
              row['state'] == 'DELIVERY_RECONCILIATION_PENDING' and len(accepted) == 1)
+        shutil.rmtree(state / 'deliveries')
+        restore_snapshot(base)
+        upgrade_goal['evidence'] = []
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal]}))
+        poll()
+        (state / 'monitor-state.json').unlink()
+        row = poll()
+        goal('An unreceipted completed followup stays required after losing the poll state',
+             row['state'] != 'COMPLETE' and 'P4' in row['trackedPurposeIds'] and not (state / 'finished.json').exists())
+        upgrade_goal['evidence'] = ['source owner accepted recovered followup']
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late, upgrade_goal]}))
+        row = poll()
+        goal('Recovered scope can close only after its retained followup receives evidence',
+             row['state'] == 'COMPLETE' and 'P4' in row['trackedPurposeIds'])
+        other = sqlite3.connect(database)
+        other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_requested5', 'thr_fixture', 'client/turn/requested', 13, '117471a8-1970-4376-8672-9de66c418579'))
+        other.commit()
+        other.close()
+        row = poll()
+        goal('A closed scope cannot finish while a newer adapter request is still pending',
+             row['state'] == 'SOURCE_REQUEST_PENDING' and not (state / 'finished.json').exists())
+        (state / 'scope-baselines/thr_fixture.json').unlink()
+        (state / 'monitor-state.json').unlink()
+        row = poll()
+        goal('Losing both scope snapshots fails closed while a sibling stays observable',
+             row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE' and not (state / 'finished.json').exists())
     db = sqlite3.connect(database)
     db.execute('UPDATE threads SET status=? WHERE id=?', ('active', 'thr_sibling'))
     db.execute('UPDATE threads SET environment_id=? WHERE id=?', ('env_thr_fixture', 'thr_sibling'))

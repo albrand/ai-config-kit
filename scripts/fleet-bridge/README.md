@@ -80,6 +80,13 @@ the original floor, observed followups, acceptance evidence, source descendants,
 and native tool callbacks to be settled. Polling continues after closure to
 observe later work; `finished.json` records the latest completed round.
 
+Per-target scope baselines also survive independently of the main poll state.
+Losing that state cannot turn a retained unreceipted followup into old history.
+If both copies are absent after prior activity, the target remains unknown
+until its baseline is reconciled. A newer uncompleted adapter request prevents
+completion even when the source still appears idle. For a new schedule, run
+the initial observation before staging so its first baseline is recorded.
+
 The first scope snapshot records all existing purpose IDs. Later additions
 remain tracked even if added and completed between polls. Accepted revisions
 newer than original closure also block completion. The source owner records
