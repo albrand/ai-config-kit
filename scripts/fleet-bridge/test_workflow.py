@@ -513,7 +513,9 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         with patch.object(fresh_monitor, 'bb', return_value=[]), patch.object(fresh_monitor, 'surface', return_value=subprocess.CompletedProcess([], 0, stdout='{"ok":true,"result":{"chats":[]}}')), patch.object(fresh_monitor, 'native_review_state', return_value={'state': 'IDLE', 'pending': []}):
             fresh_states = [fresh_monitor.run(mutate=False)['targets']['thr_newfixture']['state'] for _ in range(3)]
         goal('Stage before the first poll creates a usable fresh baseline instead of locking into unknown',
-             Path(fresh_monitor.__file__).parent == Path(staged['installPath']) and fresh_states == ['COMPLETE'] * 3 and (fresh_state / 'scope-baselines/thr_newfixture.json').exists())
+             Path(fresh_monitor.__file__).parent.resolve() == Path(staged['installPath']).resolve() and fresh_states == ['COMPLETE'] * 3 and (fresh_state / 'scope-baselines/thr_newfixture.json').exists())
+        goals[-1]['observed'] = {'states': fresh_states, 'monitorPath': str(fresh_monitor.__file__), 'stagedPath': staged['installPath'],
+                                 'baselineExists': (fresh_state / 'scope-baselines/thr_newfixture.json').exists()}
 
 packet = {'persona': 'Fleet operator', 'target': {'stack': 'Portable monitor and real metadata guard with disposable BB/provider fixtures',
           'monitorSha256': hashlib.sha256((HERE / 'monitor.py').read_bytes()).hexdigest()}, 'polls': polls,
