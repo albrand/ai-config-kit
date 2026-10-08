@@ -1,7 +1,7 @@
 # PR review workflow details
 
 
-1. Read and obey `pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
+1. Read and obey `pr-review-output-contract.md` before any PR review, merge-readiness comment, posted review, or PR body. This is mandatory. If running inside a repo that vendors `agent-config-kit`, also read `skillsets/pr-review/references/pr-review-output-contract.md`, `REVIEW_AND_PR_FRAMEWORK.md`, `QUALITY_GATES.md`, and `ARCHITECTURE_AND_CODE_QUALITY.md`.
 2. Preflight the PR or diff:
    - Confirm it is open and reviewable.
    - Stop or ask before continuing if it is closed, draft, obviously automated or trivial, or already reviewed by the **same authenticated reviewer at the same head**. Reviewer identity and head SHA must match exactly before reusing a prior review; a different reviewer or a different head does not count as already-reviewed.
