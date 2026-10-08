@@ -473,6 +473,59 @@ def delivery_binding_current(db, expected):
         expected.get('environmentId'), expected.get('providerId'), expected.get('sessionId'),
         expected.get('leaseId'), expected.get('topicId'), expected.get('epoch'), expected.get('completedSequence')))
 
+def delivery_history(ident):
+    """Durable attempts survive an ambiguous CLI result or later poll failure."""
+    folder = ROOT / 'deliveries' / ident
+    attempts = []
+    uncertain = []
+    for path in sorted(folder.glob('*.json')) if folder.is_dir() else []:
+        record, error = read_scope_ledger(path)
+        if error or record.get('thread') != ident or not isinstance(record.get('attempt'), int) or isinstance(record.get('attempt'), bool) or record['attempt'] < 1 or not isinstance(record.get('at'), (int, float)) or isinstance(record.get('at'), bool):
+            uncertain.append(path.stem)
+            continue
+        attempts.append(record)
+        if record.get('status') not in {'confirmed', 'not-sent'}:
+            uncertain.append(path.stem)
+    return {'count': max((r['attempt'] for r in attempts), default=0),
+            'lastAt': max((r['at'] for r in attempts), default=0), 'uncertain': uncertain}
+
+def queued_delivery(db, item, admitted, brief):
+    """Persist intent before tell; an unknown outcome never permits a retry."""
+    folder = ROOT / 'deliveries' / item['thread']
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    attempt = item['nudges'] + 1
+    at = time.time()
+    path = folder / (str(attempt) + '-' + uuid.uuid4().hex + '.json')
+    intent = {'thread': item['thread'], 'attempt': attempt, 'at': at,
+              'status': 'prepared', 'binding': admitted['binding'],
+              'briefSha256': hashlib.sha256(brief.read_bytes()).hexdigest()}
+    save(path, intent)
+    # Count attempts before the side effect, even if its receipt is lost.
+    item['nudges'], item['lastNudgeAt'] = attempt, at
+    item['deliveryIntent'] = path.name
+    try:
+        if not delivery_binding_current(db, admitted['binding']):
+            intent.update({'status': 'not-sent', 'reason': 'Owner or lease changed before delivery'})
+            save(path, intent)
+            item['nudgeHeld'] = intent['reason']
+            item['state'] = 'OWNER_OR_LEASE_HOLD'
+            return
+        receipt = bb(['thread', 'tell', item['thread'], '--message-file', str(brief), '--mode', 'queue', '--json'])
+        if not isinstance(receipt, dict) or receipt.get('delivery') not in {'queued', 'sent'} or receipt.get('refusal'):
+            raise ValueError('Delivery receipt is not an accepted outcome')
+        queued = receipt.get('queuedMessage')
+        intent.update({'status': 'confirmed', 'receipt': {'delivery': receipt['delivery'],
+                      'queuedMessageId': queued.get('id') if isinstance(queued, dict) else None}})
+        save(path, intent)
+        item['nudgeReceipt'] = intent['receipt']
+        item['state'] = 'QUEUED' if receipt['delivery'] == 'queued' else 'RUNNING'
+    except Exception as failure:
+        intent.update({'status': 'uncertain', 'errorType': type(failure).__name__})
+        save(path, intent)
+        item['deliveryUncertain'] = True
+        item['nudgeHeld'] = 'Delivery outcome uncertain; reconcile its actual adapter receipt before any retry'
+        item['state'] = 'DELIVERY_RECONCILIATION_PENDING'
+
 def run(mutate=False):
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     with LOCK_FILE.open('a') as lock:
@@ -583,11 +636,23 @@ def run(mutate=False):
                 item['nativeCodexTerminalError'] = codex_error
             item['nudges'] = last.get('nudges', 0)
             item['lastNudgeAt'] = last.get('lastNudgeAt', 0)
+            history = delivery_history(thread)
+            counters_valid = isinstance(item['nudges'], int) and not isinstance(item['nudges'], bool) and item['nudges'] >= 0 and isinstance(item['lastNudgeAt'], (int, float)) and not isinstance(item['lastNudgeAt'], bool)
+            if counters_valid:
+                item['nudges'] = max(item['nudges'], history['count'])
+                item['lastNudgeAt'] = max(item['lastNudgeAt'], history['lastAt'])
+            if history['uncertain']:
+                item['uncertainDeliveryIntents'] = history['uncertain']
+                item['nudgeHeld'] = 'Prior delivery outcome uncertain; actual adapter reconciliation required'
+                if classification not in {'RUNNING', 'QUEUED', 'OWNER_HOLD'}:
+                    item['state'] = 'DELIVERY_RECONCILIATION_PENDING'
+            if not counters_valid:
+                item['nudgeHeld'] = 'Prior attempt counters invalid; no automatic delivery'
             # Only fresh input to an idle target. No model call for a running,
             # queued, held, blocked or unknown target, and never send-now.
             reconcile = classification == 'CHILD_WORK_PENDING' and reconciliation_needed(t['status'], purposes, queue, owners, child_holds, pending_revisions)
             revision_reconcile = classification == 'SCOPE_REVISION_PENDING' and t['status'] == 'idle' and not queue and not owners
-            if mutate and (classification == 'RUNNABLE_IDLE' or reconcile or revision_reconcile) and item['nudges'] < 3 and time.time() - item['lastNudgeAt'] >= 1800:
+            if mutate and counters_valid and not history['uncertain'] and (classification == 'RUNNABLE_IDLE' or reconcile or revision_reconcile) and item['nudges'] < 3 and time.time() - item['lastNudgeAt'] >= 1800:
                 file = ROOT / (thread + '-monitor-brief.md')
                 open_ids = [p['id'] for p in purposes if p['status'] == 'open']
                 file.write_text('serves: ' + ', '.join(open_ids) + '\n\nOriginal delivery remains unfinished. Continue every authorized runnable step for these purposes. Read the native delivery packets under ' + str(JOBS_ROOT) + '. Review actual source changes and exact-head evidence before integrating them. Do not substitute a context/tryout pass for the original workflow. Preserve every specific held gate, permission, source owner and later accepted scope revision. Do not retry held database gates, change cloud/DNS, read secrets, expose services or alter policy without the existing specific authorization. If every remaining step truly depends on the user, retain blocked-on-user with the exact pending decision after finishing independent preparation. Do not create duplicate workers or leave an open runnable purpose unattended.\n')
@@ -621,11 +686,7 @@ def run(mutate=False):
                     boundary = source_snapshot(db, thread)
                     boundary_queue = bb(['thread', 'queue', 'list', thread, '--json'])
                     if admitted['admitted'] and boundary['thread'].get('status') == 'idle' and boundary['environment']['id'] == current['environment']['id'] and not boundary_queue and delivery_binding_current(db, admitted.get('binding')):
-                        receipt = bb(['thread', 'tell', thread, '--message-file', str(file), '--mode', 'queue', '--json'])
-                        item['nudgeReceipt'] = receipt
-                        item['nudges'] += 1
-                        item['lastNudgeAt'] = time.time()
-                        item['state'] = 'QUEUED' if receipt.get('delivery') == 'queued' else 'RUNNING'
+                        queued_delivery(db, item, admitted, file)
                     else:
                         item['nudgeHeld'] = 'Metadata admission or delivery-time owner/lease check failed'
                 else:

@@ -59,8 +59,18 @@ python3 controller.py status --config /absolute/private-config.json
 
 The macOS adapter polls with launchd without a model call per poll. `run` also
 works on POSIX hosts with a separately owned scheduler. Actual source nudges
-may cause authorized provider work; at most three are sent per target, at
-least 30 minutes apart. All schedules for a target share one advisory lock.
+may cause authorized provider work; at most three attempts occur per target,
+at least 30 minutes apart. All schedules and deployment operations for a target
+share one advisory lock.
+
+Each delivery intent is written before calling the source CLI. An ambiguous
+result consumes the attempt budget and holds further automatic delivery, even
+if the next poll loses its main state file or the spacing interval expires.
+The actual adapter outcome must be reconciled; a prompt claiming success cannot
+clear uncertainty. One target's delivery error leaves its siblings observable.
+Staging and activation bind the complete command and working directory to the
+installed artifact, including README parity, and preserve an unchanged loaded
+version's activation receipt.
 
 `monitor-state.json`, `monitor-events.jsonl`, `scheduler-last-run.json`, and
 `installation.json` record actual state and artifact identity. Files are

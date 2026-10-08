@@ -8,6 +8,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import shutil
+import io
+import plistlib
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -129,6 +133,9 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         before = sum(args[:2] == ['thread', 'tell'] for args in calls)
         poll(mutate=True)
         goal('An immediate repeat does not duplicate the queued nudge', sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
+        # Independent later interleavings start without the successful fixture
+        # round's delivery history; this is only our disposable temp directory.
+        shutil.rmtree(state / 'deliveries')
         child_db = sqlite3.connect(database)
         child_db.execute('DELETE FROM threads WHERE id=?', ('thr_child',))
         child_db.commit()
@@ -303,6 +310,39 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         goal('Only a request followed by its start and completion can admit queued recovery',
              row.get('inputAdmission', {}).get('admitted') and row.get('nudgeReceipt', {}).get('delivery') == 'queued' and
              sum(args[:2] == ['thread', 'tell'] for args in calls) == before + 1)
+        prepared_before_call = []
+        accepted = []
+
+        def accepted_then_timeout(args):
+            result = fake_bb(args)
+            if args[:2] == ['thread', 'tell']:
+                intents = [json.loads(p.read_text()) for p in (state / 'deliveries/thr_fixture').glob('*.json')]
+                prepared_before_call.append(any(p['status'] == 'prepared' and p['attempt'] == 2 for p in intents))
+                accepted.append(args[2])
+                other = sqlite3.connect(database)
+                for suffix, kind, sequence in [('requested4', 'client/turn/requested', 10), ('started4', 'turn/started', 11), ('completed4', 'turn/completed', 12)]:
+                    other.execute('INSERT INTO events VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+                other.commit()
+                other.close()
+                raise subprocess.TimeoutExpired('fixture tell after adapter acceptance', 25)
+            return result
+
+        later = monitor.time.time() + 2000
+        with patch.object(monitor, 'bb', side_effect=accepted_then_timeout), patch.object(monitor.time, 'time', return_value=later):
+            row = poll(mutate=True)
+        goal('Delivery intent is durable before a possibly accepted side effect', prepared_before_call == [True])
+        goal('A lost receipt counts its attempt and leaves the sibling observable',
+             row['state'] == 'DELIVERY_RECONCILIATION_PENDING' and row['nudges'] == 2 and
+             (state / 'monitor-state.json').exists() and polls[-1]['sibling'] == 'COMPLETE')
+        (state / 'monitor-state.json').unlink()
+        with patch.object(monitor, 'bb', side_effect=accepted_then_timeout), patch.object(monitor.time, 'time', return_value=later + 4000):
+            row = poll(mutate=True)
+        goal('Losing the poll state cannot erase an uncertain delivery or its budget',
+             row['state'] == 'DELIVERY_RECONCILIATION_PENDING' and row['nudges'] == 2 and len(accepted) == 1)
+        with patch.object(monitor, 'bb', side_effect=accepted_then_timeout), patch.object(monitor.time, 'time', return_value=later + 8000):
+            row = poll(mutate=True)
+        goal('Spacing expiry cannot retry an ambiguous accepted delivery',
+             row['state'] == 'DELIVERY_RECONCILIATION_PENDING' and len(accepted) == 1)
     db = sqlite3.connect(database)
     db.execute('UPDATE threads SET status=? WHERE id=?', ('active', 'thr_sibling'))
     db.execute('UPDATE threads SET environment_id=? WHERE id=?', ('env_thr_fixture', 'thr_sibling'))
@@ -310,6 +350,61 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     admitted = monitor.queue_admission(db, {'id': 'thr_fixture', 'status': 'idle'}, {'id': 'env_thr_fixture'})
     goal('A different active write owner blocks admission', not admitted['admitted'])
     db.close()
+    spec = importlib.util.spec_from_file_location('controller_workflow', HERE / 'controller.py')
+    controller = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(controller)
+    control = {'loaded': False, 'bootstraps': 0}
+
+    def launchctl_fixture(argv, **kwargs):
+        assert argv[0] == 'launchctl'
+        if argv[1] == 'print':
+            return subprocess.CompletedProcess(argv, 0 if control['loaded'] else 1, stdout='')
+        assert argv[1] == 'bootstrap'
+        control['loaded'] = True
+        control['bootstraps'] += 1
+        return subprocess.CompletedProcess(argv, 0, stdout='')
+
+    def rejects(call):
+        try:
+            call()
+        except ValueError:
+            return True
+        return False
+
+    with patch.object(controller.Path, 'home', return_value=home / 'operator-home'), patch.object(controller.sys, 'platform', 'darwin'), patch.object(controller.subprocess, 'run', side_effect=launchctl_fixture), redirect_stdout(io.StringIO()):
+        installed = controller.stage(config_path, home / 'installed')
+        plist = Path(installed['plist'])
+        expected = plist.read_bytes()
+        wrong = plistlib.loads(expected)
+        wrong['ProgramArguments'][1] = '/unowned/controller.py'
+        plist.write_bytes(plistlib.dumps(wrong))
+        refused = rejects(lambda: controller.activate(config_path))
+        goal('A plist that points at another controller cannot activate despite a matching config path', refused and control['bootstraps'] == 0)
+        plist.write_bytes(expected)
+        with (home / 'shared.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            refused = rejects(lambda: controller.stage(config_path, home / 'installed'))
+        goal('A held poll lock blocks interleaved scheduler staging', refused and control['bootstraps'] == 0)
+        controller.activate(config_path)
+        first = json.loads((state / 'installation.json').read_text())
+        repeated = controller.stage(config_path, home / 'installed')
+        goal('Restaging the loaded immutable version preserves its activation receipt',
+             first['activated'] and repeated['activated'] and repeated['activatedAt'] == first['activatedAt'] and control['bootstraps'] == 1)
+        control['loaded'] = False
+        installed_readme = Path(installed['installPath']) / 'README.md'
+        installed_readme.write_text(installed_readme.read_text() + '\nchanged after stage\n')
+        refused = rejects(lambda: controller.activate(config_path))
+        goal('An installed README changed after staging blocks activation', refused and control['bootstraps'] == 1)
+        frames = home / 'digest-boundaries'
+        frames.mkdir()
+        for name, raw in [('monitor.py', b'a'), ('controller.py', b'b'), ('README.md', b'c')]:
+            (frames / name).write_bytes(raw)
+        with patch.object(controller, 'HERE', frames):
+            digest1 = controller.artifact_digest()
+            (frames / 'monitor.py').write_bytes(b'ab')
+            (frames / 'controller.py').write_bytes(b'')
+            digest2 = controller.artifact_digest()
+        goal('Different file boundaries cannot reuse the same installed artifact identity', digest1 != digest2)
 
 packet = {'persona': 'Fleet operator', 'target': {'stack': 'Portable monitor and real metadata guard with disposable BB/provider fixtures',
           'monitorSha256': hashlib.sha256((HERE / 'monitor.py').read_bytes()).hexdigest()}, 'polls': polls,

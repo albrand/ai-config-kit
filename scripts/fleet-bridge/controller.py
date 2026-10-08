@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install and inspect a task-scoped, user-owned local fleet scheduler."""
 import argparse
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from contextlib import contextmanager
 
 HERE = Path(__file__).resolve().parent
 
@@ -41,7 +43,26 @@ def bindings(path):
 
 
 def artifact_digest():
-    return hashlib.sha256(b''.join((HERE / name).read_bytes() for name in ['monitor.py', 'controller.py', 'README.md'])).hexdigest()
+    digest = hashlib.sha256()
+    for name in ['monitor.py', 'controller.py', 'README.md']:
+        raw = (HERE / name).read_bytes()
+        encoded = name.encode()
+        digest.update(len(encoded).to_bytes(8, 'big'))
+        digest.update(encoded)
+        digest.update(len(raw).to_bytes(8, 'big'))
+        digest.update(raw)
+    return digest.hexdigest()
+
+@contextmanager
+def deployment_lock(path):
+    monitor, _, _ = bindings(path)
+    monitor.ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with monitor.LOCK_FILE.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('A task-owned poll or deployment already holds the shared lock')
+        yield
 
 
 def run_once(path, observe_only=False):
@@ -64,6 +85,10 @@ def run_once(path, observe_only=False):
 
 
 def stage(path, install_root):
+    with deployment_lock(path):
+        return stage_locked(path, install_root)
+
+def stage_locked(path, install_root):
     monitor, config, label = bindings(path)
     if sys.platform != 'darwin':
         raise ValueError('This scheduler adapter requires macOS; run is portable on POSIX')
@@ -93,34 +118,46 @@ def stage(path, install_root):
               'EnvironmentVariables': {'PATH': config['scheduler'].get('path', '/usr/bin:/bin:/usr/sbin:/sbin')},
               'StandardOutPath': str(logs / 'stdout.log'), 'StandardErrorPath': str(logs / 'stderr.log')}
     expected = plistlib.dumps(values)
-    if plist.exists() and plist.read_bytes() != expected:
+    previous = {}
+    loaded = False
+    if plist.exists():
         previous_path = monitor.ROOT / 'installation.json'
         previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
         prior_values = plistlib.loads(plist.read_bytes())
         old_command = str(Path(previous.get('installPath', '/unowned')) / 'controller.py')
-        if previous.get('label') != label or previous.get('plist') != str(plist) or old_command not in prior_values.get('ProgramArguments', []):
+        prior_command = previous.get('programArguments', [sys.executable, old_command, 'run', '--config', str(path)])
+        if previous.get('label') != label or previous.get('plist') != str(plist) or prior_values.get('ProgramArguments') != prior_command or prior_values.get('WorkingDirectory') != previous.get('installPath'):
             raise ValueError('A different scheduler already owns this label; do not overwrite it')
-        loaded = subprocess.run(['launchctl', 'print', 'gui/' + str(os.getuid()) + '/' + label], capture_output=True, text=True)
-        if loaded.returncode == 0:
+        loaded = subprocess.run(['launchctl', 'print', 'gui/' + str(os.getuid()) + '/' + label], capture_output=True, text=True).returncode == 0
+        if loaded and plist.read_bytes() != expected:
             raise ValueError('Unload only this owned scheduler before changing its installed version')
-        shutil.copyfile(plist, monitor.ROOT / ('scheduler-' + previous['artifactSha256'] + '.plist.bak'))
+        if plist.read_bytes() != expected:
+            shutil.copyfile(plist, monitor.ROOT / ('scheduler-' + previous['artifactSha256'] + '.plist.bak'))
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_bytes(expected)
     plist.chmod(0o600)
     receipt = {'label': label, 'artifactSha256': digest, 'installPath': str(destination), 'plist': str(plist),
-               'config': str(path), 'stagedAt': time.time(), 'activated': False,
-               'files': {name: hashlib.sha256((destination / name).read_bytes()).hexdigest() for name in ['monitor.py', 'controller.py']}}
+               'config': str(path), 'stagedAt': time.time(), 'activated': loaded,
+               'programArguments': values['ProgramArguments'],
+               'files': {name: hashlib.sha256((destination / name).read_bytes()).hexdigest() for name in ['monitor.py', 'controller.py', 'README.md']}}
+    if loaded and 'activatedAt' in previous:
+        receipt['activatedAt'] = previous['activatedAt']
     write_json(monitor.ROOT / 'installation.json', receipt)
     print(json.dumps(receipt))
     return receipt
 
 
 def activate(path):
+    with deployment_lock(path):
+        return activate_locked(path)
+
+def activate_locked(path):
     monitor, _, label = bindings(path)
     installation = json.loads((monitor.ROOT / 'installation.json').read_text())
     plist = Path(installation['plist'])
     actual = plistlib.loads(plist.read_bytes())
-    if actual.get('Label') != label or actual.get('ProgramArguments', [])[-1:] != [str(path)]:
+    expected_command = [sys.executable, str(Path(installation['installPath']) / 'controller.py'), 'run', '--config', str(path)]
+    if installation.get('label') != label or installation.get('config') != str(path) or actual.get('Label') != label or actual.get('ProgramArguments') != expected_command or installation.get('programArguments') != expected_command or actual.get('WorkingDirectory') != installation['installPath']:
         raise ValueError('Installed scheduler binding mismatch')
     for name, digest in installation['files'].items():
         if hashlib.sha256((Path(installation['installPath']) / name).read_bytes()).hexdigest() != digest:
