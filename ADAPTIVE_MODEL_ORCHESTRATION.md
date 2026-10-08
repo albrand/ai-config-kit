@@ -66,7 +66,8 @@ standard tier sufficient.
 ## Model Policy (owner directive 2026-10-08)
 
 Pick the model and reasoning level from the agent's role. In bb, `bb fleet route`
-applies this table; pass `--topic`, `--rejections` and `--complexity` so it can.
+applies this table; pass `--topic`, `--rejections`, `--complexity` and, when the
+work began before its first review, `--started-at` so it can.
 Elsewhere (Codex, Claude Code, Elyra cards), name the model and reasoning
 explicitly when you start an agent. Never leave it to a default: Codex's config
 default is the GPT ceiling, and Claude's is Opus.
@@ -78,15 +79,20 @@ default is the GPT ceiling, and Claude's is Opus.
 | Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for light research and bulk work; low | `gpt-6-luna`; low, medium or high by complexity |
 
 - **Claude children and reviewers.** Reasoning goes from low to high if and
-  only if the work keeps being sent back: two rejections in a row from quality
-  gates or Hermes. It never goes past high. Light work that keeps coming back
+  only if the work keeps being sent back: two rejections in a row, counting
+  Hermes non-accepts and failed quality gates together. It never goes past
+  high. Light work that keeps coming back
   moves from Haiku to Sonnet.
 - **GPT children.** They climb one step for each rejection in a row, and one
-  step each when the orchestrator has run the work for 2 hours, then for 6:
+  step each when this work has been going back and forth for 2 hours, then
+  for 6. That time is the work's own, counted from its first rejection since
+  its last accept (or its stated start); a new task in an old group starts at
+  zero:
   - `gpt-6-luna` low → medium → high → xhigh
   - → `gpt-6.1-sol` high → xhigh, which is the ceiling.
 - **Never astra.** No agent work runs on any astra model; Fleet refuses such
-  a turn at dispatch. The ceiling also excludes `max` and `ultra` (which
+  a turn at dispatch, and also refuses an agent's Codex turn whose model it
+  cannot determine. The ceiling also excludes `max` and `ultra` (which
   delegates on its own).
 - **Re-route before rework.** A running agent keeps its spawn model. When work
   is rejected, start its next attempt on the route the new count gives.
