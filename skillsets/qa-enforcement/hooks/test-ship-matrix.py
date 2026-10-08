@@ -318,7 +318,10 @@ bad += misread
 print(f"replay gate reads {merge_only - misread} of {merge_only} merge-only payloads as merges")
 # Which word a shell runs as its -c script, after its options, is checked against the real shells: each form runs
 # with `printf RAN` in the script slot, and every reader (ship-gate.py, the replay gate, the hook's awk) must pick
-# that word exactly when the shell prints RAN (Hermes 2026-10-08 r22, r23).
+# that word exactly when the shell prints RAN (Hermes 2026-10-08 r22, r23). The forms run on shell_oracle's required
+# shells, never on one found on PATH: shell_versions() above has already exited 1 if any is missing, a form naming
+# another shell or a shell that hangs is a failure, and every required shell must have a form, so a host without
+# zsh cannot drop the zsh forms and still pass (r24).
 SHELL_FORMS = [["sh", "-c", "S"], ["sh", "-e", "-c", "S"], ["bash", "-lc", "S"], ["bash", "-o", "pipefail", "-c", "S"],
                ["bash", "-c", "-e", "S"], ["bash", "--norc", "-c", "S"], ["bash", "--rcfile", "/dev/null", "-c", "S"],
                ["bash", "--login", "-c", "S"], ["bash", "-O", "extglob", "-c", "S"], ["sh", "-c", "--", "S"],
@@ -328,16 +331,20 @@ SHELL_FORMS = [["sh", "-c", "S"], ["sh", "-e", "-c", "S"], ["bash", "-lc", "S"],
 sh_bad = sh_cases = 0
 probe_home = tempfile.mkdtemp(prefix="shell-forms-")
 for form in SHELL_FORMS:
-    exe = shutil.which(form[0])
-    if not exe:
-        print(f"skip shell form (no {form[0]}): {form}")
+    sh_cases += 1
+    exe = "/bin/" + form[0]
+    if exe not in SHELLS or not os.access(exe, os.X_OK):
+        sh_bad += 1
+        print(f"BAD shell form not checked: {exe} is not a required shell present on this host: {form}")
         continue
     argv = [exe] + ["printf RAN" if w == "S" else w for w in form[1:]]
     try:
         real = subprocess.run(argv, capture_output=True, text=True, timeout=10, cwd=probe_home,
                               env={"PATH": "/usr/bin:/bin", "HOME": probe_home}).stdout.endswith("RAN")
     except subprocess.TimeoutExpired:
-        real = False
+        sh_bad += 1
+        print(f"BAD shell form not checked: {form[0]} timed out: {form}")
+        continue
     want = form.index("S") if real else None
     words = ["printf RAN" if w == "S" else w for w in form]
     py = gate.shell_script_index(words, 0)
@@ -347,13 +354,16 @@ for form in SHELL_FORMS:
                     {**os.environ, "SHIP_SCAN_VIEW": "1"}).stdout.rstrip("\n")
     awk_ok = (shell_view.strip() == "printf RAN") == real
     ok = py == want and rg == want and awk_ok
-    sh_cases += 1
     sh_bad += not ok
     print(f"{'ok ' if ok else 'BAD'} shell form real {'runs S' if real else 'does not run S'}; ship-gate {py}, replay {rg}, "
           f"awk view {shell_view.strip()!r}: {command}")
 shutil.rmtree(probe_home, ignore_errors=True)
+for s in SHELLS:
+    if not any("/bin/" + form[0] == s for form in SHELL_FORMS):
+        sh_bad += 1
+        print(f"BAD required shell {s} has no shell -c form")
 bad += sh_bad
-print(f"shell -c forms: {sh_cases} checked against the real shells, {sh_bad} bad")
+print(f"shell -c forms: {sh_cases} checked against the real shells ({VERSIONS}), {sh_bad} bad")
 if md:
     print("| command | cwd | path | expected | observed |\n|---|---|---|---|---|")
     for c, w, m, e, o, ok in rows:
