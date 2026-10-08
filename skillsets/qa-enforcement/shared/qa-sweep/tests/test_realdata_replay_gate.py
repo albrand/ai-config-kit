@@ -1228,7 +1228,8 @@ sys.exit(2)
     def test_blocked_rows_rejects_negation_boundary(self) -> None:
         gate = self.gate_module()
         for boundary in (
-                "none", " nOnE ", "n/a", "NA", "na", "-", "no boundary", "no boundary reached",
+                "none", " nOnE ", "n/a", "n.a.", "n-a", "N_A", "NA", "na", "-",
+                "no boundary", "no boundary reached",
                 "not blocked", "nothing blocked", "none blocked", "zero blocked",
                 "never blocked", "unblocked", "not applicable", "none.", "not-blocked",
                 "no_boundary", "n / a", "None!", "'none'", "`none`", "(none)",

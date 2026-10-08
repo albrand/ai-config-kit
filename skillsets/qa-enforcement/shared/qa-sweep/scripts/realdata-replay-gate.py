@@ -32,7 +32,7 @@ BLOCKED_ROWS_PATTERN = re.compile(
     r"\((?P<boundary>[^)\r\n]+)\).*$"
 )
 BLOCKED_ROW_NEGATIONS = frozenset({
-    "none", "n/a", "na", "no boundary", "no boundary reached",
+    "none", "n a", "na", "no boundary", "no boundary reached",
     "not blocked", "nothing blocked", "none blocked", "zero blocked",
     "never blocked", "unblocked", "not applicable",
 })
@@ -847,9 +847,8 @@ def _blocked_boundary_has_disallowed_character(value: str) -> bool:
 
 def _blocked_boundary_skeleton(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
-    skeleton = re.sub(r"[^a-z0-9/]", " ", normalized)
+    skeleton = re.sub(r"[^a-z0-9]", " ", normalized)
     skeleton = re.sub(r"\s+", " ", skeleton)
-    skeleton = re.sub(r"\s*/\s*", "/", skeleton)
     return skeleton.strip()
 
 
