@@ -833,8 +833,10 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "per-goal counts/reasons/error classes": r"(?is)\|[^\n]*goal[^\n]*\|[^\n]*target[^\n]*\|[^\n]*control[^\n]*\|[^\n]*candidate[^\n]*\|[^\n]*reason[^\n]*\|[^\n]*error class[^\n]*\|",
         "blocked external-call rows": (
             r"(?m)^(?:[-*] )?Blocked rows: (?:\d{1,3}(?:,\d{3})*|\d+)"
-            r"(?: (?!(?i:not|no|none|never|were|was|are|is|succeeded|unblocked)\b)"
-            r"[A-Za-z_-]+){0,3} "
+            r"(?: (?:(?!(?i:not|no|none|never|were|was|are|is|succeeded|unblocked)\b)"
+            r"[A-Za-z]+ )?(?i:rows|row|observations|artifacts|chunks|conversations|items|"
+            r"records|groups|messages|subjects|checkpoints|candidates|events|reads|calls|"
+            r"pages|accounts|clients))? "
             r"\((?![ \t]*(?i:none|n/a|na|-|no boundary reached|no boundary|"
             r"not blocked|nothing blocked|not applicable)[ \t]*\))"
             r"[^)\r\n]+\).*$"

@@ -1110,18 +1110,30 @@ sys.exit(2)
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_accepts_asterisk_bullet_and_three_word_phrase(self) -> None:
+    def test_blocked_rows_accepts_asterisk_bullet_and_two_word_noun_phrase(self) -> None:
         text = replay_report_with_blocked_line(
-            "* Blocked rows: 12 pending graph observations (boundary reached)")
+            "* Blocked rows: 12 graph observations (boundary reached)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertTrue(valid, reason)
 
-    def test_blocked_rows_rejects_phrase_longer_than_three_words(self) -> None:
+    def test_blocked_rows_rejects_qualifier_without_row_noun(self) -> None:
         text = replay_report_with_blocked_line(
-            "- Blocked rows: 12 pending graph projector retry boundary observations today (none)")
+            "- Blocked rows: 12 pending graph observations (boundary reached)")
         valid, reason, _ = self.gate_module().validate_report_text(text)
         self.assertFalse(valid)
         self.assertIn("blocked external-call rows", reason)
+
+    def test_blocked_rows_rejects_non_ascii_or_compound_qualifiers(self) -> None:
+        gate = self.gate_module()
+        for qualifier in (
+                "were_not_blocked_and_succeeded", "not_blocked", "were-not", "succeeded rows"):
+            text = replay_report_with_blocked_line(
+                f"Blocked rows: 8 {qualifier} (boundary reached: provider limit)")
+            valid, reason, _ = gate.validate_report_text(text)
+            with self.subTest(qualifier=qualifier):
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
+                self.assertNotIn(qualifier, reason)
 
     def test_blocked_rows_rejects_contradictory_qualifier(self) -> None:
         text = replay_report_with_blocked_line(
