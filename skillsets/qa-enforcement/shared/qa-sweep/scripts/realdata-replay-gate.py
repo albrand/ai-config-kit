@@ -845,7 +845,7 @@ def _blocked_boundary_is_valid(value: str) -> bool:
     normalized = _normalize_blocked_boundary(value)
     if not any(character.isalpha() or character.isdigit() for character in normalized):
         return False
-    first_clause = _normalize_blocked_boundary(value.split(";", 1)[0])
+    first_clause = normalized.split(";", 1)[0].strip()
     return (normalized not in BLOCKED_ROW_NEGATIONS
             and first_clause not in BLOCKED_ROW_NEGATIONS)
 
@@ -862,9 +862,11 @@ def _validate_report_structure_and_digest(text: str) -> tuple[bool, str, str | N
         "blocked external-call rows": BLOCKED_ROWS_PATTERN,
     }
     missing = [name for name, pattern in required.items() if not re.search(pattern, text)]
+    blocked_matches = list(BLOCKED_ROWS_PATTERN.finditer(text))
     if ("blocked external-call rows" in missing
+            or not blocked_matches
             or not any(_blocked_boundary_is_valid(match.group("boundary"))
-                       for match in BLOCKED_ROWS_PATTERN.finditer(text))):
+                       for match in blocked_matches)):
         line_number = len(text.splitlines()) + 1
         return False, ("REALDATA-REPLAY.md is missing required blocked external-call rows "
                        f"at line {line_number} (end of report)"), None

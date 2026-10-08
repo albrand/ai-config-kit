@@ -75,6 +75,15 @@ def replay_report_with_blocked_line(line: str | None) -> str:
     return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
 
 
+def replay_report_with_blocked_lines(*blocked_lines: str) -> str:
+    lines = replay_report().splitlines()
+    index = next(i for i, value in enumerate(lines) if value.startswith("Blocked rows:"))
+    lines[index:index + 1] = blocked_lines
+    body = "\n".join(lines[:-1]) + "\n"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return body + f"- Artifact SHA-256 (excluding this line): {digest}\n"
+
+
 class RealdataReplayGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -1139,6 +1148,28 @@ sys.exit(2)
                 valid, reason, _ = gate.validate_report_text(
                     replay_report_with_blocked_line(line))
                 self.assertTrue(valid, reason)
+
+    def test_report_with_several_valid_blocked_rows_is_accepted(self) -> None:
+        blocked_lines = (
+            "Blocked rows: 8 (provider_limit)",
+            "Blocked rows: 1,145 (graph_store_not_copied; graph observations)",
+            "Blocked rows: 0 (boundary reached: none needed)",
+            "Blocked rows: 8 (no Neo4j in the read-only copy)",
+        )
+        for line in blocked_lines:
+            self.assertRegex(line, MAIN_BLOCKED_ROWS_PATTERN)
+        valid, reason, _ = self.gate_module().validate_report_text(
+            replay_report_with_blocked_lines(*blocked_lines))
+        self.assertTrue(valid, reason)
+
+    def test_blocked_rows_lookalike_semicolons_are_normalized_before_clause_split(self) -> None:
+        for punctuation in ("\uff1b", "\u037e"):
+            text = replay_report_with_blocked_line(
+                f"Blocked rows: 8 (none{punctuation}eight calls stopped)")
+            valid, reason, _ = self.gate_module().validate_report_text(text)
+            with self.subTest(punctuation=punctuation):
+                self.assertFalse(valid)
+                self.assertIn("blocked external-call rows", reason)
 
     def test_blocked_rows_rejects_free_text_qualifiers(self) -> None:
         gate = self.gate_module()
