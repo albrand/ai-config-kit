@@ -101,8 +101,8 @@ def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
     return p.returncode, out or ""
 
 
-def git(repo, *args, timeout=60):
-    rc, out = sh(["git", "-C", str(repo), *args], timeout=timeout, merge=False)
+def git(repo, *args, timeout=60, env=None):
+    rc, out = sh(["git", "-C", str(repo), *args], env=env, timeout=timeout, merge=False)
     return out.strip() if rc == 0 else ""
 
 
@@ -494,11 +494,11 @@ def skipped_count(output):
     return n
 
 
-def changed_paths(repo, base):
+def changed_paths(repo, base, env=None):
     if not base:
         return None
-    mb = git(repo, "merge-base", base, "HEAD")
-    out = git(repo, "diff", "--name-only", f"{mb or base}...HEAD")
+    mb = git(repo, "merge-base", base, "HEAD", env=env)
+    out = git(repo, "diff", "--name-only", f"{mb or base}...HEAD", env=env)
     return out.splitlines()
 
 
@@ -852,10 +852,11 @@ def branch_head(mirror, name):
     return git(mirror, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}")
 
 
-def trusted_config(mirror, sha, base):
-    """(config, note): a PR runs its base branch's config, so it can't change what is checked. A branch job
-    (an owner-chosen branch, no base) runs its own."""
-    ref = f"refs/heads/{base}" if base else sha
+def trusted_config(mirror, sha, base, ref=None, since=None):
+    """(config, note): a PR runs its base branch's config (at commit `ref`), so it can't change what is checked. A
+    branch job (an owner-chosen branch, no base) runs its own. The note names an edit the PR made since `since`,
+    where it left the base branch, so a later change on the base is not blamed on the PR."""
+    ref = ref or (f"refs/heads/{base}" if base else sha)
     try:
         cfg = json.loads(git(mirror, "show", f"{ref}:{CONFIG}") or "null")
     except ValueError:
@@ -866,7 +867,11 @@ def trusted_config(mirror, sha, base):
         mine = json.loads(git(mirror, "show", f"{sha}:{CONFIG}") or "null")
     except ValueError:
         mine = "unreadable"
-    return cfg, ("" if mine == cfg else f" (ran {base}'s config, not this PR's edit)")
+    try:
+        then = json.loads(git(mirror, "show", f"{since}:{CONFIG}") or "null") if since else cfg
+    except ValueError:
+        then = "unreadable"
+    return cfg, ("" if mine == then else f" (ran {base}'s config, not this PR's edit)")
 
 
 def verifier_paths(cfg):
@@ -886,11 +891,11 @@ def verifier_paths(cfg):
     return paths
 
 
-def pin_verifier(mirror, ref, sha, work, paths):
+def pin_verifier(mirror, ref, sha, work, paths, since=None):
     """Replace each verifier path in the PR checkout `work` with its copy at `ref`, read from the mirror (no git runs
     in the job dir). A directory is replaced whole, so the PR can add nothing under it. Runs before any PR code, and
     never follows a link the PR planted: a path whose directory is a symlink in the PR is refused.
-    Returns (error, paths the PR edited)."""
+    Returns (error, paths the PR edited since `since`, where it left the base branch)."""
     work = Path(work).resolve()
     edited = []
     for rel in paths:
@@ -930,9 +935,22 @@ def pin_verifier(mirror, ref, sha, work, paths):
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
         if git(mirror, "rev-parse", "--verify", "--quiet", f"{sha}:{rel}") != \
-                git(mirror, "rev-parse", "--verify", "--quiet", f"{ref}:{rel}"):
+                git(mirror, "rev-parse", "--verify", "--quiet", f"{since or ref}:{rel}"):
             edited.append(rel)
     return "", edited
+
+
+GIT_NO_HOST_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+
+def job_git_env(job):
+    """Env for git in a PR job dir: no host global, system or XDG git config, so a PR's .gitattributes can't select
+    a merge driver or filter the host defines (git-lfs included), and no host hook, signing or credential helper
+    applies. GIT_* from the host is dropped too."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_NO_HOST_CONFIG, HOME=str(job / "home"), XDG_CONFIG_HOME=str(job / "home" / ".config"),
+               GIT_TERMINAL_PROMPT="0")
+    return env
 
 
 def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
@@ -948,12 +966,16 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
     if kind == "branch" and not trusted:
         print(f"[serve] {slug} {label}: {sha[:9]} is not the head of an owner-listed branch; not running", flush=True)
         return "error"
-    if not trusted and not branch_head(mirror, base):
+    base_sha = None if trusted else branch_head(mirror, base)
+    if not trusted and not base_sha:
         print(f"[serve] {slug} {label}: PR base branch {base!r} is missing or unknown; not running", flush=True)
         return "error"
     if not trusted:
         kind = "pr"
-    cfg, note = trusted_config(mirror, sha, None if trusted else base)
+    # A PR is checked merged into this base commit, the one its verifier is pinned from, so a branch that predates
+    # a base change (a new suite and its registry entry) is not failed by the skew. Edits count from the fork point.
+    since = (git(mirror, "merge-base", sha, base_sha) or None) if base_sha else None
+    cfg, note = trusted_config(mirror, sha, None if trusted else base, base_sha, since)
     if not cfg:
         post(STATUS_PREFIX, "missing", f"no .verify/config.json on {base} yet; merge one there first" if base
              else "no .verify/config.json in this commit")
@@ -975,15 +997,27 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             post = capped_post(post)
         (job / "home").mkdir()
         (job / "tmp").mkdir()
-        rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], timeout=900)
-        rc = rc or sh(["git", "-C", str(work), "checkout", "--quiet", "--detach", sha], timeout=900)[0]
+        genv = None if trusted else job_git_env(job)
+        rc, _ = sh(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(mirror), str(work)], env=genv,
+                   timeout=900)
+        rc = rc or sh(["git", "-C", str(work), "checkout", "--quiet", "--detach", sha], env=genv, timeout=900)[0]
         if rc != 0:
             print(f"[serve] {slug} {label}: cannot check out {sha[:9]}")
             return "error"
+        if base_sha:  # genv: no host git config, so no host hook, signing, merge driver or filter runs here
+            rc, out = sh(["git", "-C", str(work), "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                          "-c", "user.name=verify runner", "-c", "user.email=verify-runner@localhost",
+                          "merge", "--quiet", "--no-ff", "--no-edit", base_sha], env=genv, timeout=900)
+            if rc != 0:
+                print(f"[serve] {slug} {label}: {sha[:9]} does not merge into {base} at {base_sha[:9]}:\n{out[-2000:]}",
+                      flush=True)
+                return "done" if post(STATUS_PREFIX, "missing", f"not checked: conflicts with {base} at {base_sha[:9]};"
+                                      f" merge or rebase on {base}") else "error"
+        checked = git(work, "rev-parse", "HEAD", env=genv)
         # Last git call in the job dir: after PR code runs, its hooks and config could run unsandboxed.
-        paths = None if trusted else changed_paths(work, f"origin/{base}")
+        paths = None if trusted else changed_paths(work, base_sha, genv)
         try:
-            problem, edited = pin_verifier(mirror, f"refs/heads/{base}", sha, work, pinned) if pinned else ("", [])
+            problem, edited = pin_verifier(mirror, base_sha, sha, work, pinned, since) if pinned else ("", [])
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             problem, edited = f"cannot pin {base}'s verifier: {e}", []
         if problem:
@@ -997,6 +1031,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             print(f"[serve] {slug}: env file sets {', '.join(dropped)}; forge tokens never reach jobs", flush=True)
         secrets = sorted({v for v in env_file.values() if len(v) >= 4}, key=len, reverse=True)
         env = job_env(job, env_file, sha)
+        if not trusted:  # git in a stage starts with no host config either (the sandbox, not this, contains PR code)
+            env.update(GIT_NO_HOST_CONFIG)
         deadline = time.time() + cfg.get("timeout", 7200)
         if cfg.get("setup"):
             post(STATUS_PREFIX, "pending", "setup")
@@ -1005,7 +1041,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             if rc != 0:
                 print(f"[serve] {slug} {label} setup failed (exit {rc}):\n{redact(out[-3000:], secrets)}", flush=True)
                 return "done" if post(STATUS_PREFIX, "fail", f"setup failed (exit {rc}); output is in the runner log") else "error"
-        print(f"[serve] {slug} {label} {sha[:9]} running", flush=True)
+        print(f"[serve] {slug} {label} {sha[:9]} running" + (f", merged into {base} at {base_sha[:9]}" if base_sha else ""),
+              flush=True)
         stages = list(PER_CHANGE)
         if trusted and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
             stages.append("mutation")
@@ -1016,7 +1053,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
         art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "label": label, "base": base, "fork": fork,
-               "sandboxed": bool(wrap), "verdict": verdict, "stages": results}
+               "sandboxed": bool(wrap), "checked": checked, "base_sha": base_sha, "verdict": verdict, "stages": results}
         (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
         return "done" if posted else "error"
