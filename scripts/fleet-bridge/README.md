@@ -65,6 +65,13 @@ the original floor, observed followups, acceptance evidence, source descendants,
 and native tool callbacks to be settled. Polling continues after closure to
 observe later work; `finished.json` records the latest completed round.
 
+The first scope snapshot records all existing purpose IDs. Later additions
+remain tracked even if added and completed between polls. Accepted revisions
+newer than original closure also block completion. The source owner records
+`status: "done"` and actual `evidence` on each addressed revision in its own
+ledger; the bridge only reads those receipts. Older revisions already covered
+by the original goals' evidenced closure do not reopen completed history.
+
 To remove a task-owned schedule after its bounded trial, inspect its label and
 installation receipt, run `launchctl bootout gui/<uid>/<label>`, and remove only
 that receipt's plist. Keep project sessions, worktrees, and journals intact.

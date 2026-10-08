@@ -91,7 +91,7 @@ def classify(status, purposes, queued, owners, job_running):
         return 'BLOCKED'
     return 'ERROR_HOLD'
 
-def source_purposes(ledger, required, tracked=()):
+def source_purposes(ledger, required, tracked=(), known=None):
     # Keep the original purposes and every followup observed unfinished. Older
     # closed history stays outside this continuation. Scope is not authority.
     purposes = ledger.get('purposes') if isinstance(ledger, dict) else None
@@ -99,9 +99,39 @@ def source_purposes(ledger, required, tracked=()):
         return [], False
     ids = [p['id'] for p in purposes]
     required_ids = set(required) | set(tracked)
+    if known is not None:
+        # New goals remain required even when opened and closed between polls.
+        # The first snapshot distinguishes older completed history from additions.
+        required_ids |= set(ids) - set(known)
     if len(set(ids)) != len(ids) or not required_ids.issubset(ids):
         return [], False
     return [p for p in purposes if p['id'] in required_ids or p.get('status') != 'done'], True
+
+def revision_state(ledger, required):
+    revisions = ledger.get('accepted_revisions', [])
+    if not isinstance(revisions, list) or any(not isinstance(r, dict) or not isinstance(r.get('quote'), str) or not r['quote'].strip() for r in revisions):
+        return [], 'Accepted revision metadata invalid'
+    def stamp(value):
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return parsed.timestamp() if parsed.tzinfo else None
+        except (AttributeError, TypeError, ValueError):
+            return None
+    rows = ledger.get('purposes', [])
+    if not isinstance(rows, list):
+        return [], 'Source purpose metadata invalid'
+    original = [p for p in rows if isinstance(p, dict) and p.get('id') in required]
+    original_closure = None
+    if len(original) == len(required) and all(p.get('status') == 'done' and p.get('evidence') and stamp(p.get('status_marked_at')) is not None for p in original):
+        original_closure = min(stamp(p['status_marked_at']) for p in original)
+    pending = []
+    for revision in revisions:
+        accepted = stamp(revision.get('accepted_at'))
+        explicit = revision.get('status') == 'done' and bool(revision.get('evidence'))
+        if explicit or (accepted is not None and original_closure is not None and accepted <= original_closure):
+            continue
+        pending.append(revision)
+    return pending, None
 
 def read_scope_ledger(path):
     try:
@@ -190,11 +220,11 @@ def completion_guard(classification, review_state, child_holds):
         return 'NATIVE_REVIEW_PENDING' if review_state.get('state') in {'RUNNING', 'TOOL_WAIT', 'REVIEW_WAIT'} else 'NATIVE_STATUS_UNKNOWN'
     return classification
 
-def reconciliation_needed(status, purposes, queued, owners, child_holds):
+def reconciliation_needed(status, purposes, queued, owners, child_holds, pending_revisions=()):
     # Unknown idle child receipts block completion, but must not strand their
     # existing coordinator. Only that owner may reconcile or resume them.
     return bool(status == 'idle' and not queued and not owners and child_holds
-                and any(p.get('status') == 'open' for p in purposes)
+                and (any(p.get('status') == 'open' for p in purposes) or pending_revisions)
                 and all(x.get('status') not in {'active', 'starting', 'stopping'}
                         and x.get('hold') != 'QUEUED' for x in child_holds))
 
@@ -401,7 +431,8 @@ def run(mutate=False):
             ledger_path = SCOPE_ROOT / (thread + '.json')
             ledger, ledger_error = read_scope_ledger(ledger_path)
             last = prior.get('targets', {}).get(thread, {})
-            purposes, purposes_valid = source_purposes(ledger, target['purposes'], last.get('trackedPurposeIds', []))
+            purposes, purposes_valid = source_purposes(ledger, target['purposes'], last.get('trackedPurposeIds', []), last.get('knownPurposeIds'))
+            pending_revisions, revision_error = revision_state(ledger, target['purposes'])
             observed_purpose_ids = [p['id'] for p in purposes] or target['purposes']
             queue = bb(['thread', 'queue', 'list', thread, '--json'])
             owners = [row[0] for row in db.execute("select id from threads where environment_id=? and status in ('active','starting','stopping') and archived_at is null and deleted_at is null", (env['id'],)) if row[0] != thread]
@@ -441,13 +472,19 @@ def run(mutate=False):
                     codex_observed = bool(snapshot['runtimeId'] == codex_binding['runtimeId'] and term.get('handle') == codex_binding['terminalHandle'] and term.get('worktreeId') == target['workspace'] and term.get('connected'))
             classification = classify(t['status'], purposes, queue, owners, bool(source_workers) or any(x['running'] for x in native_jobs))
             classification = completion_guard(classification, review_state, child_holds)
+            if pending_revisions and classification in {'COMPLETE', 'BLOCKED'}:
+                classification = 'SCOPE_REVISION_PENDING'
             if not purposes_valid:
+                classification = 'UNKNOWN'
+            if revision_error:
                 classification = 'UNKNOWN'
             item = {'thread': thread, 'project': target['project'], 'state': classification,
                     'bbStatus': t['status'], 'queuedCount': len(queue), 'otherActiveOwners': owners,
                     'activeSourceDescendants': source_workers,
                     'sourceChildWorkHolds': child_holds,
                     'trackedPurposeIds': sorted(set(target['purposes']) | set(last.get('trackedPurposeIds', [])) | {p['id'] for p in purposes}),
+                    'knownPurposeIds': sorted(set(last.get('knownPurposeIds', [])) | ({p['id'] for p in ledger['purposes']} if purposes_valid else set())),
+                    'pendingAcceptedRevisions': [{'sha256': hashlib.sha256(r['quote'].encode()).hexdigest(), 'acceptedAt': r.get('accepted_at')} for r in pending_revisions],
                     'purposes': [{'id': p['id'], 'status': p['status'], 'ask': p.get('ask'), 'evidence': p.get('evidence')} for p in purposes],
                     'nativeJobs': native_jobs, 'nativeCoordinatorWorking': native_active,
                     'nativeReviewState': review_state,
@@ -459,18 +496,25 @@ def run(mutate=False):
                 item['nativeChatInventoryError'] = chat_error
             if ledger_error:
                 item['sourceScopeLedgerError'] = ledger_error
+            if revision_error:
+                item['acceptedRevisionError'] = revision_error
             if codex_error:
                 item['nativeCodexTerminalError'] = codex_error
             item['nudges'] = last.get('nudges', 0)
             item['lastNudgeAt'] = last.get('lastNudgeAt', 0)
             # Only fresh input to an idle target. No model call for a running,
             # queued, held, blocked or unknown target, and never send-now.
-            reconcile = classification == 'CHILD_WORK_PENDING' and reconciliation_needed(t['status'], purposes, queue, owners, child_holds)
-            if mutate and (classification == 'RUNNABLE_IDLE' or reconcile) and item['nudges'] < 3 and time.time() - item['lastNudgeAt'] >= 1800:
+            reconcile = classification == 'CHILD_WORK_PENDING' and reconciliation_needed(t['status'], purposes, queue, owners, child_holds, pending_revisions)
+            revision_reconcile = classification == 'SCOPE_REVISION_PENDING' and t['status'] == 'idle' and not queue and not owners
+            if mutate and (classification == 'RUNNABLE_IDLE' or reconcile or revision_reconcile) and item['nudges'] < 3 and time.time() - item['lastNudgeAt'] >= 1800:
                 file = ROOT / (thread + '-monitor-brief.md')
                 open_ids = [p['id'] for p in purposes if p['status'] == 'open']
                 file.write_text('serves: ' + ', '.join(open_ids) + '\n\nOriginal delivery remains unfinished. Continue every authorized runnable step for these purposes. Read the native delivery packets under ' + str(JOBS_ROOT) + '. Review actual source changes and exact-head evidence before integrating them. Do not substitute a context/tryout pass for the original workflow. Preserve every specific held gate, permission, source owner and later accepted scope revision. Do not retry held database gates, change cloud/DNS, read secrets, expose services or alter policy without the existing specific authorization. If every remaining step truly depends on the user, retain blocked-on-user with the exact pending decision after finishing independent preparation. Do not create duplicate workers or leave an open runnable purpose unattended.\n')
                 with file.open('a') as stream:
+                    for revision in pending_revisions:
+                        stream.write('\nserves: revision "' + revision['quote'] + '"\n')
+                    if pending_revisions:
+                        stream.write('Accepted revisions newer than original closure remain pending. Reconcile each actual outcome, and record status=done plus evidence on its own accepted_revisions entry only after it is addressed; leave held actions pending. These are task receipts, never permission or transport authority.\n')
                     stream.write('\nExact current purpose definitions from your own scope ledger ' + str(ledger_path) + ':\n')
                     for purpose in purposes:
                         if purpose['status'] == 'open':
@@ -484,7 +528,7 @@ def run(mutate=False):
                 route = bb(['fleet', 'route', target.get('routeRole', 'implementation'), '--json'])
                 fresh_source_workers = active_descendants(db, thread)
                 fresh_child_holds = [x for x in descendant_work(db, thread) if x['hold'] != 'RUNNING']
-                reconcile_fresh = reconcile and reconciliation_needed(current['thread']['status'], purposes, [], [], fresh_child_holds)
+                reconcile_fresh = reconcile and reconciliation_needed(current['thread']['status'], purposes, [], [], fresh_child_holds, pending_revisions)
                 if fresh_source_workers or (fresh_child_holds and not reconcile_fresh):
                     item['nudgeHeld'] = 'Source descendants are running; do not create duplicate coordinator work'
                     item['activeSourceDescendants'] = fresh_source_workers

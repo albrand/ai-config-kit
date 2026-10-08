@@ -122,6 +122,35 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         before = sum(args[:2] == ['thread', 'tell'] for args in calls)
         poll(mutate=True)
         goal('An immediate repeat does not duplicate the queued nudge', sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
+        child_db = sqlite3.connect(database)
+        child_db.execute('DELETE FROM threads WHERE id=?', ('thr_child',))
+        child_db.commit()
+        child_db.close()
+        closed_followup = {'id': 'P2', 'status': 'done', 'evidence': ['accepted followup']}
+        late = {'id': 'P3', 'status': 'done', 'evidence': []}
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late]}))
+        row = poll()
+        goal('A goal added and completed between polls remains required without evidence', 'P3' in row['trackedPurposeIds'] and row['state'] != 'COMPLETE')
+        late['evidence'] = ['accepted late followup']
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late]}))
+        row = poll()
+        goal('An evidenced between-poll goal remains tracked when completion is allowed', 'P3' in row['trackedPurposeIds'] and row['state'] == 'COMPLETE')
+        original['status_marked_at'] = '2026-01-01T00:00:00Z'
+        revision = {'quote': 'Accepted additional owner outcome', 'accepted_at': '2026-01-02T00:00:00Z'}
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late], 'accepted_revisions': [revision]}))
+        row = poll()
+        goal('A revision newer than original closure cannot silently close', row['state'] == 'SCOPE_REVISION_PENDING' and len(row['pendingAcceptedRevisions']) == 1)
+        revision.update({'status': 'done', 'evidence': ['source owner outcome receipt']})
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late], 'accepted_revisions': [revision]}))
+        row = poll()
+        goal('An explicit evidenced revision receipt permits closure', row['state'] == 'COMPLETE' and not row['pendingAcceptedRevisions'])
+        older = {'quote': 'Earlier accepted original scope', 'accepted_at': '2025-12-31T00:00:00Z'}
+        ledger.write_text(json.dumps({'purposes': [original, closed_followup, late], 'accepted_revisions': [older]}))
+        row = poll()
+        goal('Original evidenced acceptance preserves older completed revision history', row['state'] == 'COMPLETE' and not row['pendingAcceptedRevisions'])
+        ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
+        row = poll()
+        goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
     db = sqlite3.connect(database)
     db.execute('UPDATE threads SET status=? WHERE id=?', ('active', 'thr_sibling'))
     db.execute('UPDATE threads SET environment_id=? WHERE id=?', ('env_thr_fixture', 'thr_sibling'))
