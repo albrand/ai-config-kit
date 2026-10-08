@@ -43,11 +43,12 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     database = home / 'bb.db'
     db = sqlite3.connect(database)
     db.execute('CREATE TABLE threads(id TEXT,parent_thread_id TEXT,status TEXT,provider_id TEXT,environment_id TEXT,archived_at INTEGER,deleted_at INTEGER)')
-    db.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT,data TEXT)')
+    db.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT,data TEXT,turn_id TEXT)')
     for ident in ['thr_fixture', 'thr_sibling']:
         db.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', (ident, None, 'idle', 'codex', 'env_' + ident, None, None))
     for ident, kind, sequence in [('requested', 'client/turn/requested', 1), ('started', 'turn/started', 2), ('completed', 'turn/completed', 3)]:
         db.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_' + ident, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+    db.execute('UPDATE events SET turn_id=?', ('fixture-turn-1',))
     db.commit()
     db.close()
     idle_unknown = [{'thread': 'thr_child', 'status': 'idle', 'hold': 'SCOPE_UNKNOWN'}]
@@ -336,7 +337,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
             assert admitted['admitted']
             other = sqlite3.connect(database)
             for suffix, kind, sequence in [('requested2', 'client/turn/requested', 4), ('started2', 'turn/started', 5), ('completed2', 'turn/completed', 6)]:
-                other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+                other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,turn_id) VALUES(?,?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579', 'fixture-turn-' + str((sequence - 1) // 3 + 1)))
             other.commit()
             other.close()
             return admitted
@@ -348,7 +349,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
              row.get('inputAdmission', {}).get('admitted') and not row.get('nudgeReceipt') and
              sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
         other = sqlite3.connect(database)
-        other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_requested3', 'thr_fixture', 'client/turn/requested', 7, '117471a8-1970-4376-8672-9de66c418579'))
+        other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,turn_id) VALUES(?,?,?,?,?,?)', ('evt_requested3', 'thr_fixture', 'client/turn/requested', 7, '117471a8-1970-4376-8672-9de66c418579', 'fixture-turn-3'))
         other.commit()
         other.close()
         restore_snapshot(snapshot)
@@ -358,7 +359,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
              sum(args[:2] == ['thread', 'tell'] for args in calls) == before)
         other = sqlite3.connect(database)
         for suffix, kind, sequence in [('started3', 'turn/started', 8), ('completed3', 'turn/completed', 9)]:
-            other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+            other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,turn_id) VALUES(?,?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579', 'fixture-turn-3'))
         other.commit()
         other.close()
         restore_snapshot(snapshot)
@@ -377,7 +378,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
                 accepted.append(args[2])
                 other = sqlite3.connect(database)
                 for suffix, kind, sequence in [('requested4', 'client/turn/requested', 10), ('started4', 'turn/started', 11), ('completed4', 'turn/completed', 12)]:
-                    other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579'))
+                    other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,turn_id) VALUES(?,?,?,?,?,?)', ('evt_' + suffix, 'thr_fixture', kind, sequence, '117471a8-1970-4376-8672-9de66c418579', 'fixture-turn-4'))
                 other.commit()
                 other.close()
                 raise subprocess.TimeoutExpired('fixture tell after adapter acceptance', 25)
@@ -414,7 +415,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         goal('Recovered scope can close only after its retained followup receives evidence',
              row['state'] == 'COMPLETE' and 'P4' in row['trackedPurposeIds'])
         other = sqlite3.connect(database)
-        other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id) VALUES(?,?,?,?,?)', ('evt_requested5', 'thr_fixture', 'client/turn/requested', 13, '117471a8-1970-4376-8672-9de66c418579'))
+        other.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,turn_id) VALUES(?,?,?,?,?,?)', ('evt_requested5', 'thr_fixture', 'client/turn/requested', 13, '117471a8-1970-4376-8672-9de66c418579', 'fixture-turn-5'))
         other.commit()
         other.close()
         row = poll()
@@ -436,22 +437,23 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     # It is not a new task or user authority; unknown input still holds.
     notices = sqlite3.connect(home / 'notices.db')
     notices.execute('CREATE TABLE threads(id TEXT,parent_thread_id TEXT,status TEXT,provider_id TEXT,environment_id TEXT,archived_at INTEGER,deleted_at INTEGER)')
-    notices.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT,data TEXT)')
+    notices.execute('CREATE TABLE events(id TEXT,thread_id TEXT,type TEXT,sequence INTEGER,provider_thread_id TEXT,data TEXT,turn_id TEXT)')
     notices.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', ('thr_notices', None, 'idle', 'codex', 'env_notices', None, None))
     notices.execute('INSERT INTO threads VALUES(?,?,?,?,?,?,?)', ('thr_notice_child', 'thr_notices', 'idle', 'codex', 'env_child', None, None))
     session = '117471a8-1970-4376-8672-9de66c418579'
     for ident, kind, sequence in [('notice_requested', 'client/turn/requested', 1), ('notice_started', 'turn/started', 2), ('notice_completed', 'turn/completed', 4)]:
-        notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', (ident, 'thr_notices', kind, sequence, session, '{}'))
+        notices.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,data) VALUES(?,?,?,?,?,?)', (ident, 'thr_notices', kind, sequence, session, '{}'))
     notification = {'direction': 'outbound', 'source': 'tell', 'initiator': 'system',
                     'requestId': 'creq_notice_fixture',
                     'systemMessageKind': 'child-completed',
                     'systemMessageSubject': {'kind': 'thread', 'threadId': 'thr_notice_child'},
                     'target': {'kind': 'auto', 'expectedTurnId': 'fixture-active-turn'},
                     'request': {'method': 'turn/start', 'params': {}}}
-    notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', ('notice_midturn', 'thr_notices', 'client/turn/requested', 3, None, json.dumps(notification)))
+    notices.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,data) VALUES(?,?,?,?,?,?)', ('notice_midturn', 'thr_notices', 'client/turn/requested', 3, None, json.dumps(notification)))
     notices.execute('UPDATE events SET sequence=? WHERE id=?', (5, 'notice_completed'))
     acceptance = {'providerThreadId': session, 'clientRequestId': 'creq_notice_fixture'}
-    notices.execute('INSERT INTO events VALUES(?,?,?,?,?,?)', ('notice_accepted', 'thr_notices', 'turn/input/accepted', 4, session, json.dumps(acceptance)))
+    notices.execute('INSERT INTO events(id,thread_id,type,sequence,provider_thread_id,data) VALUES(?,?,?,?,?,?)', ('notice_accepted', 'thr_notices', 'turn/input/accepted', 4, session, json.dumps(acceptance)))
+    notices.execute('UPDATE events SET turn_id=?', ('fixture-active-turn',))
     notices.commit()
     notice_thread = {'id': 'thr_notices', 'status': 'idle', 'providerId': 'codex'}
     notice_environment = {'id': 'env_notices'}
@@ -495,6 +497,21 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
     goal('A child notice without an acceptance receipt before completion stays held', not decision.get('admitted'))
     notices.execute('UPDATE events SET sequence=? WHERE id=?', (4, 'notice_accepted'))
     notices.commit()
+    stale_target = dict(notification, target={'kind': 'auto', 'expectedTurnId': 'STALE-OTHER-TURN'})
+    notices.execute('UPDATE events SET data=? WHERE id=?', (json.dumps(stale_target), 'notice_midturn'))
+    notices.commit()
+    stale_admission = monitor.queue_admission(notices, notice_thread, notice_environment)
+    goal('A stale expected turn ID stays pending despite a matching provider/request acceptance receipt',
+         not stale_admission.get('admitted'))
+    notices.execute('UPDATE events SET data=? WHERE id=?', (json.dumps(notification), 'notice_midturn'))
+    notices.commit()
+    for field_id, label in [('notice_accepted', 'Acceptance from another turn'), ('notice_completed', 'Completion from another turn'), ('notice_started', 'Missing start turn identity')]:
+        notices.execute('UPDATE events SET turn_id=? WHERE id=?', (None if field_id == 'notice_started' else 'foreign-turn', field_id))
+        notices.commit()
+        decision = monitor.queue_admission(notices, notice_thread, notice_environment)
+        goal(label + ' cannot settle the original task', not decision.get('admitted'))
+        notices.execute('UPDATE events SET turn_id=? WHERE id=?', ('fixture-active-turn', field_id))
+        notices.commit()
     admitted_notice = monitor.queue_admission(notices, notice_thread, notice_environment)
     altered = dict(notification, initiator='user')
     notices.execute('UPDATE events SET data=? WHERE id=?', (json.dumps(altered), 'notice_midturn'))

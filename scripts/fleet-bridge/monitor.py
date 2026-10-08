@@ -455,15 +455,17 @@ def completed_adapter_binding(db, ident):
             return None
         owners = db.execute("SELECT id FROM threads WHERE environment_id=? AND status IN ('active','starting','stopping') AND archived_at IS NULL AND deleted_at IS NULL", (thread[1],)).fetchall()
         session = db.execute('SELECT provider_thread_id FROM events WHERE thread_id=? AND provider_thread_id IS NOT NULL ORDER BY sequence DESC LIMIT 1', (ident,)).fetchone()
-        started = db.execute("SELECT id,sequence,provider_thread_id FROM events WHERE thread_id=? AND type='turn/started' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
-        ended = db.execute("SELECT sequence,provider_thread_id FROM events WHERE thread_id=? AND type='turn/completed' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
-        if owners or not session or not started or not ended or started[1] >= ended[0] or session[0] != started[2] or session[0] != ended[1]:
+        started = db.execute("SELECT id,sequence,provider_thread_id,turn_id FROM events WHERE thread_id=? AND type='turn/started' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
+        ended = db.execute("SELECT sequence,provider_thread_id,turn_id FROM events WHERE thread_id=? AND type='turn/completed' ORDER BY sequence DESC LIMIT 1", (ident,)).fetchone()
+        if (owners or not session or not started or not ended or started[1] >= ended[0] or
+                session[0] != started[2] or session[0] != ended[1] or
+                not isinstance(started[3], str) or not started[3].strip() or ended[2] != started[3]):
             return None
         requested = db.execute("SELECT id,sequence FROM events WHERE thread_id=? AND type='client/turn/requested' AND sequence<? ORDER BY sequence DESC LIMIT 1", (ident, started[1])).fetchone()
         if not requested:
             return None
         later = db.execute("SELECT id,sequence,data FROM events WHERE thread_id=? AND type='client/turn/requested' AND sequence>? ORDER BY sequence", (ident, started[1])).fetchall()
-        accepted = db.execute("SELECT id,sequence,provider_thread_id,data FROM events WHERE thread_id=? AND type='turn/input/accepted' AND sequence>? AND sequence<? ORDER BY sequence", (ident, started[1], ended[0])).fetchall()
+        accepted = db.execute("SELECT id,sequence,provider_thread_id,turn_id,data FROM events WHERE thread_id=? AND type='turn/input/accepted' AND sequence>? AND sequence<? ORDER BY sequence", (ident, started[1], ended[0])).fetchall()
         frame = [[requested[0], requested[1]]]
         for event_id, sequence, raw in later:
             if sequence >= ended[0]:
@@ -481,7 +483,7 @@ def completed_adapter_binding(db, ident):
                     data.get('initiator') != 'system' or data.get('systemMessageKind') != 'child-completed' or
                     not isinstance(data.get('requestId'), str) or not data['requestId'].strip() or
                     not isinstance(target, dict) or target.get('kind') != 'auto' or
-                    not isinstance(target.get('expectedTurnId'), str) or not target['expectedTurnId'].strip() or
+                    target.get('expectedTurnId') != started[3] or
                     not isinstance(subject, dict) or subject.get('kind') != 'thread' or
                     not isinstance(subject.get('threadId'), str) or
                     not isinstance(request, dict) or request.get('method') != 'turn/start'):
@@ -490,8 +492,8 @@ def completed_adapter_binding(db, ident):
             if not child or child[0] != ident:
                 return None
             receipts = []
-            for receipt_id, receipt_sequence, receipt_session, receipt_raw in accepted:
-                if receipt_sequence <= sequence or receipt_session != session[0]:
+            for receipt_id, receipt_sequence, receipt_session, receipt_turn, receipt_raw in accepted:
+                if receipt_sequence <= sequence or receipt_session != session[0] or receipt_turn != started[3]:
                     continue
                 try:
                     receipt = json.loads(receipt_raw)
@@ -504,7 +506,7 @@ def completed_adapter_binding(db, ident):
             frame.append([event_id, sequence, target['expectedTurnId'], subject['threadId'], receipts[0]])
         return {'threadId': ident, 'environmentId': thread[1], 'providerId': thread[2],
                 'sessionId': session[0], 'leaseId': started[0], 'topicId': requested[0],
-                'epoch': started[1], 'completedSequence': ended[0],
+                'epoch': started[1], 'completedSequence': ended[0], 'turnId': started[3],
                 'requestFrameSha256': hashlib.sha256(json.dumps(frame, separators=(',', ':')).encode()).hexdigest()}
     finally:
         db.execute('RELEASE SAVEPOINT fleet_bridge_binding')

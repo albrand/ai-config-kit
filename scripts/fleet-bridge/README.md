@@ -99,7 +99,9 @@ with a matching provider/request acceptance receipt during the turn, does not
 replace the task. User input, unknown or
 malformed notices, foreign children, and all requests after completion keep
 delivery held. The final owner/lease check reads a consistent database snapshot
-and compares the request frame before enqueueing.
+and compares the request frame before enqueueing. The notice's expected turn ID
+must equal the authoritative `events.turn_id` on both start and completion;
+its acceptance receipt must bind that same turn, provider session and request.
 
 The first scope snapshot records all existing purpose IDs. Later additions
 remain tracked even if added and completed between polls. Accepted revisions
