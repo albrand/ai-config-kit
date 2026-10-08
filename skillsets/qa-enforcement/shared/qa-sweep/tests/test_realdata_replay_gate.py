@@ -2007,6 +2007,9 @@ sys.exit(2)
                 ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2),
                 ("zsh --emulate sh -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
                 ("zsh --emulate sh -c 'gh pr merge 1701 && gh pr create --fill'", 2),
+                ("bash -eo pipefail -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                ("bash -c -oc pipefail 'gh pr merge 1701 -t \"gh release create v1\"'", 0),
+                ("bash -eo pipefail -c 'gh pr merge 1701 && gh pr create --fill'", 2),
                 ("gh pr create --fill", 2), ("bb fleet validate --evidence x", 2))
         for name, source in (("working", (ROOT / "scripts/ship-gate.py").read_text(encoding="utf-8")),
                              ("missing", None), ("exits", "import sys\nsys.exit(3)\n"), ("syntax", "def broken(:\n"),
@@ -2046,7 +2049,9 @@ sys.exit(2)
                         "gh pr merge 5\n  || gh release create v1", "sh -e -c 'gh pr merge 5'",
                         "bash -lc 'gh pr merge 5'", "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5'",
                         "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'",
-                        "sh -c -- 'gh pr merge 5'", "zsh +x -ec 'gh pr merge 5'", "zsh --emulate sh -c 'gh pr merge 5'"):
+                        "sh -c -- 'gh pr merge 5'", "zsh +x -ec 'gh pr merge 5'", "zsh --emulate sh -c 'gh pr merge 5'",
+                        "bash -eo pipefail -c 'gh pr merge 5'", "bash -c -oc pipefail 'gh pr merge 5'",
+                        "zsh -oshwordsplit -c 'gh pr merge 5'"):
             with self.subTest(command=command):
                 self.assertTrue(only(command))
         for command in ("", "ls", "gh pr merge 5 && gh pr create", "echo 'gh pr merge' && gh pr create",
@@ -2094,7 +2099,10 @@ sys.exit(2)
                             ("bash -c -e 'gh pr merge 1701 -t \"gh pr create\"'", 0),
                             ("bash -e -c 'gh pr merge 1701 && gh pr create --fill'", 2),
                             ("zsh --emulate sh -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
-                            ("zsh --emulate sh -c 'gh pr merge 1701 && gh pr create --fill'", 2)):
+                            ("zsh --emulate sh -c 'gh pr merge 1701 && gh pr create --fill'", 2),
+                            ("bash -eo pipefail -c 'gh pr merge 1701 --body \"gh pr create\"'", 0),
+                            ("bash -c -oc pipefail 'gh pr merge 1701 -t \"gh release create v1\"'", 0),
+                            ("bash -eo pipefail -c 'gh pr merge 1701 && gh pr create --fill'", 2)):
             with self.subTest(command=command):
                 payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(self.repo)})
                 result = subprocess.run(["sh", str(hook)], input=payload, text=True, capture_output=True, env=env)

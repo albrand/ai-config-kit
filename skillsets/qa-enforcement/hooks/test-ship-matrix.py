@@ -78,7 +78,8 @@ LOCAL_DENY = ["git push origin main", "git \\\npush origin main", "git  push ori
               # a push inside a shell's -c script after its options (Hermes r22)
               "sh -e -c 'git push origin main'", "bash -lc 'git push origin main'",
               "bash -o pipefail -c 'git push origin main'", "bash -c -e 'git push origin main'",
-              "zsh --emulate sh -c 'git push origin main'",
+              "zsh --emulate sh -c 'git push origin main'", "bash -eo pipefail -c 'git push origin main'",
+              "bash -c -oc pipefail 'git push origin main'", "zsh -oshwordsplit -c 'git push origin main'",
               "gh pr merge 5\ngit push origin main", 'gh pr merge 5 --subject "$(git push origin main)"',
               "gh pr merge 5 --subject `git push origin main`",
               # a push in a substitution runs, quoted or not
@@ -188,7 +189,9 @@ EDGE = ['"gh" pr merge 5', "gh pr merge", "gh pr", "cd && gh pr merge 5", "cd x 
         "bash -o pipefail -c 'gh pr merge 5'", "bash -c -e 'gh pr merge 5 && gh pr create --fill'",
         "bash --norc -c 'gh pr merge 5'", "bash --rcfile x -c 'gh pr merge 5'", "sh -c -- 'gh pr merge 5'",
         "bash -o -c 'gh pr merge 5'", "bash -e 'gh pr merge 5'", "zsh --emulate sh -c 'gh pr merge 5 --body \"gh pr create\"'",
-        "zsh --emulate sh -o shwordsplit -c 'gh pr merge 5'"]
+        "zsh --emulate sh -o shwordsplit -c 'gh pr merge 5'",
+        "bash -eo pipefail -c 'gh pr merge 5 --body \"gh pr create\"'", "bash -c -oc pipefail 'gh pr merge 5'",
+        "zsh -oshwordsplit -c 'gh pr merge 5'", "dash -c -oc errexit 'gh pr merge 5'"]
 
 # Real-shell oracle (Hermes 2026-10-07, kit-never-block-pr-merge r11): heredoc delimiter words crossed with the
 # contexts that hold them, run by every shell here with -c, as agents run commands. When a shell runs the line
@@ -327,7 +330,23 @@ SHELL_FORMS = [["sh", "-c", "S"], ["sh", "-e", "-c", "S"], ["bash", "-lc", "S"],
                ["bash", "--login", "-c", "S"], ["bash", "-O", "extglob", "-c", "S"], ["sh", "-c", "--", "S"],
                ["bash", "-c", "S", "arg0"], ["bash", "-e", "S"], ["bash", "-o", "-c", "S"], ["zsh", "+x", "-ec", "S"],
                ["zsh", "--emulate", "sh", "-c", "S"], ["zsh", "-o", "shwordsplit", "-c", "S"], ["zsh", "-c", "-x", "S"],
-               ["dash", "-e", "-c", "S"], ["dash", "-c", "S"]]
+               ["dash", "-e", "-c", "S"], ["dash", "-c", "S"],
+               # option clusters: each o takes the next word, and so does bash's O; zsh takes the rest of the
+               # cluster after o when there is one, and its -O takes none (kit-shell-dispatch-script-word r1)
+               ["bash", "-eo", "pipefail", "-c", "S"], ["bash", "-c", "-oc", "pipefail", "S"],
+               ["bash", "-oc", "pipefail", "S"], ["bash", "-ceo", "pipefail", "S"],
+               ["bash", "-oo", "pipefail", "errexit", "-c", "S"], ["bash", "-Oc", "extglob", "S"], ["bash", "-oc", "S"],
+               ["sh", "-eo", "pipefail", "-c", "S"], ["sh", "-c", "-oc", "pipefail", "S"],
+               ["zsh", "-eo", "shwordsplit", "-c", "S"], ["zsh", "-co", "shwordsplit", "S"],
+               ["zsh", "-oshwordsplit", "-c", "S"], ["zsh", "-eoshwordsplit", "-c", "S"], ["zsh", "-Oc", "S"],
+               ["zsh", "-oc", "shwordsplit", "S"],
+               ["dash", "-eo", "errexit", "-c", "S"], ["dash", "-c", "-oc", "errexit", "S"],
+               ["dash", "-oo", "errexit", "nounset", "-c", "S"]]
+# The scope gate's dispatch reader (scope-ledger shell_dispatch.py) is checked against the same shells.
+dspec = importlib.util.spec_from_file_location("shell_dispatch", os.path.join(HOOKS, "..", "shared", "scope-ledger",
+                                                                              "scripts", "shell_dispatch.py"))
+dispatch = importlib.util.module_from_spec(dspec)
+dspec.loader.exec_module(dispatch)
 sh_bad = sh_cases = 0
 probe_home = tempfile.mkdtemp(prefix="shell-forms-")
 for form in SHELL_FORMS:
@@ -349,13 +368,14 @@ for form in SHELL_FORMS:
     words = ["printf RAN" if w == "S" else w for w in form]
     py = gate.shell_script_index(words, 0)
     rg = replay.shell_script_at(words, 0)
+    sd = dispatch.shell_script_index(words, 0)
     command = " ".join("'printf RAN'" if w == "S" else w for w in form)
     shell_view = sh(f"input=$(cat)\n{func}ship_scan", N, json.dumps({"tool_input": {"command": command}, "cwd": N}),
                     {**os.environ, "SHIP_SCAN_VIEW": "1"}).stdout.rstrip("\n")
     awk_ok = (shell_view.strip() == "printf RAN") == real
-    ok = py == want and rg == want and awk_ok
+    ok = py == want and rg == want and sd == want and awk_ok
     sh_bad += not ok
-    print(f"{'ok ' if ok else 'BAD'} shell form real {'runs S' if real else 'does not run S'}; ship-gate {py}, replay {rg}, "
+    print(f"{'ok ' if ok else 'BAD'} shell form real {'runs S' if real else 'does not run S'}; ship-gate {py}, replay {rg}, scope gate {sd}, "
           f"awk view {shell_view.strip()!r}: {command}")
 shutil.rmtree(probe_home, ignore_errors=True)
 for s in SHELLS:

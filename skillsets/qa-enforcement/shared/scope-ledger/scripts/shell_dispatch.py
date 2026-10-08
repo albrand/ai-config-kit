@@ -410,29 +410,35 @@ def words(text):
         return text.split()
 
 
-def shell_script_index(w, k):
-    """The index of the script a shell's -c runs, the shell being w[k]: the first word after its options, as in
+def shell_script_index(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: the first word after its options, as in
     qa-sweep's ship-gate.py (test-ship-matrix.py checks that reading against the real shells). So `bash -c -e S`,
-    `sh -c -- S`, `sh -e -c S`, `bash -o pipefail -c S` and `zsh --emulate sh -c S` all run S; -o, -O, --rcfile,
-    --init-file and --emulate take a value. None when no option holds c, or no word follows."""
+    `sh -c -- S`, `bash -eo pipefail -c S`, `bash -c -oc pipefail S` and `zsh --emulate sh -c S` all run S: each o in
+    an option cluster takes a value, in order (bash's O too; zsh takes the rest of the cluster after o when there is
+    one), and so do --rcfile, --init-file and --emulate. None when no option holds c, or no word follows."""
+    zsh = words[k].rsplit("/", 1)[-1] == "zsh"
     c, j = False, k + 1
-    while j < len(w):
-        a = w[j]
-        if a == "--":
-            j += 1
+    while j < len(words):
+        w = words[j]
+        j += 1
+        if w == "--":
             break
-        if re.fullmatch(r"[-+][oO]", a) or a in ("--rcfile", "--init-file", "--emulate"):
-            j += 2
-        elif a.startswith("--") and len(a) > 2:
+        if w in ("--rcfile", "--init-file", "--emulate"):
             j += 1
-        elif re.fullmatch(r"-[A-Za-z]+", a):
-            c = c or "c" in a
-            j += 1
-        elif re.fullmatch(r"\+[A-Za-z]+", a):
-            j += 1
+        elif w.startswith("--") and len(w) > 2:
+            pass
+        elif re.fullmatch(r"[-+][A-Za-z]+", w):
+            for i, ch in enumerate(w[1:], 2):
+                if ch == "c" and w[0] == "-":
+                    c = True
+                elif ch == "o" or (ch == "O" and not zsh):
+                    if zsh and i < len(w):
+                        break  # zsh: -oshwordsplit, the rest of the cluster is the value
+                    j += 1  # the next word is this option's value: -eo pipefail, -oc pipefail S
         else:
+            j -= 1
             break
-    return j if c and j < len(w) else None
+    return j if c and j < len(words) else None
 
 
 def _command_word(w):

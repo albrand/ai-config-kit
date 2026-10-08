@@ -236,6 +236,9 @@
     {"label": "shell -c script after options: -x after -c, spawning", "want": 2, "command": "bash -c -x 'bb thread spawn --prompt x'"},
     {"label": "shell -c script after options: a value option before -c (-o pipefail)", "want": 2, "command": "bash -o pipefail -c 'bb thread tell thr_x hi'"},
     {"label": "shell -c script after options: zsh --emulate takes a value before -c", "want": 2, "command": "zsh --emulate sh -c 'bb thread tell thr_x hi'"},
-    {"label": "shell -c script after options: an option after -c with a brief line is allowed", "want": 0, "command": "bash -c -e 'bb thread tell thr_x \"serves: P1 hi\"'"}
+    {"label": "shell -c script after options: an option after -c with a brief line is allowed", "want": 0, "command": "bash -c -e 'bb thread tell thr_x \"serves: P1 hi\"'"},
+    {"label": "shell -c script after options: an o in a cluster takes the next word (-eo pipefail)", "want": 2, "command": "bash -eo pipefail -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: an o after c in a cluster takes the next word (Hermes r1)", "want": 2, "command": "bash -c -oc pipefail 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: zsh takes the rest of the cluster after o as its value", "want": 2, "command": "zsh -oshwordsplit -c 'bb thread tell thr_x hi'"}
   ]
 }
