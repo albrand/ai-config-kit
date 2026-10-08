@@ -940,13 +940,16 @@ def pin_verifier(mirror, ref, sha, work, paths, since=None):
     return "", edited
 
 
+GIT_NO_HOST_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+
 def job_git_env(job):
     """Env for git in a PR job dir: no host global, system or XDG git config, so a PR's .gitattributes can't select
     a merge driver or filter the host defines (git-lfs included), and no host hook, signing or credential helper
     applies. GIT_* from the host is dropped too."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(HOME=str(job / "home"), XDG_CONFIG_HOME=str(job / "home" / ".config"), GIT_CONFIG_NOSYSTEM="1",
-               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull, GIT_TERMINAL_PROMPT="0")
+    env.update(GIT_NO_HOST_CONFIG, HOME=str(job / "home"), XDG_CONFIG_HOME=str(job / "home" / ".config"),
+               GIT_TERMINAL_PROMPT="0")
     return env
 
 
@@ -1028,6 +1031,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
             print(f"[serve] {slug}: env file sets {', '.join(dropped)}; forge tokens never reach jobs", flush=True)
         secrets = sorted({v for v in env_file.values() if len(v) >= 4}, key=len, reverse=True)
         env = job_env(job, env_file, sha)
+        if not trusted:  # git in a stage starts with no host config either (the sandbox, not this, contains PR code)
+            env.update(GIT_NO_HOST_CONFIG)
         deadline = time.time() + cfg.get("timeout", 7200)
         if cfg.get("setup"):
             post(STATUS_PREFIX, "pending", "setup")

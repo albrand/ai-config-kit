@@ -467,6 +467,20 @@ class PinnedVerifier(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(ran)), [])
         self.assertIn("unit=pass", final[2])  # the job did check out, merge and run
 
+    def test_git_in_a_pr_stage_sees_no_host_git_config(self):
+        host = self.tmp / "host.gitconfig"
+        host.write_text(f'[core]\n\thooksPath = {self.tmp}/host-hooks\n[filter "probe"]\n\tsmudge = cat\n')
+        probe = ('out=$(git config --list --show-origin --includes 2>&1); '
+                 '[ -z "$out" ] || { echo "host git config: $out"; exit 1; }\n')
+        saved = os.environ.get("GIT_CONFIG_GLOBAL")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(host)  # outside any repo, so only global and system config can show
+        try:
+            final, out = self.run_pr(self.write("tests/widget.sh", "cd \"$TMPDIR\" && " + probe))
+        finally:
+            os.environ.pop("GIT_CONFIG_GLOBAL") if saved is None else os.environ.update(GIT_CONFIG_GLOBAL=saved)
+        self.assertNotIn("host git config", out)
+        self.assertIn("unit=pass", final[2])
+
     def test_bad_verifier_paths_in_the_base_config_fail_closed(self):
         for bad in (["../x"], ["/etc/passwd"], [".git/config"], ["a//b"], "scripts", [3]):
             with self.subTest(bad=bad):
