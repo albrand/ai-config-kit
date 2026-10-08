@@ -1,5 +1,6 @@
 """Exercise scope recovery, single-flight ownership and admitted queued delivery."""
 import fcntl
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -14,6 +15,12 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('monitor_workflow', HERE / 'monitor.py')
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('output', nargs='?', type=Path)
+parser.add_argument('--input-guard', type=Path, help='Actual installed/staged metadata-guard prerequisite for this isolated fixture')
+args = parser.parse_args()
+if args.input_guard:
+    monitor.INPUT_GUARD = args.input_guard.resolve(strict=True)
 goals = []
 
 
@@ -176,6 +183,24 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
         (state / 'monitor-state.json').write_text(json.dumps(prior))
         row = poll()
         goal('Malformed tracked scope reports unknown without stopping the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
+        malformed_target_results = []
+        for malformed in [None, 'bad', [], 1, False]:
+            prior = json.loads(json.dumps(base))
+            prior['targets']['thr_fixture'] = malformed
+            (state / 'monitor-state.json').write_text(json.dumps(prior))
+            row = poll()
+            malformed_target_results.append(row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
+        goal('Malformed persisted target records leave the valid sibling observable', all(malformed_target_results))
+        malformed_container_results = []
+        for malformed in [None, 'bad', [], 1, False]:
+            (state / 'monitor-state.json').write_text(json.dumps({'targets': malformed}))
+            row = poll()
+            malformed_container_results.append(row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'UNKNOWN')
+        goal('Malformed target containers still observe both targets without inventing a baseline', all(malformed_container_results))
+        (state / 'monitor-state.json').write_text('{"targets":')
+        row = poll()
+        goal('Corrupt persisted JSON reports both targets as unknown', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'UNKNOWN')
+        (state / 'monitor-state.json').write_text(json.dumps(base))
         ledger.write_text(json.dumps({'purposes': None, 'accepted_revisions': []}))
         row = poll()
         goal('Malformed revision/purpose metadata fails closed without losing the sibling', row['state'] == 'UNKNOWN' and polls[-1]['sibling'] == 'COMPLETE')
@@ -190,7 +215,7 @@ with tempfile.TemporaryDirectory(prefix='fleet-bridge-workflow-') as tmp:
 packet = {'persona': 'Fleet operator', 'target': {'stack': 'Portable monitor and real metadata guard with disposable BB/provider fixtures',
           'monitorSha256': hashlib.sha256((HERE / 'monitor.py').read_bytes()).hexdigest()}, 'polls': polls,
           'goals': goals, 'verdict': 'PASS' if all(g['verdict'] == 'PASS' for g in goals) else 'FAIL'}
-if len(sys.argv) > 1:
-    Path(sys.argv[1]).write_text(json.dumps(packet, indent=2) + '\n')
+if args.output:
+    args.output.write_text(json.dumps(packet, indent=2) + '\n')
 print(json.dumps(packet, indent=2))
 raise SystemExit(0 if packet['verdict'] == 'PASS' else 1)

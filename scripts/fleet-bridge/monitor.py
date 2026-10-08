@@ -144,8 +144,8 @@ def read_scope_ledger(path):
     except (ValueError, OSError):
         return {}, 'Source scope ledger unavailable or invalid'
 
-def previous_scope(last, required):
-    if not last:
+def previous_scope(last, required, has_previous=False):
+    if not last and not has_previous:
         return [], None, None
     def valid(value):
         return isinstance(value, list) and all(isinstance(x, str) and x for x in value) and len(set(value)) == len(value) and set(required).issubset(value)
@@ -434,7 +434,11 @@ def run(mutate=False):
         except BlockingIOError:
             return {'status': 'SINGLE_FLIGHT_HELD'}
         prior_path = ROOT / 'monitor-state.json'
-        prior = json.loads(prior_path.read_text()) if prior_path.exists() else {'targets': {}, 'allComplete': False}
+        prior, prior_error = read_scope_ledger(prior_path) if prior_path.exists() else ({'targets': {}}, None)
+        prior_targets = prior.get('targets', {})
+        if not isinstance(prior_targets, dict):
+            prior_targets = {}
+            prior_error = 'Prior targets container invalid; baseline reconciliation required'
         db = sqlite3.connect(DATABASE.as_uri() + '?mode=ro', uri=True)
         results = []
         for target in TARGETS:
@@ -445,9 +449,17 @@ def run(mutate=False):
             t, env = s['thread'], s['environment']
             ledger_path = SCOPE_ROOT / (thread + '.json')
             ledger, ledger_error = read_scope_ledger(ledger_path)
-            last = prior.get('targets', {}).get(thread, {})
+            has_previous = thread in prior_targets or prior_error is not None
+            last = prior_targets.get(thread, {})
+            target_error = prior_error
+            if not isinstance(last, dict):
+                last = {}
+                target_error = 'Prior target record invalid; baseline reconciliation required'
+            if last.get('scopeBaselineUnreconciled'):
+                target_error = 'Prior scope baseline remains unreconciled'
             # An upgrade cannot bless unknown IDs as old completed history.
-            tracked, known, baseline_error = previous_scope(last, target['purposes'])
+            tracked, known, baseline_error = previous_scope(last, target['purposes'], has_previous)
+            baseline_error = target_error or baseline_error
             purposes, purposes_valid = source_purposes(ledger, target['purposes'], tracked, known)
             pending_revisions, revision_error = revision_state(ledger, target['purposes'])
             observed_purpose_ids = [p['id'] for p in purposes] or target['purposes']
@@ -519,6 +531,7 @@ def run(mutate=False):
                 item['acceptedRevisionError'] = revision_error
             if baseline_error:
                 item['priorScopeBaselineError'] = baseline_error
+                item['scopeBaselineUnreconciled'] = True
             if codex_error:
                 item['nativeCodexTerminalError'] = codex_error
             item['nudges'] = last.get('nudges', 0)
