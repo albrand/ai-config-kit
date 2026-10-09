@@ -480,7 +480,16 @@ class Session {
         await elyra(["terminal", "send", "--terminal", reg.cardTitle, "--text", BACKEND === "codex" ? "/quit" : "/exit"]);
         await sleep(5000);
       }
-      const stillAlive = await cardAlive(reg.cardTitle);
+      let stillAlive = await cardAlive(reg.cardTitle);
+      if (stillAlive) {
+        // A frozen agent ignores its quit command: close this bridge's own card (ending its
+        // terminal session) and forget it, so ensureCard creates a fresh card on the same session.
+        const closed = await elyra(["canvas", "close", reg.cardTitle, "--workspace", reg.workspace || config.fallbackWorkspace]);
+        log({ event: "control-relaunch-close", card: reg.cardTitle, ok: closed.ok, error: closed.error?.message });
+        await sleep(3000);
+        stillAlive = await cardAlive(reg.cardTitle);
+        if (!stillAlive) { updateRegistry(this.sessionId, { cardTitle: null }); reg.cardTitle = null; }
+      }
       log({ event: "control-relaunch", card: reg.cardTitle, reason: ctl.reason, stillAlive });
       if (stillAlive) {
         // Never type this turn into the session the operator asked to replace.
