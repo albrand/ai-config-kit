@@ -1211,7 +1211,10 @@ def serve_repo(spec, args, budget=None):
             if done >= args.max_jobs:
                 break
             st = budget.call(forge_status, slug, sha)
-            if st is None:  # the forge is down or auth is gone: the rest of the queue would fail the same way
+            # A failed read is never about one commit: the combined-status endpoint answers 200 with no statuses for
+            # any 40-hex SHA, even one GitHub doesn't have. So the forge is down, auth is gone or the API is refusing
+            # this host, and the rest of the queue would fail the same way.
+            if st is None:
                 print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running, and leaving "
                       "the rest of the queue for the next tick", flush=True)
                 errors += 1
