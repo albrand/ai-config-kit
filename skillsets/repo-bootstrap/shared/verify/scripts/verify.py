@@ -379,10 +379,30 @@ def proposal(d):
 # ---------------------------------------------------------------- forge (GitHub REST; no Actions involved)
 
 # The runner's forge calls on a loaded host: gh can take over a minute to start, so a call gets FORGE_TIMEOUT and
-# one retry. A retried post whose first try was accepted adds a second record for the context; the combined
-# status (what forge_status and the hook read) shows only the latest per context, so the state is the same.
-# Interactive callers (`run --post-status`, the hook, doctor) keep one short try.
-FORGE_TIMEOUT, FORGE_ATTEMPTS = 120, 2
+# one retry, drawn from a ForgeBudget shared by one serve tick. A retried post whose first try was accepted adds a
+# second record for the context; the combined status (what forge_status and the hook read) shows only the latest
+# per context, so the state is the same. Interactive callers (`run --post-status`, the hook, doctor) keep one
+# short try.
+FORGE_TIMEOUT, FORGE_ATTEMPTS, FORGE_BUDGET = 120, 2, 600
+
+
+class ForgeBudget:
+    """The long-limit forge waits one serve tick may spend. A call gets FORGE_TIMEOUT and FORGE_ATTEMPTS while what
+    is left covers that worst case; after that it gets the callee's short single try, as interactive callers do. So
+    however many posts and reads a tick makes, the long limit adds at most FORGE_BUDGET seconds of waiting to it."""
+
+    def __init__(self, seconds=None, clock=time.monotonic):
+        self.left, self.clock = FORGE_BUDGET if seconds is None else seconds, clock
+
+    def call(self, fn, *args):
+        """fn(*args, timeout, attempts) on the long limit, or fn(*args) with its own short defaults."""
+        if self.left < FORGE_TIMEOUT * FORGE_ATTEMPTS:
+            return fn(*args)
+        start = self.clock()
+        try:
+            return fn(*args, FORGE_TIMEOUT, FORGE_ATTEMPTS)
+        finally:
+            self.left -= self.clock() - start
 
 
 def forge_status(slug, sha, timeout=20, attempts=1):
@@ -1057,11 +1077,12 @@ def job_git_env(job):
     return env
 
 
-def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
+def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr", budget=None):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
-    whose SHA is, right now, the head of the owner-listed branch named by `label`."""
-    post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc, FORGE_TIMEOUT,
-                                                             FORGE_ATTEMPTS))
+    whose SHA is, right now, the head of the owner-listed branch named by `label`. Its posts draw on `budget`,
+    the serve tick's, or a fresh one."""
+    budget = budget or ForgeBudget()
+    post = post or (lambda context, state, desc: budget.call(post_status, slug, sha, context, state, desc))
     jobs = RUNNER_HOME / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     if free_gb(jobs) < DISK_FLOOR_GB:
@@ -1184,10 +1205,11 @@ def serve_repo(spec, args):
     try:
         mirror = ensure_mirror(slug, url)
         errors = done = 0
+        budget = ForgeBudget()
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
-            st = forge_status(slug, sha, FORGE_TIMEOUT, FORGE_ATTEMPTS)
+            st = budget.call(forge_status, slug, sha)
             if st is None:
                 print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
                 errors += 1
@@ -1196,7 +1218,7 @@ def serve_repo(spec, args):
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):
                 continue
-            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork, kind=kind)
+            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork, kind=kind, budget=budget)
             errors += outcome == "error"
             done += outcome == "done"
         return 1 if errors else 0

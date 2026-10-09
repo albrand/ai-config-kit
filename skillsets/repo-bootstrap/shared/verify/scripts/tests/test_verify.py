@@ -321,9 +321,49 @@ class ForgeCalls(unittest.TestCase):
             verify.sh, verify.RUNNER_HOME = saved
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_the_budget_gives_the_long_limit_only_while_it_covers_the_worst_case(self):
+        now = [0.0]
+        budget = verify.ForgeBudget(clock=lambda: now[0])
+        seen = []
+
+        def slow(*a):  # every call takes the full worst case on a forge that never answers
+            seen.append(a)
+            now[0] += verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS if len(a) == 3 else 30
+        for _ in range(6):
+            budget.call(slow, "x")
+        long = ("x", verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
+        n = verify.FORGE_BUDGET // (verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS)
+        self.assertEqual(seen, [long] * n + [("x",)] * (6 - n))
+        self.assertGreaterEqual(budget.left, 0)  # the long waits never exceed the budget
+
+    def test_a_job_on_a_forge_that_never_answers_waits_at_most_the_budget_plus_short_tries(self):
+        saved = verify.sh, verify.RUNNER_HOME
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        now, waits = [0.0], []
+        try:
+            verify.RUNNER_HOME = tmp
+
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                if cmd[:1] == ["gh"]:
+                    waits.append(timeout)
+                    now[0] += timeout
+                    return 124, "timed out"
+                if cmd[:1] == ["git"] and ("rev-parse" in cmd or "merge-base" in cmd):
+                    return 0, "b" * 40
+                return 1, ""
+            verify.sh = sh
+            args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
+            budget = verify.ForgeBudget(seconds=verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS, clock=lambda: now[0])
+            for _ in range(3):  # three jobs in one tick share the tick's budget
+                quiet(lambda: verify.run_job("acme/app", tmp / "mirror.git", "a" * 40, "main", "PR #1", args, budget=budget))
+            self.assertEqual(waits, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS + [30, 30])
+        finally:
+            verify.sh, verify.RUNNER_HOME = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
-        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status")
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
         saved = {n: getattr(verify, n) for n in names}
         seen = []
         try:
@@ -335,6 +375,15 @@ class ForgeCalls(unittest.TestCase):
             rc, out = quiet(verify.serve_repo, "acme/app", args)
             self.assertEqual(rc, 1, out)
             self.assertEqual(seen, [(verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)])
+            budgets = []
+            verify.forge_status = lambda slug, sha, *a: {}
+            verify.run_job = lambda *a, budget=None, **k: budgets.append(budget) or "done"
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr"),
+                                                                   ("c" * 40, "main", "PR #2", False, "pr")])
+            quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=2, stale_hours=3.0, rerun=None))
+            self.assertEqual(len(budgets), 2)
+            self.assertIs(budgets[0], budgets[1])  # one budget for the tick's reads and every job's posts
+            self.assertIsInstance(budgets[0], verify.ForgeBudget)
         finally:
             for n, v in saved.items():
                 setattr(verify, n, v)
