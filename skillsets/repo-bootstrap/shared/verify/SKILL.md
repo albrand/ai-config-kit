@@ -68,6 +68,19 @@ stopping point: write the missing stage if you can, then run it.
    (`StartInterval`) or cron. A job can outlast a bb automation's 15-minute script limit, and launchd
    never starts a tick while the last one runs. It runs open PR heads in throwaway clones and posts
    `verify/<stage>` statuses.
+   - Give the launchd job `ProcessType` `Standard`, not `Background`. `launchd.plist(5)` applies
+     resource limits to `Background` jobs so they don't disrupt the user. On one busy Mac, a runner
+     set to `Background`, `LowPriorityIO` and Nice 10 hit the unit stage's 3600-second limit twice;
+     set to `Standard` and Nice 5, the same stage passed in about 18 minutes.
+   - On a loaded host the gh CLI can take over a minute to start. A runner status call, read or
+     post, gets 2 minutes and one retry while at least 4 minutes (that call's worst case) remain of
+     a 10-minute allowance shared by all of a tick's reads and posts. The allowance caps only those
+     long waits, not the tick: once less than 4 minutes of it remain, every later call still runs,
+     with the single short try that `run --post-status`, the hook and doctor always use. Posting is best-effort: a commit
+     left without a `verify` status is picked up again on the next tick.
+   - One failed status read skips that PR until the next tick. After two failed reads in a row,
+     whatever the cause (GitHub, the network, gh auth, the API refusing the host), the runner
+     leaves that repo's queue for the next tick. A successful read resets the count.
    - On the runner's host, `run --strict` reuses the runner's sandboxed result for HEAD and runs
      only the stages the runner reported `missing` (integration that needs an unconfined host, say).
      That holds only when the runner checked exactly this commit: the branch already contains its
