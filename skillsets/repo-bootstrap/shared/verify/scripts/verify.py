@@ -643,6 +643,21 @@ def write_artifact(runs, name, art):
     os.replace(tmp, runs / name)
 
 
+def worktree_changes(repo):
+    """`git status` lines for how the worktree differs from HEAD, or None when git can't tell. Plain status trusts
+    the index: assume-unchanged and skip-worktree bits, a stale or lying fsmonitor, and a same-size edit under
+    core.trustctime=false or core.checkStat=minimal all hide a change. A throwaway index read from HEAD has no
+    bits and no stat data, so status hashes every tracked file."""
+    with tempfile.TemporaryDirectory(prefix="verify-index-") as d:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(d) / "index")}
+        base = ["git", "-C", str(repo), "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"]
+        rc, out = sh([*base, "read-tree", "HEAD"], env=env, timeout=60, merge=False)
+        if rc == 0:
+            rc, out = sh([*base, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+                         env=env, timeout=300, merge=False)
+    return out.splitlines() if rc == 0 else None
+
+
 def runner_result(repo, sha):
     """(artifact, why not): the runner's result for exactly this commit, when it can stand in for running here.
     Read from the runner's own files on this host, never from forge statuses, which anyone with push access can
@@ -663,7 +678,10 @@ def runner_result(repo, sha):
     if link:
         return None, f"{link} is a symlink, so the artifact path leaves the repo"
     own = f"?? {(RUNS / f'{sha}.json').as_posix()}"  # this command's own artifact for HEAD, from an earlier run
-    dirty = [e for e in git(repo, "status", "--porcelain", "--untracked-files=all").splitlines() if e != own]
+    changes = worktree_changes(repo)
+    if changes is None:
+        return None, "git could not compare the worktree with HEAD"
+    dirty = [e for e in changes if e != own]
     if dirty:
         return None, f"the worktree has uncommitted or untracked files ({dirty[0].strip()})"
     return art, ""

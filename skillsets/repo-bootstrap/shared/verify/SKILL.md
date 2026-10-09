@@ -71,7 +71,9 @@ stopping point: write the missing stage if you can, then run it.
    - On the runner's host, `run --strict` reuses the runner's sandboxed result for HEAD and runs
      only the stages the runner reported `missing` (integration that needs an unconfined host, say).
      That holds only when the runner checked exactly this commit: the branch already contains its
-     base, the commit edits no verifier path or config, and the worktree is clean. Otherwise every
+     base, the commit edits no verifier path or config, and the worktree matches HEAD by content
+     (checked against a fresh index, so assume-unchanged, skip-worktree and fsmonitor can't hide an
+     edit). Ignored files aren't part of the tree and aren't checked. Otherwise every
      stage runs here, and the first line says why. Each stage records whether it came from the
      runner or ran here. Push the branch, keep it current with its base, and let the runner check it
      while you work; `--fresh` runs everything here.

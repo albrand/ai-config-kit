@@ -320,10 +320,20 @@ class RunnerReuse(unittest.TestCase):
                  "runner skipped the stage": {"unit": "untouched"}, "dirty tree": {}, "untracked file": {},
                  "tracked file under .verify/runs edited": {},
                  "untracked input under .verify/runs": {}, "another commit's artifact under .verify/runs": {},
+                 "edit hidden by assume-unchanged": {}, "edit hidden by skip-worktree": {},
+                 "edit hidden by an fsmonitor hook": {}, "same-size edit with stat restored": {},
                  "--fresh": {}}
+        hook = self.tmp / "fsmonitor.sh"
+        hook.write_text('#!/bin/sh\nprintf "token\\0"\n')  # always "nothing changed"
+        hook.chmod(0o755)
         for name, over in cases.items():
             with self.subTest(name):
                 shutil.rmtree(verify.RUNNER_HOME, ignore_errors=True)
+                for key in ("core.fsmonitor", "core.trustctime"):
+                    subprocess.run(["git", "-C", str(self.repo), "config", "--unset", key], capture_output=True)
+                git(self.repo, "update-index", "--no-assume-unchanged", "a.txt")
+                git(self.repo, "update-index", "--no-skip-worktree", "a.txt")
+                (self.repo / "a.txt").write_text("x\n")  # stat may match the index, so checkout can't restore it
                 git(self.repo, "checkout", "-q", "--", ".")
                 git(self.repo, "clean", "-qfd")
                 if over is not None:
@@ -336,6 +346,24 @@ class RunnerReuse(unittest.TestCase):
                     (self.repo / ".verify/runs/input.json").write_text('{"pass": true}\n')
                 if name == "another commit's artifact under .verify/runs":
                     (self.repo / ".verify/runs" / ("e" * 40 + ".json")).write_text("{}\n")
+                if name == "edit hidden by assume-unchanged":
+                    git(self.repo, "update-index", "--assume-unchanged", "a.txt")
+                    (self.repo / "a.txt").write_text("changed\n")
+                if name == "edit hidden by skip-worktree":
+                    git(self.repo, "update-index", "--skip-worktree", "a.txt")
+                    (self.repo / "a.txt").write_text("changed\n")
+                if name == "edit hidden by an fsmonitor hook":
+                    git(self.repo, "config", "core.fsmonitor", str(hook))
+                    git(self.repo, "config", "core.fsmonitorHookVersion", "2")
+                    git(self.repo, "status", "--porcelain")  # marks every entry fsmonitor-valid
+                    (self.repo / "a.txt").write_text("changed\n")
+                if name == "same-size edit with stat restored":
+                    git(self.repo, "config", "core.trustctime", "false")
+                    old = time.time() - 100
+                    os.utime(self.repo / "a.txt", (old, old))
+                    git(self.repo, "update-index", "--refresh")  # the index records that stat, and isn't racy
+                    (self.repo / "a.txt").write_text("y\n")
+                    os.utime(self.repo / "a.txt", (old, old))
                 if name == "tracked file under .verify/runs edited":
                     (self.repo / ".verify/runs/kept.json").write_text('{"verdict": "pass"}\n')
                 rc, out, stages, _ = self.run_strict(*(["--fresh"] if name == "--fresh" else []))
@@ -374,6 +402,16 @@ class RunnerReuse(unittest.TestCase):
         self.assertIn(".verify/runs is a symlink", out)
         self.assertIn("ran-unit-here", out)  # every stage ran here
         self.assertEqual(os.listdir(outside), [])  # nothing written through the link
+
+    def test_when_git_cannot_compare_the_worktree_with_head_nothing_is_reused(self):
+        self.runner_art()
+        tree = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD^{tree}"], capture_output=True,
+                              text=True).stdout.strip()
+        (self.repo / ".git/objects" / tree[:2] / tree[2:]).unlink()  # HEAD's tree can't be read
+        self.assertIsNone(verify.worktree_changes(self.repo))
+        rc, out = quiet(verify.main, ["run", str(self.repo), "--strict"])
+        self.assertIn("git could not compare the worktree with HEAD", out)
+        self.assertIn("ran-unit-here", out)
 
     def test_a_reused_failure_stays_a_failure_and_says_how_to_rerun_it(self):
         self.runner_art(unit="fail")
