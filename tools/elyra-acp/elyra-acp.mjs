@@ -501,6 +501,11 @@ class Session {
 
   async ensureCard() {
     let reg = readRegistry()[this.sessionId];
+    if (reg?.bbThreadId && process.env.BB_THREAD_ID && reg.bbThreadId !== process.env.BB_THREAD_ID) {
+      // This session's card belongs to another live bb thread: never type into it.
+      log({ event: "card-owner-mismatch", sessionId: this.sessionId, owner: reg.bbThreadId, card: reg.cardTitle });
+      throw new Error(`Elyra card "${reg.cardTitle}" belongs to bb thread ${reg.bbThreadId}; refusing to drive it from ${process.env.BB_THREAD_ID}. Clear this thread's context (bb thread clear) for its own session.`);
+    }
     await this.applyControl(reg);
     if (reg?.cardTitle && (await cardAlive(reg.cardTitle))) {
       this.cardTitle = reg.cardTitle;
@@ -755,7 +760,28 @@ const handlers = {
   async "session/new"({ cwd, mcpServers }) {
     // A new bb thread's id is unknown until it is spawned, so an import may
     // also be keyed by the environment directory it will run in.
-    const imp = config.imports[process.env.BB_THREAD_ID || ""] || config.imports["cwd:" + cwd];
+    const me = process.env.BB_THREAD_ID || "";
+    let imp = config.imports[me];
+    const byCwd = config.imports["cwd:" + cwd];
+    // A directory import belongs to the one replacement thread it was made for. Any other
+    // thread later spawned in the same directory (a shared path) gets its own fresh session:
+    // claiming someone else's import would type its brief into that card (two writers).
+    const wantsCodex = BACKEND === "codex";
+    const importIsCodex = byCwd && (/^gpt-/.test(byCwd.model || "") || /codex/.test(byCwd.provider || ""));
+    if (!imp && byCwd && importIsCodex === wantsCodex && (!byCwd.claimedBy || byCwd.claimedBy === me)) {
+      imp = byCwd;
+      if (!byCwd.claimedBy && me) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+          cfg.imports["cwd:" + cwd].claimedBy = me;
+          fs.writeFileSync(CONFIG_PATH + ".tmp", JSON.stringify(cfg, null, 2), { mode: 0o600 });
+          fs.renameSync(CONFIG_PATH + ".tmp", CONFIG_PATH);
+          byCwd.claimedBy = me;
+        } catch (e) { log({ event: "import-claim-failed", error: String(e) }); }
+      }
+    } else if (!imp && byCwd) {
+      log({ event: "import-skipped", cwd, claimedBy: byCwd.claimedBy, importIsCodex, wantsCodex });
+    }
     const sessionId = imp?.resumeSessionId || crypto.randomUUID();
     const reg = readRegistry()[sessionId];
     const model = reg?.model || imp?.model || DEFAULT_MODEL;
