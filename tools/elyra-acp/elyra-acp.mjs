@@ -581,9 +581,13 @@ let shuttingDown = false;
 const shutdown = async (why) => {
   if (shuttingDown) return;
   shuttingDown = true;
-  const busy = [...sessions.values()].filter((s) => s.prompting || s.cancelTimer);
+  const busy = [...sessions.values()].filter((s) => (s.prompting || s.cancelTimer) && s.cardTitle);
   log({ event: "shutdown", why, interrupting: busy.map((s) => s.cardTitle) });
-  await Promise.race([Promise.all(busy.map((s) => s.cancel({ immediate: true }))), sleep(5000)]);
+  // bb kills the adapter right after SIGTERM, so hand the interrupt to a
+  // detached process that outlives us.
+  for (const s of busy) {
+    childProcess.spawn(config.elyraCli, ["terminal", "send", "--terminal", s.cardTitle, "--text", "\u001b", "--no-enter", "--interrupt", "--json"], { detached: true, stdio: "ignore", env: { HOME, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } }).unref();
+  }
   process.exit(0);
 };
 rl.on("close", () => shutdown("stdin-closed"));
