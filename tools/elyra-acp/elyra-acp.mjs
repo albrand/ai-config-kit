@@ -710,7 +710,9 @@ const notificationHandlers = {
   async "session/cancel"({ sessionId }) { await sessions.get(sessionId)?.cancel(); },
 };
 
-log({ event: "start", cwd: process.cwd(), bbIds: Object.fromEntries(BB_IDENTITY.filter((k) => process.env[k] && !SECRETISH.test(k)).map((k) => [k, process.env[k]])) });
+// The code version lets the health check spot adapters still running old code.
+const CODE_VERSION = crypto.createHash("sha256").update(fs.readFileSync(new URL(import.meta.url))).digest("hex").slice(0, 12);
+log({ event: "start", version: CODE_VERSION, backend: BACKEND, cwd: process.cwd(), bbIds: Object.fromEntries(BB_IDENTITY.filter((k) => process.env[k] && !SECRETISH.test(k)).map((k) => [k, process.env[k]])) });
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", async (line) => {

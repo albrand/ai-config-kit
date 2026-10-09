@@ -62,3 +62,20 @@ for old, r in mig.items():
     note = (f" errors={len(errs)} last={errs[-1]['error'][:120]}" if errs else "") + (f" waiting: {gates[-1].get('gate')}" if open_gate else "")
     print(f"{flag} child {new} (was {old}) {state}{note}")
 PY
+
+# Bridges still running code older than the file on disk (restart each while idle).
+python3 - "$log" <<'PY'
+import hashlib, json, sys
+cur = hashlib.sha256(open("/Users/alexandrebrandizzi/projects/agent-config-kit-elyra-acp/tools/elyra-acp/elyra-acp.mjs", "rb").read()).hexdigest()[:12]
+last = {}
+for l in open(sys.argv[1]).read().splitlines()[-6000:]:
+    try: d = json.loads(l)
+    except Exception: continue
+    if d.get("event") == "start" and d.get("thread"): last[d["thread"]] = d.get("version")
+import os
+fleet = {"thr_67z7498bvq"} | {v["new"] for v in json.load(open(os.path.expanduser("~/.local/state/elyra-acp/migrations.json"))).values() if v.get("new")}
+stale = sorted(t for t, v in last.items() if v != cur and t in fleet)
+import subprocess
+live = [t for t in stale if subprocess.run(["bb", "thread", "show", t], capture_output=True, text=True).stdout.count("archived") == 0]
+print(("WARN old bridge code on: " + " ".join(live)) if live else "OK   every bridge runs current code")
+PY
