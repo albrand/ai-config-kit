@@ -442,23 +442,26 @@ class StandingRuleCheckerTest(unittest.TestCase):
     def test_session_input_guard_stays_retired(self):
         # Owner directive 2026-10-08: agents message running sessions (Elyra, bb) without the session-input guard,
         # which blocked every Elyra delivery because Elyra writes no lease records. No home and no kit source may
-        # require it again; the supersede, attestation and write-owner rules stay.
+        # require it again; the supersede, attestation and write-owner rules stay, and so does the OpenCode overlay's
+        # lease/attestation line (Hermes 2026-10-08, kit-retire-session-input-guard r1).
         root = SCRIPT.parents[1]
         rendered = root / "proposals/card21/rendered-homes"
         sources = [root / "GLOBAL_AGENTS.md", root / "proposals/card21/hard-rules.md",
-                   root / "proposals/card21/overlays/opencode.md",
                    *(rendered / name for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"))]
         for source in sources:
             text = source.read_text(encoding="utf-8")
             with self.subTest(source=source.name):
                 self.assertNotIn("session-input-guard", text)
                 self.assertNotIn("Before active-session input", text)
-                self.assertNotIn("exact workspace/topic lease/adapter attestations", text)
         for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md"):
             text = (rendered / name).read_text(encoding="utf-8")
             with self.subTest(kept=name):
                 self.assertIn("Supersede only via `superseding`", text)
                 self.assertIn("A same-workspace write-owner mismatch blocks delivery.", text)
+        overlay = (root / "proposals/card21/overlays/opencode.md").read_text(encoding="utf-8")
+        self.assertIn("exact workspace/topic lease/adapter attestations", overlay)
+        self.assertIn("exact workspace/topic lease/adapter attestations",
+                      (rendered / "opencode-AGENTS.md").read_text(encoding="utf-8"))
         self.assertNotIn("active-session-input-skill-trigger", CHECKER.RULES)
 
     def test_rendered_profiles_reject_each_security_obligation_mutation(self):
