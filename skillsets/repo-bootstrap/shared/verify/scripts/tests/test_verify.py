@@ -269,7 +269,7 @@ class RunnerReuse(unittest.TestCase):
         cfg = {"version": 1, "stages": {"static": {"run": "true"}, "unit": {"run": "echo ran-unit-here; exit 1"},
                                         "integration": {"run": "true"}, "journeys": {"run": None, "na": "cli"},
                                         "evals": {"run": None, "na": "no LLM"}, "rehearsal": {"run": None, "na": "no data"}}}
-        self.repo = make_repo({"a.txt": "x\n"}, cfg)
+        self.repo = make_repo({"a.txt": "x\n", ".verify/runs/kept.json": "{}\n"}, cfg)  # a tracked file there too
         git(self.repo, "remote", "add", "origin", "https://github.com/acme/app.git")
         self.sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
                                   text=True).stdout.strip()
@@ -318,6 +318,7 @@ class RunnerReuse(unittest.TestCase):
                  "malformed edit record": {"edited": "scripts/check.sh"},
                  "malformed config record": {"config_edited": "no"}, "another commit's result": {"sha": "d" * 40},
                  "runner skipped the stage": {"unit": "untouched"}, "dirty tree": {}, "untracked file": {},
+                 "tracked file under .verify/runs edited": {},
                  "--fresh": {}}
         for name, over in cases.items():
             with self.subTest(name):
@@ -330,6 +331,8 @@ class RunnerReuse(unittest.TestCase):
                     (self.repo / "a.txt").write_text("changed\n")
                 if name == "untracked file":
                     (self.repo / "new.txt").write_text("new\n")
+                if name == "tracked file under .verify/runs edited":
+                    (self.repo / ".verify/runs/kept.json").write_text('{"verdict": "pass"}\n')
                 rc, out, stages, _ = self.run_strict(*(["--fresh"] if name == "--fresh" else []))
                 self.assertEqual(rc, 1, out)
                 self.assertIn("ran-unit-here", out)
