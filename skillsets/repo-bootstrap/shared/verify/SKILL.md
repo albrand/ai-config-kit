@@ -72,8 +72,9 @@ stopping point: write the missing stage if you can, then run it.
      2 minutes and one retry, while a 10-minute budget per tick lasts; after that a call gets the
      single short try that `run --post-status`, the hook and doctor always use. Posting is
      best-effort: a commit left without a `verify` status is picked up again on the next tick.
-   - One failed status read skips that PR until the next tick. Two in a row mean GitHub or gh
-     auth is down, so the runner leaves that repo's queue for the next tick.
+   - One failed status read skips that PR until the next tick. After two failed reads in a row,
+     whatever the cause (GitHub, the network, gh auth, the API refusing the host), the runner
+     leaves that repo's queue for the next tick. A successful read resets the count.
    - On the runner's host, `run --strict` reuses the runner's sandboxed result for HEAD and runs
      only the stages the runner reported `missing` (integration that needs an unconfined host, say).
      That holds only when the runner checked exactly this commit: the branch already contains its
