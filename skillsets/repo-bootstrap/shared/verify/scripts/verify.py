@@ -379,7 +379,9 @@ def proposal(d):
 # ---------------------------------------------------------------- forge (GitHub REST; no Actions involved)
 
 # The runner's forge calls on a loaded host: gh can take over a minute to start, so a call gets FORGE_TIMEOUT and
-# one retry (posting a status again just overwrites it). Interactive callers (the hook) keep their short limits.
+# one retry. A retried post whose first try was accepted adds a second record for the context; the combined
+# status (what forge_status and the hook read) shows only the latest per context, so the state is the same.
+# Interactive callers (`run --post-status`, the hook, doctor) keep one short try.
 FORGE_TIMEOUT, FORGE_ATTEMPTS = 120, 2
 
 
@@ -418,11 +420,11 @@ def capped_post(post):
     return capped
 
 
-def post_status(slug, sha, context, state, description):
+def post_status(slug, sha, context, state, description, timeout=30, attempts=1):
     """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
-    for _ in range(FORGE_ATTEMPTS):
+    for _ in range(attempts):
         rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
-                      "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=FORGE_TIMEOUT)
+                      "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=timeout)
         if rc == 0:
             break
     if rc != 0:
@@ -967,7 +969,8 @@ def job_git_env(job):
 def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
     whose SHA is, right now, the head of the owner-listed branch named by `label`."""
-    post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc))
+    post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc, FORGE_TIMEOUT,
+                                                             FORGE_ATTEMPTS))
     jobs = RUNNER_HOME / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     if free_gb(jobs) < DISK_FLOOR_GB:

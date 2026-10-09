@@ -273,12 +273,16 @@ class ForgeCalls(unittest.TestCase):
     def test_a_status_post_that_times_out_once_is_retried_with_the_long_limit(self):
         saved = verify.sh
         try:
+            long = (verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
             verify.sh, calls = self.fake_sh([(124, "timed out"), (0, "")])
-            self.assertTrue(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertTrue(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok", *long)[0])
             self.assertEqual(calls, [verify.FORGE_TIMEOUT] * 2)
             verify.sh, calls = self.fake_sh([(124, "timed out")] * 3)
-            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok", *long)[0])
             self.assertEqual(len(calls), verify.FORGE_ATTEMPTS)  # bounded: no third try
+            verify.sh, calls = self.fake_sh([(124, "timed out"), (0, "")])
+            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertEqual(calls, [30])  # `run --post-status` keeps one short try
         finally:
             verify.sh = saved
         self.assertGreaterEqual(verify.FORGE_TIMEOUT, 90)
@@ -295,6 +299,27 @@ class ForgeCalls(unittest.TestCase):
             self.assertEqual(calls, [20])
         finally:
             verify.sh = saved
+
+    def test_the_runner_posts_with_the_long_limit_and_a_retry(self):
+        saved = verify.sh, verify.RUNNER_HOME
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        calls = []
+        try:
+            verify.RUNNER_HOME = tmp
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                calls.append((cmd, timeout))
+                if cmd[:1] == ["git"] and ("rev-parse" in cmd or "merge-base" in cmd):
+                    return 0, "b" * 40  # the base branch exists
+                return (124, "timed out") if cmd[:1] == ["gh"] else (1, "")  # no config on the base; posts time out
+            verify.sh = sh
+            args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
+            quiet(verify.run_job, "acme/app", tmp / "mirror.git", "a" * 40, "main", "PR #1", args)
+            posts = [t for cmd, t in calls if cmd[:4] == ["gh", "api", "-X", "POST"]]
+            self.assertTrue(posts, calls)  # the base config is unreadable here, so the job posts `missing`
+            self.assertEqual(posts, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS)
+        finally:
+            verify.sh, verify.RUNNER_HOME = saved
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
