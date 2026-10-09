@@ -549,7 +549,7 @@ class Session {
         const keys = [["--text", "\r", "--no-enter"], ["--text", ""], ["--text", "1", "--no-enter"], ["--text", "1"]][n - 1];
         const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, ...keys]);
         log({ event: "unarchive-answered", card: this.cardTitle, nativeId: this.nativeId, sendOk: r.ok, sendError: r.error?.message });
-        await sleep(2000);
+        await sleep(5000); // Codex takes a few seconds to load a large rollout
         continue;
       }
       if (gate) {
