@@ -640,9 +640,10 @@ def runner_result(repo, sha):
         return None, "the runner's result is not from a sandboxed strict job"
     if art.get("edited") != [] or art.get("config_edited") is not False:  # absent or malformed: unknown
         return None, "this commit edits the verifier or config, which the runner replaced with its base's copy"
-    status = git(repo, "status", "--porcelain", "--untracked-files=all").splitlines()
-    if [e for e in status if not (e.startswith("?? ") and e[3:].startswith(RUNS.as_posix() + "/"))]:
-        return None, "the worktree has uncommitted or untracked files"  # only this command's own new artifacts pass
+    own = f"?? {(RUNS / f'{sha}.json').as_posix()}"  # this command's own artifact for HEAD, from an earlier run
+    dirty = [e for e in git(repo, "status", "--porcelain", "--untracked-files=all").splitlines() if e != own]
+    if dirty:
+        return None, f"the worktree has uncommitted or untracked files ({dirty[0].strip()})"
     return art, ""
 
 

@@ -319,18 +319,23 @@ class RunnerReuse(unittest.TestCase):
                  "malformed config record": {"config_edited": "no"}, "another commit's result": {"sha": "d" * 40},
                  "runner skipped the stage": {"unit": "untouched"}, "dirty tree": {}, "untracked file": {},
                  "tracked file under .verify/runs edited": {},
+                 "untracked input under .verify/runs": {}, "another commit's artifact under .verify/runs": {},
                  "--fresh": {}}
         for name, over in cases.items():
             with self.subTest(name):
                 shutil.rmtree(verify.RUNNER_HOME, ignore_errors=True)
                 git(self.repo, "checkout", "-q", "--", ".")
-                git(self.repo, "clean", "-qfd", "-e", ".verify/runs")
+                git(self.repo, "clean", "-qfd")
                 if over is not None:
                     self.runner_art(**over)
                 if name == "dirty tree":
                     (self.repo / "a.txt").write_text("changed\n")
                 if name == "untracked file":
                     (self.repo / "new.txt").write_text("new\n")
+                if name == "untracked input under .verify/runs":
+                    (self.repo / ".verify/runs/input.json").write_text('{"pass": true}\n')
+                if name == "another commit's artifact under .verify/runs":
+                    (self.repo / ".verify/runs" / ("e" * 40 + ".json")).write_text("{}\n")
                 if name == "tracked file under .verify/runs edited":
                     (self.repo / ".verify/runs/kept.json").write_text('{"verdict": "pass"}\n')
                 rc, out, stages, _ = self.run_strict(*(["--fresh"] if name == "--fresh" else []))
