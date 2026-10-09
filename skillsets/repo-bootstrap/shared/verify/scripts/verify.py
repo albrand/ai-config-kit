@@ -378,11 +378,43 @@ def proposal(d):
 
 # ---------------------------------------------------------------- forge (GitHub REST; no Actions involved)
 
-def forge_status(slug, sha, timeout=20):
+# The runner's forge calls on a loaded host: gh can take over a minute to start, so a call gets FORGE_TIMEOUT and
+# one retry, drawn from a ForgeBudget shared by one serve tick. A retried post whose first try was accepted adds a
+# second record for the context; the combined status (what forge_status and the hook read) shows only the latest
+# per context, so the state is the same. Interactive callers (`run --post-status`, the hook, doctor) keep one
+# short try.
+FORGE_TIMEOUT, FORGE_ATTEMPTS, FORGE_BUDGET = 120, 2, 600
+FAILED_READS_IN_A_ROW = 2  # a serve tick leaves a repo's queue after this many failed status reads in a row
+
+
+class ForgeBudget:
+    """The long-limit forge waits one serve tick may spend. A call gets FORGE_TIMEOUT and FORGE_ATTEMPTS while what
+    is left covers that worst case; after that it gets the callee's short single try, the one every runner call had
+    before the long limit. So however many posts and reads a tick makes, it waits at most FORGE_BUDGET seconds more
+    than the same tick on short tries alone. Those short tries aren't capped: a tick still makes every post."""
+
+    def __init__(self, seconds=None, clock=time.monotonic):
+        self.left, self.clock = FORGE_BUDGET if seconds is None else seconds, clock
+
+    def call(self, fn, *args):
+        """fn(*args, timeout, attempts) on the long limit, or fn(*args) with its own short defaults."""
+        if self.left < FORGE_TIMEOUT * FORGE_ATTEMPTS:
+            return fn(*args)
+        start = self.clock()
+        try:
+            return fn(*args, FORGE_TIMEOUT, FORGE_ATTEMPTS)
+        finally:
+            self.left -= self.clock() - start
+
+
+def forge_status(slug, sha, timeout=20, attempts=1):
     """{context: {state, at}} for the commit, or None when the forge can't be read (auth, network)."""
-    rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
-                  "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
-                 timeout=timeout, merge=False)
+    for _ in range(attempts):
+        rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
+                      "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
+                     timeout=timeout, merge=False)
+        if rc == 0:
+            break
     if rc != 0:
         return None
     try:
@@ -410,10 +442,13 @@ def capped_post(post):
     return capped
 
 
-def post_status(slug, sha, context, state, description):
+def post_status(slug, sha, context, state, description, timeout=30, attempts=1):
     """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
-    rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
-                  "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=30)
+    for _ in range(attempts):
+        rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
+                      "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=timeout)
+        if rc == 0:
+            break
     if rc != 0:
         print(f"[verify] could not post {context} to {slug}@{sha[:9]}: {out.strip()[-300:]}", file=sys.stderr, flush=True)
     return rc == 0
@@ -1044,10 +1079,12 @@ def job_git_env(job):
     return env
 
 
-def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr"):
+def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr", budget=None):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
-    whose SHA is, right now, the head of the owner-listed branch named by `label`."""
-    post = post or (lambda context, state, desc: post_status(slug, sha, context, state, desc))
+    whose SHA is, right now, the head of the owner-listed branch named by `label`. Its posts draw on `budget`,
+    the serve tick's, or a fresh one."""
+    budget = budget or ForgeBudget()
+    post = post or (lambda context, state, desc: budget.call(post_status, slug, sha, context, state, desc))
     jobs = RUNNER_HOME / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     if free_gb(jobs) < DISK_FLOOR_GB:
@@ -1154,7 +1191,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         shutil.rmtree(job, ignore_errors=True)
 
 
-def serve_repo(spec, args):
+def serve_repo(spec, args, budget=None):
     slug, url = resolve_target(spec)
     if not slug:
         print(f"[serve] {spec}: not a GitHub repo path or OWNER/NAME")
@@ -1169,20 +1206,31 @@ def serve_repo(spec, args):
         return 0
     try:
         mirror = ensure_mirror(slug, url)
-        errors = done = 0
+        errors = done = failed = 0
+        budget = budget or ForgeBudget()
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
-            st = forge_status(slug, sha)
+            st = budget.call(forge_status, slug, sha)
+            # One failed read only skips that commit (until the next tick), so a passing glitch can't hold up the PRs
+            # behind it. Failures in a row mean the forge is down, auth is gone or the API is refusing this host, so
+            # the rest of the queue would fail the same way: leave it. (The combined-status endpoint answers 200 for
+            # any 40-hex SHA, even one GitHub doesn't have, so a commit can't make its own read fail every tick.)
             if st is None:
-                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
                 errors += 1
+                failed += 1
+                if failed >= FAILED_READS_IN_A_ROW:
+                    print(f"[serve] {slug} {label}: cannot read statuses (auth or network), {failed} in a row; not "
+                          "running, and leaving the rest of the queue for the next tick", flush=True)
+                    break
+                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
                 continue
+            failed = 0
             mine = st.get(STATUS_PREFIX)
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):
                 continue
-            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork, kind=kind)
+            outcome = run_job(slug, mirror, sha, base, label, args, fork=fork, kind=kind, budget=budget)
             errors += outcome == "error"
             done += outcome == "done"
         return 1 if errors else 0
@@ -1194,9 +1242,10 @@ def serve_repo(spec, args):
 def cmd_serve(args):
     while True:
         rc = 0
+        budget = ForgeBudget()  # one per tick, shared by every repo's reads and every job's posts
         for r in args.repo:
             try:
-                rc |= serve_repo(r, args)
+                rc |= serve_repo(r, args, budget)
             except Exception as e:  # one broken repo must not stop the others
                 print(f"[serve] {r}: {e}", flush=True)
                 rc = 1

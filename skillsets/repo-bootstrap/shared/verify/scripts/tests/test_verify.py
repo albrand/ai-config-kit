@@ -259,6 +259,243 @@ class RunStage(unittest.TestCase):
         self.assertFalse(marker.exists(), "a background child outlived the timeout")
 
 
+class ForgeCalls(unittest.TestCase):
+    """On a loaded host gh can take over a minute to start: the runner's forge calls get a long limit and one retry."""
+
+    def fake_sh(self, results):
+        calls = []
+
+        def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+            calls.append(timeout)
+            return results[len(calls) - 1]
+        return sh, calls
+
+    def test_a_status_post_that_times_out_once_is_retried_with_the_long_limit(self):
+        saved = verify.sh
+        try:
+            long = (verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
+            verify.sh, calls = self.fake_sh([(124, "timed out"), (0, "")])
+            self.assertTrue(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok", *long)[0])
+            self.assertEqual(calls, [verify.FORGE_TIMEOUT] * 2)
+            verify.sh, calls = self.fake_sh([(124, "timed out")] * 3)
+            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok", *long)[0])
+            self.assertEqual(len(calls), verify.FORGE_ATTEMPTS)  # bounded: no third try
+            verify.sh, calls = self.fake_sh([(124, "timed out"), (0, "")])
+            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertEqual(calls, [30])  # `run --post-status` keeps one short try
+        finally:
+            verify.sh = saved
+        self.assertGreaterEqual(verify.FORGE_TIMEOUT, 90)
+
+    def test_the_runner_status_read_retries_but_the_default_read_does_not(self):
+        saved = verify.sh
+        try:
+            verify.sh, calls = self.fake_sh([(124, ""), (0, '{"verify": {"state": "success", "at": "x"}}')])
+            st = verify.forge_status("acme/app", "a" * 40, verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
+            self.assertEqual(st["verify"]["state"], "success")
+            self.assertEqual(calls, [verify.FORGE_TIMEOUT] * 2)
+            verify.sh, calls = self.fake_sh([(124, ""), (0, "{}")])
+            self.assertIsNone(verify.forge_status("acme/app", "a" * 40))  # the hook and doctor keep one short try
+            self.assertEqual(calls, [20])
+        finally:
+            verify.sh = saved
+
+    def test_the_runner_posts_with_the_long_limit_and_a_retry(self):
+        saved = verify.sh, verify.RUNNER_HOME
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        calls = []
+        try:
+            verify.RUNNER_HOME = tmp
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                calls.append((cmd, timeout))
+                if cmd[:1] == ["git"] and ("rev-parse" in cmd or "merge-base" in cmd):
+                    return 0, "b" * 40  # the base branch exists
+                return (124, "timed out") if cmd[:1] == ["gh"] else (1, "")  # no config on the base; posts time out
+            verify.sh = sh
+            args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
+            quiet(verify.run_job, "acme/app", tmp / "mirror.git", "a" * 40, "main", "PR #1", args)
+            posts = [t for cmd, t in calls if cmd[:4] == ["gh", "api", "-X", "POST"]]
+            self.assertTrue(posts, calls)  # the base config is unreadable here, so the job posts `missing`
+            self.assertEqual(posts, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS)
+        finally:
+            verify.sh, verify.RUNNER_HOME = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_the_budget_gives_the_long_limit_only_while_it_covers_the_worst_case(self):
+        now = [0.0]
+        budget = verify.ForgeBudget(clock=lambda: now[0])
+        seen = []
+
+        def slow(*a):  # every call takes the full worst case on a forge that never answers
+            seen.append(a)
+            now[0] += verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS if len(a) == 3 else 30
+        for _ in range(6):
+            budget.call(slow, "x")
+        long = ("x", verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
+        n = verify.FORGE_BUDGET // (verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS)
+        self.assertEqual(seen, [long] * n + [("x",)] * (6 - n))
+        self.assertGreaterEqual(budget.left, 0)  # the long waits never exceed the budget
+
+    def test_a_job_on_a_forge_that_never_answers_waits_at_most_the_budget_plus_short_tries(self):
+        saved = verify.sh, verify.RUNNER_HOME
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        now, waits = [0.0], []
+        try:
+            verify.RUNNER_HOME = tmp
+
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                if cmd[:1] == ["gh"]:
+                    waits.append(timeout)
+                    now[0] += timeout
+                    return 124, "timed out"
+                if cmd[:1] == ["git"] and ("rev-parse" in cmd or "merge-base" in cmd):
+                    return 0, "b" * 40
+                return 1, ""
+            verify.sh = sh
+            args = argparse.Namespace(unsandboxed=True, allow_read=None, allow_host_port=None)
+            budget = verify.ForgeBudget(seconds=verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS, clock=lambda: now[0])
+            for _ in range(3):  # three jobs in one tick share the tick's budget
+                quiet(lambda: verify.run_job("acme/app", tmp / "mirror.git", "a" * 40, "main", "PR #1", args, budget=budget))
+            self.assertEqual(waits, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS + [30, 30])
+        finally:
+            verify.sh, verify.RUNNER_HOME = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_one_budget_covers_every_repo_in_a_tick_and_each_tick_gets_a_new_one(self):
+        saved = verify.serve_repo
+        seen = []
+        try:
+            verify.serve_repo = lambda spec, args, budget=None: seen.append((spec, budget)) or 0
+            args = argparse.Namespace(repo=["acme/app", "acme/api", "acme/web"], once=True)
+            self.assertEqual(verify.cmd_serve(args), 0)
+            verify.cmd_serve(args)
+        finally:
+            verify.serve_repo = saved
+        self.assertEqual([spec for spec, _ in seen], ["acme/app", "acme/api", "acme/web"] * 2)
+        first, second = {id(b) for _, b in seen[:3]}, {id(b) for _, b in seen[3:]}
+        self.assertEqual((len(first), len(second)), (1, 1))  # the same budget for every repo in a tick
+        self.assertNotEqual(first, second)  # and a fresh one for the next tick
+        self.assertIsInstance(seen[0][1], verify.ForgeBudget)
+
+    def test_failed_status_reads_in_a_row_end_the_tick_but_one_only_skips_that_commit(self):
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
+        saved = {n: getattr(verify, n) for n in names}
+        reads, ran = [], []
+        sha = [f"{i:040x}" for i in range(50)]
+        done = {"verify": {"state": "success", "at": "2026-10-09T00:00:00Z"}}
+        try:
+            verify.RUNNER_HOME = tmp
+            verify.ensure_mirror = lambda slug, url: tmp
+            verify.pending_jobs = lambda slug, mirror, args: iter([(h, "main", f"PR #{i}", False, "pr")
+                                                                   for i, h in enumerate(sha)])
+            verify.run_job = lambda *a, **k: ran.append(a[2]) or "done"
+            args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
+
+            def tick(answers):  # answers: sha -> what its read returns; unlisted commits fail
+                reads[:], ran[:] = [], []
+                verify.forge_status = lambda slug, h, *a: reads.append(h) or answers.get(h)
+                return quiet(verify.serve_repo, "acme/app", args)
+            rc, out = tick({})  # the forge never answers
+            self.assertEqual((rc, reads, ran), (1, sha[:2], []), out)  # two reads, not fifty
+            self.assertIn("leaving the rest of the queue for the next tick", out)
+            rc, out = tick({h: {} for h in sha[1:]})  # one passing failure, then a commit to check
+            self.assertEqual((rc, reads, ran), (1, sha[:2], [sha[1]]), out)  # the next PR still runs
+            self.assertNotIn("leaving the rest of the queue", out)
+            rc, out = tick({sha[1]: done, sha[3]: {}})  # fail, already checked, fail, to check: a read resets the run
+            self.assertEqual((rc, reads, ran), (1, sha[:4], [sha[3]]), out)
+            self.assertNotIn("leaving the rest of the queue", out)
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_a_tick_whose_posts_all_time_out_waits_at_most_the_budget_beyond_short_tries(self):
+        """Full fan-out: two jobs of six real stages each, reads that answer, every post timing out."""
+        tmp = Path(tempfile.mkdtemp(prefix="verify-tick-")).resolve()
+        saved = {n: getattr(verify, n) for n in ("RUNNER_HOME", "DISK_FLOOR_GB", "sh", "ensure_mirror", "pending_jobs")}
+        cfg = {"version": 1, "stages": {s: {"run": "true"} for s in verify.PER_CHANGE}}
+        origin = make_repo({"a.txt": "x\n"}, cfg)
+        shas = []
+        for n in (1, 2):
+            git(origin, "checkout", "-q", "-b", f"pr{n}", "main")
+            (origin / "a.txt").write_text(f"pr{n}\n")
+            git(origin, "commit", "-qam", f"pr{n}")
+            shas.append(subprocess.run(["git", "-C", str(origin), "rev-parse", "HEAD"], capture_output=True,
+                                       text=True).stdout.strip())
+        mirror = tmp / "mirror.git"
+        subprocess.run(["git", "clone", "-q", "--mirror", str(origin), str(mirror)], check=True)
+        real_sh = verify.sh
+
+        def tick(seconds):
+            now, waits = [0.0], []
+
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                if cmd[:4] == ["gh", "api", "-X", "POST"]:
+                    waits.append(timeout)
+                    now[0] += timeout
+                    return 124, "timed out"
+                if cmd[:2] == ["gh", "api"]:
+                    return 0, "{}"  # reads answer at once: no status yet, so every job runs
+                return real_sh(cmd, cwd=cwd, env=env, timeout=timeout, merge=merge)
+            verify.sh = sh
+            args = argparse.Namespace(max_jobs=2, stale_hours=3.0, rerun=None, unsandboxed=True, allow_read=None,
+                                      allow_host_port=None)
+            quiet(verify.serve_repo, "acme/app", args, verify.ForgeBudget(seconds, clock=lambda: now[0]))
+            return waits
+        try:
+            verify.RUNNER_HOME, verify.DISK_FLOOR_GB = tmp / "runner", 0
+            verify.ensure_mirror = lambda slug, url: mirror
+            verify.pending_jobs = lambda slug, mirror, args: iter([(sha, "main", f"PR #{n}", False, "pr")
+                                                                   for n, sha in enumerate(shas, 1)])
+            short = tick(0)  # every post on its single short try, as before the long limit
+            shutil.rmtree(tmp / "runner", ignore_errors=True)
+            budgeted = tick(verify.FORGE_BUDGET)
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(origin, ignore_errors=True)
+        posts = len(short)
+        self.assertGreaterEqual(posts, 2 * 2 * len(verify.PER_CHANGE))  # pending and result per stage, per job
+        self.assertEqual(short, [30] * posts)
+        n_long = verify.FORGE_BUDGET // (verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS)
+        self.assertEqual(budgeted, [verify.FORGE_TIMEOUT] * (n_long * verify.FORGE_ATTEMPTS) + [30] * (posts - n_long))
+        self.assertLessEqual(sum(budgeted) - sum(short), verify.FORGE_BUDGET)
+
+    def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
+        saved = {n: getattr(verify, n) for n in names}
+        seen = []
+        try:
+            verify.RUNNER_HOME = tmp
+            verify.ensure_mirror = lambda slug, url: tmp
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr")])
+            verify.forge_status = lambda slug, sha, *a: seen.append(a) or None
+            args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
+            rc, out = quiet(verify.serve_repo, "acme/app", args)
+            self.assertEqual(rc, 1, out)
+            self.assertEqual(seen, [(verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)])
+            budgets = []
+            verify.forge_status = lambda slug, sha, *a: {}
+            verify.run_job = lambda *a, budget=None, **k: budgets.append(budget) or "done"
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr"),
+                                                                   ("c" * 40, "main", "PR #2", False, "pr")])
+            quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=2, stale_hours=3.0, rerun=None))
+            self.assertEqual(len(budgets), 2)
+            self.assertIs(budgets[0], budgets[1])  # one budget for the tick's reads and every job's posts
+            self.assertIsInstance(budgets[0], verify.ForgeBudget)
+            given, budgets[:] = verify.ForgeBudget(), []
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr")])
+            quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None), given)
+            self.assertIs(budgets[0], given)  # the tick's budget, when cmd_serve passes one
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class RunnerReuse(unittest.TestCase):
     """`run --strict` takes the runner's sandboxed result for exactly this commit and runs only the rest here."""
 
