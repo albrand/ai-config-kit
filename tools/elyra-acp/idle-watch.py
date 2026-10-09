@@ -79,7 +79,9 @@ def tick(coord, dry):
         if not dry:
             subprocess.run(["python3", SCOPE_GATE, "release", coord, k["id"], "--evidence", "moved to Elyra; archived original"], capture_output=True, text=True)
             bb("thread", "archive", k["id"])
-    kids = [k for k in kids if k["id"] not in moved]
+    # A child still on bb's native provider is migrate-children's: it moves it into Elyra
+    # within ~2 min of going idle. Nudging it first would hand it work and block the move.
+    kids = [k for k in kids if k["id"] not in moved and k["providerId"].startswith("acp-elyra")]
     to_nudge = []
     for k in kids:
         tid = k["id"]
