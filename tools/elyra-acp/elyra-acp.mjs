@@ -558,6 +558,9 @@ class Session {
   async waitReady(sessionIdForNotices) {
     let announced = null;
     for (let i = 0; i < 1800; i++) {
+      // A turn waiting on a frozen card must yield to bb's stop or next message, or every
+      // later message (including an operator relaunch) queues behind it for up to an hour.
+      if (sessionIdForNotices && (this.cancelled || this.stopLoop)) { log({ event: "wait-ready-abandoned", card: this.cardTitle }); return false; }
       const w = await elyra(["terminal", "wait", "--terminal", this.cardTitle, "--for", "tui-idle", "--timeout-ms", "2000"], { timeoutMs: 10000 });
       const text = await this.screen();
       const gate = this.blockingGate(text);
@@ -666,7 +669,7 @@ class Session {
       const idle = await elyra(["terminal", "wait", "--terminal", this.cardTitle, "--for", "tui-idle", "--timeout-ms", "1500"], { timeoutMs: 8000 });
       const scr = await this.screen();
       const steering = BACKEND === "codex" ? BUSY_RE.test(scr.slice(-1500)) : !idle.ok && BUSY_RE.test(scr);
-      if (!steering) await this.waitReady(this.sessionId);
+      if (!steering && (await this.waitReady(this.sessionId)) === false) return "cancelled";
 
       const text = promptBlocks.map((b) => (b.type === "text" ? b.text : b.type === "resource_link" ? `[attachment: ${b.uri}]` : b.type === "resource" ? `[attachment: ${b.resource?.uri}]` : `[${b.type}]`)).join("\n");
       const promptFile = `${RUN_DIR}/${this.sessionId}.prompt-${crypto.randomBytes(4).toString("hex")}.txt`;
