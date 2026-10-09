@@ -195,9 +195,12 @@ replace it.
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `7f98a5a5d12d9771ce7c38b95e9e56404a374f3907ccfa9ad1db01460aad29cb` |
 
-### Accepted live profile: session-input guard retired, first wording at 1b16d87 (never installed)
+### Accepted live profile: session-input guard retired, first wording at 1b16d87 (never installed; replaced on install)
 
-This PR's first render was the current profile at 1b16d87, so it stays installable. It also dropped the OpenCode overlay's lease/attestation line, which the owner's directive did not ask for (Hermes r1).
+This PR's first render was the current profile at 1b16d87, so the history test keeps it here. It is never
+installed: an accepted profile is only a state the compare-and-swap may overwrite, and `--install` writes the
+current render. That render dropped the OpenCode overlay's lease/attestation line, which the owner's directive
+did not ask for (Hermes r1); homes in this state get the line back when the current render replaces them.
 
 | Home | SHA-256 |
 |---|---|
