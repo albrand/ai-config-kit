@@ -40,7 +40,10 @@ const DEFAULTS = {
   toolResultMaxChars: 4000,
   // bb can take several seconds between a steer's cancel and its new prompt;
   // a real stop kills the adapter, which interrupts through shutdown().
-  cancelGraceMs: 30000,
+  // null: a session/cancel never interrupts Claude. bb sends cancel before every
+  // steer and can take 50s+ to send the follow-up, so any timer misfires and
+  // derails the agent. A real stop kills the adapter; shutdown() interrupts.
+  cancelGraceMs: null,
 };
 
 const loadConfig = () => {
@@ -645,6 +648,7 @@ class Session {
       log({ event: "interrupt", card: this.cardTitle, ok: r.ok, error: r.error?.message });
     };
     if (immediate) return interrupt();
+    if (config.cancelGraceMs == null) { log({ event: "cancel-no-interrupt", card: this.cardTitle }); return Promise.resolve(); }
     this.cancelTimer = setTimeout(interrupt, config.cancelGraceMs);
     return Promise.resolve();
   }
