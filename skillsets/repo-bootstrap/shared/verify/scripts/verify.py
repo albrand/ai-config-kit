@@ -384,6 +384,7 @@ def proposal(d):
 # per context, so the state is the same. Interactive callers (`run --post-status`, the hook, doctor) keep one
 # short try.
 FORGE_TIMEOUT, FORGE_ATTEMPTS, FORGE_BUDGET = 120, 2, 600
+FAILED_READS_IN_A_ROW = 2  # a serve tick leaves a repo's queue after this many failed status reads in a row
 
 
 class ForgeBudget:
@@ -1205,20 +1206,26 @@ def serve_repo(spec, args, budget=None):
         return 0
     try:
         mirror = ensure_mirror(slug, url)
-        errors = done = 0
+        errors = done = failed = 0
         budget = budget or ForgeBudget()
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
             st = budget.call(forge_status, slug, sha)
-            # A failed read is never about one commit: the combined-status endpoint answers 200 with no statuses for
-            # any 40-hex SHA, even one GitHub doesn't have. So the forge is down, auth is gone or the API is refusing
-            # this host, and the rest of the queue would fail the same way.
+            # One failed read only skips that commit (until the next tick), so a passing glitch can't hold up the PRs
+            # behind it. Failures in a row mean the forge is down, auth is gone or the API is refusing this host, so
+            # the rest of the queue would fail the same way: leave it. (The combined-status endpoint answers 200 for
+            # any 40-hex SHA, even one GitHub doesn't have, so a commit can't make its own read fail every tick.)
             if st is None:
-                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running, and leaving "
-                      "the rest of the queue for the next tick", flush=True)
                 errors += 1
-                break
+                failed += 1
+                if failed >= FAILED_READS_IN_A_ROW:
+                    print(f"[serve] {slug} {label}: cannot read statuses (auth or network), {failed} in a row; not "
+                          "running, and leaving the rest of the queue for the next tick", flush=True)
+                    break
+                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
+                continue
+            failed = 0
             mine = st.get(STATUS_PREFIX)
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):

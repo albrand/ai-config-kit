@@ -377,21 +377,34 @@ class ForgeCalls(unittest.TestCase):
         self.assertNotEqual(first, second)  # and a fresh one for the next tick
         self.assertIsInstance(seen[0][1], verify.ForgeBudget)
 
-    def test_a_failed_status_read_ends_the_tick_for_that_repo_however_long_the_queue(self):
+    def test_failed_status_reads_in_a_row_end_the_tick_but_one_only_skips_that_commit(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
         saved = {n: getattr(verify, n) for n in names}
         reads, ran = [], []
+        sha = [f"{i:040x}" for i in range(50)]
+        done = {"verify": {"state": "success", "at": "2026-10-09T00:00:00Z"}}
         try:
             verify.RUNNER_HOME = tmp
             verify.ensure_mirror = lambda slug, url: tmp
-            verify.pending_jobs = lambda slug, mirror, args: iter([(f"{i:040x}", "main", f"PR #{i}", False, "pr")
-                                                                   for i in range(50)])
-            verify.forge_status = lambda slug, sha, *a: reads.append(sha) or None
-            verify.run_job = lambda *a, **k: ran.append(a) or "done"
-            rc, out = quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None))
-            self.assertEqual((rc, len(reads), ran), (1, 1, []), out)  # one read, not fifty
+            verify.pending_jobs = lambda slug, mirror, args: iter([(h, "main", f"PR #{i}", False, "pr")
+                                                                   for i, h in enumerate(sha)])
+            verify.run_job = lambda *a, **k: ran.append(a[2]) or "done"
+            args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
+
+            def tick(answers):  # answers: sha -> what its read returns; unlisted commits fail
+                reads[:], ran[:] = [], []
+                verify.forge_status = lambda slug, h, *a: reads.append(h) or answers.get(h)
+                return quiet(verify.serve_repo, "acme/app", args)
+            rc, out = tick({})  # the forge never answers
+            self.assertEqual((rc, reads, ran), (1, sha[:2], []), out)  # two reads, not fifty
             self.assertIn("leaving the rest of the queue for the next tick", out)
+            rc, out = tick({h: {} for h in sha[1:]})  # one passing failure, then a commit to check
+            self.assertEqual((rc, reads, ran), (1, sha[:2], [sha[1]]), out)  # the next PR still runs
+            self.assertNotIn("leaving the rest of the queue", out)
+            rc, out = tick({sha[1]: done, sha[3]: {}})  # fail, already checked, fail, to check: a read resets the run
+            self.assertEqual((rc, reads, ran), (1, sha[:4], [sha[3]]), out)
+            self.assertNotIn("leaving the rest of the queue", out)
         finally:
             for n, v in saved.items():
                 setattr(verify, n, v)
