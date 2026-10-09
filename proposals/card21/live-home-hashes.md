@@ -182,13 +182,11 @@ This PR's fifth render was the current profile at 1dc1d00, so it stays installab
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `62e8de1b2642e5ee9eeedc17d38789f15677734cf4c6cfe7dec248830c3254ba` |
 
-### Current rendered profile: model policy by role, based on b31e8e2
+### Accepted live profile: model policy by role at 2dc1093 (installed)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
-Only the bb home changes: it gains the "Models by role" line (owner directive
-2026-10-08). GPT reviewers and automations escalate like GPT children. The
-other three equal #67's.
+The #69 render, installed in all four live homes on 2026-10-08 (`--check` reported
+MATCH for each before this revision). It stays installable so this revision can
+replace it.
 
 | Home | SHA-256 |
 |---|---|
@@ -196,6 +194,37 @@ other three equal #67's.
 | Codex | `ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf` |
 | OpenCode | `5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6` |
 | bb | `7f98a5a5d12d9771ce7c38b95e9e56404a374f3907ccfa9ad1db01460aad29cb` |
+
+### Accepted live profile: session-input guard retired, first wording at 1b16d87 (never installed; replaced on install)
+
+This PR's first render was the current profile at 1b16d87, so the history test keeps it here. It is never
+installed: an accepted profile is only a state the compare-and-swap may overwrite, and `--install` writes the
+current render. That render dropped the OpenCode overlay's lease/attestation line, which the owner's directive
+did not ask for (Hermes r1); homes in this state get the line back when the current render replaces them.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `d5fa4f1ffeb7cb343abc79c13fdc88a22fa8b87936b1f844c06ad4ce3a19ae35` |
+| bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
+
+### Current rendered profile: session-input guard retired, based on dc52be1
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+Every home drops the line that required the session-input guard before input to
+another agent's running session (owner directive 2026-10-08: agents must be able
+to message Elyra sessions). The supersede, attestation and write-owner lines stay,
+and so does the OpenCode overlay's lease/attestation requirement for active-session
+input.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
