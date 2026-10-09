@@ -7,7 +7,7 @@ For each live child of PARENT that is idle and runs locally:
   3. spawn its replacement on acp-elyra-claude / acp-elyra-codex in the same
      directory, parented to PARENT, resuming the same native session,
   4. re-point the old child's own live children to the replacement,
-  5. park the stopped child under HISTORY so PARENT lists only live work,
+  5. archive the stopped child, so nothing can wake it as a second writer,
   6. tell PARENT the old -> new mapping.
 Every step is recorded in migrations.json, so a rerun skips finished children.
 
@@ -106,7 +106,10 @@ def migrate(child, parent, history, ledger):
         if not g.get("archivedAt"):
             bb("thread", "update", g["id"], "--parent-thread", new)
             rec.setdefault("grandchildren", []).append(g["id"])
-    bb("thread", "update", tid, "--parent-thread", history)
+    # Archive the stopped original: an archived thread rejects messages (409), so
+    # nothing can wake it as a second writer on the session now in Elyra.
+    # (Re-parenting it instead sends a notice that starts a turn on the parent.)
+    bb("thread", "archive", tid)
     rec["done"] = time.time(); save(LEDGER, ledger)
     bb("thread", "tell", parent, f"[bb operator] Card moved to Elyra: @thread:{tid} is now @thread:{new} (same session, resumed in Elyra, provider {target}). "
        f"Send that card's follow-ups to {new}; {tid} is stopped history. Update PLAN.md.")
