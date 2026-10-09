@@ -388,8 +388,9 @@ FORGE_TIMEOUT, FORGE_ATTEMPTS, FORGE_BUDGET = 120, 2, 600
 
 class ForgeBudget:
     """The long-limit forge waits one serve tick may spend. A call gets FORGE_TIMEOUT and FORGE_ATTEMPTS while what
-    is left covers that worst case; after that it gets the callee's short single try, as interactive callers do. So
-    however many posts and reads a tick makes, the long limit adds at most FORGE_BUDGET seconds of waiting to it."""
+    is left covers that worst case; after that it gets the callee's short single try, the one every runner call had
+    before the long limit. So however many posts and reads a tick makes, it waits at most FORGE_BUDGET seconds more
+    than the same tick on short tries alone. Those short tries aren't capped: a tick still makes every post."""
 
     def __init__(self, seconds=None, clock=time.monotonic):
         self.left, self.clock = FORGE_BUDGET if seconds is None else seconds, clock

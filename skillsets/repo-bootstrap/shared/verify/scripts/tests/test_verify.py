@@ -397,6 +397,59 @@ class ForgeCalls(unittest.TestCase):
                 setattr(verify, n, v)
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_a_tick_whose_posts_all_time_out_waits_at_most_the_budget_beyond_short_tries(self):
+        """Full fan-out: two jobs of six real stages each, reads that answer, every post timing out."""
+        tmp = Path(tempfile.mkdtemp(prefix="verify-tick-")).resolve()
+        saved = {n: getattr(verify, n) for n in ("RUNNER_HOME", "DISK_FLOOR_GB", "sh", "ensure_mirror", "pending_jobs")}
+        cfg = {"version": 1, "stages": {s: {"run": "true"} for s in verify.PER_CHANGE}}
+        origin = make_repo({"a.txt": "x\n"}, cfg)
+        shas = []
+        for n in (1, 2):
+            git(origin, "checkout", "-q", "-b", f"pr{n}", "main")
+            (origin / "a.txt").write_text(f"pr{n}\n")
+            git(origin, "commit", "-qam", f"pr{n}")
+            shas.append(subprocess.run(["git", "-C", str(origin), "rev-parse", "HEAD"], capture_output=True,
+                                       text=True).stdout.strip())
+        mirror = tmp / "mirror.git"
+        subprocess.run(["git", "clone", "-q", "--mirror", str(origin), str(mirror)], check=True)
+        real_sh = verify.sh
+
+        def tick(seconds):
+            now, waits = [0.0], []
+
+            def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+                if cmd[:4] == ["gh", "api", "-X", "POST"]:
+                    waits.append(timeout)
+                    now[0] += timeout
+                    return 124, "timed out"
+                if cmd[:2] == ["gh", "api"]:
+                    return 0, "{}"  # reads answer at once: no status yet, so every job runs
+                return real_sh(cmd, cwd=cwd, env=env, timeout=timeout, merge=merge)
+            verify.sh = sh
+            args = argparse.Namespace(max_jobs=2, stale_hours=3.0, rerun=None, unsandboxed=True, allow_read=None,
+                                      allow_host_port=None)
+            quiet(verify.serve_repo, "acme/app", args, verify.ForgeBudget(seconds, clock=lambda: now[0]))
+            return waits
+        try:
+            verify.RUNNER_HOME, verify.DISK_FLOOR_GB = tmp / "runner", 0
+            verify.ensure_mirror = lambda slug, url: mirror
+            verify.pending_jobs = lambda slug, mirror, args: iter([(sha, "main", f"PR #{n}", False, "pr")
+                                                                   for n, sha in enumerate(shas, 1)])
+            short = tick(0)  # every post on its single short try, as before the long limit
+            shutil.rmtree(tmp / "runner", ignore_errors=True)
+            budgeted = tick(verify.FORGE_BUDGET)
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(origin, ignore_errors=True)
+        posts = len(short)
+        self.assertGreaterEqual(posts, 2 * 2 * len(verify.PER_CHANGE))  # pending and result per stage, per job
+        self.assertEqual(short, [30] * posts)
+        n_long = verify.FORGE_BUDGET // (verify.FORGE_TIMEOUT * verify.FORGE_ATTEMPTS)
+        self.assertEqual(budgeted, [verify.FORGE_TIMEOUT] * (n_long * verify.FORGE_ATTEMPTS) + [30] * (posts - n_long))
+        self.assertLessEqual(sum(budgeted) - sum(short), verify.FORGE_BUDGET)
+
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
