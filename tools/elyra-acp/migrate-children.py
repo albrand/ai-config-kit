@@ -102,11 +102,14 @@ def migrate(child, parent, history, ledger, force=False):
     else:
         return "FAIL: child still active after stop"
 
+    t = show.get("thread", {})
+    serves = re.search(r"serves:\s*(P\d+(?:\s*,\s*P\d+)*)", f"{t.get('titleFallback') or ''} {t.get('title') or ''}")
     prompt = (f"[bb operator] This card has moved: it now runs in an Elyra terminal under the native {('Claude Code' if target.endswith('claude') else 'Codex')} CLI, "
               f"resuming your own session, so your context is intact. Your bb thread is now this one; the old thread {tid} is stopped and kept as history. "
               f"Your parent is still the coordinator, now @thread:{parent}. "
               + ("The move interrupted your last turn mid-step. First re-check the real state (git status, branch, PR and CI state, any running jobs) so nothing is done twice or left half-done, then " if busy else "")
-              + "Carry on with your card exactly where you left off and report to the coordinator as before.")
+              + "Carry on with your card exactly where you left off and report to the coordinator as before."
+              + (f" serves: {serves.group(1)}" if serves else ""))  # keeps the scope ledger crediting this card
     r = bbj("thread", "spawn", "--project", child.get("projectId") or show.get("thread", {}).get("projectId"), "--environment", cwd,
             "--provider", target, "--model", model, "--parent-thread", parent, "--title", f"{title[:90]} (Elyra)", "--prompt", prompt)
     new = (r or {}).get("id")
