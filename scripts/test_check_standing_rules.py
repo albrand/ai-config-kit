@@ -439,12 +439,12 @@ class StandingRuleCheckerTest(unittest.TestCase):
             with self.subTest(admitted=digest[:12]):
                 self.assertIsNotNone(CHECKER.RULES["bb-app-never-restart"].search(text))
 
-    # The pattern the retired active-session-input-skill-trigger rule used to REQUIRE, kept here to FORBID it in
-    # any wording (Hermes 2026-10-08, kit-retire-session-input-guard r4).
+    # The retired guard, recognised by what it names rather than by how a sentence opens: any line naming the
+    # session-input guard, a metadata-only guard, or native-agent-surface together with a guard (Hermes 2026-10-08,
+    # kit-retire-session-input-guard r4 and r5).
     RETIRED_GUARD = re.compile(
-        r"(?is)before\s+(?:active-session\s+input|(?:delivering|sending)\s+input\s+(?:in)?to\s+(?:an?\s+)?"
-        r"(?:active|running|live)\s+(?:agent|session)).{0,300}"
-        r"(?:native-agent-surface|session-input-guard|metadata-only\s+guard)"
+        r"(?im)^.*(?:session-input[- ]guard|metadata-only\s+guard|"
+        r"native-agent-surface.*\bguard\b|\bguard\b.*native-agent-surface).*$"
     )
 
     def test_retired_guard_pattern_catches_each_wording(self):
@@ -454,6 +454,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
             "- Before delivering input to an active agent, load `native-agent-surface` and run its metadata-only guard.",
             "- Before delivering input to an active agent, run the metadata-only guard from native-agent-surface.",
             "- Before sending input to a running session, run `scripts/session-input-guard.py`.",
+            "- Before messaging a live agent session, run the metadata-only guard from `native-agent-surface`.",
+            "- To message another agent, first pass the native-agent-surface admission guard.",
         ):
             with self.subTest(wording=wording[:60]):
                 self.assertIsNotNone(self.RETIRED_GUARD.search("intro\n" + wording + "\noutro"))
