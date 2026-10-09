@@ -406,9 +406,8 @@ class ForgeBudget:
             self.left -= self.clock() - start
 
 
-def read_status(slug, sha, timeout=20, attempts=1):
-    """(statuses, timed out): forge_status's answer, and whether its last try ran out of time rather than failing
-    with an answer of its own (an HTTP error for this commit, say)."""
+def forge_status(slug, sha, timeout=20, attempts=1):
+    """{context: {state, at}} for the commit, or None when the forge can't be read (auth, network)."""
     for _ in range(attempts):
         rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
                       "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
@@ -416,16 +415,11 @@ def read_status(slug, sha, timeout=20, attempts=1):
         if rc == 0:
             break
     if rc != 0:
-        return None, rc == 124
+        return None
     try:
-        return json.loads(out or "{}") or {}, False
+        return json.loads(out or "{}") or {}
     except ValueError:
-        return None, False
-
-
-def forge_status(slug, sha, timeout=20, attempts=1):
-    """{context: {state, at}} for the commit, or None when the forge can't be read (auth, network)."""
-    return read_status(slug, sha, timeout, attempts)[0]
+        return None
 
 
 GH_STATE = {"pass": "success", "na": "success", "untouched": "success", "fail": "failure",
@@ -1216,15 +1210,12 @@ def serve_repo(spec, args, budget=None):
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
-            st, timed_out = budget.call(read_status, slug, sha)
-            if st is None:
+            st = budget.call(forge_status, slug, sha)
+            if st is None:  # the forge is down or auth is gone: the rest of the queue would fail the same way
+                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running, and leaving "
+                      "the rest of the queue for the next tick", flush=True)
                 errors += 1
-                if timed_out:  # the forge isn't answering: every later read would wait the same way
-                    print(f"[serve] {slug} {label}: reading statuses timed out; not running, and leaving the rest "
-                          "of the queue for the next tick", flush=True)
-                    break
-                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
-                continue  # an answer for this commit alone, and a quick one: the rest of the queue still runs
+                break
             mine = st.get(STATUS_PREFIX)
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):
