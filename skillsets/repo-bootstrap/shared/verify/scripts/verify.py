@@ -1210,10 +1210,11 @@ def serve_repo(spec, args, budget=None):
             if done >= args.max_jobs:
                 break
             st = budget.call(forge_status, slug, sha)
-            if st is None:
-                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
+            if st is None:  # the forge is down or auth is gone: the rest of the queue would fail the same way
+                print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running, and leaving "
+                      "the rest of the queue for the next tick", flush=True)
                 errors += 1
-                continue
+                break
             mine = st.get(STATUS_PREFIX)
             stale = bool(mine) and mine.get("state") == "pending" and age_hours(mine.get("at")) > args.stale_hours
             if mine and not stale and sha not in (args.rerun or []):

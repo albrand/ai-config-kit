@@ -377,6 +377,26 @@ class ForgeCalls(unittest.TestCase):
         self.assertNotEqual(first, second)  # and a fresh one for the next tick
         self.assertIsInstance(seen[0][1], verify.ForgeBudget)
 
+    def test_a_failed_status_read_ends_the_tick_for_that_repo_however_long_the_queue(self):
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
+        saved = {n: getattr(verify, n) for n in names}
+        reads, ran = [], []
+        try:
+            verify.RUNNER_HOME = tmp
+            verify.ensure_mirror = lambda slug, url: tmp
+            verify.pending_jobs = lambda slug, mirror, args: iter([(f"{i:040x}", "main", f"PR #{i}", False, "pr")
+                                                                   for i in range(50)])
+            verify.forge_status = lambda slug, sha, *a: reads.append(sha) or None
+            verify.run_job = lambda *a, **k: ran.append(a) or "done"
+            rc, out = quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None))
+            self.assertEqual((rc, len(reads), ran), (1, 1, []), out)  # one read, not fifty
+            self.assertIn("leaving the rest of the queue for the next tick", out)
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
