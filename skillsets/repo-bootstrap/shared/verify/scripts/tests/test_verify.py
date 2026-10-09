@@ -314,7 +314,9 @@ class RunnerReuse(unittest.TestCase):
         cases = {"no runner result": None, "checked merged with a newer base": {"checked": "c" * 40},
                  "not sandboxed": {"sandboxed": False}, "not strict": {"strict": False},
                  "verifier edited": {"edited": ["scripts/check.sh"]}, "config edited": {"config_edited": True},
-                 "no edit record": {"edited": None}, "another commit's result": {"sha": "d" * 40},
+                 "no edit record": {"edited": None}, "no config record": {"config_edited": None},
+                 "malformed edit record": {"edited": "scripts/check.sh"},
+                 "malformed config record": {"config_edited": "no"}, "another commit's result": {"sha": "d" * 40},
                  "runner skipped the stage": {"unit": "untouched"}, "dirty tree": {}, "untracked file": {},
                  "--fresh": {}}
         for name, over in cases.items():

@@ -638,7 +638,7 @@ def runner_result(repo, sha):
                       "merge or rebase on it so the runner's result covers this tree")
     if art.get("sandboxed") is not True or art.get("strict") is not True:
         return None, "the runner's result is not from a sandboxed strict job"
-    if "edited" not in art or art.get("edited") or art.get("config_edited"):
+    if art.get("edited") != [] or art.get("config_edited") is not False:  # absent or malformed: unknown
         return None, "this commit edits the verifier or config, which the runner replaced with its base's copy"
     if git(repo, "status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).verify/runs"):
         return None, "the worktree has uncommitted or untracked files"
