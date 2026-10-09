@@ -113,7 +113,7 @@ def tick(coord, dry):
             if not dry:
                 bb("thread", "tell", tid,
                    f"[bb operator, idle-watch] You have been idle {int(idle_min)} min and the coordinator has not given you a next step. "
-                   "If your card has remaining authorized work, continue it now. If it is finished: remove the git worktrees you created for this card "
+                   "If your card has remaining authorized work, continue it now. Your card is NOT finished while its PR is open and unmerged, a replay or review it owes has not passed, or a tool failure stopped you; in those cases continue, or report the exact blocker to the coordinator and do not close. If it is truly finished: remove the git worktrees you created for this card "
                    "(only clean ones, `git worktree remove` without --force; keep any that are dirty or hold `.keep-worktree`, and say why), "
                    f"report your final state to the coordinator @thread:{coord}, and end your reply with the line CARD-CLOSED.")
             state[tid] = {"stage": "closeout", "at": now, "turn": ended}; continue
