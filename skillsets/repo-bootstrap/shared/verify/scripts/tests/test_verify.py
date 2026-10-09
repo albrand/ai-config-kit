@@ -361,6 +361,22 @@ class ForgeCalls(unittest.TestCase):
             verify.sh, verify.RUNNER_HOME = saved
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_one_budget_covers_every_repo_in_a_tick_and_each_tick_gets_a_new_one(self):
+        saved = verify.serve_repo
+        seen = []
+        try:
+            verify.serve_repo = lambda spec, args, budget=None: seen.append((spec, budget)) or 0
+            args = argparse.Namespace(repo=["acme/app", "acme/api", "acme/web"], once=True)
+            self.assertEqual(verify.cmd_serve(args), 0)
+            verify.cmd_serve(args)
+        finally:
+            verify.serve_repo = saved
+        self.assertEqual([spec for spec, _ in seen], ["acme/app", "acme/api", "acme/web"] * 2)
+        first, second = {id(b) for _, b in seen[:3]}, {id(b) for _, b in seen[3:]}
+        self.assertEqual((len(first), len(second)), (1, 1))  # the same budget for every repo in a tick
+        self.assertNotEqual(first, second)  # and a fresh one for the next tick
+        self.assertIsInstance(seen[0][1], verify.ForgeBudget)
+
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
@@ -384,6 +400,10 @@ class ForgeCalls(unittest.TestCase):
             self.assertEqual(len(budgets), 2)
             self.assertIs(budgets[0], budgets[1])  # one budget for the tick's reads and every job's posts
             self.assertIsInstance(budgets[0], verify.ForgeBudget)
+            given, budgets[:] = verify.ForgeBudget(), []
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr")])
+            quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None), given)
+            self.assertIs(budgets[0], given)  # the tick's budget, when cmd_serve passes one
         finally:
             for n, v in saved.items():
                 setattr(verify, n, v)

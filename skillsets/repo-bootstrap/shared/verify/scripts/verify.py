@@ -1189,7 +1189,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         shutil.rmtree(job, ignore_errors=True)
 
 
-def serve_repo(spec, args):
+def serve_repo(spec, args, budget=None):
     slug, url = resolve_target(spec)
     if not slug:
         print(f"[serve] {spec}: not a GitHub repo path or OWNER/NAME")
@@ -1205,7 +1205,7 @@ def serve_repo(spec, args):
     try:
         mirror = ensure_mirror(slug, url)
         errors = done = 0
-        budget = ForgeBudget()
+        budget = budget or ForgeBudget()
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
@@ -1230,9 +1230,10 @@ def serve_repo(spec, args):
 def cmd_serve(args):
     while True:
         rc = 0
+        budget = ForgeBudget()  # one per tick, shared by every repo's reads and every job's posts
         for r in args.repo:
             try:
-                rc |= serve_repo(r, args)
+                rc |= serve_repo(r, args, budget)
             except Exception as e:  # one broken repo must not stop the others
                 print(f"[serve] {r}: {e}", flush=True)
                 rc = 1
