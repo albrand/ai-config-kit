@@ -567,6 +567,15 @@ class Session {
         await sleep(5000); // Codex takes a few seconds to load a large rollout
         continue;
       }
+      if (BACKEND === "codex" && (this.cwdTries || 0) < 3 && /Working directory · resume/.test(text) && text.includes(`Use current directory (${this.cwd})`)) {
+        // Resuming a session last used elsewhere: this card's directory is the one bb assigned.
+        const n = this.cwdTries = (this.cwdTries || 0) + 1;
+        const keys = [["--text", "2", "--no-enter"], ["--text", "\r", "--no-enter"], ["--text", "2"]][n - 1];
+        const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, ...keys]);
+        log({ event: "resume-cwd-answered", card: this.cardTitle, cwd: this.cwd, try: n, sendOk: r.ok, sendError: r.error?.message });
+        await sleep(3000);
+        continue;
+      }
       if (gate) {
         if (announced !== gate) {
           announced = gate;
