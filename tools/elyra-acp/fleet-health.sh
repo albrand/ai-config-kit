@@ -35,8 +35,30 @@ ledger=~/.local/state/agent-quality/scope/$thread.json
 orphans=$(bb thread list --project proj_d7xhqan8mu --json 2>/dev/null | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-print(sum(1 for t in d if t.get('parentThreadId')=='thr_vr4dga9uxn' and not t.get('archivedAt')))" 2>/dev/null)
+import os; m=json.load(open(os.path.expanduser('~/.local/state/elyra-acp/migrations.json'))) if os.path.exists(os.path.expanduser('~/.local/state/elyra-acp/migrations.json')) else {}
+print(sum(1 for t in d if t.get('parentThreadId')=='thr_vr4dga9uxn' and not t.get('archivedAt') and t['id'] not in m))" 2>/dev/null)
 [ "${orphans:-0}" -gt 0 ] && echo "WARN $orphans live children still point at the stopped thr_vr4dga9uxn" || echo "OK   no children left on the old thread"
 
 old=$(bb thread show thr_vr4dga9uxn 2>&1 | sed -n 2p | awk '{print $2}')
 [ "$old" = active ] && echo "FAIL old thread thr_vr4dga9uxn is active again (two writers)" || echo "OK   old thread stays $old"
+
+# Every child moved onto the bridge: bb state, recent bridge errors, open prompts.
+python3 - "$log" <<'PY'
+import json, os, subprocess, sys, time
+mig = json.load(open(os.path.expanduser("~/.local/state/elyra-acp/migrations.json"))) if os.path.exists(os.path.expanduser("~/.local/state/elyra-acp/migrations.json")) else {}
+lines = open(sys.argv[1]).read().splitlines()[-4000:]
+cut = time.strftime("%Y-%m-%dT%H:%M", time.gmtime(time.time() - 1800))
+for old, r in mig.items():
+    new = r.get("new")
+    if not new: print(f"WARN migration of {old} incomplete: {r.get('error','no new thread')}"); continue
+    st = subprocess.run(["bb", "thread", "show", new], capture_output=True, text=True).stdout.splitlines()
+    state = st[1].split()[-1] if len(st) > 1 else "unknown"
+    mine = [json.loads(l) for l in lines if f'"thread":"{new}"' in l]
+    errs = [e for e in mine if e["event"] == "error" and e["t"] >= cut]
+    gates = [e for e in mine if e["event"] == "gate"]
+    sent = [e for e in mine if e["event"] == "prompt-sent"]
+    open_gate = gates and (not sent or gates[-1]["t"] > sent[-1]["t"])
+    flag = "FAIL" if state not in ("idle", "active") else "WARN" if errs or open_gate else "OK  "
+    note = (f" errors={len(errs)} last={errs[-1]['error'][:120]}" if errs else "") + (f" waiting: {gates[-1].get('gate')}" if open_gate else "")
+    print(f"{flag} child {new} (was {old}) {state}{note}")
+PY
