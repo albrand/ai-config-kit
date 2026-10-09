@@ -68,6 +68,9 @@ stopping point: write the missing stage if you can, then run it.
    (`StartInterval`) or cron. A job can outlast a bb automation's 15-minute script limit, and launchd
    never starts a tick while the last one runs. It runs open PR heads in throwaway clones and posts
    `verify/<stage>` statuses.
+   - Give the launchd job `ProcessType` `Standard`, not `Background`: on a busy Mac, `Background`
+     keeps it on the efficiency cores, and a unit stage that takes 20 minutes in the foreground can
+     hit the stage's 3600-second limit.
    - On a loaded host the gh CLI can take over a minute to start. Each runner status call gets
      2 minutes and one retry while at least 4 minutes (that call's worst case) remain of a
      10-minute budget per tick; after that a call gets the single short try that
