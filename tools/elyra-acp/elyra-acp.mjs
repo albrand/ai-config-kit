@@ -38,7 +38,9 @@ const DEFAULTS = {
   pollMs: 400,
   idleSettleMs: 1500,
   toolResultMaxChars: 4000,
-  cancelGraceMs: 2500,
+  // bb can take several seconds between a steer's cancel and its new prompt;
+  // a real stop kills the adapter, which interrupts through shutdown().
+  cancelGraceMs: 30000,
 };
 
 const loadConfig = () => {
@@ -688,6 +690,8 @@ const handlers = {
   async "session/prompt"({ sessionId, prompt }) {
     const s = sessions.get(sessionId);
     if (!s) throw new Error("unknown session " + sessionId);
+    // A new prompt means the cancel before it was a steer: never interrupt.
+    if (s.cancelTimer) { clearTimeout(s.cancelTimer); s.cancelTimer = null; log({ event: "steer-detected", sessionId }); }
     const stopReason = await s.prompt(prompt || []);
     return { stopReason };
   },
