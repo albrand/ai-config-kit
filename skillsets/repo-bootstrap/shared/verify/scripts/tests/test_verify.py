@@ -359,6 +359,22 @@ class RunnerReuse(unittest.TestCase):
         rc, out, stages, _ = self.run_strict()  # the replaced, regular artifact is this command's own again
         self.assertEqual((rc, stages["unit"]["source"]), (0, "runner"), out)
 
+    def test_a_tracked_symlinked_runs_dir_refuses_reuse_and_nothing_is_written_through_it(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        shutil.rmtree(self.repo / ".verify/runs")
+        (self.repo / ".verify/runs").symlink_to(outside)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "runs dir is a link")  # tracked and unchanged: git status is clean
+        self.sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                  text=True).stdout.strip()
+        self.runner_art()
+        rc, out = quiet(verify.main, ["run", str(self.repo), "--strict"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn(".verify/runs is a symlink", out)
+        self.assertIn("ran-unit-here", out)  # every stage ran here
+        self.assertEqual(os.listdir(outside), [])  # nothing written through the link
+
     def test_a_reused_failure_stays_a_failure_and_says_how_to_rerun_it(self):
         self.runner_art(unit="fail")
         rc, out, stages, _ = self.run_strict()

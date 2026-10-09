@@ -624,6 +624,15 @@ def summary(verdict, results, note=""):
     return f"{verdict}{note}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results)
 
 
+def linked_artifact_path(repo, sha, leaf=True):
+    """The first of .verify, .verify/runs and (with `leaf`) the artifact that is a symlink, or None. A linked parent,
+    tracked or not, would send the artifact outside the repo; write_artifact replaces a linked leaf safely."""
+    for rel in (RUNS.parent, RUNS, *([RUNS / f"{sha}.json"] if leaf else [])):
+        if (repo / rel).is_symlink():
+            return rel
+    return None
+
+
 def write_artifact(runs, name, art):
     """Write runs/name by atomic replace: a symlink planted at that path is replaced, never followed."""
     runs.mkdir(parents=True, exist_ok=True)
@@ -650,8 +659,9 @@ def runner_result(repo, sha):
         return None, "the runner's result is not from a sandboxed strict job"
     if art.get("edited") != [] or art.get("config_edited") is not False:  # absent or malformed: unknown
         return None, "this commit edits the verifier or config, which the runner replaced with its base's copy"
-    if (repo / RUNS / f"{sha}.json").is_symlink():
-        return None, f"{RUNS / (sha + '.json')} is a symlink, not this command's artifact"
+    link = linked_artifact_path(repo, sha)
+    if link:
+        return None, f"{link} is a symlink, so the artifact path leaves the repo"
     own = f"?? {(RUNS / f'{sha}.json').as_posix()}"  # this command's own artifact for HEAD, from an earlier run
     dirty = [e for e in git(repo, "status", "--porcelain", "--untracked-files=all").splitlines() if e != own]
     if dirty:
@@ -690,7 +700,11 @@ def cmd_run(args):
     art = {"sha": sha, "at": now(), "strict": args.strict, "base": args.base, "verdict": verdict, "stages": results}
     if reuse:
         art["runner"] = {k: runner.get(k) for k in ("at", "base", "base_sha", "checked", "kind", "label")}
-    write_artifact(repo / RUNS, f"{sha}.json", art)
+    link = linked_artifact_path(repo, sha, leaf=False)
+    if link:
+        print(f"[verify] not writing the artifact: {link} is a symlink and would send it outside the repo")
+    else:
+        write_artifact(repo / RUNS, f"{sha}.json", art)
     if post:
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results))
     label = {"pass": "PASS", "fail": "FAIL", "not-verified": "NOT VERIFIED"}[verdict]
