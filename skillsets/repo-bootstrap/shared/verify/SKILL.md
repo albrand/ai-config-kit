@@ -69,8 +69,9 @@ stopping point: write the missing stage if you can, then run it.
    never starts a tick while the last one runs. It runs open PR heads in throwaway clones and posts
    `verify/<stage>` statuses.
    - On a loaded host the gh CLI can take over a minute to start. Each runner status call gets
-     2 minutes and one retry, while a 10-minute budget per tick lasts; after that a call gets the
-     single short try that `run --post-status`, the hook and doctor always use. Posting is
+     2 minutes and one retry while at least 4 minutes (that call's worst case) remain of a
+     10-minute budget per tick; after that a call gets the single short try that
+     `run --post-status`, the hook and doctor always use. Posting is
      best-effort: a commit left without a `verify` status is picked up again on the next tick.
    - One failed status read skips that PR until the next tick. After two failed reads in a row,
      whatever the cause (GitHub, the network, gh auth, the API refusing the host), the runner
