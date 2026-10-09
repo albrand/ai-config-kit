@@ -153,8 +153,10 @@ const codexDayDirs = () => {
   } catch {}
   return dirs;
 };
+// Archiving a bb codex thread moves its rollout to ~/.codex/archived_sessions;
+// it is still resumable (Codex offers "Unarchive and resume"), so look there too.
 const findCodexRollout = (id) => {
-  for (const dir of codexDayDirs()) {
+  for (const dir of [...codexDayDirs(), HOME + "/.codex/archived_sessions"]) {
     try { const f = fs.readdirSync(dir).find((n) => n.endsWith(`-${id}.jsonl`)); if (f) return `${dir}/${f}`; } catch {}
   }
   return null;
@@ -188,6 +190,8 @@ class Tail {
   }
   read() {
     if (!this.locate()) return [];
+    // Unarchiving moves a codex rollout back under sessions/: same file, new path.
+    if (!fs.existsSync(this.path)) { this.path = this.locateFn(); if (!this.path) return []; }
     const size = fs.statSync(this.path).size;
     if (size <= this.offset) return [];
     const fd = fs.openSync(this.path, "r");
@@ -439,8 +443,41 @@ class Session {
     return scriptPath;
   }
 
+  // Operator requests for this card, from control/<bbThreadId>.json. Only the bridge
+  // (spawned by bb, outside any card) may drive cards, so maintenance goes through it:
+  //   relaunch: quit the agent so the card is relaunched (resuming the native session)
+  //   canvas:   [["canvas","link",src,dst] | ["canvas","move",...] | ["canvas","rename",...]]
+  async applyControl(reg) {
+    const file = `${STATE_DIR}/control/${process.env.BB_THREAD_ID}.json`;
+    let ctl;
+    try { ctl = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
+    try { fs.unlinkSync(file); } catch {}
+    for (const args of Array.isArray(ctl.canvas) ? ctl.canvas : []) {
+      if (!Array.isArray(args) || args[0] !== "canvas" || !["link", "move", "rename"].includes(args[1])) continue;
+      const r = await elyra(args.map(String));
+      log({ event: "control-canvas", args, ok: r.ok, error: r.error?.message });
+    }
+    if (ctl.relaunch && reg?.cardTitle && (await cardAlive(reg.cardTitle))) {
+      for (let i = 0; i < 3 && (await cardAlive(reg.cardTitle)); i++) {
+        // Stop any running turn, then use the agent's own quit command.
+        await elyra(["terminal", "send", "--terminal", reg.cardTitle, "--text", "\u001b", "--no-enter", "--interrupt"]);
+        await sleep(1500);
+        await elyra(["terminal", "send", "--terminal", reg.cardTitle, "--text", BACKEND === "codex" ? "/quit" : "/exit"]);
+        await sleep(5000);
+      }
+      const stillAlive = await cardAlive(reg.cardTitle);
+      log({ event: "control-relaunch", card: reg.cardTitle, reason: ctl.reason, stillAlive });
+      if (stillAlive) {
+        // Never type this turn into the session the operator asked to replace.
+        fs.writeFileSync(file, JSON.stringify(ctl), { mode: 0o600 });
+        throw new Error(`Elyra card "${reg.cardTitle}" did not quit for the requested relaunch; the turn was not sent.`);
+      }
+    }
+  }
+
   async ensureCard() {
-    const reg = readRegistry()[this.sessionId];
+    let reg = readRegistry()[this.sessionId];
+    await this.applyControl(reg);
     if (reg?.cardTitle && (await cardAlive(reg.cardTitle))) {
       this.cardTitle = reg.cardTitle;
       log({ event: "card-reused", sessionId: this.sessionId, card: this.cardTitle });
@@ -501,6 +538,17 @@ class Session {
         markTrusted(this.cwd);
         const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text", "\r", "--no-enter"]);
         log({ event: "auto-trust-answered", cwd: this.cwd, card: this.cardTitle, sendOk: r.ok, sendError: r.error?.message, screen: text.split("\n").slice(-12) });
+        await sleep(2000);
+        continue;
+      }
+      if (BACKEND === "codex" && this.nativeId && (this.unarchiveTries || 0) < 4 && /This conversation is archived/.test(text) && /Unarchive and resume/.test(text) && text.includes(this.nativeId)) {
+        // Archiving a moved bb original archives its Codex conversation too. Resuming
+        // that same, user-approved session here is the move itself, so take the
+        // preselected "Unarchive and resume".
+        const n = this.unarchiveTries = (this.unarchiveTries || 0) + 1;
+        const keys = [["--text", "\r", "--no-enter"], ["--text", ""], ["--text", "1", "--no-enter"], ["--text", "1"]][n - 1];
+        const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, ...keys]);
+        log({ event: "unarchive-answered", card: this.cardTitle, nativeId: this.nativeId, sendOk: r.ok, sendError: r.error?.message });
         await sleep(2000);
         continue;
       }

@@ -11,7 +11,10 @@ For each live child of PARENT that is idle and runs locally:
   6. tell PARENT the old -> new mapping.
 Every step is recorded in migrations.json, so a rerun skips finished children.
 
-Usage: migrate-children.py PARENT HISTORY [--loop SECONDS] [--only ID ...]
+With --force a busy child is moved too: its turn is stopped and the replacement is told
+to re-check real state before continuing.
+
+Usage: migrate-children.py PARENT HISTORY [--loop SECONDS] [--force] [--only ID ...]
 """
 import json, os, re, subprocess, sys, time, collections
 
@@ -64,7 +67,7 @@ def native_session(tid):
 def log(msg):
     print(time.strftime("%H:%M:%S"), msg, flush=True)
 
-def migrate(child, parent, history, ledger):
+def migrate(child, parent, history, ledger, force=False):
     tid = child["id"]
     show = bbj("thread", "show", tid) or {}
     env = show.get("environment") or {}
@@ -86,14 +89,23 @@ def migrate(child, parent, history, ledger):
     cfg.setdefault("imports", {})["cwd:" + cwd] = {"resumeSessionId": sid, "model": model, "fromBbThread": tid, "approvedBy": APPROVAL, "approvedAt": "2026-10-09"}
     save(CONFIG, cfg)
 
-    if bbj("thread", "show", tid).get("thread", {}).get("status") != "idle":
+    busy = bbj("thread", "show", tid).get("thread", {}).get("status") != "idle"
+    if busy and not force:
         return "wait: became busy"
     bb("thread", "stop", tid, check=True)
-    rec["stopped"] = time.time(); save(LEDGER, ledger)
+    rec["stopped"] = time.time(); rec["interrupted"] = busy; save(LEDGER, ledger)
+    for _ in range(40):  # a busy child needs a moment to settle after the stop
+        if (bbj("thread", "show", tid) or {}).get("thread", {}).get("status") != "active":
+            break
+        time.sleep(3)
+    else:
+        return "FAIL: child still active after stop"
 
     prompt = (f"[bb operator] This card has moved: it now runs in an Elyra terminal under the native {('Claude Code' if target.endswith('claude') else 'Codex')} CLI, "
               f"resuming your own session, so your context is intact. Your bb thread is now this one; the old thread {tid} is stopped and kept as history. "
-              f"Your parent is still the coordinator, now @thread:{parent}. Carry on with your card exactly where you left off and report to the coordinator as before.")
+              f"Your parent is still the coordinator, now @thread:{parent}. "
+              + ("The move interrupted your last turn mid-step. First re-check the real state (git status, branch, PR and CI state, any running jobs) so nothing is done twice or left half-done, then " if busy else "")
+              + "Carry on with your card exactly where you left off and report to the coordinator as before.")
     r = bbj("thread", "spawn", "--project", child.get("projectId") or show.get("thread", {}).get("projectId"), "--environment", cwd,
             "--provider", target, "--model", model, "--parent-thread", parent, "--title", f"{title[:90]} (Elyra)", "--prompt", prompt)
     new = (r or {}).get("id")
@@ -109,7 +121,13 @@ def migrate(child, parent, history, ledger):
     # Archive the stopped original: an archived thread rejects messages (409), so
     # nothing can wake it as a second writer on the session now in Elyra.
     # (Re-parenting it instead sends a notice that starts a turn on the parent.)
-    bb("thread", "archive", tid)
+    for _ in range(10):  # right after a stop, archive can lose a race with the stop settling
+        if bb("thread", "archive", tid).returncode == 0 and (bbj("thread", "show", tid) or {}).get("thread", {}).get("archivedAt"):
+            break
+        time.sleep(3)
+    else:
+        rec["error"] = "archive failed"; save(LEDGER, ledger)
+        return f"FAIL archive {tid} (moved to {new}; old thread still live)"
     rec["done"] = time.time(); save(LEDGER, ledger)
     bb("thread", "tell", parent, f"[bb operator] Card moved to Elyra: @thread:{tid} is now @thread:{new} (same session, resumed in Elyra, provider {target}). "
        f"Send that card's follow-ups to {new}; {tid} is stopped history. Update PLAN.md.")
@@ -118,16 +136,17 @@ def migrate(child, parent, history, ledger):
 def main():
     parent, history = sys.argv[1], sys.argv[2]
     loop = int(sys.argv[sys.argv.index("--loop") + 1]) if "--loop" in sys.argv else 0
+    force = "--force" in sys.argv
     only = set(sys.argv[sys.argv.index("--only") + 1:]) if "--only" in sys.argv else None
     while True:
         ledger = load(LEDGER, {})
         kids = [k for k in (bbj("thread", "list", "--parent-thread", parent) or []) if not k.get("archivedAt")]
         pending = [k for k in kids if k["providerId"] in ("claude-code", "codex") and not ledger.get(k["id"], {}).get("done") and (not only or k["id"] in only)]
         for k in pending:
-            if k["status"] != "idle":
+            if k["status"] != "idle" and not force:
                 continue
             try:
-                log(f"{k['id']} {k['providerId']}: {migrate(k, parent, history, ledger)}")
+                log(f"{k['id']} {k['providerId']}: {migrate(k, parent, history, ledger, force)}")
             except Exception as e:
                 log(f"{k['id']}: ERROR {e}")
         remaining = [k["id"] for k in pending if not load(LEDGER, {}).get(k["id"], {}).get("done")]
