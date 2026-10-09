@@ -54,6 +54,12 @@ def last_turn(db, tid):
             text = msg[0][:4000]
     return ended, text
 
+def closed_out(text):
+    """The child closed only if its reply ENDS with the line CARD-CLOSED. A mention such as
+    "No CARD-CLOSED declaration" is the opposite, and once archived a card that way."""
+    lines = [l.strip().strip("*`_ ") for l in (text or "").strip().splitlines() if l.strip()]
+    return bool(lines) and lines[-1] == "CARD-CLOSED"
+
 def save(state):
     tmp = STATE + ".tmp"
     with open(tmp, "w") as f:
@@ -96,8 +102,9 @@ def tick(coord, dry):
         title = (k.get("title") or "")[:70]
         stage = rec.get("stage")
         since = (now - rec.get("at", now)) / 60000
-        if stage == "closeout" and (("CARD-CLOSED" in text and ended > rec["at"]) or (ended <= rec["at"] and since >= ARCHIVE_MIN)):
-            why = "closed out by the child (CARD-CLOSED)" if "CARD-CLOSED" in text else f"silent {int(since)} min after the closeout ask"
+        closed = closed_out(text)
+        if stage == "closeout" and ((closed and ended > rec["at"]) or (ended <= rec["at"] and since >= ARCHIVE_MIN)):
+            why = "closed out by the child (CARD-CLOSED)" if closed else f"silent {int(since)} min after the closeout ask"
             log(f"archive {tid} {title}: {why}")
             if not dry:
                 ev = f"idle-watch: idle child, coordinator nudged, {why}"
