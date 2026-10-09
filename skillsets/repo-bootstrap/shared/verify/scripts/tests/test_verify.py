@@ -259,6 +259,89 @@ class RunStage(unittest.TestCase):
         self.assertFalse(marker.exists(), "a background child outlived the timeout")
 
 
+class RunnerReuse(unittest.TestCase):
+    """`run --strict` takes the runner's sandboxed result for exactly this commit and runs only the rest here."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="verify-reuse-")).resolve()
+        self.saved = verify.RUNNER_HOME
+        verify.RUNNER_HOME = self.tmp / "runner"
+        cfg = {"version": 1, "stages": {"static": {"run": "true"}, "unit": {"run": "echo ran-unit-here; exit 1"},
+                                        "integration": {"run": "true"}, "journeys": {"run": None, "na": "cli"},
+                                        "evals": {"run": None, "na": "no LLM"}, "rehearsal": {"run": None, "na": "no data"}}}
+        self.repo = make_repo({"a.txt": "x\n"}, cfg)
+        git(self.repo, "remote", "add", "origin", "https://github.com/acme/app.git")
+        self.sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                                  text=True).stdout.strip()
+
+    def tearDown(self):
+        verify.RUNNER_HOME = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree(self.repo, ignore_errors=True)
+
+    def runner_art(self, unit="pass", **over):
+        art = {"sha": self.sha, "checked": self.sha, "sandboxed": True, "strict": True, "edited": [],
+               "config_edited": False, "kind": "pr", "label": "PR #1", "base": "main", "base_sha": "b" * 40,
+               "at": "2026-10-08T00:00:00Z", "verdict": "not-verified",
+               "stages": [{"stage": "static", "status": "pass", "detail": "exit 0 in 2s"},
+                          {"stage": "unit", "status": unit, "detail": "exit 0 in 1391s"},
+                          {"stage": "integration", "status": "missing", "detail": "needs an unconfined host"},
+                          *({"stage": s, "status": "na", "detail": "n/a"} for s in ("journeys", "evals", "rehearsal"))]}
+        art.update(over)
+        for k in [k for k, v in over.items() if v is None]:
+            del art[k]
+        d = verify.RUNNER_HOME / "runs" / "acme__app"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{self.sha}.json").write_text(json.dumps(art))
+
+    def run_strict(self, *extra):
+        rc, out = quiet(verify.main, ["run", str(self.repo), "--strict", *extra])
+        art = json.loads((self.repo / ".verify/runs" / f"{self.sha}.json").read_text())
+        return rc, out, {r["stage"]: r for r in art["stages"]}, art
+
+    def test_an_exact_sandboxed_runner_result_is_reused_and_only_the_missing_stage_runs_here(self):
+        self.runner_art()
+        rc, out, stages, art = self.run_strict()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("ran-unit-here", out)  # the local unit command fails; it never ran
+        self.assertEqual((stages["unit"]["status"], stages["unit"]["source"]), ("pass", "runner"))
+        self.assertEqual((stages["integration"]["status"], stages["integration"]["source"]), ("pass", "local"))
+        self.assertEqual(art["runner"]["base_sha"], "b" * 40)
+        rc, out, _, _ = self.run_strict()  # its own artifact under .verify/runs doesn't count as a dirty tree
+        self.assertEqual(rc, 0, out)
+
+    def test_anything_short_of_an_exact_clean_sandboxed_result_runs_every_stage_here(self):
+        cases = {"no runner result": None, "checked merged with a newer base": {"checked": "c" * 40},
+                 "not sandboxed": {"sandboxed": False}, "not strict": {"strict": False},
+                 "verifier edited": {"edited": ["scripts/check.sh"]}, "config edited": {"config_edited": True},
+                 "no edit record": {"edited": None}, "another commit's result": {"sha": "d" * 40},
+                 "runner skipped the stage": {"unit": "untouched"}, "dirty tree": {}, "untracked file": {},
+                 "--fresh": {}}
+        for name, over in cases.items():
+            with self.subTest(name):
+                shutil.rmtree(verify.RUNNER_HOME, ignore_errors=True)
+                git(self.repo, "checkout", "-q", "--", ".")
+                git(self.repo, "clean", "-qfd", "-e", ".verify/runs")
+                if over is not None:
+                    self.runner_art(**over)
+                if name == "dirty tree":
+                    (self.repo / "a.txt").write_text("changed\n")
+                if name == "untracked file":
+                    (self.repo / "new.txt").write_text("new\n")
+                rc, out, stages, _ = self.run_strict(*(["--fresh"] if name == "--fresh" else []))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("ran-unit-here", out)
+                self.assertEqual(stages["unit"]["source"], "local")
+
+    def test_a_reused_failure_stays_a_failure_and_says_how_to_rerun_it(self):
+        self.runner_art(unit="fail")
+        rc, out, stages, _ = self.run_strict()
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("ran-unit-here", out)
+        self.assertEqual(stages["unit"]["source"], "runner")
+        self.assertIn("--fresh reruns it here", out)
+
+
 class EndToEnd(unittest.TestCase):
     def test_run_writes_artifact_and_reports_not_verified(self):
         cfg = {"version": 1, "stages": {"static": {"run": "true"}, "unit": {"run": "true"},
@@ -480,6 +563,24 @@ class PinnedVerifier(unittest.TestCase):
             os.environ.pop("GIT_CONFIG_GLOBAL") if saved is None else os.environ.update(GIT_CONFIG_GLOBAL=saved)
         self.assertNotIn("host git config", out)
         self.assertIn("unit=pass", final[2])
+
+    def test_the_runner_artifact_records_verifier_and_config_edits_for_reuse(self):
+        def runner_art():
+            sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True,
+                                 text=True).stdout.strip()
+            return json.loads((verify.RUNNER_HOME / "runs" / "acme__app" / f"{sha}.json").read_text())
+        self.run_pr(self.write("tests/widget.sh", "exit 0\n"))
+        art = runner_art()
+        self.assertEqual((art["edited"], art["config_edited"], art["checked"] == art["sha"]), ([], False, True))
+        self.run_pr(self.write("scripts/check.sh", "exit 0\n"))
+        self.assertEqual(runner_art()["edited"], ["scripts/check.sh"])
+
+        def edit_config(repo):
+            cfg = json.loads((repo / ".verify/config.json").read_text())
+            cfg["timeout"] = 600
+            (repo / ".verify/config.json").write_text(json.dumps(cfg))
+        self.run_pr(edit_config)
+        self.assertTrue(runner_art()["config_edited"])
 
     def test_bad_verifier_paths_in_the_base_config_fail_closed(self):
         for bad in (["../x"], ["/etc/passwd"], [".git/config"], ["a//b"], "scripts", [3]):

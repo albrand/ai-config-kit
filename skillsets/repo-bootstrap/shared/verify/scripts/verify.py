@@ -586,11 +586,20 @@ def overall(results):
     return "pass"
 
 
-def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets=(), deadline=None, withheld=()):
+def execute(repo, cfg, stages, strict, paths, env, post=None, wrap=None, secrets=(), deadline=None, withheld=(),
+            reuse=None):
     """Run `stages` in order; return (verdict, results, posted). `post(context, state, description)` reports
-    each stage; `secrets` are masked in everything returned or printed."""
+    each stage; `secrets` are masked in everything returned or printed. A stage in `reuse` takes that result
+    instead of running (the runner's, for this exact commit)."""
     posted, results = True, []
     for name in stages:
+        if name in (reuse or {}):
+            r = reuse[name]
+            results.append(r)
+            print(f"[verify] {name:<11} {r['status']:<10} {r.get('detail', '')}", flush=True)
+            if post:
+                posted &= post(f"{STATUS_PREFIX}/{name}", r["status"], r.get("detail", ""))
+            continue
         spec = cfg.get("stages", {}).get(name) or {"run": None, "todo": "stage not declared"}
         if post:
             posted &= post(f"{STATUS_PREFIX}/{name}", "pending", "running")
@@ -615,6 +624,27 @@ def summary(verdict, results, note=""):
     return f"{verdict}{note}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results)
 
 
+def runner_result(repo, sha):
+    """(artifact, why not): the runner's result for exactly this commit, when it can stand in for running here.
+    Read from the runner's own files on this host, never from forge statuses, which anyone with push access can
+    post. It must be for this tree as committed (the runner's merge with its base was a no-op, so `checked` is
+    this SHA), sandboxed and strict, run with this tree's own verifier and config, and the worktree must be clean."""
+    slug = forge_slug(repo)
+    art = read_json(RUNNER_HOME / "runs" / slug.replace("/", "__") / f"{sha}.json") if slug else None
+    if not art or art.get("sha") != sha:
+        return None, "the runner has no result for this commit"
+    if art.get("checked") != sha:
+        return None, (f"the runner checked this commit merged with {art.get('base') or 'its base'}; "
+                      "merge or rebase on it so the runner's result covers this tree")
+    if art.get("sandboxed") is not True or art.get("strict") is not True:
+        return None, "the runner's result is not from a sandboxed strict job"
+    if "edited" not in art or art.get("edited") or art.get("config_edited"):
+        return None, "this commit edits the verifier or config, which the runner replaced with its base's copy"
+    if git(repo, "status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).verify/runs"):
+        return None, "the worktree has uncommitted or untracked files"
+    return art, ""
+
+
 def cmd_run(args):
     repo = repo_root(args.repo)
     cfg = read_json(repo / CONFIG)
@@ -630,14 +660,30 @@ def cmd_run(args):
     if args.post_status and not slug:
         print("[verify] --post-status: no GitHub origin; results stay local", file=sys.stderr)
     post = (lambda context, state, desc: post_status(slug, sha, context, state, desc)) if slug else None
-    verdict, results, posted = execute(repo, cfg, stages, args.strict, paths, env, post)
+    reuse, runner = {}, None
+    if args.strict and not args.fresh:
+        runner, why = runner_result(repo, sha)
+        if runner:
+            mark = f"runner, {runner.get('at', '?')}, base {str(runner.get('base_sha'))[:9]}"
+            reuse = {r["stage"]: {**r, "source": "runner", "detail": f"{r.get('detail', '')} ({mark})"}
+                     for r in runner.get("stages", []) if r.get("stage") in stages and r.get("status") in ("pass", "fail", "na")}
+            print(f"[verify] reusing the runner's sandboxed result for {sha[:9]}: {', '.join(reuse) or 'nothing'};"
+                  " the rest runs here. --fresh runs everything here", flush=True)
+        else:
+            print(f"[verify] runner: {why}; running every stage here", flush=True)
+    verdict, results, posted = execute(repo, cfg, stages, args.strict, paths, env, post, reuse=reuse)
+    results = [r if r.get("source") else {**r, "source": "local"} for r in results]
     art = {"sha": sha, "at": now(), "strict": args.strict, "base": args.base, "verdict": verdict, "stages": results}
+    if reuse:
+        art["runner"] = {k: runner.get(k) for k in ("at", "base", "base_sha", "checked", "kind", "label")}
     (repo / RUNS).mkdir(parents=True, exist_ok=True)
     (repo / RUNS / f"{sha}.json").write_text(json.dumps(art, indent=1))
     if post:
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results))
     label = {"pass": "PASS", "fail": "FAIL", "not-verified": "NOT VERIFIED"}[verdict]
     print(f"[verify] {label} for {sha[:9]} -> {RUNS / (sha + '.json')}")
+    if verdict == "fail" and any(r["status"] == "fail" and r.get("source") == "runner" for r in results):
+        print("[verify] a failed stage is the runner's result for this commit; --fresh reruns it here")
     if not posted:
         return 3
     return 0 if verdict == "pass" else 1
@@ -976,6 +1022,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
     # a base change (a new suite and its registry entry) is not failed by the skew. Edits count from the fork point.
     since = (git(mirror, "merge-base", sha, base_sha) or None) if base_sha else None
     cfg, note = trusted_config(mirror, sha, None if trusted else base, base_sha, since)
+    config_edited = bool(note)
     if not cfg:
         post(STATUS_PREFIX, "missing", f"no .verify/config.json on {base} yet; merge one there first" if base
              else "no .verify/config.json in this commit")
@@ -1053,7 +1100,8 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
         dest.mkdir(parents=True, exist_ok=True)
         art = {"sha": sha, "at": now(), "strict": True, "kind": kind, "label": label, "base": base, "fork": fork,
-               "sandboxed": bool(wrap), "checked": checked, "base_sha": base_sha, "verdict": verdict, "stages": results}
+               "sandboxed": bool(wrap), "checked": checked, "base_sha": base_sha, "edited": edited,
+               "config_edited": config_edited, "verdict": verdict, "stages": results}
         (dest / f"{sha}.json").write_text(json.dumps(art, indent=1))
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results, note))
         return "done" if posted else "error"
@@ -1405,6 +1453,8 @@ def main(argv=None):
     p.add_argument("--strict", action="store_true")
     p.add_argument("--base")
     p.add_argument("--post-status", action="store_true")
+    p.add_argument("--fresh", action="store_true",
+                   help="run every stage here, even ones the runner already checked for this exact commit")
     p = sub.add_parser("status")
     p.add_argument("repo", nargs="?", default=".")
     p.add_argument("--sha")
