@@ -48,6 +48,23 @@ const loadConfig = () => {
 };
 const config = loadConfig();
 
+// One adapter, two runtimes: `--backend codex` drives the interactive codex
+// TUI instead of claude. Codex models follow the owner's routing policy
+// (luna by complexity, ceiling sol xhigh, never astra or max).
+const argIdx = process.argv.indexOf("--backend");
+const BACKEND = argIdx > 0 ? process.argv[argIdx + 1] : "claude";
+const CODEX_MODELS = [
+  { modelId: "gpt-6-luna", name: "GPT-6 Luna (medium)", model: "gpt-6-luna", effort: "medium" },
+  { modelId: "gpt-6-luna-low", name: "GPT-6 Luna (low)", model: "gpt-6-luna", effort: "low" },
+  { modelId: "gpt-6-luna-high", name: "GPT-6 Luna (high)", model: "gpt-6-luna", effort: "high" },
+  { modelId: "gpt-6.1-sol-xhigh", name: "GPT-6.1 Sol (xhigh)", model: "gpt-6.1-sol", effort: "xhigh" },
+];
+const MODELS = BACKEND === "codex" ? (config.codexModels || CODEX_MODELS) : config.models;
+const DEFAULT_MODEL = BACKEND === "codex" ? (config.codexDefaultModel || "gpt-6-luna") : config.defaultModel;
+const CODEX_BIN = config.codexBin || "/Users/alexandrebrandizzi/.nvm/versions/node/v24.13.0/bin/codex";
+const READY_RE = BACKEND === "codex" ? /context left|\? for shortcuts|⏎ send|send\s+⌃/i : /bypass permissions|\? for shortcuts/i;
+const BUSY_RE = BACKEND === "codex" ? /esc to interrupt|Working \(|• Working/i : /bypass permissions|esc to interrupt/i;
+
 const SECRETISH = /TOKEN|SECRET|KEY|PASSWORD|AUTH|COOKIE/i;
 const log = (o) => {
   try { fs.appendFileSync(LOG_PATH, JSON.stringify({ t: new Date().toISOString(), pid: process.pid, thread: process.env.BB_THREAD_ID, ...o }) + "\n", { mode: 0o600 }); } catch {}
@@ -120,10 +137,47 @@ const findTranscript = (sessionId, cwd) => {
   return null;
 };
 
+// Codex keeps rollouts under ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl.
+const CODEX_SESSIONS = HOME + "/.codex/sessions";
+const codexDayDirs = () => {
+  const dirs = [];
+  try {
+    for (const y of fs.readdirSync(CODEX_SESSIONS).sort().reverse())
+      for (const m of fs.readdirSync(`${CODEX_SESSIONS}/${y}`).sort().reverse())
+        for (const d of fs.readdirSync(`${CODEX_SESSIONS}/${y}/${m}`).sort().reverse()) dirs.push(`${CODEX_SESSIONS}/${y}/${m}/${d}`);
+  } catch {}
+  return dirs;
+};
+const findCodexRollout = (id) => {
+  for (const dir of codexDayDirs()) {
+    try { const f = fs.readdirSync(dir).find((n) => n.endsWith(`-${id}.jsonl`)); if (f) return `${dir}/${f}`; } catch {}
+  }
+  return null;
+};
+const realOf = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+// A fresh codex session announces itself only by writing a rollout; claim the
+// first unclaimed one for this cwd created after the launch.
+const discoverCodexRollout = (cwd, sinceMs) => {
+  const claimed = new Set(Object.values(readRegistry()).map((r) => r.nativeId).filter(Boolean));
+  for (const dir of codexDayDirs().slice(0, 2)) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch {}
+    for (const n of names) {
+      const p = `${dir}/${n}`;
+      try {
+        if (fs.statSync(p).birthtimeMs < sinceMs - 2000) continue;
+        const meta = JSON.parse(fs.readFileSync(p, "utf8").split("\n", 1)[0]).payload || {};
+        if (meta.id && !claimed.has(meta.id) && realOf(meta.cwd || "") === realOf(cwd)) return { id: meta.id, path: p };
+      } catch {}
+    }
+  }
+  return null;
+};
+
 class Tail {
-  constructor(sessionId, cwd, offset) { this.sessionId = sessionId; this.cwd = cwd; this.path = null; this.offset = offset ?? null; this.partial = ""; }
+  constructor(locateFn) { this.locateFn = locateFn; this.path = null; this.offset = null; this.partial = ""; }
   locate() {
-    if (!this.path) this.path = findTranscript(this.sessionId, this.cwd);
+    if (!this.path) this.path = this.locateFn();
     if (this.path && this.offset === null) this.offset = fs.statSync(this.path).size;
     return this.path;
   }
@@ -191,6 +245,48 @@ const mapEntry = (e) => {
   return { updates, userText, turnEnded };
 };
 
+const clip = (text) => (text.length > config.toolResultMaxChars ? text.slice(0, config.toolResultMaxChars) + `\n… (${text.length - config.toolResultMaxChars} more chars in the Elyra card)` : text);
+const codexToolTitle = (name, raw) => {
+  let input = raw;
+  if (typeof raw === "string") { try { input = JSON.parse(raw); } catch { input = { command: raw }; } }
+  const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command || input?.cmd || input?.path || "";
+  return `${name}${cmd ? ": " + String(cmd).replace(/\s+/g, " ").slice(0, 160) : ""}`;
+};
+const codexKind = (name) => (/exec|shell|bash/i.test(name) ? "execute" : /apply_patch|write|edit/i.test(name) ? "edit" : /read|search|grep|list/i.test(name) ? "read" : "other");
+const codexOutput = (out) => {
+  if (typeof out !== "string") return resultText(out);
+  try { const j = JSON.parse(out); return typeof j.output === "string" ? j.output : out; } catch { return out; }
+};
+
+const mapCodexEntry = (e) => {
+  const updates = [];
+  let userText = null;
+  let turnEnded = false;
+  const p = e.payload || {};
+  if (e.type === "response_item") {
+    if (p.type === "message" && p.role === "assistant") {
+      for (const c of p.content || []) if (c.text) updates.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: c.text } });
+    } else if (p.type === "message" && p.role === "user") {
+      // Typed input; skip the harness context blocks codex injects as user items.
+      const t = (p.content || []).map((c) => c.text || "").join("\n").trim();
+      if (t && !/^<(environment_context|user_instructions|permissions|turn_aborted|INSTRUCTIONS)/.test(t)) userText = t;
+    } else if (p.type === "reasoning") {
+      const t = (p.summary || []).map((s) => s.text).filter(Boolean).join("\n");
+      if (t) updates.push({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: t } });
+    } else if (p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") {
+      const raw = p.arguments ?? p.input ?? p.action;
+      updates.push({ sessionUpdate: "tool_call", toolCallId: p.call_id || p.id, title: codexToolTitle(p.name || p.type, raw), kind: codexKind(p.name || p.type), status: "in_progress", rawInput: typeof raw === "string" ? { input: raw.slice(0, 4000) } : raw });
+    } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+      updates.push({ sessionUpdate: "tool_call_update", toolCallId: p.call_id, status: "completed", content: [{ type: "content", content: { type: "text", text: clip(codexOutput(p.output)) } }] });
+    }
+  } else if (e.type === "event_msg") {
+    if (p.type === "user_message" && p.message) userText = userText || p.message;
+    else if (p.type === "task_complete" || p.type === "turn_aborted") turnEnded = true;
+  }
+  return { updates, userText, turnEnded };
+};
+const mapAny = (e) => (BACKEND === "codex" ? mapCodexEntry(e) : mapEntry(e));
+
 // ---------- ACP transport ----------
 const out = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\n");
 const notify = (sessionId, update) => out({ method: "session/update", params: { sessionId, update } });
@@ -242,7 +338,7 @@ const mcpConfigFrom = (mcpServers) => {
 };
 
 class Session {
-  constructor({ sessionId, cwd, mcpServers, model, resume }) {
+  constructor({ sessionId, cwd, mcpServers, model, resume, nativeId }) {
     this.sessionId = sessionId;
     this.cwd = cwd;
     this.mcpServers = mcpServers;
@@ -254,9 +350,42 @@ class Session {
     this.cancelled = false;
     this.idleBuffer = [];
     this.watcher = null;
+    // Claude sessions use the ACP id as their own id; codex picks its own.
+    this.nativeId = BACKEND === "codex" ? nativeId || readRegistry()[sessionId]?.nativeId || null : sessionId;
+    this.launchTs = readRegistry()[sessionId]?.launchTs || null;
   }
 
-  effortFor(model) { return (config.models.find((m) => m.modelId === model) || {}).effort || "low"; }
+  transcriptPath() {
+    if (BACKEND !== "codex") return findTranscript(this.sessionId, this.cwd);
+    if (this.nativeId) return findCodexRollout(this.nativeId);
+    if (!this.launchTs) return null;
+    const found = discoverCodexRollout(this.cwd, this.launchTs);
+    if (!found) return null;
+    this.nativeId = found.id;
+    updateRegistry(this.sessionId, { nativeId: found.id });
+    log({ event: "codex-session-discovered", sessionId: this.sessionId, nativeId: found.id });
+    return found.path;
+  }
+
+  effortFor(model) { return (MODELS.find((m) => m.modelId === model) || {}).effort || "low"; }
+
+  codexLaunchLines(lines) {
+    const m = MODELS.find((x) => x.modelId === this.model) || { model: this.model, effort: "medium" };
+    // bb's pool route for codex comes from bb itself, never from argv.
+    for (const k of ["CODEX_OPENAI_BASE_URL", "CODEX_POOL_AUTH_TOKEN"]) if (process.env[k]) lines.push(`export ${k}=${shq(process.env[k])}`);
+    const args = [CODEX_BIN];
+    if (this.nativeId && this.resume) args.push("resume", this.nativeId);
+    args.push("-m", m.model, "-c", `model_reasoning_effort="${m.effort}"`, "-c", "check_for_update_on_startup=false", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust");
+    if (autoTrustable(this.cwd)) args.push("-c", `projects.${JSON.stringify(this.cwd)}.trust_level="trusted"`);
+    for (const s of this.mcpServers || []) {
+      if (!s?.name || !s.command) continue;
+      const key = `mcp_servers.${JSON.stringify(s.name)}`;
+      const envNames = [];
+      for (const kv of s.env || []) { lines.push(`export ${kv.name}=${shq(kv.value)}`); envNames.push(kv.name); }
+      args.push("-c", `${key}.command=${JSON.stringify(s.command)}`, "-c", `${key}.args=${JSON.stringify(s.args || [])}`, "-c", `${key}.env_vars=${JSON.stringify(envNames)}`);
+    }
+    return args;
+  }
 
   async titleForCard() {
     const tid = process.env.BB_THREAD_ID || "nothread";
@@ -282,6 +411,13 @@ class Session {
     // Pool routing: bb's own pool bridge, which also keeps the 1M window.
     if (config.poolEnvCommand) lines.push(`eval "$(${config.poolEnvCommand})"`);
     lines.push(`cd ${shq(this.cwd)}`);
+    if (BACKEND === "codex") {
+      const cargs = this.codexLaunchLines(lines);
+      lines.push("set +e", cargs.map(shq).join(" "), `echo "$(date -u +%FT%TZ) exit=$?" >> ${shq(`${RUN_DIR}/${id}.exit`)}`, "exit 0");
+      const p = `${RUN_DIR}/${id}.sh`;
+      fs.writeFileSync(p, lines.join("\n") + "\n", { mode: 0o700 });
+      return p;
+    }
     const args = [config.claudeBin, this.resume ? "--resume" : "--session-id", id, "--model", this.model, "--effort", this.effortFor(this.model), "--dangerously-skip-permissions", "--mcp-config", mcpPath, "--disallowedTools", "AskUserQuestion"];
     // bb's harness instructions go in the system prompt once, not into every
     // typed turn (they are ~49K chars).
@@ -307,7 +443,7 @@ class Session {
     }
     // Resume only when there is a conversation to resume; `--resume` on an
     // unknown id exits at once.
-    this.resume = !!findTranscript(this.sessionId, this.cwd);
+    this.resume = !!this.transcriptPath();
     const workspace = reg?.workspace || (await pickWorkspace(this.cwd));
     if (reg?.cardTitle) {
       // The card survives its process: reopen it as a shell and relaunch.
@@ -322,11 +458,12 @@ class Session {
       if (!created.ok) throw new Error("Elyra card creation failed: " + (created.error?.message || "unknown"));
     }
     if (autoTrustable(this.cwd)) markTrusted(this.cwd);
+    this.launchTs = Date.now();
     const script = this.writeLaunchScript();
     await sleep(2500); // let the shell come up before typing
     const sent = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text", `exec ${shq(script)}`]);
     if (!sent.ok) throw new Error("Elyra launch send failed: " + (sent.error?.message || "unknown"));
-    updateRegistry(this.sessionId, { cardTitle: this.cardTitle, cwd: this.cwd, workspace, bbThreadId: process.env.BB_THREAD_ID, model: this.model });
+    updateRegistry(this.sessionId, { cardTitle: this.cardTitle, cwd: this.cwd, workspace, bbThreadId: process.env.BB_THREAD_ID, model: this.model, launchTs: this.launchTs });
     log({ event: "card-created", sessionId: this.sessionId, card: this.cardTitle, workspace, resume: this.resume });
     await this.waitReady();
   }
@@ -374,7 +511,9 @@ class Session {
       }
       // Only Claude's own footer counts as ready: a bare shell prompt must never
       // receive a typed turn, or the shell would execute it.
-      if (w.ok && /bypass permissions|\? for shortcuts/i.test(text.slice(-2000))) return;
+      // Elyra's tui-idle does not recognise the codex TUI, so for codex the screen decides.
+      const quiet = BACKEND === "codex" ? !BUSY_RE.test(text.slice(-1500)) : w.ok;
+      if (quiet && READY_RE.test(text.slice(-2000))) return;
       if (!w.ok && w.error?.message === "terminal_exited") throw new Error(`Claude exited in Elyra card "${this.cardTitle}"; see ${RUN_DIR}/${this.sessionId}.exit`);
       if (i % 15 === 0) log({ event: "waiting-ready", card: this.cardTitle, idleOk: w.ok, waitError: w.error?.message, screen: text.split("\n").slice(-12) });
       await sleep(1000);
@@ -384,11 +523,11 @@ class Session {
 
   startWatcher() {
     if (this.watcher) return;
-    this.tail = this.tail || new Tail(this.sessionId, this.cwd, null);
+    this.tail = this.tail || new Tail(() => this.transcriptPath());
     this.watcher = setInterval(() => {
       if (this.prompting) return;
       for (const e of this.tail.read()) {
-        const { updates, userText } = mapEntry(e);
+        const { updates, userText } = mapAny(e);
         if (userText && !/^<(command|local-command|system-reminder)/.test(userText)) this.idleBuffer.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `\n\n> (typed in Elyra) ${userText.slice(0, 2000)}\n\n` } });
         for (const u of updates) { this.idleBuffer.push(u); notify(this.sessionId, u); }
       }
@@ -418,11 +557,11 @@ class Session {
     }
     try {
       await this.ensureCard();
-      this.tail = this.tail || new Tail(this.sessionId, this.cwd, null);
+      this.tail = this.tail || new Tail(() => this.transcriptPath());
       // Drain anything that happened while bb was not in a turn, then replay it
       // inside this turn so bb's timeline is complete.
       for (const e of this.tail.read()) {
-        const { updates, userText } = mapEntry(e);
+        const { updates, userText } = mapAny(e);
         if (userText) this.idleBuffer.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `\n\n> (typed in Elyra) ${userText.slice(0, 2000)}\n\n` } });
         this.idleBuffer.push(...updates);
       }
@@ -434,13 +573,20 @@ class Session {
       }
       // A busy TUI takes the message as a queued steer; an idle one starts a turn.
       const idle = await elyra(["terminal", "wait", "--terminal", this.cardTitle, "--for", "tui-idle", "--timeout-ms", "1500"], { timeoutMs: 8000 });
-      const steering = !idle.ok && /bypass permissions|esc to interrupt/i.test(await this.screen());
+      const scr = await this.screen();
+      const steering = BACKEND === "codex" ? BUSY_RE.test(scr.slice(-1500)) : !idle.ok && BUSY_RE.test(scr);
       if (!steering) await this.waitReady(this.sessionId);
 
       const text = promptBlocks.map((b) => (b.type === "text" ? b.text : b.type === "resource_link" ? `[attachment: ${b.uri}]` : b.type === "resource" ? `[attachment: ${b.resource?.uri}]` : `[${b.type}]`)).join("\n");
       const promptFile = `${RUN_DIR}/${this.sessionId}.prompt-${crypto.randomBytes(4).toString("hex")}.txt`;
       fs.writeFileSync(promptFile, text, { mode: 0o600 });
       if (this.tail.locate() === null) this.tail.offset = 0; // first turn of a fresh session
+      // Codex has no system-prompt flag for this, so a fresh codex session gets
+      // bb's harness instructions once, with its first turn.
+      if (BACKEND === "codex" && !this.resume && this.systemText && !this.systemSent) {
+        fs.writeFileSync(promptFile, this.systemText + "\n\n" + text, { mode: 0o600 });
+        this.systemSent = true;
+      }
       const sent = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text-file", promptFile]);
       fs.rmSync(promptFile, { force: true });
       if (!sent.ok) throw new Error("Elyra send failed: " + (sent.error?.message || "unknown"));
@@ -455,7 +601,7 @@ class Session {
         if (this.cancelled || this.stopLoop) return "cancelled";
         for (const e of this.tail.read()) {
           lastActivity = Date.now();
-          const { updates, userText, turnEnded } = mapEntry(e);
+          const { updates, userText, turnEnded } = mapAny(e);
           if (userText || e.attachment?.type === "queued_command") sawUser = true;
           if (e.type === "assistant" && !e.isSidechain) lastStop = e.message?.stop_reason || null;
           for (const u of updates) notify(this.sessionId, u);
@@ -513,7 +659,7 @@ class Session {
 
 // ---------- ACP methods ----------
 const sessions = new Map();
-const modelsPayload = (current) => ({ currentModelId: current, availableModels: config.models.map(({ modelId, name }) => ({ modelId, name })) });
+const modelsPayload = (current) => ({ currentModelId: current, availableModels: MODELS.map(({ modelId, name }) => ({ modelId, name })) });
 
 const handlers = {
   async initialize() {
@@ -525,15 +671,16 @@ const handlers = {
     const imp = config.imports[process.env.BB_THREAD_ID || ""] || config.imports["cwd:" + cwd];
     const sessionId = imp?.resumeSessionId || crypto.randomUUID();
     const reg = readRegistry()[sessionId];
-    const model = reg?.model || imp?.model || config.defaultModel;
-    const s = new Session({ sessionId, cwd, mcpServers, model, resume: !!imp || !!findTranscript(sessionId, cwd) });
+    const model = reg?.model || imp?.model || DEFAULT_MODEL;
+    const s = new Session({ sessionId, cwd, mcpServers, model, resume: !!imp, nativeId: BACKEND === "codex" ? imp?.resumeSessionId : undefined });
+    if (BACKEND === "codex" && imp) updateRegistry(sessionId, { nativeId: imp.resumeSessionId, cwd });
     sessions.set(sessionId, s);
     log({ event: "session-new", sessionId, cwd, imported: !!imp, mcp: (mcpServers || []).map((m) => m.name) });
     return { sessionId, models: modelsPayload(model) };
   },
   async "session/load"({ sessionId, cwd, mcpServers }) {
     const reg = readRegistry()[sessionId];
-    const s = new Session({ sessionId, cwd: cwd || reg?.cwd, mcpServers, model: reg?.model || config.defaultModel, resume: true });
+    const s = new Session({ sessionId, cwd: cwd || reg?.cwd, mcpServers, model: reg?.model || DEFAULT_MODEL, resume: true });
     sessions.set(sessionId, s);
     log({ event: "session-load", sessionId, cwd });
     return { models: modelsPayload(s.model) };
