@@ -297,6 +297,10 @@ class ForgeCalls(unittest.TestCase):
             verify.sh, calls = self.fake_sh([(124, ""), (0, "{}")])
             self.assertIsNone(verify.forge_status("acme/app", "a" * 40))  # the hook and doctor keep one short try
             self.assertEqual(calls, [20])
+            verify.sh, _ = self.fake_sh([(124, "")])
+            self.assertEqual(verify.read_status("acme/app", "a" * 40), (None, True))  # ran out of time
+            verify.sh, _ = self.fake_sh([(1, "gh: Not Found (HTTP 404)")])
+            self.assertEqual(verify.read_status("acme/app", "a" * 40), (None, False))  # an answer for this commit
         finally:
             verify.sh = saved
 
@@ -377,9 +381,9 @@ class ForgeCalls(unittest.TestCase):
         self.assertNotEqual(first, second)  # and a fresh one for the next tick
         self.assertIsInstance(seen[0][1], verify.ForgeBudget)
 
-    def test_a_failed_status_read_ends_the_tick_for_that_repo_however_long_the_queue(self):
+    def test_a_timed_out_status_read_ends_the_tick_but_a_commit_specific_error_only_skips_that_commit(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
-        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "read_status", "run_job")
         saved = {n: getattr(verify, n) for n in names}
         reads, ran = [], []
         try:
@@ -387,11 +391,18 @@ class ForgeCalls(unittest.TestCase):
             verify.ensure_mirror = lambda slug, url: tmp
             verify.pending_jobs = lambda slug, mirror, args: iter([(f"{i:040x}", "main", f"PR #{i}", False, "pr")
                                                                    for i in range(50)])
-            verify.forge_status = lambda slug, sha, *a: reads.append(sha) or None
-            verify.run_job = lambda *a, **k: ran.append(a) or "done"
-            rc, out = quiet(verify.serve_repo, "acme/app", argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None))
+            verify.read_status = lambda slug, sha, *a: reads.append(sha) or (None, True)  # never answers
+            verify.run_job = lambda *a, **k: ran.append(a[2]) or "done"
+            args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
+            rc, out = quiet(verify.serve_repo, "acme/app", args)
             self.assertEqual((rc, len(reads), ran), (1, 1, []), out)  # one read, not fifty
             self.assertIn("leaving the rest of the queue for the next tick", out)
+            reads[:] = []
+            bad = f"{0:040x}"  # this commit's read fails with an answer (an HTTP 404, say) every tick
+            verify.read_status = lambda slug, sha, *a: reads.append(sha) or ((None, False) if sha == bad else ({}, False))
+            rc, out = quiet(verify.serve_repo, "acme/app", args)
+            self.assertEqual((rc, reads, ran), (1, [bad, f"{1:040x}"], [f"{1:040x}"]), out)  # the next PR still runs
+            self.assertNotIn("leaving the rest of the queue", out)
         finally:
             for n, v in saved.items():
                 setattr(verify, n, v)
@@ -452,20 +463,20 @@ class ForgeCalls(unittest.TestCase):
 
     def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
-        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status", "run_job")
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "read_status", "run_job")
         saved = {n: getattr(verify, n) for n in names}
         seen = []
         try:
             verify.RUNNER_HOME = tmp
             verify.ensure_mirror = lambda slug, url: tmp
             verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr")])
-            verify.forge_status = lambda slug, sha, *a: seen.append(a) or None
+            verify.read_status = lambda slug, sha, *a: seen.append(a) or (None, True)
             args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
             rc, out = quiet(verify.serve_repo, "acme/app", args)
             self.assertEqual(rc, 1, out)
             self.assertEqual(seen, [(verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)])
             budgets = []
-            verify.forge_status = lambda slug, sha, *a: {}
+            verify.read_status = lambda slug, sha, *a: ({}, False)
             verify.run_job = lambda *a, budget=None, **k: budgets.append(budget) or "done"
             verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr"),
                                                                    ("c" * 40, "main", "PR #2", False, "pr")])
