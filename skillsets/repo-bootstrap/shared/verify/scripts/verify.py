@@ -378,11 +378,19 @@ def proposal(d):
 
 # ---------------------------------------------------------------- forge (GitHub REST; no Actions involved)
 
-def forge_status(slug, sha, timeout=20):
+# The runner's forge calls on a loaded host: gh can take over a minute to start, so a call gets FORGE_TIMEOUT and
+# one retry (posting a status again just overwrites it). Interactive callers (the hook) keep their short limits.
+FORGE_TIMEOUT, FORGE_ATTEMPTS = 120, 2
+
+
+def forge_status(slug, sha, timeout=20, attempts=1):
     """{context: {state, at}} for the commit, or None when the forge can't be read (auth, network)."""
-    rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
-                  "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
-                 timeout=timeout, merge=False)
+    for _ in range(attempts):
+        rc, out = sh(["gh", "api", f"repos/{slug}/commits/{sha}/status",
+                      "--jq", "[.statuses[]|{(.context): {state: .state, at: .updated_at}}]|add // {}"],
+                     timeout=timeout, merge=False)
+        if rc == 0:
+            break
     if rc != 0:
         return None
     try:
@@ -412,8 +420,11 @@ def capped_post(post):
 
 def post_status(slug, sha, context, state, description):
     """Commit statuses are a plain REST call: they work with GitHub Actions disabled or unpaid."""
-    rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
-                  "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=30)
+    for _ in range(FORGE_ATTEMPTS):
+        rc, out = sh(["gh", "api", "-X", "POST", f"repos/{slug}/statuses/{sha}", "-f", f"state={GH_STATE[state]}",
+                      "-f", f"context={context}", "-f", f"description={description[:139]}"], timeout=FORGE_TIMEOUT)
+        if rc == 0:
+            break
     if rc != 0:
         print(f"[verify] could not post {context} to {slug}@{sha[:9]}: {out.strip()[-300:]}", file=sys.stderr, flush=True)
     return rc == 0
@@ -1080,7 +1091,7 @@ def serve_repo(spec, args):
         for sha, base, label, fork, kind in pending_jobs(slug, mirror, args):
             if done >= args.max_jobs:
                 break
-            st = forge_status(slug, sha)
+            st = forge_status(slug, sha, FORGE_TIMEOUT, FORGE_ATTEMPTS)
             if st is None:
                 print(f"[serve] {slug} {label}: cannot read statuses (auth or network); not running", flush=True)
                 errors += 1

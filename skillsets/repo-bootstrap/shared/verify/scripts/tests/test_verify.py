@@ -259,6 +259,63 @@ class RunStage(unittest.TestCase):
         self.assertFalse(marker.exists(), "a background child outlived the timeout")
 
 
+class ForgeCalls(unittest.TestCase):
+    """On a loaded host gh can take over a minute to start: the runner's forge calls get a long limit and one retry."""
+
+    def fake_sh(self, results):
+        calls = []
+
+        def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
+            calls.append(timeout)
+            return results[len(calls) - 1]
+        return sh, calls
+
+    def test_a_status_post_that_times_out_once_is_retried_with_the_long_limit(self):
+        saved = verify.sh
+        try:
+            verify.sh, calls = self.fake_sh([(124, "timed out"), (0, "")])
+            self.assertTrue(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertEqual(calls, [verify.FORGE_TIMEOUT] * 2)
+            verify.sh, calls = self.fake_sh([(124, "timed out")] * 3)
+            self.assertFalse(quiet(verify.post_status, "acme/app", "a" * 40, "verify/unit", "pass", "ok")[0])
+            self.assertEqual(len(calls), verify.FORGE_ATTEMPTS)  # bounded: no third try
+        finally:
+            verify.sh = saved
+        self.assertGreaterEqual(verify.FORGE_TIMEOUT, 90)
+
+    def test_the_runner_status_read_retries_but_the_default_read_does_not(self):
+        saved = verify.sh
+        try:
+            verify.sh, calls = self.fake_sh([(124, ""), (0, '{"verify": {"state": "success", "at": "x"}}')])
+            st = verify.forge_status("acme/app", "a" * 40, verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)
+            self.assertEqual(st["verify"]["state"], "success")
+            self.assertEqual(calls, [verify.FORGE_TIMEOUT] * 2)
+            verify.sh, calls = self.fake_sh([(124, ""), (0, "{}")])
+            self.assertIsNone(verify.forge_status("acme/app", "a" * 40))  # the hook and doctor keep one short try
+            self.assertEqual(calls, [20])
+        finally:
+            verify.sh = saved
+
+    def test_the_runner_reads_statuses_with_the_long_limit_and_a_retry(self):
+        tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
+        names = ("RUNNER_HOME", "ensure_mirror", "pending_jobs", "forge_status")
+        saved = {n: getattr(verify, n) for n in names}
+        seen = []
+        try:
+            verify.RUNNER_HOME = tmp
+            verify.ensure_mirror = lambda slug, url: tmp
+            verify.pending_jobs = lambda slug, mirror, args: iter([("a" * 40, "main", "PR #1", False, "pr")])
+            verify.forge_status = lambda slug, sha, *a: seen.append(a) or None
+            args = argparse.Namespace(max_jobs=1, stale_hours=3.0, rerun=None)
+            rc, out = quiet(verify.serve_repo, "acme/app", args)
+            self.assertEqual(rc, 1, out)
+            self.assertEqual(seen, [(verify.FORGE_TIMEOUT, verify.FORGE_ATTEMPTS)])
+        finally:
+            for n, v in saved.items():
+                setattr(verify, n, v)
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class EndToEnd(unittest.TestCase):
     def test_run_writes_artifact_and_reports_not_verified(self):
         cfg = {"version": 1, "stages": {"static": {"run": "true"}, "unit": {"run": "true"},
