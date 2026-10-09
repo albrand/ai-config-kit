@@ -333,13 +333,8 @@ RULES: dict[str, re.Pattern[str]] = {
         r"never treat their own agent.s\s+push as completion while its\s+thread is still running|"
         r"must not treat their own push as completion while its agent still runs)"
     ),
-    "active-session-input-skill-trigger": re.compile(
-        r"(?is)(?:before active-session input.{0,100}load `?native-agent-surface`?.{0,100}"
-        r"metadata-only.{0,80}session-input-guard\.py|"
-        r"before delivering input to an active\s+agent.{0,300}(?:"
-        r"metadata-only guard.{0,150}native-agent-surface|"
-        r"native-agent-surface.{0,150}metadata-only.{0,100}session-input-guard\.py))"
-    ),
+    # active-session-input-skill-trigger was retired by the owner on 2026-10-08: agents message running
+    # sessions (Elyra, bb) without the session-input guard. Supersede, attestation and write-owner rules stay.
     "active-session-supersede-authority": re.compile(
         r"(?is)(?:supersede only via `?superseding`?.{0,140}authenticated user authority.{0,180}"
         r"exact active workspace/session/lease/epoch.{0,160}adapter-validated resume-packet reference|"
@@ -538,7 +533,6 @@ OPTIONAL_WHEN_ABSENT = {
     "delegation-approval-scale-and-bounded-fanout",
     "delegation-cross-session-cmux-off",
     "delegation-explicit-approval-outward-effects",
-    "active-session-input-skill-trigger",
     "active-session-supersede-authority",
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
@@ -577,7 +571,7 @@ LIVE_HOME_RULES = {
         "browser-input-is-mutation", "browser-no-standard-preamble",
         "child-thread-cap-six-with-orchestration", "delegate-no-unapproved-dependencies",
         "delegation-cross-session-cmux-off",
-        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-supersede-authority",
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
@@ -595,7 +589,7 @@ LIVE_HOME_RULES = {
         "hermes-no-local-terminal-socket", "no-gc-user-owned-state",
         "child-thread-cap-six-with-orchestration", "context-gc-discard-logs",
         "hermes-broker-model-call-explicit-activation", "context-gc-resume-packet",
-        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-supersede-authority",
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
@@ -617,7 +611,7 @@ LIVE_HOME_RULES = {
         "hermes-no-listeners", "browser-no-foreground-takeover-claim",
         "browser-input-is-mutation", "browser-exclusive-delivery-proof",
         "child-thread-cap-six-with-orchestration", "browser-no-standard-preamble",
-        "active-session-input-skill-trigger", "active-session-supersede-authority",
+        "active-session-supersede-authority",
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
@@ -669,7 +663,7 @@ KIT_BASELINE_RULES = {
     "hermes-broker-model-call-explicit-activation", "verified-qa-e2e-full-trigger-set",
     "browser-persistent-quarantine-per-input", "delegation-cross-session-cmux-off",
     "browser-no-standard-preamble", "hermes-no-project-source",
-    "active-session-input-skill-trigger", "active-session-supersede-authority",
+    "active-session-supersede-authority",
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
@@ -717,10 +711,10 @@ LIVE_HOME_SHA256: dict[str, str] = {}
 # them (Hermes 2026-10-07, kit-one-page-baseline r4 and kit-session-input-scope r1).
 INSTALLED_HOME_SHA256: dict[str, str] = {}
 RENDERED_HOME_SHA256 = {
-    "15d218ecfd6226a2c04ce8da7c6face3f2136f67191f484409bed6e6a0fbff92": "proposal-claude",
-    "ba387d5cacbae58fb1ff2e272ab8504f66ced40fab3f22d553de72504ac73abf": "proposal-codex",
-    "5c4cf5f414bfa9a9ae80c6d21fb8ad08433cae03abc500d28b7874aa5f7071d6": "proposal-opencode",
-    "7f98a5a5d12d9771ce7c38b95e9e56404a374f3907ccfa9ad1db01460aad29cb": "proposal-bb",
+    "f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919": "proposal-claude",
+    "92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2": "proposal-codex",
+    "95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed": "proposal-opencode",
+    "0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270": "proposal-bb",
 }
 
 
