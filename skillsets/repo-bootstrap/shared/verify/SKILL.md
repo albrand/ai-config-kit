@@ -23,6 +23,7 @@ V=~/.agents/skills/verify/scripts/verify.py
 python3 $V doctor .            # what is missing, by severity, with the fix
 python3 $V init . --write      # propose .verify/config.json from the stack
 python3 $V run . --strict      # run every per-change stage; artifact in .verify/runs/<sha>.json
+                               # reuses this host's runner result for HEAD when it exists (--fresh: don't)
 python3 $V status .            # last result for HEAD
 ```
 
@@ -63,8 +64,19 @@ stopping point: write the missing stage if you can, then run it.
 3. `housekeep .` lists merged branches, stale worktrees, large and cache files. `--apply` only
    deletes merged local branches and prunes worktree records.
 4. Copy [templates/AGENTS.repo.md](templates/AGENTS.repo.md) to the repo's `AGENTS.md` and fill it in.
-5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME` (add `--once` to a cron
-   or bb automation). It runs open PR heads in throwaway clones and posts `verify/<stage>` statuses.
+5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME`, or `--once` from launchd
+   (`StartInterval`) or cron. A job can outlast a bb automation's 15-minute script limit, and launchd
+   never starts a tick while the last one runs. It runs open PR heads in throwaway clones and posts
+   `verify/<stage>` statuses.
+   - On the runner's host, `run --strict` reuses the runner's sandboxed result for HEAD and runs
+     only the stages the runner reported `missing` (integration that needs an unconfined host, say).
+     That holds only when the runner checked exactly this commit: the branch already contains its
+     base, the commit edits no verifier path or config, and the worktree matches HEAD by content
+     (checked against a fresh index, so assume-unchanged, skip-worktree and fsmonitor can't hide an
+     edit). Ignored files aren't part of the tree and aren't checked. Otherwise every
+     stage runs here, and the first line says why. Each stage records whether it came from the
+     runner or ran here. Push the branch, keep it current with its base, and let the runner check it
+     while you work; `--fresh` runs everything here.
    Add `--pr NUMBER` for one open PR; it reads that exact PR, refuses closed or mismatched replies,
    and records its label with the result. This cannot be combined with `--branch`.
    Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
