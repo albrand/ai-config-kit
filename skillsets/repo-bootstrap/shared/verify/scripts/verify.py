@@ -624,6 +624,16 @@ def summary(verdict, results, note=""):
     return f"{verdict}{note}: " + ", ".join(f"{r['stage']}={r['status']}" for r in results)
 
 
+def write_artifact(runs, name, art):
+    """Write runs/name by atomic replace: a symlink planted at that path is replaced, never followed."""
+    runs.mkdir(parents=True, exist_ok=True)
+    tmp = runs / f".{name}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(json.dumps(art, indent=1))
+    os.replace(tmp, runs / name)
+
+
 def runner_result(repo, sha):
     """(artifact, why not): the runner's result for exactly this commit, when it can stand in for running here.
     Read from the runner's own files on this host, never from forge statuses, which anyone with push access can
@@ -640,6 +650,8 @@ def runner_result(repo, sha):
         return None, "the runner's result is not from a sandboxed strict job"
     if art.get("edited") != [] or art.get("config_edited") is not False:  # absent or malformed: unknown
         return None, "this commit edits the verifier or config, which the runner replaced with its base's copy"
+    if (repo / RUNS / f"{sha}.json").is_symlink():
+        return None, f"{RUNS / (sha + '.json')} is a symlink, not this command's artifact"
     own = f"?? {(RUNS / f'{sha}.json').as_posix()}"  # this command's own artifact for HEAD, from an earlier run
     dirty = [e for e in git(repo, "status", "--porcelain", "--untracked-files=all").splitlines() if e != own]
     if dirty:
@@ -678,8 +690,7 @@ def cmd_run(args):
     art = {"sha": sha, "at": now(), "strict": args.strict, "base": args.base, "verdict": verdict, "stages": results}
     if reuse:
         art["runner"] = {k: runner.get(k) for k in ("at", "base", "base_sha", "checked", "kind", "label")}
-    (repo / RUNS).mkdir(parents=True, exist_ok=True)
-    (repo / RUNS / f"{sha}.json").write_text(json.dumps(art, indent=1))
+    write_artifact(repo / RUNS, f"{sha}.json", art)
     if post:
         posted &= post(STATUS_PREFIX, verdict, summary(verdict, results))
     label = {"pass": "PASS", "fail": "FAIL", "not-verified": "NOT VERIFIED"}[verdict]

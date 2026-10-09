@@ -343,6 +343,22 @@ class RunnerReuse(unittest.TestCase):
                 self.assertIn("ran-unit-here", out)
                 self.assertEqual(stages["unit"]["source"], "local")
 
+    def test_a_symlink_at_the_artifact_path_refuses_reuse_and_is_replaced_not_followed(self):
+        sentinel = self.tmp / "sentinel.txt"
+        sentinel.write_text("sentinel\n")
+        self.runner_art()
+        (self.repo / ".verify/runs").mkdir(parents=True, exist_ok=True)
+        (self.repo / ".verify/runs" / f"{self.sha}.json").symlink_to(sentinel)
+        rc, out, stages, _ = self.run_strict()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("is a symlink", out)
+        self.assertIn("ran-unit-here", out)
+        self.assertEqual(stages["unit"]["source"], "local")
+        self.assertEqual(sentinel.read_text(), "sentinel\n")
+        self.assertFalse((self.repo / ".verify/runs" / f"{self.sha}.json").is_symlink())
+        rc, out, stages, _ = self.run_strict()  # the replaced, regular artifact is this command's own again
+        self.assertEqual((rc, stages["unit"]["source"]), (0, "runner"), out)
+
     def test_a_reused_failure_stays_a_failure_and_says_how_to_rerun_it(self):
         self.runner_art(unit="fail")
         rc, out, stages, _ = self.run_strict()
