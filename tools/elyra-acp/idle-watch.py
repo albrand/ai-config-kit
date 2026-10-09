@@ -23,6 +23,7 @@ HOME = os.path.expanduser("~")
 STATE = f"{HOME}/.local/state/elyra-acp/idle-watch.json"
 BB_DB = f"{HOME}/.bb/bb.db"
 SCOPE_GATE = f"{HOME}/.agents/skills/scope-ledger/scripts/scope-gate.py"
+MIGRATIONS = f"{HOME}/.local/state/elyra-acp/migrations.json"
 IDLE_MIN, CLOSEOUT_MIN, ARCHIVE_MIN = 20, 40, 40
 SKIP = {"thr_8bqtrnzyca"}  # GRAPHLANE-A runs on hsrpc-wsl, outside this Mac's fleet tooling
 
@@ -66,7 +67,19 @@ def tick(coord, dry):
         state = {}
     db = sqlite3.connect(f"file:{BB_DB}?mode=ro", uri=True)
     now = time.time() * 1000
+    try:
+        moved = {v["old"] for v in json.load(open(MIGRATIONS)).values() if v.get("done")}
+    except Exception:
+        moved = set()
     kids = [k for k in (bbj("thread", "list", "--parent-thread", coord) or []) if not k.get("archivedAt") and k["id"] not in SKIP]
+    for k in [k for k in kids if k["id"] in moved]:
+        # A moved original is history; its session now lives in an Elyra card. Never message
+        # it (that would start bb's native provider as a second writer): release and re-archive.
+        log(f"re-archive moved original {k['id']}")
+        if not dry:
+            subprocess.run(["python3", SCOPE_GATE, "release", coord, k["id"], "--evidence", "moved to Elyra; archived original"], capture_output=True, text=True)
+            bb("thread", "archive", k["id"])
+    kids = [k for k in kids if k["id"] not in moved]
     to_nudge = []
     for k in kids:
         tid = k["id"]

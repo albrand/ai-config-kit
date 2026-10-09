@@ -446,14 +446,29 @@ class Session {
   // Operator requests for this card, from control/<bbThreadId>.json. Only the bridge
   // (spawned by bb, outside any card) may drive cards, so maintenance goes through it:
   //   relaunch: quit the agent so the card is relaunched (resuming the native session)
-  //   canvas:   [["canvas","link",src,dst] | ["canvas","move",...] | ["canvas","rename",...]]
+  //   canvas:   [["canvas","move",...] | ["canvas","link",coordCard,childCard]] (validated below)
   async applyControl(reg) {
     const file = `${STATE_DIR}/control/${process.env.BB_THREAD_ID}.json`;
     let ctl;
     try { ctl = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
     try { fs.unlinkSync(file); } catch {}
+    // Every card agent can write this file, and the bridge acts outside Elyra's link check.
+    // So: moves are cosmetic and allowed; a link is drawn only from a coordinator's card to the
+    // card of one of its own bb children (checked against bb's parentage); nothing else runs.
+    const registry = readRegistry();
+    const threadOfCard = (title) => Object.values(registry).find((r) => r.cardTitle === title)?.bbThreadId;
+    const parentOf = (tid) => {
+      try {
+        const out = childProcess.execFileSync(process.execPath, [process.env.BB_CLI, "thread", "show", tid, "--json"], { timeout: 15000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }).toString();
+        return JSON.parse(out).thread?.parentThreadId || null;
+      } catch { return null; }
+    };
     for (const args of Array.isArray(ctl.canvas) ? ctl.canvas : []) {
-      if (!Array.isArray(args) || args[0] !== "canvas" || !["link", "move", "rename"].includes(args[1])) continue;
+      if (!Array.isArray(args) || args[0] !== "canvas" || !["link", "move"].includes(args[1])) continue;
+      if (args[1] === "link") {
+        const src = threadOfCard(String(args[2])), dst = threadOfCard(String(args[3]));
+        if (!src || !dst || parentOf(dst) !== src) { log({ event: "control-canvas-refused", args, why: "link is not coordinator -> own child" }); continue; }
+      }
       const r = await elyra(args.map(String));
       log({ event: "control-canvas", args, ok: r.ok, error: r.error?.message });
     }

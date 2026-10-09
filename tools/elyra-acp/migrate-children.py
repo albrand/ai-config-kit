@@ -22,7 +22,8 @@ HOME = os.path.expanduser("~")
 CONFIG = f"{HOME}/.config/elyra-acp/config.json"
 LEDGER = f"{HOME}/.local/state/elyra-acp/migrations.json"
 LOCAL_PREFIX = HOME + "/"
-APPROVAL = "user, 2026-10-09: \"bring everything in, including codex childrens, all of them\""
+SCOPE_GATE = f"{HOME}/.agents/skills/scope-ledger/scripts/scope-gate.py"
+APPROVAL ="user, 2026-10-09: \"bring everything in, including codex childrens, all of them\""
 
 def bb(*a, check=False):
     r = subprocess.run(["bb", *a], capture_output=True, text=True)
@@ -121,6 +122,10 @@ def migrate(child, parent, history, ledger, force=False):
     # Archive the stopped original: an archived thread rejects messages (409), so
     # nothing can wake it as a second writer on the session now in Elyra.
     # (Re-parenting it instead sends a notice that starts a turn on the parent.)
+    # Release it from the coordinator's scope ledger first: otherwise the fleet scope guard
+    # restores an archived child that still has open purposes, waking a second writer.
+    subprocess.run(["python3", SCOPE_GATE, "release", parent, tid, "--evidence", f"moved to Elyra as {new} (same native session); archived original"],
+                   capture_output=True, text=True)
     for _ in range(10):  # right after a stop, archive can lose a race with the stop settling
         if bb("thread", "archive", tid).returncode == 0 and (bbj("thread", "show", tid) or {}).get("thread", {}).get("archivedAt"):
             break
