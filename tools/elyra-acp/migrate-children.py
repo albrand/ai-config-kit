@@ -159,7 +159,7 @@ def main():
                 log(f"{k['id']}: ERROR {e}")
         remaining = [k["id"] for k in pending if not load(LEDGER, {}).get(k["id"], {}).get("done")]
         log(f"pending {len(remaining)}: {' '.join(remaining)}")
-        if not loop or not remaining:
+        if not loop:  # with --loop, keep watching: the coordinator may spawn new native children
             break
         time.sleep(loop)
 
