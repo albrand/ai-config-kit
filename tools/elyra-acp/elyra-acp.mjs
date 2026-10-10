@@ -10,6 +10,7 @@ import os from "node:os";
 import readline from "node:readline";
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
+import { trustPromptKeys } from "./trust-prompt.mjs";
 
 const HOME = os.homedir();
 const CONFIG_PATH = process.env.ELYRA_ACP_CONFIG || HOME + "/.config/elyra-acp/config.json";
@@ -565,12 +566,23 @@ class Session {
       const text = await this.screen();
       const gate = this.blockingGate(text);
       if (gate && /trust this folder/.test(gate) && autoTrustable(this.cwd) && !this.trustAnswered) {
-        // Default choice on Claude's trust prompt is "Yes, proceed".
+        // The cursor may start on "No, exit", so move it to "Yes" by visible position. One attempt only.
         this.trustAnswered = true;
+        const keys = trustPromptKeys(text);
+        if (!keys.length) {
+          log({ event: "auto-trust-failed", cwd: this.cwd, card: this.cardTitle, reason: "unrecognised trust prompt, nothing sent", screen: text.split("\n").slice(-12) });
+          continue;
+        }
         markTrusted(this.cwd);
-        const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text", "\r", "--no-enter"]);
-        log({ event: "auto-trust-answered", cwd: this.cwd, card: this.cardTitle, sendOk: r.ok, sendError: r.error?.message, screen: text.split("\n").slice(-12) });
+        let sendOk = true, sendError;
+        for (const key of keys) {
+          const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text", key, "--no-enter"]);
+          if (!r.ok) { sendOk = false; sendError = r.error?.message; break; }
+        }
         await sleep(2000);
+        const after = await this.screen();
+        const stillThere = /trust this folder|Do you trust/i.test(after.slice(-3000));
+        log({ event: stillThere || !sendOk ? "auto-trust-failed" : "auto-trust-answered", cwd: this.cwd, card: this.cardTitle, keys: keys.length, sendOk, sendError, screen: text.split("\n").slice(-12) });
         continue;
       }
       if (BACKEND === "codex" && this.nativeId && (this.unarchiveTries || 0) < 4 && /This conversation is archived/.test(text) && /Unarchive and resume/.test(text) && text.includes(this.nativeId)) {

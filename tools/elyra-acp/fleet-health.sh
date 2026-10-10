@@ -46,10 +46,16 @@ old=$(bb thread show thr_vr4dga9uxn 2>&1 | sed -n 2p | awk '{print $2}')
 python3 - "$log" <<'PY'
 import json, os, subprocess, sys, time
 mig = json.load(open(os.path.expanduser("~/.local/state/elyra-acp/migrations.json"))) if os.path.exists(os.path.expanduser("~/.local/state/elyra-acp/migrations.json")) else {}
+def archived_ids():
+    out = subprocess.run(["bb", "thread", "list", "--json"], capture_output=True, text=True).stdout
+    try: return {t["id"] for t in json.loads(out) if t.get("archivedAt")}
+    except Exception: return set()
+archived = archived_ids()
 lines = open(sys.argv[1]).read().splitlines()[-4000:]
 cut = time.strftime("%Y-%m-%dT%H:%M", time.gmtime(time.time() - 1800))
 for old, r in mig.items():
     new = r.get("new")
+    if new in archived: continue
     if not new: print(f"WARN migration of {old} incomplete: {r.get('error','no new thread')}"); continue
     st = subprocess.run(["bb", "thread", "show", new], capture_output=True, text=True).stdout.splitlines()
     state = st[1].split()[-1] if len(st) > 1 else "unknown"
@@ -76,6 +82,9 @@ import os
 fleet = {"thr_67z7498bvq"} | {v["new"] for v in json.load(open(os.path.expanduser("~/.local/state/elyra-acp/migrations.json"))).values() if v.get("new")}
 stale = sorted(t for t, v in last.items() if v != cur and t in fleet)
 import subprocess
-live = [t for t in stale if subprocess.run(["bb", "thread", "show", t], capture_output=True, text=True).stdout.count("archived") == 0]
+out = subprocess.run(["bb", "thread", "list", "--json"], capture_output=True, text=True).stdout
+try: archived = {t["id"] for t in json.loads(out) if t.get("archivedAt")}
+except Exception: archived = set()
+live = [t for t in stale if t not in archived]
 print(("WARN old bridge code on: " + " ".join(live)) if live else "OK   every bridge runs current code")
 PY
