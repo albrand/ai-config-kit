@@ -10,7 +10,7 @@ import os from "node:os";
 import readline from "node:readline";
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
-import { trustPromptKeys } from "./trust-prompt.mjs";
+import { trustPromptKeys, trustConfirmKey } from "./trust-prompt.mjs";
 
 const HOME = os.homedir();
 const CONFIG_PATH = process.env.ELYRA_ACP_CONFIG || HOME + "/.config/elyra-acp/config.json";
@@ -573,16 +573,36 @@ class Session {
           log({ event: "auto-trust-failed", cwd: this.cwd, card: this.cardTitle, reason: "unrecognised trust prompt, nothing sent", screen: text.split("\n").slice(-12) });
           continue;
         }
-        markTrusted(this.cwd);
-        let sendOk = true, sendError;
-        for (const key of keys) {
+        // Move first, then re-read: Enter is sent only once the cursor is confirmed on "Yes",
+        // because a lost arrow key would leave it on "No, exit" and Enter would quit the session.
+        const sent = [];
+        const send = async (key) => {
           const r = await elyra(["terminal", "send", "--terminal", this.cardTitle, "--text", key, "--no-enter"]);
-          if (!r.ok) { sendOk = false; sendError = r.error?.message; break; }
+          if (r.ok) sent.push(key);
+          return r;
+        };
+        let failReason = null;
+        for (const key of keys.slice(0, -1)) {
+          const r = await send(key);
+          if (!r.ok) { failReason = `send failed: ${r.error?.message}`; break; }
         }
-        await sleep(2000);
-        const after = await this.screen();
-        const stillThere = /trust this folder|Do you trust/i.test(after.slice(-3000));
-        log({ event: stillThere || !sendOk ? "auto-trust-failed" : "auto-trust-answered", cwd: this.cwd, card: this.cardTitle, keys: keys.length, sendOk, sendError, screen: text.split("\n").slice(-12) });
+        if (!failReason) {
+          await sleep(500);
+          const moved = await this.screen();
+          const enter = trustConfirmKey(moved);
+          if (!enter) failReason = "cursor not on Yes after move";
+          else {
+            const r = await send(enter);
+            if (!r.ok) failReason = `send failed: ${r.error?.message}`;
+          }
+        }
+        if (!failReason) {
+          await sleep(2000);
+          const after = await this.screen();
+          if (/trust this folder|Do you trust/i.test(after.slice(-3000))) failReason = "trust prompt still showing after Enter";
+        }
+        if (failReason) log({ event: "auto-trust-failed", cwd: this.cwd, card: this.cardTitle, reason: failReason, keysSent: sent, screen: text.split("\n").slice(-12) });
+        else { markTrusted(this.cwd); log({ event: "auto-trust-answered", cwd: this.cwd, card: this.cardTitle, keysSent: sent }); }
         continue;
       }
       if (BACKEND === "codex" && this.nativeId && (this.unarchiveTries || 0) < 4 && /This conversation is archived/.test(text) && /Unarchive and resume/.test(text) && text.includes(this.nativeId)) {

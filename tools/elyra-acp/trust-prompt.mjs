@@ -19,3 +19,9 @@ export function trustPromptKeys(screenText) {
   const move = delta > 0 ? Array(delta).fill(DOWN) : Array(-delta).fill(UP);
   return [...move, "\r"];
 }
+
+// Enter is only safe once the cursor is on "Yes": "\r" then, otherwise null (send nothing).
+export function trustConfirmKey(screenText) {
+  const keys = trustPromptKeys(screenText);
+  return keys.length === 1 && keys[0] === "\r" ? "\r" : null;
+}

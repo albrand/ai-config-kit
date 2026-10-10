@@ -26,3 +26,19 @@ test("unrelated screen: nothing", () => {
 test("Yes shown but no cursor line: nothing", () => {
   assert.deepEqual(trustPromptKeys(["Yes, I trust this folder", "No, exit"].join("\n")), []);
 });
+
+import { trustConfirmKey } from "./trust-prompt.mjs";
+
+test("confirm: cursor moved onto Yes -> Enter", () => {
+  const s = [...head, "   No, exit", " ❯ Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  assert.equal(trustConfirmKey(s), "\r");
+});
+
+test("confirm: cursor still on No, exit -> nothing", () => {
+  const s = [...head, " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  assert.equal(trustConfirmKey(s), null);
+});
+
+test("confirm: unrelated screen -> nothing", () => {
+  assert.equal(trustConfirmKey("$ ls"), null);
+});
