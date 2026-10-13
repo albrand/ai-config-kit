@@ -1079,6 +1079,13 @@ def job_git_env(job):
     return env
 
 
+def make_job_dir(jobs, sha):
+    """A new job directory under `jobs`. Short on purpose: TMPDIR is job/tmp, and tools put Unix sockets there
+    (tsx's IPC pipe, mongod's socket). macOS caps a socket path at 104 bytes; "<repo>-<sha9>-" pushed
+    pallium-app's tsx pipe to 105 and every tsx command failed with EINVAL."""
+    return Path(tempfile.mkdtemp(prefix=f"{sha[:7]}-", dir=jobs)).resolve()
+
+
 def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="pr", budget=None):
     """Run one job. Every job is a PR job (no secrets, base branch's config) unless it is a `branch` job
     whose SHA is, right now, the head of the owner-listed branch named by `label`. Its posts draw on `budget`,
@@ -1113,7 +1120,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         pinned = [] if trusted else verifier_paths(cfg)
     except ValueError as e:
         return "done" if post(STATUS_PREFIX, "fail", f"{base}'s config: {e}") else "error"
-    job = Path(tempfile.mkdtemp(prefix=f"{slug.split('/')[-1]}-{sha[:9]}-", dir=jobs)).resolve()
+    job = make_job_dir(jobs, sha)
     work = job / "repo"
     try:
         wrap = sandbox_wrap(job, args, pinned)
