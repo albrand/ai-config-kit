@@ -1183,7 +1183,7 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         if trusted and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
             stages.append("mutation")
         # A PR that skips, deletes or loosens tests fails the job, as `weaken-check` does locally.
-        weak = weaken_result(mirror, since, sha) if since else None
+        weak = None if trusted else weaken_result(mirror, since, sha)
         if weak:
             print(f"[verify] {'weaken':<11} {weak['status']:<10} {weak['detail']}", flush=True)
             if weak.get("tail"):
@@ -1334,6 +1334,8 @@ def weaken_result(repo, since, sha, env=None):
     base branch. Read from the mirror before any PR code runs. A commit line 'test-change-reason: <why>' allows it,
     and the status shows the reason so the reviewer sees it."""
     r = {"stage": "weaken", "started": now()}
+    if not since:
+        return {**r, "status": "missing", "detail": f"{sha[:9]} shares no history with its base branch; nothing to diff"}
     rc, diff = sh(["git", "-C", str(repo), "diff", "--unified=0", f"{since}..{sha}"], env=env, timeout=120, merge=False)
     if rc != 0:
         return {**r, "status": "missing", "detail": f"cannot diff {sha[:9]} against where it left the base branch"}

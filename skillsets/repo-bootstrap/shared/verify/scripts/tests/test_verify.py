@@ -806,6 +806,11 @@ class PinnedVerifier(unittest.TestCase):
         self.run_pr(self.write("src/app.sh", "exit 0\n"))
         self.assertIn("no skipped, deleted or loosened tests", self.weaken_post()[2])
 
+    def test_a_pr_with_no_shared_history_is_not_passed_by_the_weaken_check(self):
+        r = verify.weaken_result(self.origin, None, "a" * 40)
+        self.assertEqual((r["stage"], r["status"]), ("weaken", "missing"), r)
+        self.assertEqual(verify.overall([r, {"stage": "unit", "status": "pass"}]), "not-verified")
+
     def test_a_branch_job_runs_no_weaken_check(self):
         self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(), branch_job=True)
         self.assertNotIn("verify/weaken", [p[0] for p in self.posts])
