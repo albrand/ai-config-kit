@@ -811,6 +811,15 @@ class PinnedVerifier(unittest.TestCase):
         self.assertEqual((r["stage"], r["status"]), ("weaken", "missing"), r)
         self.assertEqual(verify.overall([r, {"stage": "unit", "status": "pass"}]), "not-verified")
 
+    def test_a_pr_job_with_unrelated_history_runs_nothing_and_is_not_green(self):
+        def change(repo):  # a new root commit: no merge base with main
+            git(repo, "checkout", "-q", "--orphan", "unrelated")
+            (repo / "tests/widget.sh").unlink()
+            self.write("tests/other.sh", "exit 0\n")(repo)
+        final, _ = self.run_pr(change)
+        self.assertEqual(final[:2], ("verify", "missing"), self.posts)
+        self.assertNotIn("success", [verify.GH_STATE[p[1]] for p in self.posts], self.posts)
+
     def test_a_branch_job_runs_no_weaken_check(self):
         self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(), branch_job=True)
         self.assertNotIn("verify/weaken", [p[0] for p in self.posts])
