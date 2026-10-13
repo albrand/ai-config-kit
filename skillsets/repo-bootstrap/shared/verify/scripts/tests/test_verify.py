@@ -960,5 +960,19 @@ class UnconfinedStage(unittest.TestCase):
                          "pass")  # --unsandboxed: the host accepted
 
 
+class JobDir(unittest.TestCase):
+    def test_socket_in_job_tmp_fits_the_macos_limit(self):
+        # tsx opens <TMPDIR>/tsx-<uid>/<pid>.pipe; macOS refuses a socket path of 104 bytes or more.
+        jobs = verify.RUNNER_HOME / "jobs"
+        jobs.mkdir(parents=True, exist_ok=True)
+        job = verify.make_job_dir(jobs, "7100e8105" + "0" * 31)
+        try:
+            pipe = job / "tmp" / "tsx-501" / "43492.pipe"
+            self.assertLess(len(str(pipe).encode()), 104, pipe)
+            self.assertTrue(job.name.startswith("7100e81-"))
+        finally:
+            shutil.rmtree(job, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
