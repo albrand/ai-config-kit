@@ -219,8 +219,15 @@ ROW_STATUSES = ("open", "closed", "fail_escalated")
 ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity", "status")
 
 
+GIT_TIMEOUT_S = 60
+
+
 def run_git(repo, *args):
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=5)
+    """git in `repo`. A busy machine can take more than a few seconds per call, so the limit is generous. A call that
+    still runs out raises TimeoutExpired, never an empty answer: several callers read empty output as "no upstream" or
+    "default branch main", which would let a ship through, while a raise is a crash and a crash denies. In hook mode
+    the hard deadline (HOOK_HARD_S) decides first."""
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
 
 
 def repo_root(start):
@@ -2835,6 +2842,42 @@ def selftest(v4_gate=None, v4_templates=None):
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
         return sh('python3 "%s" hook' % os.path.abspath(__file__), cwd=root, inp=payload)
+
+    # a git call that outlasts the limit raises (a crash, which fails closed); it never answers empty, which
+    # default_branch() would read as "main" and upstream_branch() as "no upstream"
+    global GIT_TIMEOUT_S
+    slow_bin = os.path.join(tmp, "git-past-limit")
+    os.makedirs(slow_bin, exist_ok=True)
+    with open(os.path.join(slow_bin, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nexec sleep 3\n")
+    os.chmod(os.path.join(slow_bin, "git"), 0o755)
+    slow_repo = mkrepo("git-past-limit-repo")
+    saved_git = GIT_TIMEOUT_S, os.environ["PATH"]
+    GIT_TIMEOUT_S, os.environ["PATH"] = 0.3, slow_bin + os.pathsep + os.environ["PATH"]
+
+    def outcome(fn):
+        try:
+            return ("answered", fn(slow_repo))
+        except subprocess.TimeoutExpired:
+            return ("raised", None)
+    try:
+        slow_git = outcome(lambda r: run_git(r, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"))
+        slow_branches = [outcome(fn)[0] for fn in (default_branch, upstream_branch, current_branch, head_commit)]
+        slow_check = check_all(slow_repo)
+        slow_origin = origin_repo(slow_repo)
+        # a ship_commands match resolves HEAD inside ship_plan: a timeout there still yields the ship kind
+        slow_plan = outcome(lambda r: ship_plan("make ship-it", r, {"ship_commands": ["ship-it"]}))
+    finally:
+        GIT_TIMEOUT_S, os.environ["PATH"] = saved_git
+    expect(slow_git[0] == "raised", "a git call past the limit raises instead of answering empty")
+    expect(slow_branches == ["raised"] * 4,
+           "default/upstream/current branch and head commit raise on a git past the limit %s" % slow_branches)
+    expect(not slow_check[0] and any("gate internal error" in f for f in slow_check[1]),
+           "check_all with a git past the limit fails closed %s" % slow_check[1][:1])
+    expect(slow_origin is None, "origin_repo with a git past the limit is None (no repository to check against denies)")
+    expect(slow_plan[0] == "answered" and slow_plan[1][0] == "extra",
+           "ship_plan for a ship_commands match keeps the ship kind on a git past the limit (%s)"
+           % ((slow_plan[1][:2] if slow_plan[1] else slow_plan[0]),))
 
     def cfgs_of(root):
         try:
