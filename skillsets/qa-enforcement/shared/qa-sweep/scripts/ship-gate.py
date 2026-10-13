@@ -2865,6 +2865,8 @@ def selftest(v4_gate=None, v4_templates=None):
         slow_branches = [outcome(fn)[0] for fn in (default_branch, upstream_branch, current_branch, head_commit)]
         slow_check = check_all(slow_repo)
         slow_origin = origin_repo(slow_repo)
+        # a ship_commands match resolves HEAD inside ship_plan: a timeout there still yields the ship kind
+        slow_plan = outcome(lambda r: ship_plan("make ship-it", r, {"ship_commands": ["ship-it"]}))
     finally:
         GIT_TIMEOUT_S, os.environ["PATH"] = saved_git
     expect(slow_git[0] == "raised", "a git call past the limit raises instead of answering empty")
@@ -2873,6 +2875,9 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(not slow_check[0] and any("gate internal error" in f for f in slow_check[1]),
            "check_all with a git past the limit fails closed %s" % slow_check[1][:1])
     expect(slow_origin is None, "origin_repo with a git past the limit is None (no repository to check against denies)")
+    expect(slow_plan[0] == "answered" and slow_plan[1][0] == "extra",
+           "ship_plan for a ship_commands match keeps the ship kind on a git past the limit (%s)"
+           % ((slow_plan[1][:2] if slow_plan[1] else slow_plan[0]),))
 
     def cfgs_of(root):
         try:
