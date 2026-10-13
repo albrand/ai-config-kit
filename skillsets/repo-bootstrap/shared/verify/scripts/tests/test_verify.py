@@ -740,10 +740,10 @@ class PinnedVerifier(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(self.origin, ignore_errors=True)
 
-    def run_pr(self, change, branch_job=False):
+    def run_pr(self, change, branch_job=False, message="pr"):
         change(self.origin)
         git(self.origin, "add", "-A")
-        git(self.origin, "commit", "-q", "--allow-empty", "-m", "pr")
+        git(self.origin, "commit", "-q", "--allow-empty", "-m", message)
         sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True,
                              text=True).stdout.strip()
         mirror = self.tmp / f"mirror-{sha[:9]}.git"
@@ -780,6 +780,35 @@ class PinnedVerifier(unittest.TestCase):
     def test_a_file_the_pr_adds_under_a_pinned_directory_is_dropped(self):
         final, _ = self.run_pr(self.write("scripts/suites/more", "tests/widget.sh\n"))
         self.assertEqual(final[1], "fail", final)
+
+    def weaken_post(self):
+        return next(p for p in self.posts if p[0] == "verify/weaken")
+
+    def test_a_pr_that_deletes_its_failing_test_fails_the_weaken_check(self):
+        def change(repo):
+            (repo / "tests/widget.sh").unlink()
+            self.write("tests/other.sh", "exit 0\n")(repo)
+        final, out = self.run_pr(change)
+        self.assertEqual(self.weaken_post()[:2], ("verify/weaken", "fail"), self.posts)
+        self.assertIn("tests/widget.sh: deletes a test file", self.weaken_post()[2])
+        self.assertEqual(final[1], "fail", final)  # the unit stage now passes; the weaken check still fails the job
+        self.assertIn("weaken=fail", final[2])
+        self.assertIn("unit=pass", final[2])
+
+    def test_a_stated_test_change_reason_lets_the_deletion_through_and_shows_it(self):
+        self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(),
+                    message="drop the widget test\n\ntest-change-reason: the widget was removed")
+        state, detail = self.weaken_post()[1:]
+        self.assertEqual(state, "missing")  # --unsandboxed caps every pass
+        self.assertIn("reason given: the widget was removed", detail)
+
+    def test_a_pr_that_leaves_tests_alone_passes_the_weaken_check(self):
+        self.run_pr(self.write("src/app.sh", "exit 0\n"))
+        self.assertIn("no skipped, deleted or loosened tests", self.weaken_post()[2])
+
+    def test_a_branch_job_runs_no_weaken_check(self):
+        self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(), branch_job=True)
+        self.assertNotIn("verify/weaken", [p[0] for p in self.posts])
 
     def test_a_symlinked_verifier_directory_is_refused_and_nothing_outside_changes(self):
         outside = self.tmp / "outside"
