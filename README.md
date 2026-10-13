@@ -40,6 +40,11 @@ concept quickly.
 
 ## What This Repository Is
 
+For an authorized BB/Elyra hybrid fleet trial, the optional
+[fleet continuation bridge](scripts/fleet-bridge/README.md) preserves source
+scope and write ownership while reporting native state under a local scheduler.
+Project and machine bindings stay in private operator configuration.
+
 Use this repository as a portable instruction kit for AI-assisted software work.
 
 It provides:
