@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -740,10 +741,10 @@ class PinnedVerifier(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(self.origin, ignore_errors=True)
 
-    def run_pr(self, change, branch_job=False):
+    def run_pr(self, change, branch_job=False, message="pr"):
         change(self.origin)
         git(self.origin, "add", "-A")
-        git(self.origin, "commit", "-q", "--allow-empty", "-m", "pr")
+        git(self.origin, "commit", "-q", "--allow-empty", "-m", message)
         sha = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "HEAD"], capture_output=True,
                              text=True).stdout.strip()
         mirror = self.tmp / f"mirror-{sha[:9]}.git"
@@ -780,6 +781,49 @@ class PinnedVerifier(unittest.TestCase):
     def test_a_file_the_pr_adds_under_a_pinned_directory_is_dropped(self):
         final, _ = self.run_pr(self.write("scripts/suites/more", "tests/widget.sh\n"))
         self.assertEqual(final[1], "fail", final)
+
+    def weaken_post(self):
+        return next(p for p in self.posts if p[0] == "verify/weaken")
+
+    def test_a_pr_that_deletes_its_failing_test_fails_the_weaken_check(self):
+        def change(repo):
+            (repo / "tests/widget.sh").unlink()
+            self.write("tests/other.sh", "exit 0\n")(repo)
+        final, out = self.run_pr(change)
+        self.assertEqual(self.weaken_post()[:2], ("verify/weaken", "fail"), self.posts)
+        self.assertIn("tests/widget.sh: deletes a test file", self.weaken_post()[2])
+        self.assertEqual(final[1], "fail", final)  # the unit stage now passes; the weaken check still fails the job
+        self.assertIn("weaken=fail", final[2])
+        self.assertIn("unit=pass", final[2])
+
+    def test_a_stated_test_change_reason_lets_the_deletion_through_and_shows_it(self):
+        self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(),
+                    message="drop the widget test\n\ntest-change-reason: the widget was removed")
+        state, detail = self.weaken_post()[1:]
+        self.assertEqual(state, "missing")  # --unsandboxed caps every pass
+        self.assertIn("reason given: the widget was removed", detail)
+
+    def test_a_pr_that_leaves_tests_alone_passes_the_weaken_check(self):
+        self.run_pr(self.write("src/app.sh", "exit 0\n"))
+        self.assertIn("no skipped, deleted or loosened tests", self.weaken_post()[2])
+
+    def test_a_pr_with_no_shared_history_is_not_passed_by_the_weaken_check(self):
+        r = verify.weaken_result(self.origin, None, "a" * 40)
+        self.assertEqual((r["stage"], r["status"]), ("weaken", "missing"), r)
+        self.assertEqual(verify.overall([r, {"stage": "unit", "status": "pass"}]), "not-verified")
+
+    def test_a_pr_job_with_unrelated_history_runs_nothing_and_is_not_green(self):
+        def change(repo):  # a new root commit: no merge base with main
+            git(repo, "checkout", "-q", "--orphan", "unrelated")
+            (repo / "tests/widget.sh").unlink()
+            self.write("tests/other.sh", "exit 0\n")(repo)
+        final, _ = self.run_pr(change)
+        self.assertEqual(final[:2], ("verify", "missing"), self.posts)
+        self.assertNotIn("success", [verify.GH_STATE[p[1]] for p in self.posts], self.posts)
+
+    def test_a_branch_job_runs_no_weaken_check(self):
+        self.run_pr(lambda repo: (repo / "tests/widget.sh").unlink(), branch_job=True)
+        self.assertNotIn("verify/weaken", [p[0] for p in self.posts])
 
     def test_a_symlinked_verifier_directory_is_refused_and_nothing_outside_changes(self):
         outside = self.tmp / "outside"
@@ -963,15 +1007,19 @@ class UnconfinedStage(unittest.TestCase):
 class JobDir(unittest.TestCase):
     def test_socket_in_job_tmp_fits_the_macos_limit(self):
         # tsx opens <TMPDIR>/tsx-<uid>/<pid>.pipe; macOS refuses a socket path of 104 bytes or more.
-        jobs = verify.RUNNER_HOME / "jobs"
-        jobs.mkdir(parents=True, exist_ok=True)
-        job = verify.make_job_dir(jobs, "7100e8105" + "0" * 31)
+        # The runner's job root, as RUNNER_HOME defines it, but with "~" as the account's real home: inside a
+        # runner job HOME is the job's own directory, which would nest a second runner tree in the path.
+        tmp = Path(tempfile.mkdtemp())
         try:
-            pipe = job / "tmp" / "tsx-501" / "43492.pipe"
-            self.assertLess(len(str(pipe).encode()), 104, pipe)
-            self.assertTrue(job.name.startswith("7100e81-"))
+            name = verify.make_job_dir(tmp, "7100e8105" + "0" * 31).name
         finally:
-            shutil.rmtree(job, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)
+        home = pwd.getpwuid(os.getuid()).pw_dir
+        root = os.environ.get("VERIFY_RUNNER_HOME", "~/.cache/verify-runner")
+        jobs = Path(home + root[1:] if root.startswith("~/") else root) / "jobs"
+        pipe = jobs / name / "tmp" / "tsx-501" / "43492.pipe"
+        self.assertLess(len(str(pipe).encode()), 104, pipe)
+        self.assertTrue(name.startswith("7100e81-"))
 
 
 if __name__ == "__main__":

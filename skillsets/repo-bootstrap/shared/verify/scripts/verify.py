@@ -1182,8 +1182,18 @@ def run_job(slug, mirror, sha, base, label, args, post=None, fork=False, kind="p
         stages = list(PER_CHANGE)
         if trusted and (cfg.get("stages", {}).get("mutation") or {}).get("run"):
             stages.append("mutation")
+        # A PR that skips, deletes or loosens tests fails the job, as `weaken-check` does locally.
+        weak = None if trusted else weaken_result(mirror, since, sha)
+        if weak:
+            print(f"[verify] {'weaken':<11} {weak['status']:<10} {weak['detail']}", flush=True)
+            if weak.get("tail"):
+                print("\n".join("    " + line for line in weak["tail"].splitlines()[-25:]), flush=True)
+            weak_posted = post(f"{STATUS_PREFIX}/weaken", weak["status"], weak["detail"])
         verdict, results, posted = execute(work, cfg, stages, True, paths, env, post, wrap, secrets, deadline,
                                            withheld - set(FORGE_TOKENS))
+        if weak:
+            results.insert(0, weak)
+            verdict, posted = overall(results), posted and weak_posted
         if unsandboxed_pr and GH_STATE.get(verdict) == "success":
             verdict, note = "missing", note + f" ({UNSANDBOXED_PR})"  # the artifact records what the status says
         dest = RUNNER_HOME / "runs" / slug.replace("/", "__")
@@ -1314,14 +1324,38 @@ def weaken_findings(diff_text):
     return findings
 
 
+def test_change_reason(log):
+    m = re.search(r"^test-change-reason:\s*(.+)$", log, re.M | re.I)
+    return m.group(1).strip() if m else ""
+
+
+def weaken_result(repo, since, sha, env=None):
+    """weaken-check as a stage result for a runner PR job: what the PR changed under test paths since it left the
+    base branch. Read from the mirror before any PR code runs. A commit line 'test-change-reason: <why>' allows it,
+    and the status shows the reason so the reviewer sees it."""
+    r = {"stage": "weaken", "started": now()}
+    if not since:
+        return {**r, "status": "missing", "detail": f"{sha[:9]} shares no history with its base branch; nothing to diff"}
+    rc, diff = sh(["git", "-C", str(repo), "diff", "--unified=0", f"{since}..{sha}"], env=env, timeout=120, merge=False)
+    if rc != 0:
+        return {**r, "status": "missing", "detail": f"cannot diff {sha[:9]} against where it left the base branch"}
+    findings = weaken_findings(diff)
+    if not findings:
+        return {**r, "status": "pass", "detail": "no skipped, deleted or loosened tests"}
+    reason = test_change_reason(git(repo, "log", "--format=%B", f"{since}..{sha}", env=env))
+    if reason:
+        return {**r, "status": "pass", "detail": f"tests changed, reason given: {reason}", "tail": "\n".join(findings)}
+    return {**r, "status": "fail", "tail": "\n".join(findings),
+            "detail": f"{findings[0]}" + (f" (+{len(findings) - 1} more)" if len(findings) > 1 else "")
+            + "; fix the code, or add a commit line 'test-change-reason: <why>'"}
+
+
 def cmd_weaken(args):
     repo = repo_root(args.repo)
     mb = git(repo, "merge-base", args.base, "HEAD") or args.base
     diff = git(repo, "diff", "--unified=0", f"{mb}...HEAD", timeout=120)
     findings = weaken_findings(diff)
-    log = git(repo, "log", "--format=%B", f"{mb}..HEAD")
-    m = re.search(r"^test-change-reason:\s*(.+)$", log, re.M | re.I)
-    reason = os.environ.get("VERIFY_TEST_CHANGE_REASON") or (m.group(1).strip() if m else "")
+    reason = os.environ.get("VERIFY_TEST_CHANGE_REASON") or test_change_reason(git(repo, "log", "--format=%B", f"{mb}..HEAD"))
     for x in findings:
         print(f"[weaken-check] {x}")
     if findings and not reason:

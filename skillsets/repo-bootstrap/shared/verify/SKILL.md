@@ -51,7 +51,9 @@ stopping point: write the missing stage if you can, then run it.
 - Journeys hit the real backend. Blocking third-party origins is fine. Answering the app's own
   API with `route.fulfill`, msw or nock belongs in a component test, and `doctor` flags it.
 - `weaken-check` fails a change that deletes tests, adds skip/only, removes assertions or edits
-  expected values, unless a commit says `test-change-reason: <why>`.
+  expected values, unless a commit says `test-change-reason: <why>`. The runner runs it on every PR job
+  and posts `verify/weaken`. A weakened PR fails the job even when every stage passes, and a stated
+  reason shows in the status.
 - Non-deterministic output is scored, not eyeballed: `eval-score --dataset --predictions`.
 - Production data is read only through the rehearsal stage, and only after the owner has
   approved the source and the masking.
