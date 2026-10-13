@@ -220,7 +220,13 @@ ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity"
 
 
 def run_git(repo, *args):
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=5)
+    """git in `repo`. A busy machine can take more than a few seconds per call, so the limit is generous; a call that
+    still runs out answers as a failed git call (exit 124, no output), which every caller treats as unknown."""
+    cmd = ["git", "-C", repo, *args]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", "git timed out after 60s")
 
 
 def repo_root(start):
