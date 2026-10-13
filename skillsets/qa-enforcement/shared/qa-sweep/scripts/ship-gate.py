@@ -2851,16 +2851,28 @@ def selftest(v4_gate=None, v4_templates=None):
     with open(os.path.join(slow_bin, "git"), "w") as fh:
         fh.write("#!/bin/sh\nexec sleep 3\n")
     os.chmod(os.path.join(slow_bin, "git"), 0o755)
+    slow_repo = mkrepo("git-past-limit-repo")
     saved_git = GIT_TIMEOUT_S, os.environ["PATH"]
     GIT_TIMEOUT_S, os.environ["PATH"] = 0.3, slow_bin + os.pathsep + os.environ["PATH"]
+
+    def outcome(fn):
+        try:
+            return ("answered", fn(slow_repo))
+        except subprocess.TimeoutExpired:
+            return ("raised", None)
     try:
-        run_git(tmp, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-        slow_git = "answered"
-    except subprocess.TimeoutExpired:
-        slow_git = "raised"
+        slow_git = outcome(lambda r: run_git(r, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"))
+        slow_branches = [outcome(fn)[0] for fn in (default_branch, upstream_branch, current_branch, head_commit)]
+        slow_check = check_all(slow_repo)
+        slow_origin = origin_repo(slow_repo)
     finally:
         GIT_TIMEOUT_S, os.environ["PATH"] = saved_git
-    expect(slow_git == "raised", "a git call past the limit raises instead of answering empty")
+    expect(slow_git[0] == "raised", "a git call past the limit raises instead of answering empty")
+    expect(slow_branches == ["raised"] * 4,
+           "default/upstream/current branch and head commit raise on a git past the limit %s" % slow_branches)
+    expect(not slow_check[0] and any("gate internal error" in f for f in slow_check[1]),
+           "check_all with a git past the limit fails closed %s" % slow_check[1][:1])
+    expect(slow_origin is None, "origin_repo with a git past the limit is None (no repository to check against denies)")
 
     def cfgs_of(root):
         try:
