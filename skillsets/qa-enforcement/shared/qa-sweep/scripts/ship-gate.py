@@ -219,14 +219,15 @@ ROW_STATUSES = ("open", "closed", "fail_escalated")
 ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity", "status")
 
 
+GIT_TIMEOUT_S = 60
+
+
 def run_git(repo, *args):
-    """git in `repo`. A busy machine can take more than a few seconds per call, so the limit is generous; a call that
-    still runs out answers as a failed git call (exit 124, no output), which every caller treats as unknown."""
-    cmd = ["git", "-C", repo, *args]
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(cmd, 124, "", "git timed out after 60s")
+    """git in `repo`. A busy machine can take more than a few seconds per call, so the limit is generous. A call that
+    still runs out raises TimeoutExpired, never an empty answer: several callers read empty output as "no upstream" or
+    "default branch main", which would let a ship through, while a raise is a crash and a crash denies. In hook mode
+    the hard deadline (HOOK_HARD_S) decides first."""
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
 
 
 def repo_root(start):
@@ -2841,6 +2842,25 @@ def selftest(v4_gate=None, v4_templates=None):
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
         return sh('python3 "%s" hook' % os.path.abspath(__file__), cwd=root, inp=payload)
+
+    # a git call that outlasts the limit raises (a crash, which fails closed); it never answers empty, which
+    # default_branch() would read as "main" and upstream_branch() as "no upstream"
+    global GIT_TIMEOUT_S
+    slow_bin = os.path.join(tmp, "git-past-limit")
+    os.makedirs(slow_bin, exist_ok=True)
+    with open(os.path.join(slow_bin, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nexec sleep 3\n")
+    os.chmod(os.path.join(slow_bin, "git"), 0o755)
+    saved_git = GIT_TIMEOUT_S, os.environ["PATH"]
+    GIT_TIMEOUT_S, os.environ["PATH"] = 0.3, slow_bin + os.pathsep + os.environ["PATH"]
+    try:
+        run_git(tmp, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+        slow_git = "answered"
+    except subprocess.TimeoutExpired:
+        slow_git = "raised"
+    finally:
+        GIT_TIMEOUT_S, os.environ["PATH"] = saved_git
+    expect(slow_git == "raised", "a git call past the limit raises instead of answering empty")
 
     def cfgs_of(root):
         try:
