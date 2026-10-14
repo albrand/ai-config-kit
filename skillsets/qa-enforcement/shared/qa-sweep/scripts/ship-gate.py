@@ -2464,30 +2464,44 @@ def ship_commands_match(cfg, command, budget=SHIP_COMMANDS_BUDGET_S):
 
 
 def _ship_commands_child(pats, command, budget):
-    pid = os.fork()
-    if pid == 0:
-        hit = False
-        for p in pats:
+    """Run the patterns in a child. Anything that keeps an answer from coming back (fork refused at the process
+    limit, the child dying, waitpid failing, the budget running out) is a match with a problem: never a silent no."""
+    pid = None
+    try:
+        pid = os.fork()
+        if pid == 0:
+            hit = False
             try:
-                if re.search(p, command):
-                    hit = True
-                    break
+                for p in pats:
+                    try:
+                        if re.search(p, command):
+                            hit = True
+                            break
+                    except Exception:
+                        pass
+            finally:
+                os._exit(1 if hit else 0)
+        end = time.monotonic() + budget
+        while True:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                pid = None
+                if os.WIFEXITED(status) and os.WEXITSTATUS(status) in (0, 1):
+                    return os.WEXITSTATUS(status) == 1, None
+                return True, "matching .qa/config.json ship_commands failed (status %d); treated as a ship" % status
+            if time.monotonic() >= end:
+                return True, ("a .qa/config.json ship_commands pattern did not finish matching within %.1f s; treated "
+                              "as a ship. Simplify the pattern" % budget)
+            time.sleep(0.005)
+    except Exception as exc:
+        return True, "matching .qa/config.json ship_commands failed (%s); treated as a ship" % exc
+    finally:
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
             except Exception:
                 pass
-        os._exit(1 if hit else 0)
-    end = time.monotonic() + budget
-    while True:
-        done, status = os.waitpid(pid, os.WNOHANG)
-        if done:
-            if os.WIFEXITED(status) and os.WEXITSTATUS(status) in (0, 1):
-                return os.WEXITSTATUS(status) == 1, None
-            return True, "matching .qa/config.json ship_commands failed (status %d); treated as a ship" % status
-        if time.monotonic() >= end:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-            return True, ("a .qa/config.json ship_commands pattern did not finish matching within %.1f s; treated as "
-                          "a ship. Simplify the pattern" % budget)
-        time.sleep(0.005)
 
 
 def ship_kind(command, root, cfg):
@@ -4184,6 +4198,17 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(ship_commands_match({"ship_commands": ["ship-it"]}, "make build") == (False, None)
            and ship_commands_match({"ship_commands": []}, "make ship-it") == (False, None),
            "T2 ship_commands_match: no match, and no patterns, answer (False, None)")
+    real_fork = os.fork
+
+    def refused_fork():
+        raise BlockingIOError(35, "Resource temporarily unavailable")
+    os.fork = refused_fork
+    try:
+        refused = ship_commands_match({"ship_commands": ["ship-it"]}, "make build at the process limit")
+    finally:
+        os.fork = real_fork
+    expect(refused[0] and "failed" in (refused[1] or ""),
+           "T2 ship_commands_match: fork refused (process limit) counts as a match with a problem %r" % (refused,))
 
     def cs_payload(command, cwd):
         return json.dumps({"tool_input": {"command": command}, "cwd": cwd})
