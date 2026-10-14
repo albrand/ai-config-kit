@@ -50,6 +50,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2420,21 +2421,87 @@ def ship_plan(command, root, cfg, cwd=None):
             strict |= {x for x in s if x not in e}
             problems += [x for x in pr if x not in problems]
             prov |= set(pv)
-    try:
-        if cfg and isinstance(cfg.get("ship_commands"), list):
-            if any(re.search(str(p), command) for p in cfg["ship_commands"]):
-                kinds.append("extra")
-                h = head_commit(root)
-                if h and h not in shas:
-                    shas.append(h)
-                strict.add(h)
-    except Exception:
-        pass
+    matched, why = ship_commands_match(cfg, command)
+    if why and why not in problems:
+        problems.append(why)
+    if matched:
+        kinds.append("extra")
+        try:
+            h = head_commit(root)
+            if h and h not in shas:
+                shas.append(h)
+            strict.add(h)
+        except Exception:
+            pass
     eq -= strict
     prov -= strict
     if "push" in kinds:
         return "push", shas, eq, problems, prov
     return (kinds[0] if kinds else None), shas, eq, problems, prov
+
+
+SHIP_COMMANDS_BUDGET_S = 2.0
+# (patterns, command) -> (matched, problem). _hook fills it before any git, so the deadline and crash paths read the
+# answer instead of matching again.
+_SHIP_COMMANDS_SEEN = {}
+
+
+def ship_commands_match(cfg, command, budget=SHIP_COMMANDS_BUDGET_S):
+    """(matched, problem) for the config's `ship_commands` patterns. A pattern the regex engine cannot use (invalid,
+    or nested deep enough to raise RecursionError) matches nothing and does not stop the others from being tried.
+    The patterns run in a forked child: a valid pattern can backtrack for minutes, Python's re does not stop for
+    signals, and the hard deadline must still decide. A child that does not answer within `budget` seconds, or dies,
+    counts as a match with a problem, which denies (fail closed: the repo's own pattern is unusable). Each answer is
+    kept for the rest of the process."""
+    pats = cfg.get("ship_commands") if isinstance(cfg, dict) else None
+    pats = tuple(str(p) for p in pats) if isinstance(pats, list) else ()
+    if not pats:
+        return False, None
+    key = (pats, command)
+    if key not in _SHIP_COMMANDS_SEEN:
+        _SHIP_COMMANDS_SEEN[key] = _ship_commands_child(pats, command, budget)
+    return _SHIP_COMMANDS_SEEN[key]
+
+
+def _ship_commands_child(pats, command, budget):
+    """Run the patterns in a child. Anything that keeps an answer from coming back (fork refused at the process
+    limit, the child dying, waitpid failing, the budget running out) is a match with a problem: never a silent no."""
+    pid = None
+    try:
+        pid = os.fork()
+        if pid == 0:
+            hit = False
+            try:
+                for p in pats:
+                    try:
+                        if re.search(p, command):
+                            hit = True
+                            break
+                    except Exception:
+                        pass
+            finally:
+                os._exit(1 if hit else 0)
+        end = time.monotonic() + budget
+        while True:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                pid = None
+                if os.WIFEXITED(status) and os.WEXITSTATUS(status) in (0, 1):
+                    return os.WEXITSTATUS(status) == 1, None
+                return True, "matching .qa/config.json ship_commands failed (status %d); treated as a ship" % status
+            if time.monotonic() >= end:
+                return True, ("a .qa/config.json ship_commands pattern did not finish matching within %.1f s; treated "
+                              "as a ship. Simplify the pattern" % budget)
+            time.sleep(0.005)
+    except Exception as exc:
+        return True, "matching .qa/config.json ship_commands failed (%s); treated as a ship" % exc
+    finally:
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except Exception:
+                pass
 
 
 def ship_kind(command, root, cfg):
@@ -2444,7 +2511,7 @@ def ship_kind(command, root, cfg):
 
 def _hard_deadline(signum, frame):
     """SIGALRM at HOOK_HARD_S: decide now, before the host times the hook out."""
-    if _HOOK_OPTED is not False and coarse_ship(_LAST_INPUT or ""):
+    if _HOOK_OPTED is not False and (coarse_ship(_LAST_INPUT or "") or custom_ship(_LAST_INPUT or "")):
         reason = ("[qa-ship-gate] Ship denied: the gate could not finish within %.1f s of the hook chain "
                   "starting (the host's hook timeout is %.0f s, and a timed-out hook lets the command run); "
                   "retry, or ship one target per command" % (HOOK_HARD_S, HOOK_HOST_TIMEOUT_S))
@@ -2466,7 +2533,6 @@ def hook(raw=None):
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         _hard_deadline(None, None)
     _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S - spent
-    import signal
     signal.signal(signal.SIGALRM, _hard_deadline)
     signal.setitimer(signal.ITIMER_REAL, HOOK_HARD_S - spent)
 
@@ -2508,7 +2574,9 @@ def _hook(raw=None):
             cfgs[root] = load_json(os.path.join(root, ".qa", "config.json"))
         except Exception:
             cfgs[root] = None  # unparseable config on a ship command: check_all reports it
-    plans = {root: ship_plan(command, root, cfgs[root], cwd) for root in targets}
+    for root in targets:  # before any git, so the deadline and crash paths can read the answer
+        ship_commands_match(cfgs[root], command, min(SHIP_COMMANDS_BUDGET_S, max(0.1, time_left())))
+    plans ={root: ship_plan(command, root, cfgs[root], cwd) for root in targets}
     kinds = {root: plans[root][0] for root in targets}
     if not any(kinds.values()):
         return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
@@ -4058,6 +4126,99 @@ def selftest(v4_gate=None, v4_templates=None):
            "T1 a future, unreadable or missing HOOK_T0 counts as 0 s spent (never extends the budget)")
     expect(HOOK_HARD_S <= HOOK_HOST_TIMEOUT_S - 3.0 and HOOK_BUDGET_S < HOOK_HARD_S,
            "T1 hard deadline leaves >= 3 s before the host timeout, soft budget before the hard one")
+    # T2: a repo's own ship_commands are ship-shaped at the hard deadline too. coarse_ship knows only the built-in
+    # shapes, so before custom_ship a `make ship-it` that ran out the clock was allowed. Ahead of the real pattern sit
+    # one the regex engine rejects (re.error), one nested deep enough to raise RecursionError, and a valid one that
+    # backtracks for minutes on a run of a's ending in "!": none may hide it, and none may hold the decision past the
+    # deadline.
+    unusable = ["(", "(" * 500 + "a" + ")" * 500, "(a+)+$"]
+    redos = "echo %s! && make ship-it" % ("a" * 30)
+    r13 = os.path.join(tmp, "custom-ship-deadline")
+    os.makedirs(os.path.join(r13, ".qa"))
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r13)
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "ship_commands": unusable + ["ship-it"]}, open(os.path.join(r13, ".qa", "config.json"), "w"))
+    sh("git add -A && git commit -qm base", cwd=r13)
+    p = hook5(r13, "make ship-it", env=spent)
+    expect(p.returncode == 2 and "could not finish within" in p.stderr,
+           "T2 DENY  chain budget already spent: a ship_commands match is denied [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    for bad in unusable:
+        expect(ship_plan("make ship-it", r13, {"ship_commands": [bad, "ship-it"]})[0] == "extra",
+               "T2 ship_plan: an unusable pattern (%s...) before a matching one does not hide the match" % bad[:3])
+    expect(ship_plan("make ship-it", r13, {"ship_commands": "ship-it"})[0] is None
+           and ship_plan("make ship-it", r13, ["ship-it"])[0] is None,
+           "T2 ship_plan: ship_commands that is not a list, or a config that is not an object, matches nothing")
+    p = hook5(r13, "make ship-it")
+    expect(p.returncode == 2 and "Ship denied in" in p.stderr,
+           "T2 DENY  normal git: an unwalked ship_commands match [%s]" % " ".join(p.stderr.split())[-90:])
+    p = hook5(r13, "make build", env=spent)
+    expect(p.returncode == 0, "T2 ALLOW chain budget already spent: a command no ship_commands entry matches")
+    hang_git = os.path.join(tmp, "hang-git")
+    os.makedirs(hang_git)
+    with open(os.path.join(hang_git, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nsleep 5\nexec %s \"$@\"\n" % shutil.which("git"))
+    os.chmod(os.path.join(hang_git, "git"), 0o755)
+    p = hook5(r13, "make ship-it", env=dict(t0_left(1.5), PATH=hang_git + os.pathsep + os.environ["PATH"]))
+    expect(p.returncode == 2 and "could not finish within" in p.stderr,
+           "T2 DENY  git hanging past the hard deadline: a ship_commands match is denied [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    # a git that cannot start: the match is still a ship, and it denies
+    broken_git = os.path.join(tmp, "broken-git")
+    os.makedirs(broken_git)
+    with open(os.path.join(broken_git, "git"), "w") as fh:
+        fh.write("#!/nonexistent/interpreter\n")
+    os.chmod(os.path.join(broken_git, "git"), 0o755)
+    p = hook5(r13, "make ship-it", env={"PATH": broken_git + os.pathsep + os.environ["PATH"]})
+    expect(p.returncode == 2 and "qa-ship-gate" in p.stderr,
+           "T2 DENY  git cannot start: a ship_commands match is denied [%s]" % " ".join(p.stderr.split())[-90:])
+    p = hook5(r13, "make build", env={"PATH": broken_git + os.pathsep + os.environ["PATH"]})
+    expect(p.returncode == 0, "T2 ALLOW git cannot start: a command no ship_commands entry matches")
+    # a command that sets (a+)+$ backtracking: every path still decides, and in time
+    for name, env, why in (("normal git", lambda: None, "qa-ship-gate"),
+                           ("chain budget already spent", lambda: spent, "could not finish within"),
+                           ("git hanging past the hard deadline",  # T0 taken when this case starts, not before the loop
+                            lambda: dict(t0_left(3.0), PATH=hang_git + os.pathsep + os.environ["PATH"]),
+                            "could not finish within")):
+        t0 = time.monotonic()
+        p = hook5(r13, redos, env=env())
+        took = time.monotonic() - t0
+        expect(p.returncode == 2 and why in p.stderr and took < HOOK_HARD_S + 1,
+               "T2 DENY  backtracking pattern, %s: denied in %.1f s (< %.0f s) [%s]"
+               % (name, took, HOOK_HARD_S + 1, " ".join(p.stderr.split())[-90:]))
+    p = hook5(r13, "echo %s!" % ("a" * 30))
+    expect(p.returncode == 2 and "did not finish matching" in p.stderr,
+           "T2 DENY  a pattern that cannot finish matching counts as a ship (fail closed) [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    t0 = time.monotonic()
+    hit = ship_commands_match({"ship_commands": ["(a+)+$"]}, "a" * 30 + "!", budget=0.3)
+    took = time.monotonic() - t0
+    expect(hit[0] and "did not finish matching" in (hit[1] or "") and took < 1.5,
+           "T2 ship_commands_match: a backtracking pattern is cut off at its budget (%.2f s)" % took)
+    expect(ship_commands_match({"ship_commands": ["ship-it"]}, "make build") == (False, None)
+           and ship_commands_match({"ship_commands": []}, "make ship-it") == (False, None),
+           "T2 ship_commands_match: no match, and no patterns, answer (False, None)")
+    real_fork = os.fork
+
+    def refused_fork():
+        raise BlockingIOError(35, "Resource temporarily unavailable")
+    os.fork = refused_fork
+    try:
+        refused = ship_commands_match({"ship_commands": ["ship-it"]}, "make build at the process limit")
+    finally:
+        os.fork = real_fork
+    expect(refused[0] and "failed" in (refused[1] or ""),
+           "T2 ship_commands_match: fork refused (process limit) counts as a match with a problem %r" % (refused,))
+
+    def cs_payload(command, cwd):
+        return json.dumps({"tool_input": {"command": command}, "cwd": cwd})
+    expect(custom_ship(cs_payload("make ship-it", r13)), "T2 custom_ship: a ship_commands match")
+    expect(custom_ship(cs_payload("make \\\n ship-it", r13)), "T2 custom_ship: a match across a line continuation")
+    expect(custom_ship(cs_payload("cd %s && make ship-it" % r13, tmp)), "T2 custom_ship: a repo named by cd")
+    expect(not custom_ship(cs_payload("make build", r13)), "T2 custom_ship: no match; an invalid pattern is skipped")
+    expect(not custom_ship(cs_payload("make ship-it", tmp)), "T2 custom_ship: no opted-in repo targeted")
+    expect(not custom_ship("not json") and not custom_ship(cs_payload("", r13)),
+           "T2 custom_ship: an unreadable payload or empty command")
 
     sh("git checkout -q feat", cwd=r9)
     allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
@@ -4563,6 +4724,33 @@ def coarse_ship(text):
                      r"createCommitOnBranch|updateRef", text)
 
 
+def custom_ship(text, budget=0.5):
+    """Last-resort check, next to coarse_ship, for a repo's own `ship_commands`: True when the payload's command
+    matches one in an opted-in repo it targets. Finding the repos and reading their .qa/config.json never runs git,
+    so this still answers when git is what ran out the clock. It reads the answer _hook stored before any git; only
+    when there is none (the chain spent its budget before _hook ran) does it match, within `budget` seconds, with
+    the same fail-closed rules (ship_commands_match). A config that cannot be read matches nothing."""
+    try:
+        d = json.loads(text)
+        inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
+        cmd = (inp.get("command") or inp.get("cmd")) if isinstance(inp, dict) else None
+        if not isinstance(cmd, str) or not cmd:
+            return False
+        cmd = join_continuations(cmd)
+        cwd = d.get("cwd") or d.get("working_directory") or os.getcwd()
+        for root in ship_target_roots(cmd, cwd):
+            if not opted_in(root):
+                continue
+            try:
+                if ship_commands_match(load_json(os.path.join(root, ".qa", "config.json")), cmd, budget)[0]:
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 if __name__ == "__main__":
     try:
         sys.exit(main())
@@ -4572,7 +4760,7 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "hook":
             # fail closed for ship-looking commands; everything else fails open
             raw = globals().get("_LAST_INPUT") or ""
-            if raw and coarse_ship(raw):
+            if raw and (coarse_ship(raw) or custom_ship(raw)):
                 reason = "[qa-ship-gate] gate crashed while evaluating a ship command; treated as DENIED. Complete the .qa pipeline (%s)" % exc
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                          "permissionDecision": "deny",
