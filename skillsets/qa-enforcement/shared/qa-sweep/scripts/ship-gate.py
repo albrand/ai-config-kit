@@ -2437,14 +2437,14 @@ def ship_plan(command, root, cfg, cwd=None):
 
 
 def ship_commands_match(cfg, command):
-    """True when one of the config's `ship_commands` patterns matches. A pattern that is not a valid regex matches
-    nothing and does not stop the others from being tried."""
+    """True when one of the config's `ship_commands` patterns matches. A pattern the regex engine cannot use (invalid,
+    or nested deep enough to raise RecursionError) matches nothing and does not stop the others from being tried."""
     pats = cfg.get("ship_commands") if isinstance(cfg, dict) else None
     for p in pats if isinstance(pats, list) else []:
         try:
             if re.search(str(p), command):
                 return True
-        except re.error:
+        except Exception:
             pass
     return False
 
@@ -4071,19 +4071,22 @@ def selftest(v4_gate=None, v4_templates=None):
     expect(HOOK_HARD_S <= HOOK_HOST_TIMEOUT_S - 3.0 and HOOK_BUDGET_S < HOOK_HARD_S,
            "T1 hard deadline leaves >= 3 s before the host timeout, soft budget before the hard one")
     # T2: a repo's own ship_commands are ship-shaped at the hard deadline too. coarse_ship knows only the built-in
-    # shapes, so before custom_ship a `make ship-it` that ran out the clock was allowed.
+    # shapes, so before custom_ship a `make ship-it` that ran out the clock was allowed. Ahead of the real pattern sit
+    # one the regex engine rejects (re.error) and one nested deep enough to raise RecursionError: neither may hide it.
+    unusable = ["(", "(" * 500 + "a" + ")" * 500]
     r13 = os.path.join(tmp, "custom-ship-deadline")
     os.makedirs(os.path.join(r13, ".qa"))
     sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r13)
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "ship_commands": ["(", "ship-it"]}, open(os.path.join(r13, ".qa", "config.json"), "w"))
+               "ship_commands": unusable + ["ship-it"]}, open(os.path.join(r13, ".qa", "config.json"), "w"))
     sh("git add -A && git commit -qm base", cwd=r13)
     p = hook5(r13, "make ship-it", env=spent)
     expect(p.returncode == 2 and "could not finish within" in p.stderr,
            "T2 DENY  chain budget already spent: a ship_commands match is denied [%s]"
            % " ".join(p.stderr.split())[-90:])
-    expect(ship_plan("make ship-it", r13, {"ship_commands": ["(", "ship-it"]})[0] == "extra",
-           "T2 ship_plan: an invalid pattern before a matching one does not hide the match")
+    for bad in unusable:
+        expect(ship_plan("make ship-it", r13, {"ship_commands": [bad, "ship-it"]})[0] == "extra",
+               "T2 ship_plan: an unusable pattern (%s...) before a matching one does not hide the match" % bad[:3])
     expect(ship_plan("make ship-it", r13, {"ship_commands": "ship-it"})[0] is None
            and ship_plan("make ship-it", r13, ["ship-it"])[0] is None,
            "T2 ship_plan: ship_commands that is not a list, or a config that is not an object, matches nothing")
@@ -4630,8 +4633,8 @@ def coarse_ship(text):
 def custom_ship(text):
     """Last-resort check, next to coarse_ship, for a repo's own `ship_commands`: True when the payload's command
     matches one in an opted-in repo it targets. Finding the repos and reading their .qa/config.json never runs git,
-    so this still answers when git is what ran out the clock. A config that cannot be read, or a pattern that is not
-    a valid regex, matches nothing, as in ship_plan."""
+    so this still answers when git is what ran out the clock. A config that cannot be read matches nothing; patterns
+    are tried as in ship_plan (ship_commands_match)."""
     try:
         d = json.loads(text)
         inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
