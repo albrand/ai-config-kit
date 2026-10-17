@@ -194,6 +194,9 @@ def validate_response(resp, qs):
     for key in ("input_tokens", "output_tokens"):
         if key in usage and (type(usage[key]) is not int or usage[key] < 0):
             invalid("token counts must be nonnegative integers")
+    for key in ("cost_usd", "spend_usd"):
+        if usage.get(key) is not None and not number(usage[key], 0, sys.float_info.max):
+            invalid("reported cost must be a finite nonnegative number")
     for qid, q in qs.items():
         ans = answers[qid]
         if not isinstance(ans, dict) or ans.get("type") != q["type"]:
@@ -216,6 +219,11 @@ def validate_response(resp, qs):
             if not number(ans.get("score"), 0, len(expected) - 1):
                 invalid("score is outside declared levels")
             distribution(ans.get("probabilities"), expected)
+            # Score is the probability-weighted level, per the API contract.
+            # Allow floating-point serialization noise, never a different level.
+            mean = sum(int(level) * p for level, p in ans["probabilities"].items())
+            if not math.isclose(ans["score"], mean, rel_tol=0, abs_tol=1e-6):
+                invalid("score differs from its probability-weighted levels")
             legend = ans.get("legend")
             if not isinstance(legend, dict) or set(legend) != expected:
                 invalid("legend keys differ from declared levels")

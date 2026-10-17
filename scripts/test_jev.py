@@ -248,6 +248,16 @@ class JevResponseContractTest(unittest.TestCase):
                 response["answers"]["level"]["score"] = value
                 self.assert_refused(response)
 
+    def test_score_must_match_probability_weighted_levels(self):
+        response = copy.deepcopy(RESPONSE)
+        response["answers"]["level"]["score"] = 0
+        self.assert_refused(response)
+
+    def test_score_accepts_float_serialization_noise(self):
+        response = copy.deepcopy(RESPONSE)
+        response["answers"]["level"]["score"] = 0.9500000000000001
+        self.assertEqual(self.cli(response)[0], 0)
+
     def test_legend_must_match_the_requested_rubric(self):
         for legend in ({}, [], None, {"0": "Cosmetic", "1": "Changed meaning"}):
             with self.subTest(legend=legend):
@@ -272,7 +282,9 @@ class JevResponseContractTest(unittest.TestCase):
     def test_invalid_envelope_is_rejected(self):
         for response in (None, [], {}, {**RESPONSE, "model": None}, {**RESPONSE, "usage": []},
                          {**RESPONSE, "usage": {"input_tokens": -1}},
-                         {**RESPONSE, "usage": {"input_tokens": True}}):
+                         {**RESPONSE, "usage": {"input_tokens": True}},
+                         {**RESPONSE, "usage": {"cost_usd": float("inf")}},
+                         {**RESPONSE, "usage": {"spend_usd": "unknown"}}):
             with self.subTest(response=response):
                 self.assert_refused(response)
 
