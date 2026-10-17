@@ -21,7 +21,7 @@ Output: one JSON object {model, answers: {id: {type, answer, p|confidence, tier,
 Tiers use the human-set thresholds below until the ledger's outcome history for a
 point says otherwise (`decision-ledger.py report`, source system-one).
 
-Environment: TYPESAFE_BASE_URL (API root; default: the gateway set at publish,
+Environment: TYPESAFE_BASE_URL (API root; default: the root set at publish,
 else https://api.typesafe.ai) and
 TYPESAFE_API_KEY (a placeholder is fine behind a gateway that injects the key).
 JEV_DRY_RUN=1 or --dry-run prints the request instead of sending it.

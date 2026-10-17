@@ -217,9 +217,11 @@ python3 $J --state-file packet.json \
 `--yn` → probability of yes; `--pick` → one option plus the distribution;
 `--level` → one written anchor plus the distribution. `--spec file.json` takes
 a raw TypeSafe questions map (structured instructions, criteria objects).
-The endpoint comes from `TYPESAFE_BASE_URL` (on this setup:
-`{{SYSTEM_ONE_BASE_URL}}`, which injects the key; `TYPESAFE_API_KEY` can be any
-placeholder there).
+The endpoint comes from `TYPESAFE_BASE_URL`, or the published API root
+`{{SYSTEM_ONE_BASE_URL}}` when no override is set. Direct requests to
+`https://api.typesafe.ai` require a valid `TYPESAFE_API_KEY`. A placeholder
+works only when a separately configured gateway injects its own valid key;
+do not assume the published root provides that behavior.
 
 **Use Jev when all of these hold:** section 1 says it is a decision; the
 judgment is about *meaning* (reading a diff, ticket, message, log, finding),

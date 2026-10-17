@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise bounded publishing through its real CLI in an isolated fixture."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,9 @@ class PublishSelectionTest(unittest.TestCase):
         env = os.environ.copy()
         env.update(AGENT_LIBRARY_OVERLAY=str(self.overlay),
                    AGENT_LIBRARY_LESSONS=str(self.root / "no-local-lessons"))
+        if hasattr(self, "fake_bin"):
+            env.update(PATH=str(self.fake_bin) + os.pathsep + env["PATH"],
+                       PUBLISH_SSH_LOG=str(self.ssh_log))
         return subprocess.run(["node", str(self.root / "scripts/publish.mjs"), *args],
                               env=env, capture_output=True, text=True, timeout=15)
 
@@ -97,6 +101,91 @@ class PublishSelectionTest(unittest.TestCase):
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.files()), 6)
+
+    def setup_remote(self):
+        # serves: P11. This fixture never runs an actual SSH client.
+        self.remote = self.root / "remote-installed"
+        self.fake_bin = self.root / "fake-bin"
+        self.fake_bin.mkdir()
+        self.ssh_log = self.root / "ssh.jsonl"
+        (self.root / "scripts/targets.json").write_text(json.dumps({
+            "local": [{"agent": "fixture", "path": str(self.dest)}],
+            "remote": {"fixture-only.invalid": [{"agent": "fixture", "path": str(self.remote)}]}}))
+        ssh = self.fake_bin / "ssh"
+        ssh.write_text("#!/usr/bin/env python3\n"
+            "import json,os,subprocess,sys\n"
+            "assert len(sys.argv)==3 and sys.argv[1]=='fixture-only.invalid'\n"
+            "body=sys.stdin.buffer.read()\n"
+            "with open(os.environ['PUBLISH_SSH_LOG'],'a') as log: "
+            "log.write(json.dumps({'command':sys.argv[2],'input_bytes':len(body)})+'\\n')\n"
+            "sys.exit(subprocess.run(['/bin/sh','-c',sys.argv[2]],input=body).returncode)\n")
+        ssh.chmod(0o755)
+        # Simulate the Linux peer's md5sum on a macOS fixture host.
+        md5 = self.fake_bin / "md5sum"
+        md5.write_text("#!/usr/bin/env python3\nimport hashlib,sys\n"
+            "print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest()+'  '+sys.argv[1])\n")
+        md5.chmod(0o755)
+        for lesson in ("typed-decisions", "unrelated"):
+            for relative in ("SKILL.md", "scripts/jev.py", "scripts/other.py"):
+                target = self.remote / lesson / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("preserve unrelated remote content\n")
+        self.remote_target = self.remote / "typed-decisions/scripts/jev.py"
+        self.remote_target.write_text('BASE = "https://previous-fixture.example"\n')
+
+    def remote_snapshot(self):
+        return {str(p.relative_to(self.remote)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in self.remote.rglob("*") if p.is_file()}
+
+    def remote_cli(self, *args):
+        return self.run_cli("--lesson", "typed-decisions", "--resource", "scripts/jev.py",
+                            "--remote", "fixture-only.invalid", *args)
+
+    def remote_calls(self):
+        return [json.loads(line) for line in self.ssh_log.read_text().splitlines()]
+
+    def test_remote_selection_writes_only_selected_resource_and_is_idempotent(self):
+        self.setup_remote()
+        before = self.remote_snapshot()
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.remote_snapshot()
+        self.assertEqual(set(before), set(after))
+        self.assertEqual([p for p in before if before[p] != after[p]],
+                         ["typed-decisions/scripts/jev.py"])
+        self.assertEqual(self.remote_target.read_text(), 'BASE = "https://fixture.example"\n')
+        self.assertTrue(any(call["input_bytes"] for call in self.remote_calls()))
+        for call in self.remote_calls():
+            self.assertIn(str(self.remote_target), call["command"])
+            self.assertNotIn("other.py", call["command"])
+            self.assertNotIn("SKILL.md", call["command"])
+            self.assertNotIn("/unrelated/", call["command"])
+        self.ssh_log.write_text("")
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(after, self.remote_snapshot())
+        self.assertTrue(self.remote_calls())
+        self.assertFalse(any(call["input_bytes"] for call in self.remote_calls()))
+
+    def test_remote_check_reads_selected_resource_without_writing(self):
+        self.setup_remote()
+        before = self.remote_snapshot()
+        result = self.remote_cli("--check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(before, self.remote_snapshot())
+        self.assertTrue(self.remote_calls())
+        self.assertFalse(any(call["input_bytes"] for call in self.remote_calls()))
+        self.assertTrue(all(str(self.remote_target) in call["command"] for call in self.remote_calls()))
+        self.assertTrue(all("other.py" not in call["command"] for call in self.remote_calls()))
+
+    def test_remote_unknown_edit_is_preserved_without_force(self):
+        self.setup_remote()
+        self.remote_target.write_text("remote user modification\n")
+        before = self.remote_snapshot()
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(before, self.remote_snapshot())
+        self.assertFalse(any(call["input_bytes"] for call in self.remote_calls()))
 
 
 if __name__ == "__main__":
