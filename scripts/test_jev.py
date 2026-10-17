@@ -160,10 +160,11 @@ class JevResponseContractTest(unittest.TestCase):
                 rc = jev.main()
         return rc, stdout.getvalue(), stderr.getvalue(), ledger, transport
 
-    def assert_refused(self, response):
+    def assert_refused(self, response, questions=None):
         # Raw output and --record must not provide alternate paths around validation.
         for flags in ((), ("--raw",)):
-            rc, stdout, stderr, ledger, _ = self.cli(response, flags, record=True)
+            rc, stdout, stderr, ledger, _ = self.cli(
+                response, flags, questions=questions, record=True)
             self.assertEqual(rc, 3, stderr)
             self.assertEqual(stdout, "")
             self.assertIn("invalid service response", stderr)
@@ -257,6 +258,32 @@ class JevResponseContractTest(unittest.TestCase):
         response = copy.deepcopy(RESPONSE)
         response["answers"]["level"]["score"] = 0.9500000000000001
         self.assertEqual(self.cli(response)[0], 0)
+
+    def test_score_normalizes_accepted_probability_rounding(self):
+        questions, response = copy.deepcopy(QUESTIONS), copy.deepcopy(RESPONSE)
+        questions["level"]["criteria"] = [str(i) for i in range(10)]
+        answer = response["answers"]["level"]
+        answer["legend"] = {str(i): str(i) for i in range(10)}
+        for p9 in (0.9999995, 0.9999985):
+            with self.subTest(p9=p9):
+                probabilities = {str(i): 0.0 for i in range(10)}
+                probabilities.update({"0": 0.000001, "9": p9})
+                answer["probabilities"] = probabilities
+                weighted = 9 * p9
+                answer["score"] = weighted / sum(probabilities.values())
+                self.assertEqual(self.cli(response, questions=questions)[0], 0)
+
+    def test_score_refuses_unnormalized_probability_rounding(self):
+        questions, response = copy.deepcopy(QUESTIONS), copy.deepcopy(RESPONSE)
+        questions["level"]["criteria"] = [str(i) for i in range(10)]
+        answer = response["answers"]["level"]
+        answer["legend"] = {str(i): str(i) for i in range(10)}
+        for p9 in (0.9999995, 0.9999985):
+            with self.subTest(p9=p9):
+                answer["probabilities"] = {str(i): 0.0 for i in range(10)}
+                answer["probabilities"].update({"0": 0.000001, "9": p9})
+                answer["score"] = 9 * p9
+                self.assert_refused(response, questions=questions)
 
     def test_legend_must_match_the_requested_rubric(self):
         for legend in ({}, [], None, {"0": "Cosmetic", "1": "Changed meaning"}):

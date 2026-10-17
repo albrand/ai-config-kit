@@ -220,8 +220,10 @@ def validate_response(resp, qs):
                 invalid("score is outside declared levels")
             distribution(ans.get("probabilities"), expected)
             # Score is the probability-weighted level, per the API contract.
-            # Allow floating-point serialization noise, never a different level.
-            mean = sum(int(level) * p for level, p in ans["probabilities"].items())
+            # Normalize the accepted rounding error in the probability total.
+            probabilities = ans["probabilities"]
+            mean = (sum(int(level) * p for level, p in probabilities.items())
+                    / sum(probabilities.values()))
             if not math.isclose(ans["score"], mean, rel_tol=0, abs_tol=1e-6):
                 invalid("score differs from its probability-weighted levels")
             legend = ans.get("legend")
