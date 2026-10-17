@@ -19,6 +19,7 @@
 //   node publish.mjs --remote vps also publish to a machine over ssh
 //   node publish.mjs --force      also replace copies edited in place (backed up first)
 //   node publish.mjs --lesson NAME limit rollout to a named lesson (repeatable)
+//   node publish.mjs --lesson NAME --resource PATH  update one maintained resource only
 //
 // Publishing is idempotent and one-directional: the repo is the source of
 // truth. A target holding an earlier library version is updated; a target
@@ -55,6 +56,22 @@ const OVERLAY = loadOverlay();
 const args = new Set(process.argv.slice(2));
 const check = args.has("--check");
 const force = args.has("--force");
+
+function selectedValues(flag) {
+  const argv = process.argv.slice(2);
+  const values = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== flag) continue;
+    const value = argv[++i];
+    if (!value || value.startsWith("--")) {
+      console.error(`${flag} needs a value`);
+      process.exit(2);
+    }
+    values.push(value);
+  }
+  return new Set(values);
+}
+const selectedResources = selectedValues("--resource");
 
 const md5 = (buf) => createHash("md5").update(buf).digest("hex");
 
@@ -149,7 +166,7 @@ const TEXT_RESOURCE_EXTENSIONS = new Set([
   ".yaml", ".yml",
 ]);
 
-function lessonFiles(lesson) {
+function lessonFiles(lesson, selectedOnly = false) {
   const files = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -166,7 +183,9 @@ function lessonFiles(lesson) {
     }
   };
   walk(lesson.dir);
-  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+  return files
+    .filter((file) => !selectedOnly || !selectedResources.size || selectedResources.has(file.relative))
+    .sort((a, b) => a.relative.localeCompare(b.relative));
 }
 
 function renderedResource(file) {
@@ -238,7 +257,7 @@ function publishLocal(list) {
       const destDir = path.join(target.dir, lesson.name);
       const existed = fs.existsSync(path.join(destDir, "SKILL.md"));
       let lessonChanged = false;
-      for (const resource of lessonFiles(lesson)) {
+      for (const resource of lessonFiles(lesson, true)) {
         const dest = path.join(destDir, resource.relative);
         const next = renderedResource(resource);
         const current = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
@@ -311,7 +330,7 @@ function publishRemote(list, host) {
 
   const targets = dirs.flatMap((dir) =>
     list.flatMap((lesson) =>
-      lessonFiles(lesson).map((resource) => `${dir}/${lesson.name}/${resource.relative}`),
+      lessonFiles(lesson, true).map((resource) => `${dir}/${lesson.name}/${resource.relative}`),
     ),
   );
   const existing = remoteHashes(host, targets);
@@ -322,7 +341,7 @@ function publishRemote(list, host) {
     for (const lesson of list) {
       let lessonChanged = false;
       let lessonExisted = true;
-      for (const resource of lessonFiles(lesson)) {
+      for (const resource of lessonFiles(lesson, true)) {
         const body = renderedResource(resource);
         const want = createHash("md5").update(body).digest("hex");
         const target = `${dir}/${lesson.name}/${resource.relative}`;
@@ -373,6 +392,20 @@ try {
 if (list.length === 0) {
   console.error("No lessons found.");
   process.exit(1);
+}
+
+if (selectedResources.size) {
+  if (!args.has("--lesson") || list.length !== 1) {
+    console.error("--resource requires exactly one --lesson");
+    process.exit(2);
+  }
+  const resources = new Set(lessonFiles(list[0]).map((file) => file.relative));
+  for (const resource of selectedResources) {
+    if (!resources.has(resource)) {
+      console.error(`Unknown resource: ${resource}`);
+      process.exit(2);
+    }
+  }
 }
 
 const problems = validate(list);
