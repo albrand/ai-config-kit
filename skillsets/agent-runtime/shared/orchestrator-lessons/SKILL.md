@@ -10,7 +10,7 @@ verified: 2026-10-04
 
 # Lessons an orchestrator keeps having to relearn
 
-When assigning feature implementation, shared-contract, LLM-output, or production-fix work, load [engineering-contracts](../../../delivery-continuity/shared/engineering-contracts/SKILL.md) before planning acceptance or validation. Keep this skill's orchestration, data-movement, and recurrence checks.
+When assigning feature implementation, shared-contract, LLM-output, or production-fix work, load `engineering-contracts` before planning acceptance or validation. Keep this skill's orchestration, data-movement, and recurrence checks.
 
 Every entry here cost real rounds. They are written as the check to run, not as
 advice, because advice does not fire and a check does.

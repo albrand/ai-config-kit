@@ -1,6 +1,8 @@
 ---
 name: engineering-contracts
 description: Use before implementing a feature, changing a shared contract, modifying an LLM-backed output path, or fixing a production defect. Establish outcome, consumers, repository quality rules, and behavior evidence from current sources; load only for implementation and production-fix work, not routine operations.
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 fixtures/checks/run_baseline.py"
+verified: 2026-10-19
 ---
 
 # Engineering contracts
