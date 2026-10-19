@@ -1,0 +1,1 @@
+Fix the report helper so an inclusive date range includes both endpoint dates. A same-day range (`start_day == end_day`) includes records on that date; a two-day range includes both dates; dates outside the available records return no rows. Keep the existing storage adapter and caller contract. Run `python3 check.py`.

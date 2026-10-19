@@ -1,13 +1,13 @@
 ---
 name: engineering-contracts
-description: Use before implementing a feature, changing a shared contract, modifying an LLM-backed output path, or fixing a production defect. Establish outcome, consumers, repository quality rules, and behavior evidence from current sources; load only for implementation and production-fix work, not routine operations.
-verify: "PYTHONDONTWRITEBYTECODE=1 python3 fixtures/checks/run_baseline.py"
+description: Use before implementing or evaluating completion of a feature, shared-contract change, LLM-backed output path, or production fix. Establish outcome, consumers, repository quality rules, and behavior evidence from current sources; load only for those implementation and completion stages, not routine operations.
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/evals/engineering-contracts/checks/run_baseline.py"
 verified: 2026-10-19
 ---
 
 # Engineering contracts
 
-Apply only the contracts relevant to the requested change. Before edits, during implementation, before completion, and after a failure, load the existing skills that own the affected surface. Keep `verify`, `scope-advisor`, `reviewing-with-an-agent`, and applicable release checks in force; this skill does not replace them.
+Every engineering implementation must satisfy all four independent contracts below. Select only the supporting skills and checks applicable to the changed surface, scaling checks to behavior ownership and risk; routine operations do not load this skill. Before edits, during implementation, before completion, and after a failure, load the existing skills that own the affected surface. Keep `verify`, `scope-advisor`, `reviewing-with-an-agent`, and applicable release checks in force; this skill does not replace them.
 
 ## Outcome — before implementation
 
@@ -29,4 +29,4 @@ Tie each required outcome to a falsifiable check with realistic inputs, boundari
 
 Record the source and evidence, actual root cause, why earlier detection missed it, affected contract, recurrence/deduplication key, scoped preventive guidance, and an executable regression when justified, including its result. Keep guidance with the owning skill or source; do not append incident prose indefinitely to global instructions. A native Claude queued report is not healed, and policy text alone does not prove remediation.
 
-For an LLM-backed path, also load [LLM output evidence](references/llm-output-evidence.md). Use the [offline fixture corpus](fixtures/raw/) for representative contract checks when useful; the coordinator oracle is separate and must not be included in blind evaluations.
+For an LLM-backed path, also load [LLM output evidence](references/llm-output-evidence.md).

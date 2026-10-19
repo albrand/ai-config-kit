@@ -17,7 +17,7 @@ EXPECTED = {
     'case03': (1, 'health route is not registered'),
     'case04': (0, 'sample outputs: 99 90.0 180.0'),
     'case05': (1, "KeyError: 'name'"),
-    'case06': (1, 'one-day inclusive range must include both endpoints'),
+    'case06': (1, 'same-day inclusive range must include 2026-04-10'),
     'case07': (0, 'Field Guide'),
     'case08': (0, '[]'),
 }
@@ -62,6 +62,18 @@ def case04_coverage(folder):
         measured[Path(filename).name] = (executed, total)
     return measured
 
+def case06_corrected_control(folder):
+    with tempfile.TemporaryDirectory(prefix='inclusive-range-control-') as tmp:
+        target = Path(tmp) / 'case06'
+        shutil.copytree(str(folder), str(target))
+        (target / 'app.py').write_text(
+            "def report_rows(rows, start_day, end_day):\n"
+            "    return [row for row in rows if start_day <= row['day'] <= end_day]\n")
+        result = run(target)
+        if result.returncode != 0:
+            raise AssertionError('inclusive same-day/two-day/outside-range controls failed: ' + result.stderr)
+    print('case06 corrected-implementation control: same-day, two-day, and outside-range assertions passed')
+
 def main():
     if sys.version_info < (3, 9):
         raise SystemExit('Python 3.9 or newer is required')
@@ -76,6 +88,7 @@ def main():
         if not correct:
             print(result.stdout, result.stderr, file=sys.stderr)
             raise SystemExit(1)
+    case06_corrected_control(ROOT / 'case06')
     coverage = case04_coverage(ROOT / 'case04')
     for filename, (executed, total) in sorted(coverage.items()):
         print('case04 executed-line coverage {}: {}/{} ({:.1f}%)'.format(
