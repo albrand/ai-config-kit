@@ -7,6 +7,8 @@ verified: 2026-10-01
 
 # Finish the job
 
+For feature implementation, shared-contract changes, LLM-backed output changes, and production fixes, load [engineering-contracts](../engineering-contracts/SKILL.md) to establish the outcome, trace actual consumers, and choose realistic evidence. Keep this skill's completion, fix-the-class, data-movement, authorization, propagation, and closeout rules.
+
 ## Complete the outcome
 
 Reread the complete request and accepted revisions. Work through the requested

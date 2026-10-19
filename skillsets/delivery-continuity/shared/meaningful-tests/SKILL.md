@@ -7,6 +7,8 @@ verified: 2026-10-01
 
 # Meaningful tests
 
+For feature implementation, shared-contract changes, LLM-backed output changes, and production fixes, load [engineering-contracts](../engineering-contracts/SKILL.md) before selecting checks. It establishes the requested value and falsifiable behavior; this skill still owns persona, target, full-workflow, verdict, and evidence reporting.
+
 ## Name the outcome and its evidence
 
 A workflow test names a persona, known starting state, target URL or stack with
