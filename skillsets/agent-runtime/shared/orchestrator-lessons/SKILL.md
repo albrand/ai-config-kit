@@ -4,8 +4,8 @@ description: >
   Use when running a fleet of agents, or when the same class of mistake keeps
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
-verify: "test -n \"$HOME\""
-verified: 2026-10-03
+verify: python3 scripts/verify-contract.py
+verified: 2026-10-04
 ---
 
 # Lessons an orchestrator keeps having to relearn
@@ -42,6 +42,36 @@ thin.
 
 Work that cannot point to a cell in the map is not started. When evidence
 contradicts the map, update the map before re-planning.
+
+## Gate every data movement change at plan and integration
+
+Before slotting, merging, or releasing a card that changes processing,
+attribution, projection, backfill, or a reader of stored data, require this
+completed block in the card and carry it through integration:
+
+```markdown
+## Data movement
+- Kind: data-moving | reader-only | UI-only | docs/tests-only
+- Existing records affected (production, counts only): <count and what; UTC measurement, owner/query, or COORDINATOR TO MEASURE plus exact query>
+- Lane and cadence: <cron/queue/route, source file:line; every N minutes>
+- Per-run throughput: <rows per invocation; source file:line or measurement>
+- Time-budget check: <per-run time vs limit; source file:line>
+- Predicted drain: ceil(<existing count> / <per-run throughput>) runs × <cadence> = <duration>
+- Counts-only read-back query: <path or exact query, used before and after>
+- Expected after-value: <count by 30 minutes after deployment is Ready and the lane has taken over>
+- Deployment-takeover check: <new deployment runs the lane; logs grouped by deploymentId show integrations.chain.started on the new deployment, not skipped_sibling>
+```
+
+For UI-only and docs/tests-only cards, state why stored data does not move and
+name the screen read that proves the change is visible. At release closeout,
+report the observed before and 30-minute after counts from the read-back.
+Writers without production access use the coordinator's latest count or
+provide the exact query and mark it COORDINATOR TO MEASURE; measure it before
+merge. Tests passed is never evidence of data movement. At integration,
+capture the before read-back, then the same counts-only query 30 minutes after
+deployment is Ready and takeover is confirmed. The release verdict stays FAIL
+until the after-read reaches the prediction; diagnose immediately if it does
+not.
 
 ## Find colliding work before you write, and own it once found
 

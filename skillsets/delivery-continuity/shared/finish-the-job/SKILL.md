@@ -32,6 +32,12 @@ processing, trigger that processing, then re-measure the same per-entity table
 used for the baseline. A job that has not reported completion is a failure to
 act on now. Report deployed and delivered separately until the table moves.
 
+Before closeout, require the completed `## Data movement` block for any
+processing, attribution, projection, backfill, or stored-data-reader change.
+Record the observed before and 30-minute after counts-only read-back and
+deployment takeover; keep the release verdict FAIL until the after-value
+reaches the prediction. Tests passed is never data-movement evidence.
+
 For any change to how data is processed, answer two questions before merge:
 - How does self-healing detect existing records that need reprocessing or
   backfill (for example, a rule-version stamp a sweep can compare), and requeue
@@ -89,3 +95,26 @@ evidence is NOT RUN; a failed goal stays FAIL even if another goal passes.
 Stop when every authorized runnable outcome is handled. If user input or an
 external change is required, finish independent work and state that precise
 remaining boundary. Never replace a known runnable next action with an offer.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+"Am I done?" is a decision, so type it. Answer each yes/no with a check
+behind it, not a feeling:
+
+- In-scope work left? (re-read the original request)
+- A found defect still unfixed?
+- Siblings of the fixed bug searched?
+- Every copy of a touched shared file identical? (`shasum` each home)
+- Capability checked before saying blocked? (`bb-capability-check`)
+
+Stopping is allowed only when every answer comes out clean. "Blocked" is
+allowed only with the named blocker. Feeling done is a self-report, not a
+check.
+
+Batch the semantic questions (in-scope work left, given the request and a
+summary of what changed?) into one Jev call (`typed-decisions` section 10). The mechanical ones stay
+checks. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point done` with the computed answer), with a `--ref` a later agent can find, and resolve it when the truth arrives.
+<!-- typed-decisions:end -->

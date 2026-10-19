@@ -3,10 +3,13 @@
 from pathlib import Path
 import sys
 
-text = (Path(__file__).resolve().parents[1] / 'SKILL.md').read_text()
+text = ' '.join((Path(__file__).resolve().parents[1] / 'SKILL.md').read_text().split())
 required = ('a verdict per goal', 'full workflow cannot be called complete',
             'never bypass a safety-hook block', 'review-only request',
-            'honest partial evidence is useful')
+            'honest partial evidence is useful',
+            'observed before and 30-minute after counts',
+            'deployment takeover',
+            'tests passed is never evidence of data movement')
 missing = [clause for clause in required if clause not in text]
 if missing:
     print('Missing evidence boundary:', ', '.join(missing), file=sys.stderr)

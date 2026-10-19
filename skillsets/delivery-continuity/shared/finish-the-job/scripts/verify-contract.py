@@ -10,6 +10,10 @@ required = (
     'never bypass it or route around',
     'Already-running sessions may cache old directives',
     'a failed goal stays FAIL',
+    'completed `## Data movement` block',
+    '30-minute after counts-only read-back',
+    'release verdict FAIL',
+    'Tests passed is never data-movement evidence',
 )
 missing = [clause for clause in required if clause not in text]
 if missing:

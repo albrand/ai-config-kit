@@ -41,6 +41,12 @@ the behavior. Use `TEST_OWNERSHIP.md` when the repository adopts that contract.
 
 ## Measure, then claim
 
+A release claim for a processing, attribution, projection, backfill, or
+stored-data-reader change requires observed before and 30-minute after counts
+from the counts-only read-back, the predicted value, and confirmed deployment
+takeover. Until the after-read reaches the prediction, report FAIL; tests passed
+is never evidence of data movement.
+
 A gap claim needs the stage where it starts. Trace one representative record
 through source, storage, processing, API, and screen, in the working reference
 too when one exists. Confirm the field you count is the one the reader uses. A
@@ -92,3 +98,21 @@ command or interaction, expected result, observed result, and a findable artifac
 at the relevant evidence tier. Distinguish proposed, implemented, installed,
 and exercised outcomes. Correct prior unsupported claims explicitly. Missing
 evidence is NOT RUN; honest partial evidence is useful and must not be hidden.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+The per-goal verdict is pick-one, `PASS | FAIL | BLOCKED | NOT RUN`, and
+nothing else. "Partially", "mostly works" and "works with a caveat" are
+outside that space, and count as FAIL. PASS needs a check: the persona
+completed the goal, read at target state. BLOCKED needs the named blocker.
+Judge each goal separately; one goal passing never lifts another. The overall
+claim is computed, not felt: any FAIL means not done, and any NOT RUN means
+you may not write "tested".
+
+Jev (`typed-decisions` section 10) may answer the semantic sub-questions (does this evidence show the
+persona reaching the goal? does this report name a blocker?) as one more
+isolated judge. It never produces PASS on its own: PASS still needs the check. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (`--point test-verdict`, one record per goal), with a `--ref` a later agent can find, and resolve it when the truth arrives.
+<!-- typed-decisions:end -->
