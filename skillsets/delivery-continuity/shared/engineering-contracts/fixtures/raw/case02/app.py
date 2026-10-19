@@ -1,5 +1,5 @@
 def model_response(_text):
-    return {'category': 'general', 'confidence': 0.91}
+    return {'category': 'cancellation', 'confidence': 0.91}
 
 def classify_and_route(text):
     result = model_response(text)

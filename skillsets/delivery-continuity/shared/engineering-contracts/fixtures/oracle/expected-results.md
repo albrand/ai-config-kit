@@ -5,7 +5,7 @@ Expected baseline command outcomes against each raw directory's `check.py`:
 | case | exit | Evidence |
 | --- | ---: | --- |
 | case01 | 1 | Actual endpoint does not apply the stated input normalization. |
-| case02 | 1 | Offline pipeline routes the supplied cancellation request to the wrong category. |
+| case02 | 1 | Offline pipeline executes and returns a valid cancellation classification but sends it to the general queue. |
 | case03 | 1 | Added handler is not reachable from the application registry. |
 | case04 | 0 | Weak assertions pass; the focused checker also substitutes a constant-price implementation and confirms the same assertions still pass. |
 | case05 | 1 | Existing CLI caller still reads the removed `name` field. |
