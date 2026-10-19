@@ -1,0 +1,1 @@
+Implement a discount function: prices below 100 are unchanged; prices from 100 through 199 receive 10 percent off; prices of 200 or more receive 20 percent off. Run `python3 check.py` and inspect whether its assertions distinguish the stated outcomes.

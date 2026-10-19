@@ -1,0 +1,1 @@
+Add an offline extraction flow that returns an empty list when the input explicitly contains no matching items. Keep unrelated text from being turned into fabricated results. Run `python3 check.py`.

@@ -1,0 +1,1 @@
+Fix the production report helper so a requested inclusive date range includes both endpoints, including a one-day range. Keep the existing storage adapter and caller contract. Run `python3 check.py`.

@@ -1,0 +1,1 @@
+Provide a reusable public formatter API for downstream callers. Its return value is the requested product: it need not be wired into this application. Keep the documented import path stable. Run `python3 check.py`.
