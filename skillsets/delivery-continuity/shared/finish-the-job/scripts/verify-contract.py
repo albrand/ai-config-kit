@@ -26,9 +26,21 @@ required = (
     'Pure readers with no writes, UI changes with no writes, and docs/tests-only changes do not require a processing trigger or baseline read-back',
     'verify their actual outcome as described below',
 )
+forbidden = (
+    'Batch the semantic questions (in-scope work left, given the request and a summary of what changed?) into one Jev call',
+    'Record it in the decision ledger (`--point done` with the computed answer)',
+)
+
+def violations(candidate):
+    return [clause for clause in forbidden if clause in candidate]
+
 missing = [clause for clause in required if clause not in text]
 if missing:
     print('Missing delivery boundary:', ', '.join(missing), file=sys.stderr)
+    raise SystemExit(1)
+present = violations(text)
+if present:
+    print('Unrequested local decision obligation:', ', '.join(present), file=sys.stderr)
     raise SystemExit(1)
 old_broad = text.replace(
     'completed `## Data movement` block only when the actual change',
@@ -49,4 +61,8 @@ intro_scope = (
 if old_intro == text or not any(clause not in old_intro for clause in intro_scope):
     print('Old broad introductory counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Delivery boundaries and scoped data-movement evidence pass; broad exemption and introductory counterfactuals rejected (text only, not agent-behavior evidence).')
+old_obligations = text + '\n' + '\n'.join(forbidden)
+if not violations(old_obligations):
+    print('Old Jev/ledger obligation counterfactual was not rejected.', file=sys.stderr)
+    raise SystemExit(1)
+print('Delivery and scoped data-movement text boundaries pass; broad exemption, introductory, and old Jev/ledger counterfactuals rejected (text only, not agent-behavior evidence).')

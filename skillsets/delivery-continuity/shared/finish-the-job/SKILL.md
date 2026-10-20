@@ -109,26 +109,3 @@ evidence is NOT RUN; a failed goal stays FAIL even if another goal passes.
 Stop when every authorized runnable outcome is handled. If user input or an
 external change is required, finish independent work and state that precise
 remaining boundary. Never replace a known runnable next action with an offer.
-
-<!-- typed-decisions:begin -->
-## Typed decisions here
-
-"Am I done?" is a decision, so type it. Answer each yes/no with a check
-behind it, not a feeling:
-
-- In-scope work left? (re-read the original request)
-- A found defect still unfixed?
-- Siblings of the fixed bug searched?
-- Every copy of a touched shared file identical? (`shasum` each home)
-- Capability checked before saying blocked? (`bb-capability-check`)
-
-Stopping is allowed only when every answer comes out clean. "Blocked" is
-allowed only with the named blocker. Feeling done is a self-report, not a
-check.
-
-Batch the semantic questions (in-scope work left, given the request and a
-summary of what changed?) into one Jev call (`typed-decisions` section 10). The mechanical ones stay
-checks. Contract: the `typed-decisions` skill.
-
-Record it in the decision ledger (`--point done` with the computed answer), with a `--ref` a later agent can find, and resolve it when the truth arrives.
-<!-- typed-decisions:end -->

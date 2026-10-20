@@ -120,9 +120,4 @@ Judge each goal separately; one goal passing never lifts another. The overall
 claim is computed, not felt: any FAIL means not done, and any NOT RUN means
 you may not write "tested".
 
-Jev (`typed-decisions` section 10) may answer the semantic sub-questions (does this evidence show the
-persona reaching the goal? does this report name a blocker?) as one more
-isolated judge. It never produces PASS on its own: PASS still needs the check. Contract: the `typed-decisions` skill.
-
-Record it in the decision ledger (`--point test-verdict`, one record per goal), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->
