@@ -108,6 +108,10 @@ supports completion. Treat `in_progress` as active only while an owned live
 worker or execution handle exists; a status label is not a heartbeat. When work
 depends only on an external event or human action, use the harness's supported
 pending/waiting state and record the exact blocker, owner, and resume condition.
+If the harness exposes no native task/plan interface or no pending/waiting
+state, record the exact wait in its supported plan or prose and name that
+capability limitation; do not invent an API or status, or repurpose shared fleet
+or board state. Prefer native task/plan tools when the harness supports them.
 Split work that mixes active execution with an external wait when the supported
 interface permits it. Resume by continuing every authorized runnable next step,
 including independent work, rather than only rewriting status. Use only status
