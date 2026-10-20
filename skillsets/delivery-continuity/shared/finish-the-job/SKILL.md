@@ -29,10 +29,14 @@ delegation. The coordinator still owns integration and the complete outcome.
 ## Delivered means the outcome moved
 
 A Ready deployment, a merged PR, or an accepted job trigger proves a mechanism.
-It does not show the user's outcome changed. After shipping anything that feeds
-processing, trigger that processing, then re-measure the same per-entity table
-used for the baseline. A job that has not reported completion is a failure to
-act on now. Report deployed and delivered separately until the table moves.
+It does not show the user's outcome changed. After shipping a release whose
+actual behavior processes, writes, or requeues stored data, trigger that
+processing, then re-measure the same per-entity table used for the baseline. A
+job that has not reported completion is a failure to act on now. For these
+data-moving releases, report deployed and delivered separately until the table
+moves. Pure readers with no writes, UI changes with no writes, and
+docs/tests-only changes do not require a processing trigger or baseline
+read-back; verify their actual outcome as described below.
 
 Before closeout, require the completed `## Data movement` block only when the
 actual change processes, attributes, projects, backfills, writes, or requeues

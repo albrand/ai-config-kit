@@ -20,6 +20,11 @@ required = (
     'Tests passed is never data-movement evidence',
     'Deployment readiness and delivery are separate',
     'trigger the processing after deployment',
+    'After shipping a release whose actual behavior processes, writes, or requeues stored data, trigger that processing, then re-measure the same per-entity table used for the baseline',
+    'A job that has not reported completion is a failure to act on now',
+    'For these data-moving releases, report deployed and delivered separately until the table moves',
+    'Pure readers with no writes, UI changes with no writes, and docs/tests-only changes do not require a processing trigger or baseline read-back',
+    'verify their actual outcome as described below',
 )
 missing = [clause for clause in required if clause not in text]
 if missing:
@@ -32,4 +37,16 @@ old_broad = text.replace(
 if old_broad == text or not any(clause not in old_broad for clause in required):
     print('Broad reader counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Delivery boundaries and scoped data-movement evidence pass; broad-gate counterfactual rejected (text only, not agent-behavior evidence).')
+
+old_intro = text.replace(
+    'After shipping a release whose actual behavior processes, writes, or requeues stored data, trigger that processing',
+    'After shipping anything that feeds processing, trigger that processing',
+)
+intro_scope = (
+    'After shipping a release whose actual behavior processes, writes, or requeues stored data, trigger that processing',
+    'Pure readers with no writes, UI changes with no writes, and docs/tests-only changes do not require a processing trigger or baseline read-back',
+)
+if old_intro == text or not any(clause not in old_intro for clause in intro_scope):
+    print('Old broad introductory counterfactual was not rejected.', file=sys.stderr)
+    raise SystemExit(1)
+print('Delivery boundaries and scoped data-movement evidence pass; broad exemption and introductory counterfactuals rejected (text only, not agent-behavior evidence).')
