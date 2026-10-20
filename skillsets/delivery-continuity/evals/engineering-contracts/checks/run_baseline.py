@@ -19,7 +19,7 @@ EXPECTED = {
     'case05': (1, "KeyError: 'name'"),
     'case06': (1, 'same-day inclusive range must include 2026-04-10'),
     'case07': (0, 'Field Guide'),
-    'case08': (0, '[]'),
+    'case08': (0, 'empty, unrelated, positive, and mixed TODO extraction cases passed'),
 }
 
 def run(folder, script='check.py'):
@@ -74,6 +74,21 @@ def case06_corrected_control(folder):
             raise AssertionError('inclusive same-day/two-day/outside-range controls failed: ' + result.stderr)
     print('case06 corrected-implementation control: same-day, two-day, and outside-range assertions passed')
 
+def case08_constant_empty_counterfactual(folder):
+    with tempfile.TemporaryDirectory(prefix='todo-extraction-control-') as tmp:
+        target = Path(tmp) / 'case08'
+        shutil.copytree(str(folder), str(target))
+        (target / 'app.py').write_text(
+            "def offline_response(_text):\n"
+            "    return {'items': []}\n\n"
+            "def extract(text):\n"
+            "    response = offline_response(text)\n"
+            "    return response['items']\n")
+        result = run(target)
+        if result.returncode == 0 or 'renew the library book' not in result.stderr:
+            raise AssertionError('constant-empty implementation was not rejected by the positive TODO requirement')
+    print('case08 constant-empty counterfactual: rejected by positive TODO extraction assertion')
+
 def main():
     if sys.version_info < (3, 9):
         raise SystemExit('Python 3.9 or newer is required')
@@ -89,6 +104,7 @@ def main():
             print(result.stdout, result.stderr, file=sys.stderr)
             raise SystemExit(1)
     case06_corrected_control(ROOT / 'case06')
+    case08_constant_empty_counterfactual(ROOT / 'case08')
     coverage = case04_coverage(ROOT / 'case04')
     for filename, (executed, total) in sorted(coverage.items()):
         print('case04 executed-line coverage {}: {}/{} ({:.1f}%)'.format(

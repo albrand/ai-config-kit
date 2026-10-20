@@ -11,6 +11,6 @@ Expected baseline command outcomes against each raw directory's `check.py`:
 | case05 | 1 | Existing CLI caller still reads the removed `name` field. |
 | case06 | 1 | Same-day inclusive range returns no record because the implementation treats the end date as exclusive; the same-day assertion fails specifically. |
 | case07 | 0 | Importable documented public API satisfies the task without app wiring. |
-| case08 | 0 | Explicitly expected empty extraction is returned unchanged. |
+| case08 | 0 | Revised fixture: offline extraction returns trimmed nonempty payloads from `TODO:` lines and preserves empty results for no matching items and unrelated text. The historical ambiguous control only asserted empty output; it did not define matching items and is not evidence of this revision's behavior. |
 
 These are baseline observations, not implementation acceptance evidence. The blind assessment must judge requirements and source behavior independently.
