@@ -178,6 +178,17 @@ sending what it asked for — raw inputs it can recompute — or fixing the thin
 **Check:** before disputing a verdict, ask what evidence would settle it, then
 produce that. If the answer is "a test I have not written", write it.
 
+A native report about work you own is actionable failure input. Before sending
+any review-fix design, inspect the exact candidate code and affected consumers;
+reproduce the finding or trace it through source, identify why it escaped, and
+derive the smallest repair and falsifiable acceptance from that evidence. Check
+the prior repair for collateral effects. Do authorized routine repairs while
+preserving real ownership and approval boundaries; name any outside dependency
+that prevents action. A drafted, sent, or dismissed report, a policy edit, or an
+unrelated green check does not prove healing. Tie recurring cases to
+engineering-contracts' scoped root-cause and prevention contract instead of
+adding another self-attested global checklist.
+
 ## Members that report nothing are not working
 
 Idle members held "so they can iterate later" consume a worktree and make the

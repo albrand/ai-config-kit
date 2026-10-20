@@ -7,7 +7,7 @@ verified: 2026-10-19
 
 # Finish the job
 
-For feature implementation, shared-contract changes, LLM-backed output changes, and production fixes, load [engineering-contracts](../engineering-contracts/SKILL.md) to establish the outcome, trace actual consumers, and choose realistic evidence. Keep this skill's completion, fix-the-class, data-movement, authorization, propagation, and closeout rules.
+For implementing or assessing completion of an existing feature, shared-contract change, LLM-backed output path, or production fix, load [engineering-contracts](../engineering-contracts/SKILL.md) to establish the outcome, trace actual consumers, and choose realistic evidence. In Claude, use the native Skill tool with the registered `engineering-contracts` name when available; in Codex, read the discovered `SKILL.md`. A link or mentioned skill name alone does not show it was activated. If the harness lacks a native Skill tool, read the file directly. Keep this skill's completion, fix-the-class, data-movement, authorization, propagation, and closeout rules.
 
 ## Complete the outcome
 

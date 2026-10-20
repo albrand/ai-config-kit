@@ -7,7 +7,7 @@ verified: 2026-10-19
 
 # Meaningful tests
 
-For feature implementation, shared-contract changes, LLM-backed output changes, and production fixes, load [engineering-contracts](../engineering-contracts/SKILL.md) before selecting checks. It establishes the requested value and falsifiable behavior; this skill still owns persona, target, full-workflow, verdict, and evidence reporting.
+For implementing or assessing completion of an existing feature, shared-contract change, LLM-backed output path, or production fix, load [engineering-contracts](../engineering-contracts/SKILL.md) before selecting checks. In Claude, use the native Skill tool with the registered `engineering-contracts` name when available; in Codex, read the discovered `SKILL.md`. A link or mentioned skill name alone does not show it was activated. If the harness lacks a native Skill tool, read the file directly. It establishes the requested value and falsifiable behavior; this skill still owns persona, target, full-workflow, verdict, and evidence reporting.
 
 ## Name the outcome and its evidence
 

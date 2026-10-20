@@ -1,6 +1,6 @@
 # LLM output evidence
 
-Use this reference only when a changed path consumes LLM output. Keep these evidence levels distinct:
+Use this reference when implementing or reviewing an existing path that consumes LLM output. Keep these evidence levels distinct:
 
 1. **Execution:** the owned call path ran against the stated input and produced a captured result.
 2. **Structure:** the result conforms to the required schema and types.
