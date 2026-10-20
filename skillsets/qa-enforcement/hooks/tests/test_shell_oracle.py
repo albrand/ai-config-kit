@@ -43,11 +43,13 @@ class ShellIdentityTests(unittest.TestCase):
         # delimited by <<'a''b' would end at a different line. BASH_ENV runs a file before any bash -c script.
         with tempfile.TemporaryDirectory() as home:
             Path(home, ".zshenv").write_text("setopt RC_QUOTES\n")
-            Path(home, "bash_env").write_text("set -o posix\n")
+            Path(home, "bash_env").write_text("echo STARTUP_READ\nset -o posix\n")
             script = "cat <<'a''b'\nBODY\nab\necho RAN"
             # TMPPREFIX: zsh can write the heredoc here even in a sandboxed job, so the control differs only by RC_QUOTES
             hostile = {**os.environ, "HOME": home, "ZDOTDIR": home, "BASH_ENV": str(Path(home, "bash_env")),
                        "TMPPREFIX": str(Path(home, "zsh"))}
+            for marker in ("SSH_CLIENT", "SSH2_CLIENT"):
+                hostile.pop(marker, None)
             control = subprocess.run(["/bin/zsh", "-c", script], capture_output=True, text=True, env=hostile)
             self.assertNotEqual(control.stdout, "BODY\nRAN\n")  # the startup file really changes the reading
             with patch.dict(os.environ, hostile):
@@ -57,6 +59,7 @@ class ShellIdentityTests(unittest.TestCase):
             self.assertNotEqual(env["HOME"], home)
             posix = subprocess.run(["/bin/bash", "-c", 'echo ":$SHELLOPTS:"'], capture_output=True, text=True,
                                    env=hostile).stdout
+            self.assertIn("STARTUP_READ", posix)
             self.assertIn(":posix:", posix)  # control: BASH_ENV switches bash to POSIX mode
             self.assertNotIn(":posix:", subprocess.run(["/bin/bash", "-c", 'echo ":$SHELLOPTS:"'],
                                                        capture_output=True, text=True, env=env).stdout)
