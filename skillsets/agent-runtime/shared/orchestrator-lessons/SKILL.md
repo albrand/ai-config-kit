@@ -321,7 +321,7 @@ claim about reality and inflating it destroys its only value.
 **Check:** Done means accepted. Anything else is In Review, however finished it
 feels.
 
-## Done means the user's data moved, not that the release is Ready
+## A data-moving release is done when the user's data moved, not merely when the release is Ready
 
 On 2026-10-03 two releases reached production before a noon deadline. Both were
 gated, tree-verified and Ready, with every scheduled job "accepted". The
@@ -330,11 +330,14 @@ and the improved extraction never ran over the existing backlog. "Ready" and
 "accepted" were reported as delivery for an hour before anyone measured the
 outcome.
 
-**Check:** after every release, trigger the processing it depends on, then
-measure the user-facing outcome (per customer or per entity, the same table as
-the baseline) within 30 minutes. A job that has not reported completion is a
-FAIL to act on now, not "pending". Until that table moves, the release is
-deployed, not delivered.
+**Check:** for releases whose actual behavior processes, writes, or requeues
+stored data, trigger the processing the change depends on, then measure the
+user-facing outcome (per customer or per entity, the same table as the
+baseline) within 30 minutes. A job that has not reported completion is a FAIL
+to act on now, not "pending". Until that table moves, the data-moving release
+is deployed, not delivered. Pure readers and UI changes with no writes, and
+docs/tests-only releases, do not require processing or a 30-minute baseline
+read-back; use their actual outcome evidence.
 
 ## Find a gap by tracing one record end to end, in both systems
 

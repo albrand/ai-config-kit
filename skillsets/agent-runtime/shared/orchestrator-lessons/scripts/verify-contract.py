@@ -32,6 +32,13 @@ required = (
     'release verdict stays FAIL',
     'Deployment readiness and delivery are separate',
     'trigger the processing after deployment',
+    "## A data-moving release is done when the user's data moved, not merely when the release is Ready",
+    'for releases whose actual behavior processes, writes, or requeues stored data, trigger the processing the change depends on',
+    'measure the user-facing outcome (per customer or per entity, the same table as the baseline) within 30 minutes',
+    'A job that has not reported completion is a FAIL to act on now, not "pending"',
+    'Until that table moves, the data-moving release is deployed, not delivered',
+    'Pure readers and UI changes with no writes, and docs/tests-only releases, do not require processing or a 30-minute baseline read-back',
+    'use their actual outcome evidence',
 )
 missing = [clause for clause in required if clause not in text]
 if missing:
@@ -45,4 +52,20 @@ old_broad = text.replace(
 if old_broad == text or not any(clause not in old_broad for clause in required):
     print('Broad reader/UI counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Scoped reader/docs/UI and data-moving text contract passes; broad-gate counterfactual rejected (text only, not agent-behavior evidence).')
+
+old_incident = text.replace(
+    "## A data-moving release is done when the user's data moved, not merely when the release is Ready",
+    "## Done means the user's data moved, not that the release is Ready",
+).replace(
+    'for releases whose actual behavior processes, writes, or requeues stored data, trigger the processing the change depends on, then measure the user-facing outcome',
+    'after every release, trigger the processing it depends on, then measure the user-facing outcome',
+)
+incident_scope = (
+    "## A data-moving release is done when the user's data moved, not merely when the release is Ready",
+    'for releases whose actual behavior processes, writes, or requeues stored data, trigger the processing the change depends on',
+    'Pure readers and UI changes with no writes, and docs/tests-only releases, do not require processing or a 30-minute baseline read-back',
+)
+if old_incident == text or not any(clause not in old_incident for clause in incident_scope):
+    print('Old broad incident counterfactual was not rejected.', file=sys.stderr)
+    raise SystemExit(1)
+print('Scoped reader/docs/UI, data-moving, and incident text contracts pass; both broad-gate counterfactuals rejected (text only, not agent-behavior evidence).')
