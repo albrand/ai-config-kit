@@ -1,8 +1,8 @@
 ---
 name: meaningful-tests
 description: Use before selecting or reporting tests, claiming a feature or workflow complete, or exercising a product as its user. Require a named persona, identified target, stated user outcomes, and a verdict per outcome; preserve evidence boundaries and fix authorized workflow failures.
-verify: python3 scripts/verify-contract.py
-verified: 2026-10-01
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/shared/meaningful-tests/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Meaningful tests

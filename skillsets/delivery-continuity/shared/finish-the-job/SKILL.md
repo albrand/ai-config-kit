@@ -1,8 +1,8 @@
 ---
 name: finish-the-job
 description: Use when fixing a bug, touching shared code, configuration, hooks or skills, encountering a blocker, or preparing to stop. Complete the authorized user outcome, repair known defects, check consumers, and distinguish implementation from installation and exercised workflows.
-verify: python3 scripts/verify-contract.py
-verified: 2026-10-01
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/shared/finish-the-job/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Finish the job

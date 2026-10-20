@@ -4,8 +4,8 @@ description: >
   Use when running a fleet of agents, or when the same class of mistake keeps
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
-verify: python3 scripts/verify-contract.py
-verified: 2026-10-04
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/agent-runtime/shared/orchestrator-lessons/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Lessons an orchestrator keeps having to relearn
