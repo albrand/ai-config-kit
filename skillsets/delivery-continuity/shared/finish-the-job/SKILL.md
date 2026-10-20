@@ -100,6 +100,20 @@ claim universal propagation from file copies alone.
 
 ## Before stopping
 
+Reconcile native task and plan state with the work's actual outcome and execution
+before stopping or resuming. Read only the task list selected for your own
+session by its control plane, using supported APIs; do not mutate another
+session's task list or a board. Mark work completed only when outcome evidence
+supports completion. Treat `in_progress` as active only while an owned live
+worker or execution handle exists; a status label is not a heartbeat. When work
+depends only on an external event or human action, use the harness's supported
+pending/waiting state and record the exact blocker, owner, and resume condition.
+Split work that mixes active execution with an external wait when the supported
+interface permits it. Resume by continuing every authorized runnable next step,
+including independent work, rather than only rewriting status. Use only status
+values the current harness supports; never infer completion from a stopped
+runtime.
+
 Check the request, open defects, sibling search, consumers, installed copies,
 required workflow checks, and task-owned process cleanup. Keep each required
 goal's verdict and evidence distinct. State persona, target with commit or

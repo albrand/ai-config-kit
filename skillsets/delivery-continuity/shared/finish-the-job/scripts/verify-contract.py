@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the installed delivery contract's critical boundaries offline."""
+"""Check critical skill-text boundaries offline; this is not behavior evidence."""
 from pathlib import Path
 import sys
 
@@ -25,6 +25,15 @@ required = (
     'For these data-moving releases, report deployed and delivered separately until the table moves',
     'Pure readers with no writes, UI changes with no writes, and docs/tests-only changes do not require a processing trigger or baseline read-back',
     'verify their actual outcome as described below',
+    'Reconcile native task and plan state with the work\'s actual outcome and execution',
+    'Read only the task list selected for your own session by its control plane, using supported APIs',
+    'Mark work completed only when outcome evidence supports completion',
+    'a status label is not a heartbeat',
+    'use the harness\'s supported pending/waiting state and record the exact blocker, owner, and resume condition',
+    'Split work that mixes active execution with an external wait when the supported interface permits it',
+    'continuing every authorized runnable next step, including independent work',
+    'Use only status values the current harness supports',
+    'never infer completion from a stopped runtime',
 )
 forbidden = (
     'Batch the semantic questions (in-scope work left, given the request and a summary of what changed?) into one Jev call',
@@ -65,4 +74,4 @@ old_obligations = text + '\n' + '\n'.join(forbidden)
 if not violations(old_obligations):
     print('Old Jev/ledger obligation counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Delivery and scoped data-movement text boundaries pass; broad exemption, introductory, and old Jev/ledger counterfactuals rejected (text only, not agent-behavior evidence).')
+print('Delivery, scoped data-movement, and task-reconciliation text boundaries pass; broad exemption, introductory, and old Jev/ledger counterfactuals rejected (text only, not agent-behavior evidence).')
