@@ -3,11 +3,10 @@
 
 Three things, all checked:
   1. the always-on block in every global instruction file (identical text);
-  2. a skill-specific "Typed decisions here" block in every copy of each skill
-     that owns a decision point -- kit sources AND installed copies, which have
-     diverged on purpose (installed ones carry machine-local text) and so
-     cannot be synced wholesale. The PR-review block is canonical in the
-     Codex review skill and copied exactly to its other entrypoint;
+  2. a skill-specific "Typed decisions here" block in installed copies of
+     skills that own a decision point. Meaningful-tests and PR-review blocks
+     are canonical in their kit skill sources and copied exactly to homes;
+     other local blocks are rendered from this script;
   3. the typed-decisions skill itself in every agent skill home.
 
 A rule written into one file and missing from the next is installed but
@@ -35,35 +34,6 @@ KIT = os.environ.get("AI_CONFIG_KIT") or H("~/projects/agent-config-kit")
 FOOT = "Contract: the `typed-decisions` skill."
 
 SECTIONS = {
-"meaningful-tests": """The per-goal verdict is pick-one, `PASS | FAIL | BLOCKED | NOT RUN`, and
-nothing else. "Partially", "mostly works" and "works with a caveat" are
-outside that space, and count as FAIL. PASS needs a check: the persona
-completed the goal, read at target state. BLOCKED needs the named blocker.
-Judge each goal separately; one goal passing never lifts another. The overall
-claim is computed, not felt: any FAIL means not done, and any NOT RUN means
-you may not write "tested".
-
-Jev (`typed-decisions` section 10) may answer the semantic sub-questions (does this evidence show the
-persona reaching the goal? does this report name a blocker?) as one more
-isolated judge. It never produces PASS on its own: PASS still needs the check.""",
-
-"finish-the-job": """"Am I done?" is a decision, so type it. Answer each yes/no with a check
-behind it, not a feeling:
-
-- In-scope work left? (re-read the original request)
-- A found defect still unfixed?
-- Siblings of the fixed bug searched?
-- Every copy of a touched shared file identical? (`shasum` each home)
-- Capability checked before saying blocked? (`bb-capability-check`)
-
-Stopping is allowed only when every answer comes out clean. "Blocked" is
-allowed only with the named blocker. Feeling done is a self-report, not a
-check.
-
-Batch the semantic questions (in-scope work left, given the request and a
-summary of what changed?) into one Jev call (`typed-decisions` section 10). The mechanical ones stay
-checks.""",
-
 "scope-advisor": """Don't judge scope as a whole. For each requirement in the scope record, answer
 three separate yes/no questions against the record (not the conversation):
 `covered?`, `added-unrequested?`, `rests on an assumption only the user can
@@ -146,7 +116,6 @@ def homes(skill):
 
 TARGETS = {
     "meaningful-tests": homes("meaningful-tests"),
-    "finish-the-job": homes("finish-the-job"),
     "scope-advisor": [f"{KIT}/skillsets/scope-advisory/codex/scope-advisor/SKILL.md"] + homes("scope-advisor"),
     # shared kit skills reach every home through scripts/publish.mjs
     "reviewing-with-an-agent": [f"{KIT}/skillsets/agent-runtime/shared/reviewing-with-an-agent/SKILL.md"]
@@ -182,8 +151,6 @@ ANCHOR = "<!-- token-efficient-orchestration:end -->"
 
 # Ledger point each skill records to; see the typed-decisions skill, section 9.
 RECORD = {
-    "meaningful-tests": "`--point test-verdict`, one record per goal",
-    "finish-the-job": "`--point done` with the computed answer",
     "scope-advisor": "`--point scope-verdict`",
     "reviewing-with-an-agent": "`--point review-finding` per finding",
     "codex-delegation": "the delegate's decision under its own point",
@@ -195,15 +162,18 @@ RECORD = {
 
 
 def skill_block(key):
-    if key == "pr-review":
-        # The PR-review source block carries the complete Jev packet boundary,
-        # privacy safeguards, escalation and resolution procedure. Reuse it
-        # verbatim so this sync cannot replace it with a shortened duplicate.
-        canonical = os.path.join(KIT, "skillsets/pr-review/shared/high-signal-pr-review/SKILL.md")
+    if key in ("meaningful-tests", "pr-review"):
+        # These source blocks own their wording. Mirror them verbatim rather
+        # than maintaining a second SECTIONS/RECORD copy in this renderer.
+        source = {
+            "meaningful-tests": "skillsets/delivery-continuity/shared/meaningful-tests/SKILL.md",
+            "pr-review": "skillsets/pr-review/shared/high-signal-pr-review/SKILL.md",
+        }[key]
+        canonical = os.path.join(KIT, source)
         text = Path(canonical).read_text(encoding="utf-8")
         blocks = PAT.findall(text)
         if len(blocks) != 1:
-            raise ValueError(f"expected one canonical PR-review typed-decisions block in {canonical}")
+            raise ValueError(f"expected one canonical {key} typed-decisions block in {canonical}")
         return blocks[0]
     record = (f"\n\nRecord it in the decision ledger ({RECORD[key]}), with a `--ref` a later agent "
               "can find, and resolve it when the truth arrives.")
