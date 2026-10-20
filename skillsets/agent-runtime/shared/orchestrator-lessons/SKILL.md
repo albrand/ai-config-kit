@@ -45,15 +45,26 @@ thin.
 Work that cannot point to a cell in the map is not started. When evidence
 contradicts the map, update the map before re-planning.
 
-## Gate every data movement change at plan and integration
+## Gate data movement at plan and integration
 
-Before slotting, merging, or releasing a card that changes processing,
-attribution, projection, backfill, or a reader of stored data, require this
-completed block in the card and carry it through integration:
+Classify the actual effects before requiring data-movement evidence. A change
+is data-moving when it processes, attributes, projects, backfills, writes, or
+requeues stored data. A nominal reader or UI change that triggers such a write
+is data-moving. A pure stored-data reader with no writes, a UI-only change with
+no writes, and docs/tests-only changes do not move stored data; do not require
+them to invent a lane, throughput, drain, count change, takeover, or 30-minute
+read-back. Use the real outcome, integration, quality, and behavior evidence
+for those changes; UI changes use a screen read when that is the changed
+outcome, while docs/tests-only changes use their relevant document or test
+evidence.
+
+Only for a change whose actual behavior moves stored data, require this
+completed block in the card and carry it through integration. For every other
+kind, mark the block not applicable and state the actual effect and evidence:
 
 ```markdown
 ## Data movement
-- Kind: data-moving | reader-only | UI-only | docs/tests-only
+- Kind: data-moving | reader-only | UI-only | docs/tests-only; classify by actual writes/requeues, not the label
 - Existing records affected (production, counts only): <count and what; UTC measurement, owner/query, or COORDINATOR TO MEASURE plus exact query>
 - Lane and cadence: <cron/queue/route, source file:line; every N minutes>
 - Per-run throughput: <rows per invocation; source file:line or measurement>
@@ -64,8 +75,7 @@ completed block in the card and carry it through integration:
 - Deployment-takeover check: <new deployment runs the lane; logs grouped by deploymentId show integrations.chain.started on the new deployment, not skipped_sibling>
 ```
 
-For UI-only and docs/tests-only cards, state why stored data does not move and
-name the screen read that proves the change is visible. At release closeout,
+For data-moving cards, complete every field above. At release closeout,
 report the observed before and 30-minute after counts from the read-back.
 Writers without production access use the coordinator's latest count or
 provide the exact query and mark it COORDINATOR TO MEASURE; measure it before
@@ -73,7 +83,8 @@ merge. Tests passed is never evidence of data movement. At integration,
 capture the before read-back, then the same counts-only query 30 minutes after
 deployment is Ready and takeover is confirmed. The release verdict stays FAIL
 until the after-read reaches the prediction; diagnose immediately if it does
-not.
+not. Deployment readiness and delivery are separate: trigger the processing
+after deployment, then measure the same outcome read-back.
 
 ## Find colliding work before you write, and own it once found
 

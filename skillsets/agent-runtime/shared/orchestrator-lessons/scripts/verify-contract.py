@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Check the orchestrator's data-movement release gate offline."""
+"""Check the orchestrator's scoped data-movement text contract offline."""
 from pathlib import Path
 import sys
 
 text = ' '.join((Path(__file__).resolve().parents[1] / 'SKILL.md').read_text().split())
 required = (
-    'Gate every data movement change at plan and integration',
+    'Gate data movement at plan and integration',
+    'A change is data-moving when it processes, attributes, projects, backfills, writes, or requeues stored data',
+    'A nominal reader or UI change that triggers such a write is data-moving',
+    'A pure stored-data reader with no writes, a UI-only change with no writes, and docs/tests-only changes do not move stored data',
+    'do not require them to invent a lane, throughput, drain, count change, takeover, or 30-minute read-back',
+    'Use the real outcome, integration, quality, and behavior evidence',
+    'UI changes use a screen read when that is the changed outcome',
+    'docs/tests-only changes use their relevant document or test evidence',
+    'Only for a change whose actual behavior moves stored data',
     '## Data movement',
-    'Kind: data-moving | reader-only | UI-only | docs/tests-only',
+    'Kind: data-moving | reader-only | UI-only | docs/tests-only; classify by actual writes/requeues, not the label',
     'Existing records affected (production, counts only)',
     'Lane and cadence:',
     'Per-run throughput:',
@@ -17,14 +25,24 @@ required = (
     'Expected after-value:',
     'Deployment-takeover check:',
     'COORDINATOR TO MEASURE',
-    'screen read that proves the change is visible',
+    'For data-moving cards, complete every field above',
     'report the observed before and 30-minute after counts',
     'Tests passed is never evidence of data movement',
     '30 minutes after deployment is Ready',
     'release verdict stays FAIL',
+    'Deployment readiness and delivery are separate',
+    'trigger the processing after deployment',
 )
 missing = [clause for clause in required if clause not in text]
 if missing:
     print('Missing data-movement gate clause:', ', '.join(missing), file=sys.stderr)
     raise SystemExit(1)
-print('Orchestration data-movement release gate present.')
+
+old_broad = text.replace(
+    'Only for a change whose actual behavior moves stored data, require this',
+    'For every stored-data reader and UI change, require this',
+)
+if old_broad == text or not any(clause not in old_broad for clause in required):
+    print('Broad reader/UI counterfactual was not rejected.', file=sys.stderr)
+    raise SystemExit(1)
+print('Scoped reader/docs/UI and data-moving text contract passes; broad-gate counterfactual rejected (text only, not agent-behavior evidence).')

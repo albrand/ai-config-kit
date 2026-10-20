@@ -34,11 +34,19 @@ processing, trigger that processing, then re-measure the same per-entity table
 used for the baseline. A job that has not reported completion is a failure to
 act on now. Report deployed and delivered separately until the table moves.
 
-Before closeout, require the completed `## Data movement` block for any
-processing, attribution, projection, backfill, or stored-data-reader change.
-Record the observed before and 30-minute after counts-only read-back and
-deployment takeover; keep the release verdict FAIL until the after-value
-reaches the prediction. Tests passed is never data-movement evidence.
+Before closeout, require the completed `## Data movement` block only when the
+actual change processes, attributes, projects, backfills, writes, or requeues
+stored data. A nominal reader or UI change that triggers a write is data-moving.
+A pure stored-data reader with no writes, a UI-only change with no writes, and
+docs/tests-only changes do not require a lane, throughput, drain, count change,
+deployment takeover, or 30-minute read-back; use their real outcome,
+integration, quality, and behavior evidence. Use a screen read for a changed UI
+outcome, and relevant document or test evidence for docs/tests-only changes.
+For data-moving changes, record the observed before and 30-minute after
+counts-only read-back and deployment takeover; keep the release verdict FAIL
+until the after-value reaches the prediction. Deployment readiness and delivery
+are separate: trigger the processing after deployment, then measure its outcome.
+Tests passed is never data-movement evidence.
 
 For any change to how data is processed, answer two questions before merge:
 - How does self-healing detect existing records that need reprocessing or

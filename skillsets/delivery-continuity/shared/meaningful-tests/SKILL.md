@@ -43,11 +43,19 @@ the behavior. Use `TEST_OWNERSHIP.md` when the repository adopts that contract.
 
 ## Measure, then claim
 
-A release claim for a processing, attribution, projection, backfill, or
-stored-data-reader change requires observed before and 30-minute after counts
+A release claim requires data-movement evidence only when the actual change
+processes, attributes, projects, backfills, writes, or requeues stored data. A
+nominal reader or UI change that triggers a write is data-moving. A pure
+stored-data reader with no writes, a UI-only change with no writes, and
+docs/tests-only changes do not require a lane, throughput, drain, count change,
+deployment takeover, or 30-minute read-back. Use their real outcome,
+integration, quality, and behavior evidence; use a screen read for a changed UI
+outcome and relevant document or test evidence for docs/tests-only changes.
+For data-moving changes, require observed before and 30-minute after counts
 from the counts-only read-back, the predicted value, and confirmed deployment
-takeover. Until the after-read reaches the prediction, report FAIL; tests passed
-is never evidence of data movement.
+takeover. Until the after-read reaches the prediction, report FAIL; deployment
+readiness and delivery are separate, so trigger processing after deployment
+and measure its outcome. Tests passed is never evidence of data movement.
 
 A gap claim needs the stage where it starts. Trace one representative record
 through source, storage, processing, API, and screen, in the working reference
