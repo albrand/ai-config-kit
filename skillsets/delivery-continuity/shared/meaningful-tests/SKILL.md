@@ -1,11 +1,13 @@
 ---
 name: meaningful-tests
 description: Use before selecting or reporting tests, claiming a feature or workflow complete, or exercising a product as its user. Require a named persona, identified target, stated user outcomes, and a verdict per outcome; preserve evidence boundaries and fix authorized workflow failures.
-verify: python3 scripts/verify-contract.py
-verified: 2026-10-01
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/shared/meaningful-tests/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Meaningful tests
+
+For implementing features, shared-contract changes, LLM-backed output changes, and production fixes, or assessing completion of a new or existing candidate in those classes, load [engineering-contracts](../engineering-contracts/SKILL.md) before selecting checks. In Claude, use the native Skill tool with the registered `engineering-contracts` name when available; in Codex, read the discovered `SKILL.md`. A link or mentioned skill name alone does not show it was activated. If the harness lacks a native Skill tool, read the file directly. It establishes the requested value and falsifiable behavior; this skill still owns persona, target, full-workflow, verdict, and evidence reporting.
 
 ## Name the outcome and its evidence
 
@@ -40,6 +42,20 @@ for declarations or generated internals when a check at their consumer owns
 the behavior. Use `TEST_OWNERSHIP.md` when the repository adopts that contract.
 
 ## Measure, then claim
+
+A release claim requires data-movement evidence only when the actual change
+processes, attributes, projects, backfills, writes, or requeues stored data. A
+nominal reader or UI change that triggers a write is data-moving. A pure
+stored-data reader with no writes, a UI-only change with no writes, and
+docs/tests-only changes do not require a lane, throughput, drain, count change,
+deployment takeover, or 30-minute read-back. Use their real outcome,
+integration, quality, and behavior evidence; use a screen read for a changed UI
+outcome and relevant document or test evidence for docs/tests-only changes.
+For data-moving changes, require observed before and 30-minute after counts
+from the counts-only read-back, the predicted value, and confirmed deployment
+takeover. Until the after-read reaches the prediction, report FAIL; deployment
+readiness and delivery are separate, so trigger processing after deployment
+and measure its outcome. Tests passed is never evidence of data movement.
 
 A gap claim needs the stage where it starts. Trace one representative record
 through source, storage, processing, API, and screen, in the working reference
@@ -92,3 +108,16 @@ command or interaction, expected result, observed result, and a findable artifac
 at the relevant evidence tier. Distinguish proposed, implemented, installed,
 and exercised outcomes. Correct prior unsupported claims explicitly. Missing
 evidence is NOT RUN; honest partial evidence is useful and must not be hidden.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+The per-goal verdict is pick-one, `PASS | FAIL | BLOCKED | NOT RUN`, and
+nothing else. "Partially", "mostly works" and "works with a caveat" are
+outside that space, and count as FAIL. PASS needs a check: the persona
+completed the goal, read at target state. BLOCKED needs the named blocker.
+Judge each goal separately; one goal passing never lifts another. The overall
+claim is computed, not felt: any FAIL means not done, and any NOT RUN means
+you may not write "tested".
+
+<!-- typed-decisions:end -->

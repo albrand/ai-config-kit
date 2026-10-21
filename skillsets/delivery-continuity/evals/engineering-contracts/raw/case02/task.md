@@ -1,0 +1,1 @@
+Add an offline classification flow for supplied text. Return a category and route the result to the matching queue; a structurally valid response is insufficient when it does not drive the requested handling. The response fixture is local and no network call is needed. Run `python3 check.py`.

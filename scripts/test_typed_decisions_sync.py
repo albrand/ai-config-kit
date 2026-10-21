@@ -35,8 +35,10 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
         for target in self.targets:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(STALE, encoding="utf-8")
-        self.seed_review_source(self.home / "projects/agent-config-kit")
-        for skill in ("meaningful-tests", "typed-decisions"):
+        kit = self.home / "projects/agent-config-kit"
+        self.seed_review_source(kit)
+        self.seed_meaningful_source(kit)
+        for skill in ("meaningful-tests", "finish-the-job", "typed-decisions"):
             target = self.home / ".agents/skills" / skill / "SKILL.md"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("# fixture\n", encoding="utf-8")
@@ -44,6 +46,14 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
     @staticmethod
     def seed_review_source(kit: Path) -> None:
         rel = Path("skillsets/pr-review/shared/high-signal-pr-review/SKILL.md")
+        source = REPO / rel
+        target = kit / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    @staticmethod
+    def seed_meaningful_source(kit: Path) -> None:
+        rel = Path("skillsets/delivery-continuity/shared/meaningful-tests/SKILL.md")
         source = REPO / rel
         target = kit / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +108,7 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
         kit = self.home / "merged-main"
         kit.mkdir()
         self.seed_review_source(kit)
+        self.seed_meaningful_source(kit)
         (kit / "GLOBAL_AGENTS.md").write_text(STALE, encoding="utf-8")
         result = self.run_sync("--check", AI_CONFIG_KIT=str(kit))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -158,6 +169,29 @@ class CanonicalPrReviewBlockTests(unittest.TestCase):
             self.assertIsNotNone(match, str(path))
             self.assertEqual(match.group(0), block, str(path))
             self.assertEqual(self.sync.upsert(text, block, False), text, str(path))
+
+    def test_meaningful_tests_sync_emits_verdict_block_verbatim(self) -> None:
+        source = REPO / "skillsets/delivery-continuity/shared/meaningful-tests/SKILL.md"
+        blocks = self.sync.PAT.findall(source.read_text(encoding="utf-8"))
+        self.assertEqual(len(blocks), 1)
+        block = blocks[0]
+        self.assertEqual(self.sync.skill_block("meaningful-tests"), block)
+        self.assertIn("The per-goal verdict is pick-one", block)
+        self.assertIn("PASS | FAIL | BLOCKED | NOT RUN", block)
+        self.assertNotIn("Jev (`typed-decisions` section 10)", block)
+        self.assertNotIn("Record it in the decision ledger", block)
+
+        target = ("# fixture\n\n<!-- typed-decisions:begin -->\nold block\n"
+                  "<!-- typed-decisions:end -->\n")
+        rendered = self.sync.upsert(target, self.sync.skill_block("meaningful-tests"), False)
+        self.assertEqual(self.sync.PAT.findall(rendered), [block])
+        self.assertIn("# fixture", rendered)
+
+    def test_finish_the_job_is_not_a_sync_target_or_rendered_again(self) -> None:
+        self.assertNotIn("finish-the-job", self.sync.SECTIONS)
+        self.assertNotIn("finish-the-job", self.sync.TARGETS)
+        self.assertNotIn("finish-the-job", self.sync.RECORD)
+        self.assertFalse(any(key == "finish-the-job" for key, _, _ in self.sync.jobs()))
 
     def test_source_only_check_passes_without_installing_global_homes(self) -> None:
         result = subprocess.run(
