@@ -103,6 +103,37 @@ A peer's "rebased, green" is a claim. Read the remote SHA and the check result
 yourself: that day a peer's green rebase never reached GitHub, and your own
 `git push` was silently refused by a pre-push gate.
 
+## Carry hard boundaries into delegated execution
+
+A native trial's parent brief prohibited retries after permission denials, but
+its generated prompt omitted that rule and requested file outputs without
+checking whether the child's allowed tools authorized those writes. The child
+retried/rerouted denied actions; the required output failed. This confirms a
+handoff omission, not a single cause of the model's behavior.
+
+**Check before launch:** copy the parent's exact hard refusal and permission
+boundaries into both the generated brief and launcher configuration. Check
+that requested disposable writes fit the existing authority and allowed tools;
+if not, narrow the requested output to authorized work. Preserve the original
+outcome: report an unattempted requested output as BLOCKED/NOT RUN and an
+attempted failed output as FAIL, as applicable; continue independent
+authorized work and never silently substitute reduced output as success. Never
+widen authority or add a routine approval step. Actual hard safety/authorization
+refusals—a safety-hook, sandbox, guardian, DLP, access-policy, or provider-policy
+refusal—are final: do not retry, rephrase, switch tools/routes, delegate around
+them, or widen authority. Preserve the exact refusal and continue only
+independently authorized work.
+
+Ordinary command usage/format, transport/runtime, and wrong execution-context
+errors may be diagnosed and corrected within already established authority.
+An external access/ACL refusal is not such an error. A GitHub collaborator
+error under one account does not authorize evading repository ACLs or selecting
+credentials; use an already authenticated owner context only when actual owner
+rules authorize it. This distinction does not make external access refusals
+generally recoverable. Keep safety/process FAIL distinct from successful output
+observations or task API results. This text check is preventive knowledge only;
+it does not prove agent behavior or enforce safety.
+
 ## Verify the thing you did not change
 
 Nearly every regression in a long session comes from a change that worked and

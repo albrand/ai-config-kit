@@ -9,8 +9,8 @@ verified: 2026-10-05
 
 Bounded and bulk execution uses the live verified Codex route. Quality-critical
 architecture, security, authentication, data-loss, release, and final-review
-work stays on Claude; do not send bulk work to Claude. GLM is retired as an
-execution route. Keep Hermes's current review route working
+work stays on Claude; do not send bulk work to Claude. GLM is retired for
+ordinary execution and fallback. Keep Hermes's current review route working
 until Codex (model set in Hermes's own config) is verified there; manage the
 live route change in Hermes's own config.
 
@@ -21,7 +21,19 @@ live route change in Hermes's own config.
 3. Give the worker the relevant user request, accepted scope, parent outcome,
    plan, exact owned paths and `do_not_touch` paths, source evidence, acceptance
    criteria, exact checks, security and data invariants, allowed tools, output
-   cap, stop conditions, and fallback.
+   cap, stop conditions, and fallback. Carry the parent's exact hard refusal
+   and permission boundaries into the generated brief and launcher
+   configuration; verify requested writes fit the existing authority before
+   launch. Actual hard safety/authorization refusals are final: never retry,
+   rephrase, switch tools/routes, delegate around them, or widen authority.
+   Ordinary command usage/format, transport/runtime, and wrong execution-context
+   errors may be diagnosed and corrected within already established authority.
+   An access/ACL refusal is not such an error: do not evade ACLs or select
+   credentials. Use an already authenticated owner context only when actual
+   owner rules authorize it. Preserve the requested outcome: an unattempted
+   output is BLOCKED/NOT RUN, and an attempted failed output is FAIL; never
+   report reduced output as success. Continue only independently authorized
+   work; see `orchestrator-lessons` for the check.
 4. Keep one writer per branch and worktree. Executor work uses a dedicated
    isolated worktree with explicit write authorization. Do not recurse into
    another orchestrator or sidecar.
