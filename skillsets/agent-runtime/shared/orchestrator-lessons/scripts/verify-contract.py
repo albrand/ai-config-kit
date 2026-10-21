@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Check the orchestrator's scoped data-movement text contract offline."""
+"""Check scoped orchestrator text contracts offline, not agent behavior."""
 from pathlib import Path
 import sys
 
 text = ' '.join((Path(__file__).resolve().parents[1] / 'SKILL.md').read_text().split())
+delegation = ' '.join((Path(__file__).resolve().parents[2] / 'codex-delegation' / 'SKILL.md').read_text().split())
 required = (
     'Gate data movement at plan and integration',
     'A change is data-moving when it processes, attributes, projects, backfills, writes, or requeues stored data',
@@ -68,4 +69,40 @@ incident_scope = (
 if old_incident == text or not any(clause not in old_incident for clause in incident_scope):
     print('Old broad incident counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Scoped reader/docs/UI, data-moving, and incident text contracts pass; both broad-gate counterfactuals rejected (text only, not agent-behavior evidence).')
+boundary_required = (
+    'Carry hard boundaries into delegated execution',
+    "parent's exact hard refusal and permission boundaries into both the generated brief and launcher configuration",
+    'requested disposable writes fit the existing authority and allowed tools',
+    'Never widen authority or add a routine approval step',
+    'A safety-hook, sandbox, guardian, DLP, access-policy, or provider refusal is final',
+    'do not retry, rephrase, switch tools/routes, or delegate around it',
+    'continue only independently authorized work',
+    'Keep safety/process FAIL distinct from successful output observations or task API results',
+    'does not prove agent behavior or enforce safety',
+)
+missing_boundary = [clause for clause in boundary_required if clause not in text]
+handoff_required = (
+    "Carry the parent's exact hard refusal and permission boundaries into the generated brief and launcher configuration",
+    'verify requested writes fit the existing authority before launch',
+    'A denial is final: never retry, rephrase, switch tools/routes, delegate around it, or widen authority',
+    'Continue only independently authorized work',
+)
+missing_handoff = [clause for clause in handoff_required if clause not in delegation]
+if missing_boundary or missing_handoff:
+    missing = [f'lesson: {clause}' for clause in missing_boundary]
+    missing.extend(f'delegation handoff: {clause}' for clause in missing_handoff)
+    print('Missing delegated-boundary text contract: ' + '; '.join(missing), file=sys.stderr)
+    raise SystemExit(1)
+
+# Counterfactual: restore the original generic step 3 with no boundary clause.
+needle = "Carry the parent's exact hard refusal and permission boundaries into the generated brief and launcher configuration"
+start_boundary = delegation.find(needle)
+end_boundary = delegation.find('4. Keep one writer', start_boundary)
+if start_boundary < 0 or end_boundary < 0:
+    print('Delegated-boundary omission counterfactual could not isolate the handoff clause.', file=sys.stderr)
+    raise SystemExit(1)
+omitted_handoff = delegation[:start_boundary] + delegation[end_boundary:]
+if any(clause in omitted_handoff for clause in handoff_required):
+    print('Original delegated-boundary omission counterfactual was not rejected.', file=sys.stderr)
+    raise SystemExit(1)
+print('Scoped reader/docs/UI, data-moving, incident, and delegated-boundary text contracts pass; broad-gate and original-omission counterfactuals rejected (text contract only, not agent-behavior evidence or safety enforcement).')

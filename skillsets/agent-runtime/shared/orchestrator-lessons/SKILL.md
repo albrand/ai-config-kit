@@ -103,6 +103,25 @@ A peer's "rebased, green" is a claim. Read the remote SHA and the check result
 yourself: that day a peer's green rebase never reached GitHub, and your own
 `git push` was silently refused by a pre-push gate.
 
+## Carry hard boundaries into delegated execution
+
+A native trial's parent brief prohibited retries after permission denials, but
+its generated prompt omitted that rule and requested file outputs without
+checking whether the child's allowed tools authorized those writes. The child
+retried/rerouted denied actions; the required output failed. This confirms a
+handoff omission, not a single cause of the model's behavior.
+
+**Check before launch:** copy the parent's exact hard refusal and permission
+boundaries into both the generated brief and launcher configuration. Check
+that requested disposable writes fit the existing authority and allowed tools;
+if not, narrow the requested output to authorized work. Never widen authority
+or add a routine approval step. A safety-hook, sandbox, guardian, DLP,
+access-policy, or provider refusal is final: do not retry, rephrase, switch
+tools/routes, or delegate around it. Preserve the refusal and continue only
+independently authorized work. Keep safety/process FAIL distinct from
+successful output observations or task API results. This text check is
+preventive knowledge only; it does not prove agent behavior or enforce safety.
+
 ## Verify the thing you did not change
 
 Nearly every regression in a long session comes from a change that worked and

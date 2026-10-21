@@ -21,7 +21,12 @@ live route change in Hermes's own config.
 3. Give the worker the relevant user request, accepted scope, parent outcome,
    plan, exact owned paths and `do_not_touch` paths, source evidence, acceptance
    criteria, exact checks, security and data invariants, allowed tools, output
-   cap, stop conditions, and fallback.
+   cap, stop conditions, and fallback. Carry the parent's exact hard refusal
+   and permission boundaries into the generated brief and launcher
+   configuration; verify requested writes fit the existing authority before
+   launch. A denial is final: never retry, rephrase, switch tools/routes,
+   delegate around it, or widen authority. Continue only independently
+   authorized work; see `orchestrator-lessons` for the check.
 4. Keep one writer per branch and worktree. Executor work uses a dedicated
    isolated worktree with explicit write authorization. Do not recurse into
    another orchestrator or sidecar.
