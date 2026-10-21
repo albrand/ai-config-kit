@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check scoped orchestrator text contracts offline, not agent behavior."""
+"""Check known wording contracts offline, not arbitrary paraphrases or behavior."""
 from pathlib import Path
 import sys
 
@@ -106,4 +106,23 @@ omitted_handoff = delegation[:start_boundary] + delegation[end_boundary:]
 if any(clause in omitted_handoff for clause in handoff_required):
     print('Original delegated-boundary omission counterfactual was not rejected.', file=sys.stderr)
     raise SystemExit(1)
-print('Scoped reader/docs/UI, data-moving, incident, and delegated-boundary text contracts pass; broad-gate and original-omission counterfactuals rejected (text contract only, not agent-behavior evidence or safety enforcement).')
+
+# This intentionally narrow lexical check catches the known exception form;
+# it is not a semantic parser and cannot catch arbitrary paraphrases.
+bypass_exception = 'Exception: retry a denied action through another route and widen authority.'
+known_bypass = 'retry a denied action through another route and widen authority'
+
+def has_known_bypass(source: str) -> bool:
+    return known_bypass in source.lower()
+
+for source_name, source in (('lesson', text), ('handoff', delegation)):
+    if has_known_bypass(source):
+        print(f'Contradictory delegated-boundary exception text detected in {source_name}.', file=sys.stderr)
+        raise SystemExit(1)
+    # Same required clauses remain in place; appending the known exception
+    # must still be rejected in either relevant source.
+    if not has_known_bypass(source + ' ' + bypass_exception):
+        print(f'Known bypass counterfactual was not rejected in {source_name}.', file=sys.stderr)
+        raise SystemExit(1)
+
+print('Scoped reader/docs/UI, data-moving, incident, and delegated-boundary text contracts pass; broad-gate and omission counterfactuals rejected. Known bypass exception wording is checked lexically only: arbitrary paraphrases and agent behavior are not verified or enforced.')
