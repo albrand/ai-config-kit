@@ -114,10 +114,13 @@ handoff omission, not a single cause of the model's behavior.
 **Check before launch:** copy the parent's exact hard refusal and permission
 boundaries into both the generated brief and launcher configuration. Check
 that requested disposable writes fit the existing authority and allowed tools;
-if not, narrow the requested output to authorized work. Never widen authority
-or add a routine approval step. A safety-hook, sandbox, guardian, DLP,
-access-policy, or provider refusal is final: do not retry, rephrase, switch
-tools/routes, or delegate around it. Preserve the refusal and continue only
+if not, narrow the requested output to authorized work. Preserve the original
+outcome: report an unattempted requested output as BLOCKED/NOT RUN and an
+attempted failed output as FAIL, as applicable; continue independent
+authorized work and never silently substitute reduced output as success. Never
+widen authority or add a routine approval step. A safety-hook, sandbox,
+guardian, DLP, access-policy, or provider refusal is final: do not retry,
+rephrase, switch tools/routes, or delegate around it. Preserve the refusal and continue only
 independently authorized work. Keep safety/process FAIL distinct from
 successful output observations or task API results. This text check is
 preventive knowledge only; it does not prove agent behavior or enforce safety.

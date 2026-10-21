@@ -73,6 +73,7 @@ boundary_required = (
     'Carry hard boundaries into delegated execution',
     "parent's exact hard refusal and permission boundaries into both the generated brief and launcher configuration",
     'requested disposable writes fit the existing authority and allowed tools',
+    'Preserve the original outcome: report an unattempted requested output as BLOCKED/NOT RUN and an attempted failed output as FAIL, as applicable; continue independent authorized work and never silently substitute reduced output as success',
     'Never widen authority or add a routine approval step',
     'A safety-hook, sandbox, guardian, DLP, access-policy, or provider refusal is final',
     'do not retry, rephrase, switch tools/routes, or delegate around it',
