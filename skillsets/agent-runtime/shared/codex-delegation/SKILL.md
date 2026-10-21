@@ -24,9 +24,16 @@ live route change in Hermes's own config.
    cap, stop conditions, and fallback. Carry the parent's exact hard refusal
    and permission boundaries into the generated brief and launcher
    configuration; verify requested writes fit the existing authority before
-   launch. A denial is final: never retry, rephrase, switch tools/routes,
-   delegate around it, or widen authority. Continue only independently
-   authorized work; see `orchestrator-lessons` for the check.
+   launch. Actual hard safety/authorization refusals are final: never retry,
+   rephrase, switch tools/routes, delegate around them, or widen authority.
+   Ordinary command usage/format, transport/runtime, and wrong execution-context
+   errors may be diagnosed and corrected within already established authority.
+   An access/ACL refusal is not such an error: do not evade ACLs or select
+   credentials. Use an already authenticated owner context only when actual
+   owner rules authorize it. Preserve the requested outcome: an unattempted
+   output is BLOCKED/NOT RUN, and an attempted failed output is FAIL; never
+   report reduced output as success. Continue only independently authorized
+   work; see `orchestrator-lessons` for the check.
 4. Keep one writer per branch and worktree. Executor work uses a dedicated
    isolated worktree with explicit write authorization. Do not recurse into
    another orchestrator or sidecar.

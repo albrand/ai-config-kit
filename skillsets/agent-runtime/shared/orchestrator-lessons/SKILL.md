@@ -118,12 +118,21 @@ if not, narrow the requested output to authorized work. Preserve the original
 outcome: report an unattempted requested output as BLOCKED/NOT RUN and an
 attempted failed output as FAIL, as applicable; continue independent
 authorized work and never silently substitute reduced output as success. Never
-widen authority or add a routine approval step. A safety-hook, sandbox,
-guardian, DLP, access-policy, or provider refusal is final: do not retry,
-rephrase, switch tools/routes, or delegate around it. Preserve the refusal and continue only
-independently authorized work. Keep safety/process FAIL distinct from
-successful output observations or task API results. This text check is
-preventive knowledge only; it does not prove agent behavior or enforce safety.
+widen authority or add a routine approval step. Actual hard safety/authorization
+refusals—a safety-hook, sandbox, guardian, DLP, access-policy, or provider-policy
+refusal—are final: do not retry, rephrase, switch tools/routes, delegate around
+them, or widen authority. Preserve the exact refusal and continue only
+independently authorized work.
+
+Ordinary command usage/format, transport/runtime, and wrong execution-context
+errors may be diagnosed and corrected within already established authority.
+An external access/ACL refusal is not such an error. A GitHub collaborator
+error under one account does not authorize evading repository ACLs or selecting
+credentials; use an already authenticated owner context only when actual owner
+rules authorize it. This distinction does not make external access refusals
+generally recoverable. Keep safety/process FAIL distinct from successful output
+observations or task API results. This text check is preventive knowledge only;
+it does not prove agent behavior or enforce safety.
 
 ## Verify the thing you did not change
 

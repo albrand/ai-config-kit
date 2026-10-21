@@ -75,8 +75,11 @@ boundary_required = (
     'requested disposable writes fit the existing authority and allowed tools',
     'Preserve the original outcome: report an unattempted requested output as BLOCKED/NOT RUN and an attempted failed output as FAIL, as applicable; continue independent authorized work and never silently substitute reduced output as success',
     'Never widen authority or add a routine approval step',
-    'A safety-hook, sandbox, guardian, DLP, access-policy, or provider refusal is final',
-    'do not retry, rephrase, switch tools/routes, or delegate around it',
+    'Actual hard safety/authorization refusals—a safety-hook, sandbox, guardian, DLP, access-policy, or provider-policy refusal—are final',
+    'do not retry, rephrase, switch tools/routes, delegate around them, or widen authority',
+    'Ordinary command usage/format, transport/runtime, and wrong execution-context errors may be diagnosed and corrected within already established authority',
+    'An external access/ACL refusal is not such an error',
+    'A GitHub collaborator error under one account does not authorize evading repository ACLs or selecting credentials; use an already authenticated owner context only when actual owner rules authorize it',
     'continue only independently authorized work',
     'Keep safety/process FAIL distinct from successful output observations or task API results',
     'does not prove agent behavior or enforce safety',
@@ -85,7 +88,12 @@ missing_boundary = [clause for clause in boundary_required if clause not in text
 handoff_required = (
     "Carry the parent's exact hard refusal and permission boundaries into the generated brief and launcher configuration",
     'verify requested writes fit the existing authority before launch',
-    'A denial is final: never retry, rephrase, switch tools/routes, delegate around it, or widen authority',
+    'Actual hard safety/authorization refusals are final',
+    'never retry, rephrase, switch tools/routes, delegate around them, or widen authority',
+    'Ordinary command usage/format, transport/runtime, and wrong execution-context errors may be diagnosed and corrected within already established authority',
+    'An access/ACL refusal is not such an error: do not evade ACLs or select credentials',
+    'Use an already authenticated owner context only when actual owner rules authorize it',
+    'Preserve the requested outcome: an unattempted output is BLOCKED/NOT RUN, and an attempted failed output is FAIL; never report reduced output as success',
     'Continue only independently authorized work',
 )
 missing_handoff = [clause for clause in handoff_required if clause not in delegation]
@@ -125,4 +133,18 @@ for source_name, source in (('lesson', text), ('handoff', delegation)):
         print(f'Known bypass counterfactual was not rejected in {source_name}.', file=sys.stderr)
         raise SystemExit(1)
 
-print('Scoped reader/docs/UI, data-moving, incident, and delegated-boundary text contracts pass; broad-gate and omission counterfactuals rejected. Known bypass exception wording is checked lexically only: arbitrary paraphrases and agent behavior are not verified or enforced.')
+# Reject the former blanket rule even if all other required clauses remain.
+unqualified_finality = 'a denial is final'
+
+def has_unqualified_finality(source: str) -> bool:
+    return unqualified_finality in source.lower()
+
+for source_name, source in (('lesson', text), ('handoff', delegation)):
+    if has_unqualified_finality(source):
+        print(f'Unqualified denial-finality wording detected in {source_name}.', file=sys.stderr)
+        raise SystemExit(1)
+    if not has_unqualified_finality(source + ' A denial is final: never retry or switch tools.'):
+        print(f'Unqualified-finality regression counterfactual was not rejected in {source_name}.', file=sys.stderr)
+        raise SystemExit(1)
+
+print('Scoped contracts pass; known boundary mutations rejected. Checks are lexical: arbitrary paraphrases and agent behavior are not verified or enforced.')
