@@ -103,6 +103,11 @@ MCP_FIELDS = {
 # with "clear it, re-scope it, or escalate it" (fleet orchestrator.ts).
 MCP_WHEN = {"fleet_task_update": ("title", "body", "blockedReason", "assigneeMemberId")}
 MCP_TOOL = re.compile(r"(?:^|[^a-z])(" + "|".join(MCP_FIELDS) + r")$")
+# A file edit writes text; it runs nothing, so it dispatches nothing. Codex's apply_patch carries
+# its patch in `command`, and read as shell its `+sha=$(...)` lines looked like a run-time-built
+# bb verb ("bb substituted"), denying a read-only script write (2026-10-22). Same set as
+# ship-gate.py. A shell command is not one of these and is still parsed in full.
+FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
 # The decision must land before the host's hook timeout, because a timed-out
 # hook lets the command run (Claude Code 2.1.282, probed live 2026-09-25;
 # Codex 0.157.0, codex-rs/hooks pre_tool_use.rs). The clock starts with the
@@ -413,6 +418,8 @@ def dispatch_texts(payload):
         if kind == "fleet_task_update" and not (inp.get("title") or inp.get("body") or inp.get("blockedReason")):
             CALL_NOTES.append("A task handed to a member carries its brief: set body (or title) with the serves line.")
         return [text], kind
+    if tool.strip().lower() in FILE_EDIT_TOOLS:
+        return [], None
     cmd = command_text(inp)
     if not cmd:
         return [], None
@@ -657,6 +664,8 @@ def shape_text(stdin_text):
     if m:
         text = mcp_text(m.group(1), inp)
         return None if text is None else [flatten(text)]
+    if tool.strip().lower() in FILE_EDIT_TOOLS:
+        return None
     cmd = command_text(inp)
     if not cmd:
         return None
@@ -1317,6 +1326,10 @@ def selftest():
 
     def mcp(tool, **args):
         return {"tool_name": f"mcp__bb-bridge__{tool}", "tool_input": args}
+    # Codex's apply_patch carries the patch in `command`; read as shell, `+sha=$(...)` was a
+    # run-time-built bb verb ("bb substituted", 2026-10-22).
+    PATCH_WITH_SUBST = ("*** Begin Patch\n*** Add File: /tmp/collect.py\n+import subprocess\n"
+                        "+sha=$(gh api repos/o/r/pulls/1 --jq .head.sha)\n+out = f\"${sha}\"; print(out)\n*** End Patch\n")
     fifo = os.path.join(tmp, "brief.fifo")
     os.mkfifo(fifo)
 
@@ -1349,6 +1362,12 @@ def selftest():
         ("claude: revision that is only a substring", claude_bash("bb thread tell thr_abc 'serves: revision \"same class of harness defect\" go'"), thread, 2),
         ("claude: not a dispatch (bb thread list)", claude_bash("bb thread list --parent-thread thr_x"), thread, 0),
         ("claude: not a dispatch (git status)", claude_bash("git status"), thread, 0),
+        ("codex: apply_patch writing a script with $(...) lines is not a dispatch",
+         {"tool_name": "apply_patch", "tool_input": {"command": PATCH_WITH_SUBST}}, thread, 0),
+        ("claude: Write of a file that holds a bb command is not a dispatch",
+         {"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.sh", "content": "bb thread tell thr_x go\n"}}, thread, 0),
+        ("codex: a shell that runs apply_patch and then bb still dispatches",
+         codex_shell("apply_patch <<'EOF'\n+x\nEOF\nbb thread tell thr_x go"), thread, 2),
         ("claude mcp: fleet_member_spawn without serves", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "do x"}}, thread, 2),
         ("claude mcp: fleet_member_spawn serving P1", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "serves: P1\ndo x"}}, thread, 0),
         ("claude mcp: fleet_member_tell without serves", {"tool_name": "mcp__bb-bridge__fleet_member_tell", "tool_input": {"member": "x", "message": "also do y"}}, thread, 2),
@@ -1614,6 +1633,8 @@ def selftest():
         ("deadline: an open id in a list serves", "bb thread tell thr_x 'serves: P9, P1 hi'", spent, 0, ""),
         ("deadline: fork is a dispatch", "bb thread fork thr_x --prompt hi", spent, 2, "could not finish"),
         ("deadline: non-dispatch allowed", "ls -la", spent, 0, ""),
+        ("deadline: apply_patch writing $(...) lines is not a dispatch",
+         {"tool_name": "apply_patch", "tool_input": {"command": PATCH_WITH_SUBST}}, spent, 0, ""),
         # review r2c: each dispatch serves on its own at the deadline, too
         ("deadline: only the first of two tells serves", "bb thread tell thr_a 'serves: P1 x'; bb thread tell thr_b hi", spent, 2, "could not finish"),
         ("deadline: automation create --prompt without serves", "bb automation create --name n --in 1m --prompt hi", spent, 2, "could not finish"),
