@@ -32,8 +32,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { collectLessons, selectLessons } from "./lib/lessons.mjs";
-import { loadOverlay, OVERLAY_PATH, substitute } from "./lib/substitute.mjs";
+import { collectLessons, selectLessons, vendoredPins, vendoredProblems } from "./lib/lessons.mjs";
+import { loadOverlay, OVERLAY_PATH, placeholdersIn, substitute } from "./lib/substitute.mjs";
 
 const SCRIPTS = path.dirname(new URL(import.meta.url).pathname);
 const ROOT = path.dirname(SCRIPTS);
@@ -208,7 +208,20 @@ function validate(list) {
       problems.push(`${lesson.name}: no frontmatter`);
       continue;
     }
-    for (const key of ["name", "description", "verify", "verified"]) {
+    // A vendored lesson is published byte for byte as pinned, so it is checked
+    // against its pins instead of carrying verify/verified (see vendoredPins).
+    const pins = vendoredPins(lesson);
+    if (pins) {
+      problems.push(...vendoredProblems(lesson, pins));
+      for (const resource of lessonFiles(lesson)) {
+        if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(resource.relative))) continue;
+        if (placeholdersIn(fs.readFileSync(resource.absolute, "utf8")).length > 0) {
+          problems.push(`${lesson.name}/${resource.relative}: a vendored file has a placeholder, so it would not publish as pinned`);
+        }
+      }
+    }
+    const required = pins ? ["name", "description"] : ["name", "description", "verify", "verified"];
+    for (const key of required) {
       if (!new RegExp(`^${key}:`, "m").test(front[1])) {
         problems.push(`${lesson.name}: missing "${key}"`);
       }

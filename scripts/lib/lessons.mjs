@@ -16,6 +16,7 @@
 // for some lessons that would remove the lesson. Those stay here rather than
 // being scrubbed into a platitude or leaked upstream.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -65,6 +66,53 @@ export function collectLessons(repoRoot) {
   }
 
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The pins for a lesson copied unmodified from upstream, or null.
+ *
+ * A vendored lesson cannot carry `verify`/`verified`: adding them changes its
+ * digest, and the copy stops matching upstream. Its skillset's `vendored.json`
+ * pins each file instead. Only a shared lesson can be vendored; a local lesson
+ * with the same name is an ordinary lesson.
+ */
+export function vendoredPins(lesson) {
+  if (!lesson.origin?.startsWith("shared:")) return null;
+  const manifest = path.join(path.dirname(path.dirname(lesson.dir)), "vendored.json");
+  if (!fs.existsSync(manifest)) return null;
+  const entry = JSON.parse(fs.readFileSync(manifest, "utf8"))[lesson.name];
+  return entry && typeof entry.files === "object" ? entry.files : null;
+}
+
+/**
+ * Why a vendored lesson's directory is not exactly its pinned files: an extra,
+ * missing or non-regular entry, or a digest mismatch. Empty when it matches.
+ */
+export function vendoredProblems(lesson, pins) {
+  const problems = [];
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const absolute = path.join(dir, entry.name);
+      const relative = path.relative(lesson.dir, absolute);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) found.push(relative);
+      else problems.push(`${lesson.name}: vendored entry ${relative} is not a regular file`);
+    }
+  };
+  walk(lesson.dir);
+  for (const relative of found) {
+    if (!(relative in pins)) problems.push(`${lesson.name}: unexpected file ${relative} in a vendored lesson`);
+  }
+  for (const [relative, digest] of Object.entries(pins)) {
+    if (!found.includes(relative)) {
+      problems.push(`${lesson.name}: pinned file ${relative} is missing`);
+      continue;
+    }
+    const actual = createHash("sha256").update(fs.readFileSync(path.join(lesson.dir, relative))).digest("hex");
+    if (actual !== digest) problems.push(`${lesson.name}: ${relative} does not match its pinned digest`);
+  }
+  return problems;
 }
 
 /** Limit a rollout to named lessons; unknown or missing names fail before writes. */
