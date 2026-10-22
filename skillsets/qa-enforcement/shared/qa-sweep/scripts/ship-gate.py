@@ -1452,9 +1452,10 @@ def _strip_heredoc_bodies(command):
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
       - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`);
-      - with an unquoted delimiter, no body line holds `$(` or a backtick: the shell expands those before the
-        command runs, so `cat <<E` / `$(vercel alias set ...)` / `E` runs the alias (Hermes 2026-10-22,
-        pr94-ship-gate-file-edits). A quoted delimiter (any quote or backslash in it) keeps the body literal.
+      - with an unquoted delimiter, no body line holds `$(` or a backtick, or ends in a backslash: the shell
+        expands substitutions before the command runs, so `cat <<E` / `$(vercel alias set ...)` / `E` runs the
+        alias, and a backslash-newline joins lines first, so `$\\` / `(git push)` is one (Hermes 2026-10-22,
+        pr94-ship-gate-file-edits r1, r2). A quoted delimiter (any quote or backslash in it) keeps the body literal.
     Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
     raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
     is idempotent. The shell fallback's awk strip() is the same scanner."""
@@ -1516,8 +1517,8 @@ def _strip_heredoc_bodies(command):
                         break
                     if body.startswith(delim):
                         return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
-                    if not quoted and ("$(" in line or "`" in line):
-                        return None  # an unquoted body expands this substitution: it runs
+                    if not quoted and ("$(" in line or "`" in line or line.endswith("\\")):
+                        return None  # an unquoted body expands a substitution (one a continuation may join)
             pending = []
             word = False
             continue
@@ -4063,6 +4064,12 @@ def selftest(v4_gate=None, v4_templates=None):
           "unquoted cat heredoc with a command substitution", U)
     deny5(r9, "cat > notes.txt <<\\EOF\nok\nEOF\ncat <<EOF\nbuilt `vercel promote dpl_unwalked`\nEOF",
           "an unquoted heredoc after a quoted one, with a backtick substitution", U)
+    deny5(r9, "cat <<EOF\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted heredoc whose substitution a backslash-newline splits", U)
+    deny5(r9, "cat <<-EOF\n\t`\\\nvercel promote dpl_unwalked`\n\tEOF",
+          "unquoted <<- heredoc whose backtick substitution a continuation splits", U)
+    allow5(r9, "cat <<'EOF'\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted heredoc: a backslash-newline stays text")
     allow5(r9, "cat <<'EOF'\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
            "quoted cat heredoc holding a substitution as text")
     allow5(r9, "cat <<\\EOF\n`vercel promote dpl_unwalked`\nEOF", "backslash-quoted heredoc holding a backtick as text")

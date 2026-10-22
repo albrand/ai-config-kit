@@ -286,7 +286,8 @@ ship_scan() {
     # ${...} / $[...]; <<< is a here-string. Its delimiter must be a word hdword() reads (one the shells read
     # alike), its context must still be open where the body starts, a terminator line must exist, and no body
     # line may start with the delimiter and go on; with an unquoted delimiter no body line may hold $( or a
-    # backtick, which the shell expands (Hermes 2026-10-22). Anything else is unreadable, so the raw text is scanned.
+    # backtick, which the shell expands, or end in a backslash, whose newline the shell removes first (Hermes
+    # 2026-10-22). Anything else is unreadable, so the raw text is scanned.
     out = ""; st = ""; np = 0; hp = 1; w = 0; n = length(s); SFAIL = 0
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1); nx = substr(s, i + 1, 1); top = substr(st, length(st), 1)
@@ -318,7 +319,7 @@ ship_scan() {
             if (pd[hp]) sub(/^\t+/, "", line)
             if (line == pw[hp]) break
             if (index(line, pw[hp]) == 1) { SFAIL = 1; return "" }
-            if (!pq[hp] && (index(line, "$(") || index(line, "`"))) { SFAIL = 1; return "" }
+            if (!pq[hp] && (index(line, "$(") || index(line, "`") || substr(line, length(line)) == "\\")) { SFAIL = 1; return "" }
           }
         }
         np = 0; hp = 1; w = 0; i--; continue
