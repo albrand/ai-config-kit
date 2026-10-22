@@ -302,11 +302,12 @@ class ForgeCalls(unittest.TestCase):
             verify.sh = saved
 
     def test_the_runner_posts_with_the_long_limit_and_a_retry(self):
-        saved = verify.sh, verify.RUNNER_HOME
+        saved = verify.sh, verify.RUNNER_HOME, verify.free_gb
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         calls = []
         try:
             verify.RUNNER_HOME = tmp
+            verify.free_gb = lambda path: verify.DISK_FLOOR_GB + 1  # the host's own disk must not skip the job
             def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
                 calls.append((cmd, timeout))
                 if cmd[:1] == ["git"] and ("rev-parse" in cmd or "merge-base" in cmd):
@@ -319,7 +320,7 @@ class ForgeCalls(unittest.TestCase):
             self.assertTrue(posts, calls)  # the base config is unreadable here, so the job posts `missing`
             self.assertEqual(posts, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS)
         finally:
-            verify.sh, verify.RUNNER_HOME = saved
+            verify.sh, verify.RUNNER_HOME, verify.free_gb = saved
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_the_budget_gives_the_long_limit_only_while_it_covers_the_worst_case(self):
@@ -338,11 +339,12 @@ class ForgeCalls(unittest.TestCase):
         self.assertGreaterEqual(budget.left, 0)  # the long waits never exceed the budget
 
     def test_a_job_on_a_forge_that_never_answers_waits_at_most_the_budget_plus_short_tries(self):
-        saved = verify.sh, verify.RUNNER_HOME
+        saved = verify.sh, verify.RUNNER_HOME, verify.free_gb
         tmp = Path(tempfile.mkdtemp(prefix="verify-forge-"))
         now, waits = [0.0], []
         try:
             verify.RUNNER_HOME = tmp
+            verify.free_gb = lambda path: verify.DISK_FLOOR_GB + 1  # the host's own disk must not skip the job
 
             def sh(cmd, cwd=None, env=None, timeout=None, merge=True):
                 if cmd[:1] == ["gh"]:
@@ -359,7 +361,7 @@ class ForgeCalls(unittest.TestCase):
                 quiet(lambda: verify.run_job("acme/app", tmp / "mirror.git", "a" * 40, "main", "PR #1", args, budget=budget))
             self.assertEqual(waits, [verify.FORGE_TIMEOUT] * verify.FORGE_ATTEMPTS + [30, 30])
         finally:
-            verify.sh, verify.RUNNER_HOME = saved
+            verify.sh, verify.RUNNER_HOME, verify.free_gb = saved
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_one_budget_covers_every_repo_in_a_tick_and_each_tick_gets_a_new_one(self):
