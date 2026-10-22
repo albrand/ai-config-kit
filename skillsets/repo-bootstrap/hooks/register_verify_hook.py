@@ -2,8 +2,11 @@
 """Register ~/.agent-hooks/verify-hook.sh as a PostToolUse hook for Claude Code and Codex.
 
 Idempotent: an existing registration of the same command is left as is. Each config is backed up
-next to itself (<file>.bak-verify-<timestamp>) before it is written.
+next to itself (<file>.bak-<tag>-<timestamp>) before it is written.
   register_verify_hook.py [--check]   --check: exit 1 if either host lacks the registration
+  register_verify_hook.py --command PATH --claude-matcher M --tag T [--check]
+                                      the same for another PostToolUse hook (scope-ledger's
+                                      gap-map-hook.sh uses it)
 """
 import json
 import os
@@ -20,33 +23,42 @@ TARGETS = (
 )
 
 
-def registered(cfg):
+def opt(name, default):
+    args = sys.argv[1:]
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
+
+
+def registered(cfg, command=COMMAND):
     for entry in cfg.get("hooks", {}).get("PostToolUse", []):
-        if any(h.get("command") == COMMAND for h in entry.get("hooks", [])):
+        if any(h.get("command") == command for h in entry.get("hooks", [])):
             return True
     return False
 
 
 def main():
     check = "--check" in sys.argv[1:]
+    command = os.path.expanduser(opt("--command", COMMAND))
+    tag = opt("--tag", "verify")
     missing = []
     for path, matcher in TARGETS:
+        if path.endswith("settings.json"):
+            matcher = opt("--claude-matcher", matcher)
         if not os.path.exists(path):
             continue
         with open(path) as f:
             cfg = json.load(f)
-        if registered(cfg):
+        if registered(cfg, command):
             print(f"present  {path}")
             continue
         if check:
             missing.append(path)
             continue
-        entry = {"hooks": [{"type": "command", "command": COMMAND, "timeout": 20}]}
+        entry = {"hooks": [{"type": "command", "command": command, "timeout": 20}]}
         if matcher:
             entry = {"matcher": matcher, **entry}
         cfg.setdefault("hooks", {}).setdefault("PostToolUse", []).append(entry)
-        shutil.copy2(path, f"{path}.bak-verify-{time.strftime('%Y%m%d%H%M%S')}")
-        tmp = path + ".tmp-verify"
+        shutil.copy2(path, f"{path}.bak-{tag}-{time.strftime('%Y%m%d%H%M%S')}")
+        tmp = path + ".tmp-" + tag
         with open(tmp, "w") as f:
             json.dump(cfg, f, indent=2)
             f.write("\n")
