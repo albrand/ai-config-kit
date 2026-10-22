@@ -787,22 +787,50 @@ def mark_passed(thread, when=None):
     GAP_MAP_WINDOW_H. hooks/gap-map-hook.sh starts Python only when the file is fresh, and the
     count comes from it. Per thread, because the shared decision log moves with the whole fleet
     and can evict a thread's dispatches (Hermes review of #92, twice)."""
-    import fcntl
     try:
         when = time.time() if when is None else when
         path = passed_marker(thread)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
         # Two dispatches passing at once must not drop one (Hermes review of #92, round 3): the
         # read-prune-replace runs under the thread's own lock.
-        with open(path + ".lock", "a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with marker_lock(thread):
             keep = [t for t in passed_times(thread) if when - t <= GAP_MAP_WINDOW_H * 3600][-200:]
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
-            with os.fdopen(fd, "w") as f:
-                f.write("".join(f"{int(t)}\n" for t in sorted(keep + [when])))
-            os.replace(tmp, path)
+            replace_text(path, "".join(f"{int(t)}\n" for t in sorted(keep + [when])))
     except (OSError, LedgerError):
         pass
+
+
+class marker_lock:
+    """Exclusive lock on scope-passed/<thread>.lock, around every read-modify-write of the
+    thread's gap-map state (its dispatch times and when the note was last shown)."""
+
+    def __init__(self, thread):
+        self.path = passed_marker(thread) + ".lock"
+
+    def __enter__(self):
+        import fcntl
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.f = open(self.path, "a")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        self.f.close()  # closing releases the lock
+
+
+def replace_text(path, text):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def nudged_at(thread):
+    """Epoch the gap-map note was last shown to `thread`, or None."""
+    try:
+        with open(passed_marker(thread) + ".nudged", encoding="utf-8") as f:
+            return float(f.read().strip())
+    except (OSError, ValueError):
+        return None
 
 
 def iso_age_h(at, now):
@@ -821,7 +849,9 @@ def passed_dispatches(thread, now, hours):
 
 def gap_map_nudge(thread, now=None):
     """The note to show a coordinator staffing work with no gap map, or None. Showing it is
-    recorded in the ledger, so it repeats at most once per GAP_MAP_REPEAT_H.
+    recorded beside the thread's marker, under its lock, so concurrent hooks show it once per
+    GAP_MAP_REPEAT_H; the ledger is only read, so a coordinator's own `mark` or `release`
+    running at the same time is never overwritten (Hermes review of #92, round 4).
 
     Owner, 2026-10-22, after a coordinator worked for hours without one: "so you HVE BEEN
     WORKING FOR HOURS and never thought on doing a root cause analysis". The delivery contract
@@ -834,14 +864,14 @@ def gap_map_nudge(thread, now=None):
         age = iso_age_h(m.get("at"), now) if isinstance(m, dict) else None
         if age is not None and age <= GAP_MAP_FRESH_H:
             return None
-    age = iso_age_h(ledger.get("gap_map_nudged_at"), now)
-    if age is not None and age < GAP_MAP_REPEAT_H:
-        return None
-    n = passed_dispatches(thread, now, GAP_MAP_WINDOW_H)
-    if n < GAP_MAP_DISPATCHES:
-        return None
-    ledger["gap_map_nudged_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    write_ledger(thread, ledger)
+    with marker_lock(thread):
+        last = nudged_at(thread)
+        if last is not None and now.timestamp() - last < GAP_MAP_REPEAT_H * 3600:
+            return None
+        n = passed_dispatches(thread, now, GAP_MAP_WINDOW_H)
+        if n < GAP_MAP_DISPATCHES:
+            return None
+        replace_text(passed_marker(thread) + ".nudged", f"{int(now.timestamp())}\n")
     record({"event": "gap_map_nudge", "thread": thread, "dispatches": n})
     gate = os.path.join(os.path.expanduser("~/.agents/skills/scope-ledger/scripts"), "scope-gate.py")
     return (f"[scope-ledger] You have made {n} dispatches in {GAP_MAP_WINDOW_H}h and recorded no gap map. "
@@ -1719,9 +1749,7 @@ def selftest():
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} gap-map nudge shows once after {GAP_MAP_DISPATCHES} dispatches in "
           f"{GAP_MAP_WINDOW_H}h, never before: below={below is None} shown={bool(shown)} repeat={again is None}")
-    led = read_ledger(gt)
-    led["gap_map_nudged_at"] = (utc_now - datetime.timedelta(hours=GAP_MAP_REPEAT_H + 1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    write_ledger(gt, led)
+    replace_text(passed_marker(gt) + ".nudged", f"{int(utc_now.timestamp() - (GAP_MAP_REPEAT_H + 1) * 3600)}\n")
     quiet = sys.stderr
     sys.stderr = open(os.devnull, "w")
     try:
