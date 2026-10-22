@@ -761,6 +761,7 @@ def hook(stdin_text, thread):
     allow, served, via = decide(ledger, texts)
     if allow:
         record({"event": "scope_passed", "thread": thread, "tool": label, "serves": via})
+        mark_passed(thread)
         return 0
     record({"event": "scope_denied", "thread": thread, "tool": label, "named": served})
     notes = "".join("\nBrief file " + n + "." for n in FILE_NOTES) + "".join("\n" + n for n in CALL_NOTES)
@@ -768,6 +769,24 @@ def hook(stdin_text, thread):
 
 
 # ---------------------------------------------------------------- gap-map nudge
+
+def passed_marker(thread):
+    return os.path.join(os.path.dirname(DECISIONS), "scope-passed", thread)
+
+
+def mark_passed(thread):
+    """Touch the thread's marker: hooks/gap-map-hook.sh starts Python only when it is fresh. A
+    per-thread file, because the shared decision log's tail moves with the whole fleet (Hermes
+    review of #92)."""
+    try:
+        path = passed_marker(thread)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a"):
+            pass
+        os.utime(path, None)
+    except (OSError, LedgerError):
+        pass
+
 
 def iso_age_h(at, now):
     try:
@@ -1653,6 +1672,9 @@ def selftest():
     else:
         print("skip bb verb coverage: no bb on PATH")
     # gap-map nudge: shown after GAP_MAP_DISPATCHES passed dispatches, once, never with a map
+    good = os.path.isfile(passed_marker(thread))
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} a passed dispatch touches the thread's gap-map marker")
     import contextlib, copy, io
     gt = "thr_gapmapfixture"
     write_ledger(gt, dict(copy.deepcopy(base), thread_id=gt))

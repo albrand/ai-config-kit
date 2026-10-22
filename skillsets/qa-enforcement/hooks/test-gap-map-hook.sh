@@ -1,6 +1,6 @@
 #!/bin/sh
 # gap-map-hook.sh end to end, in a throwaway HOME: silent for a thread with no ledger and for a
-# call that was not a passed dispatch; after the 8th passed dispatch in 6h with no gap map it
+# call long after its last passed dispatch; after the 8th passed dispatch in 6h with no gap map it
 # prints the PostToolUse note once; a recorded map silences it.
 set -eu
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,12 +24,20 @@ passed() {
     echo "{\"schema_version\": 1, \"at\": \"$at\", \"event\": \"scope_passed\", \"thread\": \"$TID\", \"tool\": \"bb thread spawn\", \"serves\": \"P1\"}" >> "$LOG"
     i=$((i + 1))
   done
+  mkdir -p "$T/.local/state/agent-quality/scope-passed"
+  touch "$T/.local/state/agent-quality/scope-passed/$TID"  # what the gate does on a passed dispatch
+}
+noise() {  # the rest of the fleet writing the shared log
+  i=0; while [ $i -lt "$1" ]; do
+    echo "{\"schema_version\": 1, \"at\": \"x\", \"event\": \"scope_passed\", \"thread\": \"thr_other$i\"}" >> "$LOG"
+    i=$((i + 1))
+  done
 }
 passed 7
 check "below the threshold: silent" "$(hook $TID)" ""
 check "thread with no ledger: silent" "$(hook thr_noledgerhere)" ""
 passed 1
-echo '{"schema_version": 1, "at": "x", "event": "scope_denied", "thread": "thr_other"}' >> "$LOG"
+noise 40  # review of #92: 40 other threads' lines after the eligible dispatch
 out="$(hook $TID)"
 case "$out" in *'"additionalContext"'*"8 dispatches"*"gap map"*) got=note ;; *) got="$out" ;; esac
 check "8th passed dispatch: note shown" "$got" "note"
@@ -42,6 +50,10 @@ p = sys.argv[1]; d = json.load(open(p)); d["gap_map_nudged_at"] = "2000-01-01T00
 EOF
 passed 1
 check "recorded map: silent" "$(hook $TID)" ""
-echo "{\"at\": \"x\", \"event\": \"evidence-claim\"}" > "$LOG"
-check "no passed dispatch in the log tail: python never starts, silent" "$(hook $TID)" ""
+python3 - "$T/.local/state/agent-quality/scope/$TID.json" <<'EOF2'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["gap_maps"] = []; d["gap_map_nudged_at"] = "2000-01-01T00:00:00Z"; json.dump(d, open(p, "w"))
+EOF2
+touch -t 200001010000 "$T/.local/state/agent-quality/scope-passed/$TID"
+check "no dispatch in the last 2 minutes: python never starts, silent" "$(hook $TID)" ""
 [ $fail -eq 0 ] && echo "gap-map hook: all pass" || { echo "gap-map hook: FAIL"; exit 1; }
