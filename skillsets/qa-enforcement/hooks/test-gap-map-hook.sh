@@ -4,7 +4,7 @@
 # prints the PostToolUse note once; a recorded map silences it.
 set -eu
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-T="$(mktemp -d)"
+T="$(mktemp -d "${TMPDIR:-/tmp}/gap-map-hook.XXXXXX")"  # macOS mktemp ignores TMPDIR without a template
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/.agents/skills" "$T/.local/state/agent-quality/scope"
 cp -R "$SRC/shared/scope-ledger" "$T/.agents/skills/scope-ledger"

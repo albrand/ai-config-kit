@@ -122,10 +122,11 @@ class PublishSelectionTest(unittest.TestCase):
             "if len(sys.argv[2].encode()) > 131072: sys.stderr.write('/bin/bash: Argument list too long\\n'); sys.exit(1)\n"
             "sys.exit(subprocess.run(['/bin/sh','-c',sys.argv[2]],input=body).returncode)\n")
         ssh.chmod(0o755)
-        # Simulate the Linux peer's md5sum on a macOS fixture host.
+        # Simulate the Linux peer's md5sum on a macOS fixture host. It runs once per remote
+        # file, so it is sh + md5, not a Python start-up: 701 of those under a loaded runner
+        # passed the CLI timeout (verify/unit on PR #97, 2026-10-22).
         md5 = self.fake_bin / "md5sum"
-        md5.write_text("#!/usr/bin/env python3\nimport hashlib,sys\n"
-            "print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest()+'  '+sys.argv[1])\n")
+        md5.write_text("#!/bin/sh\nprintf '%s  %s\\n' \"$(/sbin/md5 -q \"$1\")\" \"$1\"\n")
         md5.chmod(0o755)
         for lesson in ("typed-decisions", "unrelated"):
             for relative in ("SKILL.md", "scripts/jev.py", "scripts/other.py"):
@@ -188,16 +189,18 @@ class PublishSelectionTest(unittest.TestCase):
         (big / "references").mkdir(parents=True)
         (big / "SKILL.md").write_text('---\nname: big-lesson\ndescription: "Fixture"\nverify: "true"\n'
                                       'verified: 2026-10-22\n---\nBig\n')
-        for i in range(700):
-            (big / "references" / f"reference-file-with-a-long-descriptive-name-{i:04d}.md").write_text(f"{i}\n")
+        # Long names reach the limit with few files; each file is one fake-ssh write.
+        for i in range(120):
+            (big / "references" / (f"reference-{i:03d}-" + "n" * 226 + ".md")).write_text(f"{i}\n")
         result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
         self.assertEqual(result.returncode, 0, result.stderr)
         reads = [c for c in self.remote_calls() if not c["input_bytes"]]
+        self.assertGreater(sum(len(c["command"].encode()) for c in reads), 131072, "one unbatched read would be refused")
         self.assertGreater(len(reads), 1, "the read must be split to fit")
         self.assertTrue(all(len(c["command"].encode()) <= 64 * 1024 for c in reads))
         published = {str(p.relative_to(self.remote / "big-lesson")) for p in (self.remote / "big-lesson").rglob("*")
                      if p.is_file()}
-        self.assertEqual(len(published), 701)
+        self.assertEqual(len(published), 121)
         self.ssh_log.write_text("")
         result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -212,18 +215,26 @@ class PublishSelectionTest(unittest.TestCase):
         (wide / "SKILL.md").write_text('---\nname: wide-lesson\ndescription: "Fixture"\nverify: "true"\n'
                                        'verified: 2026-10-22\n---\nWide\n')
         name = "参" * 84  # 252 bytes: within a 255-byte path component
-        for i in range(150):
-            folder = wide / "references" / (name[:-3] + f"{i:03d}")
+        for i in range(100):
+            folder = wide / "references" / (name[:-3] + f"{i:03d}") / name
             folder.mkdir(parents=True)
             (folder / (name[:-3] + ".md")).write_text(f"{i}\n")
         result = self.run_cli("--lesson", "wide-lesson", "--remote", "fixture-only.invalid")
         self.assertEqual(result.returncode, 0, result.stderr)
         reads = [c for c in self.remote_calls() if not c["input_bytes"]]
+        # The same lines batched by characters would build a command over 128 KiB in bytes.
+        batch, by_chars = [], []
+        for line in (l for c in reads for l in c["command"].split("\n")):
+            if batch and len("\n".join(batch + [line])) > 64 * 1024:
+                by_chars.append("\n".join(batch)); batch = []
+            batch.append(line)
+        by_chars.append("\n".join(batch))
+        self.assertGreater(max(len(b.encode()) for b in by_chars), 131072)
         self.assertGreater(len(reads), 1)
         self.assertTrue(all(len(c["command"].encode()) <= 64 * 1024 for c in reads),
                         max(len(c["command"].encode()) for c in reads))
         published = [p for p in (self.remote / "wide-lesson").rglob("*") if p.is_file()]
-        self.assertEqual(len(published), 151)
+        self.assertEqual(len(published), 101)
 
     def test_remote_unknown_edit_is_preserved_without_force(self):
         self.setup_remote()

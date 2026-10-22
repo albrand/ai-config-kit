@@ -9,7 +9,7 @@ set -eu
 # hooks it installs run on older Pythons too; test-gap-map-hook.sh covers those.
 python3 -c 'import tomllib' 2>/dev/null || { echo "FAIL install-scope-gate.sh needs Python 3.11+ (tomllib); this is $(python3 --version 2>&1)"; exit 1; }
 KIT="$(cd "$(dirname "$0")/../../.." && pwd)"
-T="$(mktemp -d)"
+T="$(mktemp -d "${TMPDIR:-/tmp}/gap-map-install.XXXXXX")"  # macOS mktemp ignores TMPDIR without a template
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/.claude" "$T/.codex" "$T/.agents/skills" "$T/.bb/skills" "$T/.claude/skills" "$T/.codex/skills" "$T/.agent-hooks"
 cat > "$T/.claude/settings.json" <<EOF
