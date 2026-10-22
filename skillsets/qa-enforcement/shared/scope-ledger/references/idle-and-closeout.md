@@ -45,7 +45,7 @@ correction must not hide unfinished work.
   is running while its start (within 24 h) has no completion.
 - The nudge lists the unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
-  `mark … blocked-on-user --ask` for a decision only the user owns (money, an
+  `mark … blocked-on-user --ask … --why-owner <category>` for a decision only the user owns (money, an
   outward or irreversible effect, credentials, a genuine ambiguity). A status
   report is none of them.
 - A blocked-on-user purpose counts as open again when the latest user-typed

@@ -310,7 +310,7 @@ def nudge_text(thread, purposes):
         "1. Continue the next authorized step now: do it, dispatch it to a child with `serves: <Pn>`, or start the "
         "background task you will wait on with `serves: <Pn>` in its description.",
         f'2. If it is finished: {gate} mark {thread} <Pn> done --evidence "<commit, URL or measurement>"',
-        f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>". '
+        f'3. If only the user can decide: {gate} mark {thread} <Pn> blocked-on-user --ask "<the exact question>" --why-owner <hard-prohibition-approval|owner-decision|material-new-fact>. '
         "Only for money, an outward or irreversible effect, credentials, or a genuine ambiguity in the request.",
         "A status report, a summary or an offer to continue is none of these. This is a one-time nudge for this turn.",
     ]

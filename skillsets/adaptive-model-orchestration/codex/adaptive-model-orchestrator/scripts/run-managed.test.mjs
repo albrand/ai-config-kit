@@ -21,10 +21,37 @@ const databasePath = path.join(temp, 'opencode.db');
 const configDir = path.join(temp, 'config');
 const worktree = path.join(temp, 'worktree');
 const invocationPath = path.join(temp, 'invocation.json');
+const sqliteCli = path.join(binDir, 'sqlite3');
 
 fs.mkdirSync(binDir);
 fs.mkdirSync(configDir);
 fs.mkdirSync(worktree);
+fs.writeFileSync(
+  sqliteCli,
+  `#!/usr/bin/env python3
+import sqlite3
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+read_only = bool(args and args[0] == '-readonly')
+if read_only:
+    args = args[1:]
+if len(args) < 2:
+    sys.exit(2)
+database_path, query = args[0], ' '.join(args[1:])
+try:
+    target = Path(database_path).resolve()
+    connection = sqlite3.connect(target.as_uri() + '?mode=ro', uri=True) if read_only else sqlite3.connect(target)
+    for row in connection.execute(query):
+        print('|'.join('' if value is None else str(value) for value in row))
+    connection.close()
+except (OSError, sqlite3.Error) as error:
+    print(error, file=sys.stderr)
+    sys.exit(1)
+`,
+);
+fs.chmodSync(sqliteCli, 0o700);
 fs.writeFileSync(path.join(configDir, 'opencode.json'), '{}');
 fs.writeFileSync(path.join(worktree, '.ai-config-kit-sidecar-write-scope'), 'test only\n');
 fs.writeFileSync(
@@ -96,10 +123,19 @@ if (process.env.FAKE_MODE === 'hang') {
 fs.chmodSync(fake, 0o700);
 fs.copyFileSync(fake, customFake);
 fs.chmodSync(customFake, 0o700);
-const database = spawnSync('sqlite3', [
+const database = spawnSync('python3', [
+  '-c',
+  [
+    'import sqlite3, sys',
+    'connection = sqlite3.connect(sys.argv[1])',
+    'connection.execute("create table session(id text primary key,parent_id text)")',
+    'connection.executemany("insert into session values(?, ?)", [("ses_test123", None),',
+    '("ses_existing123", None), ("ses_parent123", None), ("ses_child123", "ses_parent123")])',
+    'connection.commit()',
+    'connection.close()',
+  ].join('\n'),
   databasePath,
-  "create table session(id text primary key,parent_id text); insert into session values('ses_test123',null); insert into session values('ses_existing123',null); insert into session values('ses_parent123',null); insert into session values('ses_child123','ses_parent123');",
-]);
+], { encoding: 'utf8' });
 assert.equal(database.status, 0, database.stderr?.toString());
 
 function runManaged(extraArgs = [], env = {}, executable = fake) {
@@ -111,6 +147,7 @@ function runManaged(extraArgs = [], env = {}, executable = fake) {
       timeout: 10_000,
       env: {
         ...process.env,
+        PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
         OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
         OPENCODE_DB_PATH: databasePath,
         FAKE_STATE_PATH: statePath,
@@ -142,6 +179,7 @@ function runWrapper(env = {}) {
     timeout: 10_000,
     env: {
       ...process.env,
+      PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
       OPENCODE_ALLOW_WRITES: '1',
       OPENCODE_BIN: fake,
       OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
@@ -166,6 +204,7 @@ function runAndCancel() {
       {
         env: {
           ...process.env,
+          PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
           OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
           OPENCODE_DB_PATH: databasePath,
           FAKE_STATE_PATH: statePath,
@@ -330,6 +369,12 @@ try {
   assert.equal(childSession.status, 0, childSession.stderr);
   assert.equal(readTelemetry(childSession).root_session, false);
   assert.equal(readTelemetry(childSession).deleted, false);
+
+  fs.rmSync(statePath, { force: true });
+  const missingDatabase = runManaged([], { OPENCODE_DB_PATH: path.join(temp, 'missing.db') });
+  assert.equal(missingDatabase.status, 0, missingDatabase.stderr);
+  assert.equal(readTelemetry(missingDatabase).root_session, false);
+  assert.equal(readTelemetry(missingDatabase).deleted, false);
 
   const oversizedDeadline = runManaged(['--deadline-ms', '2147483648']);
   assert.notEqual(oversizedDeadline.status, 0);

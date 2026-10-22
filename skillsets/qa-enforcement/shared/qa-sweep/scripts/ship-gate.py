@@ -4582,8 +4582,8 @@ def selftest(v4_gate=None, v4_templates=None):
         p = os.path.join(ghdir, "calls")
         return open(p).read().splitlines() if os.path.isfile(p) else []
 
-    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, sleep=None, attempts=None, cache=None,
-               keep_calls=False):
+    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, path_tail=base_path, sleep=None,
+               attempts=None, cache=None, keep_calls=False):
         global _LOOKUP_DEADLINE
         for f in os.listdir(ghdir):
             if not (keep_calls and f == "calls"):
@@ -4592,7 +4592,7 @@ def selftest(v4_gate=None, v4_templates=None):
         for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
             with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
                 f.write(d if isinstance(d, str) else json.dumps(d))
-        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + base_path
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + path_tail
         if sleep:
             os.environ["OR_GH_SLEEP"] = sleep
         _LOOKUP_DEADLINE = None
@@ -4667,7 +4667,7 @@ def selftest(v4_gate=None, v4_templates=None):
         os.environ["PATH"] = saved_path
         _LOOKUP_DEADLINE = None
     expect(len(gh_calls()) == 1, "owner_run: check_e2e with two identities on one run -> one gh call (%d)" % len(gh_calls()))
-    expect(any("not on the hook's PATH" in p for p in verify(ident_or, path_first=None)),
+    expect(any("not on the hook's PATH" in p for p in verify(ident_or, path_first=None, path_tail=git_only)),
            "owner_run: gh unavailable -> deny")
     _LOOKUP_DEADLINE_SAVED = LOOKUP_BUDGET_S
     globals()["LOOKUP_BUDGET_S"] = 0.5

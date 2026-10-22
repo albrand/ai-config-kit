@@ -1,0 +1,16 @@
+# Fixture oracle (coordinator only)
+
+Expected baseline command outcomes against each raw directory's `check.py`:
+
+| case | exit | Evidence |
+| --- | ---: | --- |
+| case01 | 1 | Actual endpoint does not apply the stated input normalization. |
+| case02 | 1 | Offline pipeline executes and returns a validly shaped but incorrect general classification and general queue for the cancellation request. |
+| case03 | 1 | Added handler is not reachable from the application registry. |
+| case04 | 0 | Weak assertions pass; the focused checker also substitutes a constant-price implementation and confirms the same assertions still pass. |
+| case05 | 1 | Existing CLI caller still reads the removed `name` field. |
+| case06 | 1 | Same-day inclusive range returns no record because the implementation treats the end date as exclusive; the same-day assertion fails specifically. |
+| case07 | 0 | Importable documented public API satisfies the task without app wiring. |
+| case08 | 0 | Revised fixture: offline extraction returns trimmed nonempty payloads from `TODO:` lines and preserves empty results for no matching items and unrelated text. The historical ambiguous control only asserted empty output; it did not define matching items and is not evidence of this revision's behavior. |
+
+These are baseline observations, not implementation acceptance evidence. The blind assessment must judge requirements and source behavior independently.

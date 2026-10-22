@@ -1,0 +1,1 @@
+Add a normalized search endpoint. Given a query with surrounding whitespace and mixed case, the returned matches must reflect the actual stored records. The public endpoint is the user entry point. Run `python3 check.py`.

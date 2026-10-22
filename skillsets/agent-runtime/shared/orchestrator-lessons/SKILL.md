@@ -4,11 +4,13 @@ description: >
   Use when running a fleet of agents, or when the same class of mistake keeps
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
-verify: "test -n \"$HOME\""
-verified: 2026-10-03
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/agent-runtime/shared/orchestrator-lessons/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Lessons an orchestrator keeps having to relearn
+
+When assigning feature implementation, shared-contract, LLM-output, or production-fix work, load `engineering-contracts` before planning acceptance or validation. Keep this skill's orchestration, data-movement, and recurrence checks.
 
 Every entry here cost real rounds. They are written as the check to run, not as
 advice, because advice does not fire and a check does.
@@ -43,6 +45,47 @@ thin.
 Work that cannot point to a cell in the map is not started. When evidence
 contradicts the map, update the map before re-planning.
 
+## Gate data movement at plan and integration
+
+Classify the actual effects before requiring data-movement evidence. A change
+is data-moving when it processes, attributes, projects, backfills, writes, or
+requeues stored data. A nominal reader or UI change that triggers such a write
+is data-moving. A pure stored-data reader with no writes, a UI-only change with
+no writes, and docs/tests-only changes do not move stored data; do not require
+them to invent a lane, throughput, drain, count change, takeover, or 30-minute
+read-back. Use the real outcome, integration, quality, and behavior evidence
+for those changes; UI changes use a screen read when that is the changed
+outcome, while docs/tests-only changes use their relevant document or test
+evidence.
+
+Only for a change whose actual behavior moves stored data, require this
+completed block in the card and carry it through integration. For every other
+kind, mark the block not applicable and state the actual effect and evidence:
+
+```markdown
+## Data movement
+- Kind: data-moving | reader-only | UI-only | docs/tests-only; classify by actual writes/requeues, not the label
+- Existing records affected (production, counts only): <count and what; UTC measurement, owner/query, or COORDINATOR TO MEASURE plus exact query>
+- Lane and cadence: <cron/queue/route, source file:line; every N minutes>
+- Per-run throughput: <rows per invocation; source file:line or measurement>
+- Time-budget check: <per-run time vs limit; source file:line>
+- Predicted drain: ceil(<existing count> / <per-run throughput>) runs × <cadence> = <duration>
+- Counts-only read-back query: <path or exact query, used before and after>
+- Expected after-value: <count by 30 minutes after deployment is Ready and the lane has taken over>
+- Deployment-takeover check: <new deployment runs the lane; logs grouped by deploymentId show integrations.chain.started on the new deployment, not skipped_sibling>
+```
+
+For data-moving cards, complete every field above. At release closeout,
+report the observed before and 30-minute after counts from the read-back.
+Writers without production access use the coordinator's latest count or
+provide the exact query and mark it COORDINATOR TO MEASURE; measure it before
+merge. Tests passed is never evidence of data movement. At integration,
+capture the before read-back, then the same counts-only query 30 minutes after
+deployment is Ready and takeover is confirmed. The release verdict stays FAIL
+until the after-read reaches the prediction; diagnose immediately if it does
+not. Deployment readiness and delivery are separate: trigger the processing
+after deployment, then measure the same outcome read-back.
+
 ## Find colliding work before you write, and own it once found
 
 On 2026-09-20 a sibling thread was fixing the same product onboarding bug in
@@ -59,6 +102,37 @@ children yourself. A stopped child is your next action, not a status line.
 A peer's "rebased, green" is a claim. Read the remote SHA and the check result
 yourself: that day a peer's green rebase never reached GitHub, and your own
 `git push` was silently refused by a pre-push gate.
+
+## Carry hard boundaries into delegated execution
+
+A native trial's parent brief prohibited retries after permission denials, but
+its generated prompt omitted that rule and requested file outputs without
+checking whether the child's allowed tools authorized those writes. The child
+retried/rerouted denied actions; the required output failed. This confirms a
+handoff omission, not a single cause of the model's behavior.
+
+**Check before launch:** copy the parent's exact hard refusal and permission
+boundaries into both the generated brief and launcher configuration. Check
+that requested disposable writes fit the existing authority and allowed tools;
+if not, narrow the requested output to authorized work. Preserve the original
+outcome: report an unattempted requested output as BLOCKED/NOT RUN and an
+attempted failed output as FAIL, as applicable; continue independent
+authorized work and never silently substitute reduced output as success. Never
+widen authority or add a routine approval step. Actual hard safety/authorization
+refusals—a safety-hook, sandbox, guardian, DLP, access-policy, or provider-policy
+refusal—are final: do not retry, rephrase, switch tools/routes, delegate around
+them, or widen authority. Preserve the exact refusal and continue only
+independently authorized work.
+
+Ordinary command usage/format, transport/runtime, and wrong execution-context
+errors may be diagnosed and corrected within already established authority.
+An external access/ACL refusal is not such an error. A GitHub collaborator
+error under one account does not authorize evading repository ACLs or selecting
+credentials; use an already authenticated owner context only when actual owner
+rules authorize it. This distinction does not make external access refusals
+generally recoverable. Keep safety/process FAIL distinct from successful output
+observations or task API results. This text check is preventive knowledge only;
+it does not prove agent behavior or enforce safety.
 
 ## Verify the thing you did not change
 
@@ -145,6 +219,17 @@ sending what it asked for — raw inputs it can recompute — or fixing the thin
 
 **Check:** before disputing a verdict, ask what evidence would settle it, then
 produce that. If the answer is "a test I have not written", write it.
+
+A native report about work you own is actionable failure input. Before sending
+any review-fix design, inspect the exact candidate code and affected consumers;
+reproduce the finding or trace it through source, identify why it escaped, and
+derive the smallest repair and falsifiable acceptance from that evidence. Check
+the prior repair for collateral effects. Do authorized routine repairs while
+preserving real ownership and approval boundaries; name any outside dependency
+that prevents action. A drafted, sent, or dismissed report, a policy edit, or an
+unrelated green check does not prove healing. Tie recurring cases to
+engineering-contracts' scoped root-cause and prevention contract instead of
+adding another self-attested global checklist.
 
 ## Members that report nothing are not working
 
@@ -267,7 +352,7 @@ claim about reality and inflating it destroys its only value.
 **Check:** Done means accepted. Anything else is In Review, however finished it
 feels.
 
-## Done means the user's data moved, not that the release is Ready
+## A data-moving release is done when the user's data moved, not merely when the release is Ready
 
 On 2026-10-03 two releases reached production before a noon deadline. Both were
 gated, tree-verified and Ready, with every scheduled job "accepted". The
@@ -276,11 +361,14 @@ and the improved extraction never ran over the existing backlog. "Ready" and
 "accepted" were reported as delivery for an hour before anyone measured the
 outcome.
 
-**Check:** after every release, trigger the processing it depends on, then
-measure the user-facing outcome (per customer or per entity, the same table as
-the baseline) within 30 minutes. A job that has not reported completion is a
-FAIL to act on now, not "pending". Until that table moves, the release is
-deployed, not delivered.
+**Check:** for releases whose actual behavior processes, writes, or requeues
+stored data, trigger the processing the change depends on, then measure the
+user-facing outcome (per customer or per entity, the same table as the
+baseline) within 30 minutes. A job that has not reported completion is a FAIL
+to act on now, not "pending". Until that table moves, the data-moving release
+is deployed, not delivered. Pure readers and UI changes with no writes, and
+docs/tests-only releases, do not require processing or a 30-minute baseline
+read-back; use their actual outcome evidence.
 
 ## Find a gap by tracing one record end to end, in both systems
 

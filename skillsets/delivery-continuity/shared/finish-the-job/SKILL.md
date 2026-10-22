@@ -1,11 +1,13 @@
 ---
 name: finish-the-job
 description: Use when fixing a bug, touching shared code, configuration, hooks or skills, encountering a blocker, or preparing to stop. Complete the authorized user outcome, repair known defects, check consumers, and distinguish implementation from installation and exercised workflows.
-verify: python3 scripts/verify-contract.py
-verified: 2026-10-01
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/shared/finish-the-job/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Finish the job
+
+For implementing features, shared-contract changes, LLM-backed output changes, and production fixes, or assessing completion of a new or existing candidate in those classes, load [engineering-contracts](../engineering-contracts/SKILL.md) to establish the outcome, trace actual consumers, and choose realistic evidence. In Claude, use the native Skill tool with the registered `engineering-contracts` name when available; in Codex, read the discovered `SKILL.md`. A link or mentioned skill name alone does not show it was activated. If the harness lacks a native Skill tool, read the file directly. Keep this skill's completion, fix-the-class, data-movement, authorization, propagation, and closeout rules.
 
 ## Complete the outcome
 
@@ -27,10 +29,28 @@ delegation. The coordinator still owns integration and the complete outcome.
 ## Delivered means the outcome moved
 
 A Ready deployment, a merged PR, or an accepted job trigger proves a mechanism.
-It does not show the user's outcome changed. After shipping anything that feeds
-processing, trigger that processing, then re-measure the same per-entity table
-used for the baseline. A job that has not reported completion is a failure to
-act on now. Report deployed and delivered separately until the table moves.
+It does not show the user's outcome changed. After shipping a release whose
+actual behavior processes, writes, or requeues stored data, trigger that
+processing, then re-measure the same per-entity table used for the baseline. A
+job that has not reported completion is a failure to act on now. For these
+data-moving releases, report deployed and delivered separately until the table
+moves. Pure readers with no writes, UI changes with no writes, and
+docs/tests-only changes do not require a processing trigger or baseline
+read-back; verify their actual outcome as described below.
+
+Before closeout, require the completed `## Data movement` block only when the
+actual change processes, attributes, projects, backfills, writes, or requeues
+stored data. A nominal reader or UI change that triggers a write is data-moving.
+A pure stored-data reader with no writes, a UI-only change with no writes, and
+docs/tests-only changes do not require a lane, throughput, drain, count change,
+deployment takeover, or 30-minute read-back; use their real outcome,
+integration, quality, and behavior evidence. Use a screen read for a changed UI
+outcome, and relevant document or test evidence for docs/tests-only changes.
+For data-moving changes, record the observed before and 30-minute after
+counts-only read-back and deployment takeover; keep the release verdict FAIL
+until the after-value reaches the prediction. Deployment readiness and delivery
+are separate: trigger the processing after deployment, then measure its outcome.
+Tests passed is never data-movement evidence.
 
 For any change to how data is processed, answer two questions before merge:
 - How does self-healing detect existing records that need reprocessing or
@@ -79,6 +99,24 @@ supported safe refresh and record coverage; do not interrupt unrelated work or
 claim universal propagation from file copies alone.
 
 ## Before stopping
+
+Reconcile native task and plan state with the work's actual outcome and execution
+before stopping or resuming. Read only the task list selected for your own
+session by its control plane, using supported APIs; do not mutate another
+session's task list or a board. Mark work completed only when outcome evidence
+supports completion. Treat `in_progress` as active only while an owned live
+worker or execution handle exists; a status label is not a heartbeat. When work
+depends only on an external event or human action, use the harness's supported
+pending/waiting state and record the exact blocker, owner, and resume condition.
+If the harness exposes no native task/plan interface or no pending/waiting
+state, record the exact wait in its supported plan or prose and name that
+capability limitation; do not invent an API or status, or repurpose shared fleet
+or board state. Prefer native task/plan tools when the harness supports them.
+Split work that mixes active execution with an external wait when the supported
+interface permits it. Resume by continuing every authorized runnable next step,
+including independent work, rather than only rewriting status. Use only status
+values the current harness supports; never infer completion from a stopped
+runtime.
 
 Check the request, open defects, sibling search, consumers, installed copies,
 required workflow checks, and task-owned process cleanup. Keep each required
