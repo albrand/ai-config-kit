@@ -1328,6 +1328,11 @@ def selftest():
         ("claude: serving blocked-on-user P2 is denied", claude_bash('bb thread spawn --prompt "serves: P2 go"'), thread, 2),
         ("claude: serving unknown P9 is denied", claude_bash('bb thread tell thr_abc "serves: P9 go"'), thread, 2),
         ("claude: tell without serves", claude_bash('bb thread tell thr_abc "please also refactor the sparkline"'), thread, 2),
+        # VERB_EXEMPT `terminal notify` (review of #92): a notice for the person passes with no serves
+        # line; the exemption covers that verb only, not a dispatch chained after it.
+        ("claude: terminal notify without serves", claude_bash('bb terminal notify --title "build" --body "tests passed"'), thread, 0),
+        ("claude: terminal notify then tell without serves", claude_bash('bb terminal notify --title t --body b && bb thread tell thr_abc "refactor it"'), thread, 2),
+        ("codex: terminal notify without serves", codex_shell('bb terminal notify --title "build" --body "tests passed"'), thread, 0),
         ("claude: draft set without serves", claude_bash('bb thread draft set thr_abc "revise the prompt"'), thread, 2),
         ("claude: draft set serving open P1", claude_bash('bb thread draft set thr_abc "serves: P1\nrevise the prompt"'), thread, 0),
         ("claude: draft set end-of-options message without serves", claude_bash('bb thread draft set thr_abc -- "--revise the prompt"'), thread, 2),
