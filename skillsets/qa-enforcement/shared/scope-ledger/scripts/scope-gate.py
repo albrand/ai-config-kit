@@ -62,6 +62,7 @@ LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/
 DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
 THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
 STATUSES = ("open", "done", "blocked-on-user")
+OWNER_ONLY = ("hard-prohibition-approval", "owner-decision", "material-new-fact")
 
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
@@ -842,6 +843,11 @@ def main(argv):
             ask = arg(args, "--ask")
             if status == "blocked-on-user" and not (ask and ask.strip()):
                 raise LedgerError("blocked-on-user needs --ask with the exact question for the user")
+            why = arg(args, "--why-owner")
+            if status == "blocked-on-user" and why not in OWNER_ONLY:
+                raise LedgerError("blocked-on-user needs --why-owner " + "|".join(OWNER_ONLY) + ": an in-scope, reversible judgment call is yours to decide and log, not to park on the owner")
+            if status == "blocked-on-user" and p["status"] == "blocked-on-user":
+                raise LedgerError(f"{pid} is already blocked-on-user since {p.get('status_marked_at')} ({p.get('ask') or 'no ask'}); asking again adds nothing. Decide it, or keep working on what else is runnable")
             p["status"], p["status_marked_at"] = status, now_iso()
             p["ask"] = ask if status == "blocked-on-user" else None
             ev = arg(args, "--evidence")
@@ -1353,11 +1359,34 @@ def selftest():
     rc = main(["mark", thread, "P1", "blocked-on-user"])
     failed += rc != 1
     print(f"{'ok  ' if rc == 1 else 'FAIL'} mark blocked-on-user without --ask is refused: rc={rc}")
-    rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?"])
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?"])
+        rc_bad = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?", "--why-owner", "judgment"])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    good = rc == 1 and rc_bad == 1 and read_ledger(thread)["purposes"][0]["status"] != "blocked-on-user"
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} mark blocked-on-user without an owner-only --why-owner is refused: rc={rc},{rc_bad}")
+    rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?", "--why-owner", "owner-decision"])
     led = read_ledger(thread)
     good = rc == 0 and led["purposes"][0]["status"] == "blocked-on-user" and led["purposes"][0]["ask"] == "Which host?" and led["purposes"][0]["status_marked_at"]
     failed += not good
     print(f"{'ok  ' if good else 'FAIL'} mark blocked-on-user records the ask and when")
+    first_marked = led["purposes"][0]["status_marked_at"]
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host, again?", "--why-owner", "owner-decision"])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    again = read_ledger(thread)["purposes"][0]
+    good = rc == 1 and again["ask"] == "Which host?" and again["status_marked_at"] == first_marked
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} re-marking a purpose already blocked-on-user is refused and keeps the first ask: rc={rc}")
     out, err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = open(os.devnull, "w"), open(os.devnull, "w")
     try:

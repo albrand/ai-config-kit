@@ -15,7 +15,7 @@ thread:
 G=~/.claude/skills/scope-ledger/scripts/scope-gate.py
 python3 $G init <thread> --from ledger.json        # refuses to overwrite
 python3 $G add <thread> --text "<user's words>" --done-when "<observable end state>"
-python3 $G mark <thread> P2 blocked-on-user --ask "<the exact question for the user>"
+python3 $G mark <thread> P2 blocked-on-user --ask "<the exact question for the user>" --why-owner <hard-prohibition-approval|owner-decision|material-new-fact>   # refused once already blocked
 python3 $G mark <thread> P1 done --evidence "<commit / URL / measurement>"
 python3 $G revise <thread> --quote "<the user's approval, verbatim>" --source <ref>
 python3 $G show <thread>
