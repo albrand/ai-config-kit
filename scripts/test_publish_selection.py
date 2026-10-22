@@ -47,6 +47,8 @@ class PublishSelectionTest(unittest.TestCase):
         if hasattr(self, "fake_bin"):
             env.update(PATH=str(self.fake_bin) + os.pathsep + env["PATH"],
                        PUBLISH_SSH_LOG=str(self.ssh_log))
+            if getattr(self, "remote_path", None):
+                env["PUBLISH_REMOTE_PATH"] = self.remote_path
         return subprocess.run(["node", str(self.root / "scripts/publish.mjs"), *args],
                               env=env, capture_output=True, text=True, timeout=120)
 
@@ -102,8 +104,10 @@ class PublishSelectionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.files()), 6)
 
-    def setup_remote(self):
+    def setup_remote(self, remote_tools=None):
         # serves: P11. This fixture never runs an actual SSH client.
+        # remote_tools: run the remote shell with only these programs on PATH (a macOS
+        # target has md5 and may lack md5sum); None keeps the host PATH and the fake md5sum.
         self.remote = self.root / "remote-installed"
         self.fake_bin = self.root / "fake-bin"
         self.fake_bin.mkdir()
@@ -120,8 +124,16 @@ class PublishSelectionTest(unittest.TestCase):
             "log.write(json.dumps({'command':sys.argv[2],'input_bytes':len(body)})+'\\n')\n"
             # sshd hands the command to the remote shell as one argument; Linux refuses one over 128 KiB
             "if len(sys.argv[2].encode()) > 131072: sys.stderr.write('/bin/bash: Argument list too long\\n'); sys.exit(1)\n"
-            "sys.exit(subprocess.run(['/bin/sh','-c',sys.argv[2]],input=body).returncode)\n")
+            "env=dict(os.environ)\n"
+            "if os.environ.get('PUBLISH_REMOTE_PATH'): env['PATH']=os.environ['PUBLISH_REMOTE_PATH']\n"
+            "sys.exit(subprocess.run(['/bin/sh','-c',sys.argv[2]],input=body,env=env).returncode)\n")
         ssh.chmod(0o755)
+        if remote_tools is not None:
+            remote_bin = self.root / "remote-bin"
+            remote_bin.mkdir()
+            for tool in remote_tools:
+                (remote_bin / Path(tool).name).symlink_to(tool)
+            self.remote_path = str(remote_bin)
         # Simulate the Linux peer's md5sum on a macOS fixture host. It runs once per remote
         # file, so it is sh + md5, not a Python start-up: 701 of those under a loaded runner
         # passed the CLI timeout (verify/unit on PR #97, 2026-10-22).
@@ -190,7 +202,7 @@ class PublishSelectionTest(unittest.TestCase):
         (big / "SKILL.md").write_text('---\nname: big-lesson\ndescription: "Fixture"\nverify: "true"\n'
                                       'verified: 2026-10-22\n---\nBig\n')
         # Long names reach the limit with few files; each file is one fake-ssh write.
-        for i in range(120):
+        for i in range(160):
             (big / "references" / (f"reference-{i:03d}-" + "n" * 226 + ".md")).write_text(f"{i}\n")
         result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -200,7 +212,7 @@ class PublishSelectionTest(unittest.TestCase):
         self.assertTrue(all(len(c["command"].encode()) <= 64 * 1024 for c in reads))
         published = {str(p.relative_to(self.remote / "big-lesson")) for p in (self.remote / "big-lesson").rglob("*")
                      if p.is_file()}
-        self.assertEqual(len(published), 121)
+        self.assertEqual(len(published), 161)
         self.ssh_log.write_text("")
         result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -244,6 +256,37 @@ class PublishSelectionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertEqual(before, self.remote_snapshot())
         self.assertFalse(any(call["input_bytes"] for call in self.remote_calls()))
+
+    MAC_TOOLS = ["/sbin/md5", "/usr/bin/cut", "/bin/mkdir", "/usr/bin/base64", "/bin/chmod", "/bin/cat", "/bin/cp"]
+
+    @unittest.skipUnless(os.path.exists("/sbin/md5"), "needs macOS md5")
+    def test_macos_remote_without_md5sum_reads_hashes(self):
+        # `md5sum f | cut ... || md5 -q f` never reached md5: cut succeeded on empty input,
+        # so an existing file read as absent and an edit on the remote was overwritten unchecked.
+        self.setup_remote(remote_tools=self.MAC_TOOLS)
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.remote_target.read_text(), 'BASE = "https://fixture.example"\n')
+        self.ssh_log.write_text("")
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(c["input_bytes"] for c in self.remote_calls()), "a repeat publish writes nothing")
+        self.remote_target.write_text("remote user modification\n")
+        before = self.remote_snapshot()
+        self.ssh_log.write_text("")
+        result = self.remote_cli()
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(before, self.remote_snapshot(), "an unknown edit on the remote is preserved")
+        self.assertFalse(any(c["input_bytes"] for c in self.remote_calls()))
+
+    def test_remote_with_no_hasher_refuses_before_writing(self):
+        self.setup_remote(remote_tools=[t for t in self.MAC_TOOLS if not t.endswith("/md5")])
+        before = self.remote_snapshot()
+        result = self.remote_cli()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("neither md5sum nor md5 -q", result.stderr)
+        self.assertEqual(before, self.remote_snapshot())
+        self.assertFalse(any(c["input_bytes"] for c in self.remote_calls()))
 
 
 if __name__ == "__main__":
