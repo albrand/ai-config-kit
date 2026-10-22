@@ -787,15 +787,20 @@ def mark_passed(thread, when=None):
     GAP_MAP_WINDOW_H. hooks/gap-map-hook.sh starts Python only when the file is fresh, and the
     count comes from it. Per thread, because the shared decision log moves with the whole fleet
     and can evict a thread's dispatches (Hermes review of #92, twice)."""
+    import fcntl
     try:
         when = time.time() if when is None else when
-        keep = [t for t in passed_times(thread) if when - t <= GAP_MAP_WINDOW_H * 3600][-200:]
         path = passed_marker(thread)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
-        with os.fdopen(fd, "w") as f:
-            f.write("".join(f"{int(t)}\n" for t in sorted(keep + [when])))
-        os.replace(tmp, path)
+        # Two dispatches passing at once must not drop one (Hermes review of #92, round 3): the
+        # read-prune-replace runs under the thread's own lock.
+        with open(path + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            keep = [t for t in passed_times(thread) if when - t <= GAP_MAP_WINDOW_H * 3600][-200:]
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                f.write("".join(f"{int(t)}\n" for t in sorted(keep + [when])))
+            os.replace(tmp, path)
     except (OSError, LedgerError):
         pass
 

@@ -52,4 +52,34 @@ p = sys.argv[1]; d = json.load(open(p)); d["gap_maps"] = []; d["gap_map_nudged_a
 EOF2
 touch -t 200001010000 "$T/.local/state/agent-quality/scope-passed/$TID"
 check "no dispatch in the last 2 minutes: python never starts, silent" "$(hook $TID)" ""
+# Eight dispatches passing at the same moment (review of #92, round 3): eight processes released
+# together each record one; all eight count and the note shows.
+C=thr_gapmapconcurrent
+python3 - "$SRC/shared/scope-ledger/tests/fixtures/scope-ledger.json" "$T/.local/state/agent-quality/scope/$C.json" "$C" <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d["thread_id"] = sys.argv[3]
+json.dump(d, open(sys.argv[2], "w"))
+EOF
+cat > "$T/concurrent.py" <<'EOF'
+import importlib.util, multiprocessing as mp, sys
+
+def one(path, thread, go):
+    spec = importlib.util.spec_from_file_location("sg", path); sg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sg)
+    go.wait()
+    sg.mark_passed(thread)
+
+if __name__ == "__main__":
+    go = mp.Event()
+    ps = [mp.Process(target=one, args=(sys.argv[1], sys.argv[2], go)) for _ in range(8)]
+    [p.start() for p in ps]
+    go.set()
+    [p.join() for p in ps]
+EOF
+HOME="$T" python3 "$T/concurrent.py" "$T/.agents/skills/scope-ledger/scripts/scope-gate.py" "$C"
+n=$(wc -l < "$T/.local/state/agent-quality/scope-passed/$C" | tr -d ' ')
+check "8 simultaneous passed dispatches: all recorded" "$n" "8"
+out="$(hook $C)"
+case "$out" in *'"additionalContext"'*"8 dispatches"*) got=note ;; *) got="$out" ;; esac
+check "8 simultaneous passed dispatches: note shown" "$got" "note"
 [ $fail -eq 0 ] && echo "gap-map hook: all pass" || { echo "gap-map hook: FAIL"; exit 1; }
