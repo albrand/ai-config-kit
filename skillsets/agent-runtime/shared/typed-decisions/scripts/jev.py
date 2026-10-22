@@ -191,8 +191,10 @@ def validate_response(resp, qs):
     usage = resp.get("usage")
     if not isinstance(usage, dict):
         invalid("missing token usage")
+    # Both counts are required by the API's Usage schema; a missing one would
+    # be summed as 0 and under-report spend.
     for key in ("input_tokens", "output_tokens"):
-        if key in usage and (type(usage[key]) is not int or usage[key] < 0):
+        if type(usage.get(key)) is not int or usage[key] < 0:
             invalid("token counts must be nonnegative integers")
     for key in ("cost_usd", "spend_usd"):
         if usage.get(key) is not None and not number(usage[key], 0, sys.float_info.max):

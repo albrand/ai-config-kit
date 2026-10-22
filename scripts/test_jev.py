@@ -308,10 +308,14 @@ class JevResponseContractTest(unittest.TestCase):
 
     def test_invalid_envelope_is_rejected(self):
         for response in (None, [], {}, {**RESPONSE, "model": None}, {**RESPONSE, "usage": []},
-                         {**RESPONSE, "usage": {"input_tokens": -1}},
-                         {**RESPONSE, "usage": {"input_tokens": True}},
-                         {**RESPONSE, "usage": {"cost_usd": float("inf")}},
-                         {**RESPONSE, "usage": {"spend_usd": "unknown"}}):
+                         {**RESPONSE, "usage": {}},
+                         {**RESPONSE, "usage": {"input_tokens": 300}},
+                         {**RESPONSE, "usage": {"output_tokens": 30}},
+                         {**RESPONSE, "usage": {"input_tokens": None, "output_tokens": 30}},
+                         {**RESPONSE, "usage": {"input_tokens": -1, "output_tokens": 30}},
+                         {**RESPONSE, "usage": {"input_tokens": True, "output_tokens": 30}},
+                         {**RESPONSE, "usage": {**RESPONSE["usage"], "cost_usd": float("inf")}},
+                         {**RESPONSE, "usage": {**RESPONSE["usage"], "spend_usd": "unknown"}}):
             with self.subTest(response=response):
                 self.assert_refused(response)
 
