@@ -5,6 +5,9 @@
 # gap-map hook then prints the note and exits 0. Host integration: the installer's selftest reads
 # the running bb's help, so this runs on a host with bb, not in the checkout-only suite.
 set -eu
+# The installer runs codex-hook-trust.py, which reads config.toml with tomllib (Python 3.11+). The
+# hooks it installs run on older Pythons too; test-gap-map-hook.sh covers those.
+python3 -c 'import tomllib' 2>/dev/null || { echo "FAIL install-scope-gate.sh needs Python 3.11+ (tomllib); this is $(python3 --version 2>&1)"; exit 1; }
 KIT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
