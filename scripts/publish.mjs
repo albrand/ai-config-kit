@@ -301,6 +301,12 @@ function publishLocal(list) {
   return changes;
 }
 
+// sshd runs a command as one `sh -c` argument, and Linux caps a single argument
+// at 128 KiB (MAX_ARG_STRLEN), counted in bytes. One line per file for the whole
+// library passed that on 2026-10-22 ("Argument list too long"), so the reads go
+// in batches measured in UTF-8 bytes; a multibyte path counts at its real size.
+const REMOTE_SCRIPT_MAX = 64 * 1024;
+
 /**
  * Push to a remote machine over ssh.
  *
@@ -313,21 +319,43 @@ function publishLocal(list) {
  * for an agent working there to do — is destroyed with nobody told. So we hash
  * what is there first, write only what differs, and report drift loudly.
  *
- * The hashing is one ssh round trip for the whole machine, not one per file.
+ * The hashing is a few ssh round trips for the whole machine (one per batch
+ * under REMOTE_SCRIPT_MAX), not one per file.
  */
+// `md5sum` on Linux, `md5 -q` on a Mac without it. Chosen once per batch: in
+// `md5sum f | cut ... || md5 -q f` the pipeline's status is cut's, so a missing
+// md5sum gave an empty hash and an existing file read as absent (Hermes 2026-10-22).
+const REMOTE_HASHER =
+  `if command -v md5sum >/dev/null 2>&1; then __ph() { md5sum "$1" | cut -d' ' -f1; }; ` +
+  `else __ph() { md5 -q "$1"; }; fi`;
+
 function remoteHashes(host, targets) {
-  // `md5 -q` on macOS, `md5sum` on Linux; emit "<path> <hash>" or nothing.
-  const script = targets
-    .map(
-      (t) =>
-        `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(md5sum ${t} 2>/dev/null | cut -d' ' -f1 || md5 -q ${t})"; fi`,
-    )
-    .join("\n");
-  const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+  // Emit "<path> <hash>" for each target that exists.
+  const lines = targets.map(
+    (t) => `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(__ph ${t})"; fi`,
+  );
+  const batches = [];
+  let size = 0;
+  for (const line of lines) {
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (batches.length && size + 1 + bytes <= REMOTE_SCRIPT_MAX) {
+      batches[batches.length - 1].push(line);
+      size += 1 + bytes;
+    } else {
+      batches.push([REMOTE_HASHER, line]);
+      size = Buffer.byteLength(REMOTE_HASHER, "utf8") + 1 + bytes;
+    }
+  }
   const map = new Map();
-  for (const line of out.split("\n")) {
-    const [file, hash] = line.trim().split(/\s+/);
-    if (file && hash) map.set(file, hash);
+  for (const script of batches.map((b) => b.join("\n"))) {
+    const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      const [file, hash] = line.trim().split(/\s+/);
+      if (!file) continue;
+      // An existing file with no hash must not read as absent: it would be overwritten unchecked.
+      if (!hash) throw new Error(`Could not hash ${host}:${file}: the remote has neither md5sum nor md5 -q.`);
+      map.set(file, hash);
+    }
   }
   return map;
 }
