@@ -2545,19 +2545,31 @@ def hook(raw=None):
 # File-edit tools carry file content, not a command line. On 2026-10-16 a Codex apply_patch adding an
 # offline test fixture (`vercel alias set` against candidate.example.test) was read as a production
 # alias, failed provenance and was denied. Edits never ship; only a shell segment does. A shell
-# command is skipped only when it is exactly one apply_patch heredoc (or a bare patch body) with
-# nothing before or after it, so `apply_patch <<EOF ... EOF; vercel alias set ...` is still scanned.
+# command is skipped only when it is exactly one apply_patch heredoc with a QUOTED delimiter and
+# nothing after its first closing line: an unquoted heredoc expands `$(...)` before apply_patch
+# runs, and a shell ends the heredoc at the first delimiter line, running whatever follows. A bare
+# patch body given to a shell is shell input, so it is scanned like any other command.
 FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
-_APPLY_PATCH_HEREDOC = re.compile(
-    r"\A\s*apply_patch\s*<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\n.*?\n[ \t]*\2[ \t]*\n?\s*\Z", re.S)
-_BARE_PATCH = re.compile(r"\A\s*\*\*\* Begin Patch\n.*\n\*\*\* End Patch\s*\Z", re.S)
+_APPLY_PATCH_HEADER = re.compile(r"\A\s*apply_patch[ \t]*<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*\Z")
+
+
+def _is_quoted_apply_patch_heredoc(command):
+    lines = command.strip().split("\n")
+    head = _APPLY_PATCH_HEADER.match(lines[0]) if lines else None
+    if not head:
+        return False
+    strip_tabs, delimiter = head.group(1) == "-", head.group(3)
+    for i, line in enumerate(lines[1:], 1):
+        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+            return i == len(lines) - 1  # the shell runs anything after the first closing line
+    return False
 
 
 def is_file_edit(payload, command):
     tool = str(payload.get("tool_name") or payload.get("toolName") or "").strip().lower()
     if tool in FILE_EDIT_TOOLS:
         return True
-    return bool(_BARE_PATCH.match(command) or _APPLY_PATCH_HEREDOC.match(command))
+    return _is_quoted_apply_patch_heredoc(command)
 
 
 def _hook(raw=None):
@@ -4027,6 +4039,19 @@ def selftest(v4_gate=None, v4_templates=None):
           "apply_patch heredoc followed by a real alias", U)
     deny5(r9, "vercel alias set dpl_unwalked app.example.com && apply_patch <<'EOF'\n%s\nEOF" % patch_body,
           "real alias before an apply_patch heredoc", U)
+    # Only a quoted heredoc is literal. Unquoted, the shell expands $(...) before apply_patch runs; and
+    # the heredoc ends at its first closing line, so a later line runs as a command.
+    deny5(r9, "apply_patch <<EOF\n%s\n$(vercel alias set dpl_unwalked app.example.com)\nEOF" % patch_body,
+          "unquoted apply_patch heredoc with a command substitution", U)
+    deny5(r9, "apply_patch <<-EOF\n%s\n`vercel alias set dpl_unwalked app.example.com`\nEOF" % patch_body,
+          "unquoted <<- apply_patch heredoc with a backtick substitution", U)
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted apply_patch heredoc closed early, then a real alias", U)
+    deny5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted <<- heredoc closed early by a tab-indented delimiter, then a real alias", U)
+    deny5(r9, "%s\n$(vercel alias set dpl_unwalked app.example.com)" % patch_body,
+          "a bare patch body given to a shell", U)
+    allow5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF" % patch_body, "quoted <<- apply_patch heredoc")
     deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
     deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
           "no deployment id")
