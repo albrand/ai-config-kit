@@ -67,5 +67,20 @@ fi
 # 4. host timeout on the chain entry: at least the gates' HOOK_HOST_TIMEOUT_S
 #    (a timed-out PreToolUse hook lets the command run; backup inside)
 python3 "$SRC/hooks/hook-timeouts.py" apply
+# 5. gap-map nudge: a PostToolUse hook for Claude and Codex (never denies; owner-approved
+#    2026-10-22). Claude runs it only for the tools that can dispatch; Codex hooks carry no
+#    matcher and the wrapper leaves at once unless a dispatch just passed the gate.
+f=gap-map-hook.sh
+[ -f "$HOME/.agent-hooks/$f" ] && cp -p "$HOME/.agent-hooks/$f" "$BK/$f"
+cp "$SRC/hooks/$f" "$HOME/.agent-hooks/$f.new"
+chmod +x "$HOME/.agent-hooks/$f.new"
+mv "$HOME/.agent-hooks/$f.new" "$HOME/.agent-hooks/$f"
+MATCH="Bash|$(echo $TOOLS | tr ' ' '|')"
+python3 "$KIT/skillsets/repo-bootstrap/hooks/register_verify_hook.py" \
+  --command "$HOME/.agent-hooks/$f" --claude-matcher "$MATCH" --tag gap-map
+# Codex skips an untrusted hook without a word: trust exactly this one.
+if [ -f "$HOME/.codex/hooks.json" ]; then
+  python3 "$SRC/hooks/codex-hook-trust.py" --trust --only-command "$HOME/.agent-hooks/$f" --only-event PostToolUse
+fi
 echo "installed scope gate; backup: $BK"
 

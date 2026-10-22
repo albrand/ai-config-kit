@@ -39,7 +39,12 @@ Subcommands:
                                             from archive (only the child's parent
                                             ledger counts; its own ledger still holds)
     show <thread>
-    shape                                   the deadline (shape) decision for a stdin
+    map <thread> --artifact PATH            record the gap map work is staffed from
+    nudge                                   PostToolUse (env BB_THREAD_ID): after
+                                            GAP_MAP_DISPATCHES passed dispatches in
+                                            GAP_MAP_WINDOW_H hours with no map, shows
+                                            the delivery contract once; never denies
+    shape                                 the deadline (shape) decision for a stdin
                                             payload: allow, deny or none (tests)
     selftest
 
@@ -63,6 +68,13 @@ DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jso
 THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
 STATUSES = ("open", "done", "blocked-on-user")
 OWNER_ONLY = ("hard-prohibition-approval", "owner-decision", "material-new-fact")
+# Gap-map nudge (owner-approved 2026-10-22): a coordinator that keeps staffing work with no gap
+# map is shown the delivery contract after a dispatch. It never denies.
+GAP_MAP_DISPATCHES = 8   # passed dispatches ...
+GAP_MAP_WINDOW_H = 6     # ... within this many hours
+GAP_MAP_FRESH_H = 24     # a map recorded this recently counts
+GAP_MAP_REPEAT_H = 6     # shown at most once per this many hours
+DECISIONS_TAIL = 4 * 1024 * 1024
 
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
@@ -755,6 +767,71 @@ def hook(stdin_text, thread):
     return deny(deny_reason(ledger, thread, served) + notes)
 
 
+# ---------------------------------------------------------------- gap-map nudge
+
+def iso_age_h(at, now):
+    try:
+        t = datetime.datetime.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+    return (now - t).total_seconds() / 3600
+
+
+def passed_dispatches(thread, now, hours):
+    """scope_passed decisions for `thread` in the last `hours`, from the decision log's tail."""
+    try:
+        with open(DECISIONS, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - DECISIONS_TAIL))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return 0
+    n = 0
+    for line in tail.splitlines():
+        if thread not in line or "scope_passed" not in line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        age = iso_age_h(e.get("at"), now)
+        if e.get("event") == "scope_passed" and e.get("thread") == thread and age is not None and age <= hours:
+            n += 1
+    return n
+
+
+def gap_map_nudge(thread, now=None):
+    """The note to show a coordinator staffing work with no gap map, or None. Showing it is
+    recorded in the ledger, so it repeats at most once per GAP_MAP_REPEAT_H.
+
+    Owner, 2026-10-22, after a coordinator worked for hours without one: "so you HVE BEEN
+    WORKING FOR HOURS and never thought on doing a root cause analysis". The delivery contract
+    already required the map; text alone did not make it happen."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    ledger = read_ledger(thread)
+    if not ledger:
+        return None
+    for m in ledger.get("gap_maps") or []:
+        age = iso_age_h(m.get("at"), now) if isinstance(m, dict) else None
+        if age is not None and age <= GAP_MAP_FRESH_H:
+            return None
+    age = iso_age_h(ledger.get("gap_map_nudged_at"), now)
+    if age is not None and age < GAP_MAP_REPEAT_H:
+        return None
+    n = passed_dispatches(thread, now, GAP_MAP_WINDOW_H)
+    if n < GAP_MAP_DISPATCHES:
+        return None
+    ledger["gap_map_nudged_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_ledger(thread, ledger)
+    record({"event": "gap_map_nudge", "thread": thread, "dispatches": n})
+    gate = os.path.join(os.path.expanduser("~/.agents/skills/scope-ledger/scripts"), "scope-gate.py")
+    return (f"[scope-ledger] You have made {n} dispatches in {GAP_MAP_WINDOW_H}h and recorded no gap map. "
+            "Delivery contract: before staffing more work, trace one representative record end to end, "
+            "map every bucket x count to the first stage where it breaks, and staff only from that map. "
+            f"Record it: python3 {gate} map {thread} --artifact <path>. "
+            f"(This dispatch went through; shown at most once per {GAP_MAP_REPEAT_H}h.)")
+
+
 # ---------------------------------------------------------------- CLI
 
 def arg(args, name, default=None):
@@ -784,6 +861,16 @@ def main(argv):
             return 0
     if cmd == "selftest":
         return selftest()
+    if cmd == "nudge":
+        # PostToolUse, after a dispatch. Never denies; any failure is silent.
+        try:
+            sys.stdin.read()
+            note = gap_map_nudge(os.environ.get("BB_THREAD_ID", ""))
+        except Exception:
+            return 0
+        if note:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}))
+        return 0
     if cmd == "shape":
         thread = os.environ.get("BB_THREAD_ID", "")
         text = shape_text(sys.stdin.read())
@@ -864,6 +951,14 @@ def main(argv):
             write_ledger(thread, ledger)
             print("revision recorded")
             return 0
+        if cmd == "map":
+            path = arg(args, "--artifact")
+            if not path or not os.path.isfile(path) or os.path.getsize(path) == 0:
+                raise LedgerError("map needs --artifact <path> of an existing, non-empty gap map")
+            ledger.setdefault("gap_maps", []).append({"artifact": os.path.abspath(path), "at": now_iso()})
+            write_ledger(thread, ledger)
+            print(f"gap map recorded for {thread}")
+            return 0
         if cmd == "release":
             # The fleet archive guard restores every archive of a child whose
             # parent ledger has an unfinished purpose. A release is the
@@ -898,6 +993,7 @@ VERB_EXEMPT = {
     "fleet hermes": "a claim sent to the reviewer, not work for a thread",
     "terminal send": "types into a terminal session (a shell), not a thread's conversation",
     "notify send": "a desktop notice to the person, not work for an agent",
+    "terminal notify": "raises terminal attention for the person (title/body), not work for an agent",
     "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
     "thread log": "read-only: its --message <seq> names a message to print, not text sent to a thread",
 }
@@ -1556,6 +1652,63 @@ def selftest():
               f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
     else:
         print("skip bb verb coverage: no bb on PATH")
+    # gap-map nudge: shown after GAP_MAP_DISPATCHES passed dispatches, once, never with a map
+    import contextlib, copy, io
+    gt = "thr_gapmapfixture"
+    write_ledger(gt, dict(copy.deepcopy(base), thread_id=gt))
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+
+    def passed(k, hours_ago=0):
+        at = (utc_now - datetime.timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(DECISIONS, "a") as f:
+            for _ in range(k):
+                f.write(json.dumps({"schema_version": 1, "at": at, "event": "scope_passed", "thread": gt,
+                                    "tool": "bb thread spawn", "serves": "P1"}) + "\n")
+
+    def cli_nudge():
+        out, env = io.StringIO(), os.environ.get("BB_THREAD_ID")
+        os.environ["BB_THREAD_ID"] = gt
+        stdin, sys.stdin = sys.stdin, io.StringIO('{"tool_name": "Bash"}')
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = main(["nudge"])
+        finally:
+            sys.stdin = stdin
+            if env is None:
+                os.environ.pop("BB_THREAD_ID", None)
+            else:
+                os.environ["BB_THREAD_ID"] = env
+        return rc, out.getvalue()
+
+    passed(20, hours_ago=GAP_MAP_WINDOW_H + 1)  # old dispatches do not count
+    passed(GAP_MAP_DISPATCHES - 1)
+    below = gap_map_nudge(gt)
+    passed(1)
+    rc, out = cli_nudge()
+    shown = json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
+    again = gap_map_nudge(gt)
+    good = (below is None and rc == 0 and f"{GAP_MAP_DISPATCHES} dispatches" in shown
+            and "gap map" in shown and again is None)
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} gap-map nudge shows once after {GAP_MAP_DISPATCHES} dispatches in "
+          f"{GAP_MAP_WINDOW_H}h, never before: below={below is None} shown={bool(shown)} repeat={again is None}")
+    led = read_ledger(gt)
+    led["gap_map_nudged_at"] = (utc_now - datetime.timedelta(hours=GAP_MAP_REPEAT_H + 1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_ledger(gt, led)
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc_bad = main(["map", gt, "--artifact", os.path.join(tmp, "absent.md")])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc_map = main(["map", gt, "--artifact", brief])
+    after_map = gap_map_nudge(gt)
+    good = rc_bad == 1 and rc_map == 0 and after_map is None
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} a recorded gap map (an existing file) silences the nudge: "
+          f"absent={rc_bad} map={rc_map} silent={after_map is None}")
     with open(DECISIONS) as f:
         n = sum(1 for _ in f)
 

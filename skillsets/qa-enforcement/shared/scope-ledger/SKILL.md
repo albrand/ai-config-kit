@@ -2,7 +2,7 @@
 name: scope-ledger
 verify: python3 scripts/scope-gate.py selftest
 verified: 2026-10-01
-description: Keep a coordinator on what the user asked for. A per-thread ledger of the user's purposes (verbatim), a PreToolUse gate that denies spawns and tells that do not say which open purpose they serve, a Stop check that blocks an early stop while open purposes have nothing running, and the fleet idle guard that nudges a coordinator sitting idle with open purposes. Use when coordinating children, when the gate denies a dispatch, or when the fleet scope guard or the scope-closeout check nudges you.
+description: Keep a coordinator on what the user asked for. A per-thread ledger of the user's purposes (verbatim), a PreToolUse gate that denies spawns and tells that do not say which open purpose they serve, a gap-map note after a run of dispatches with no recorded gap map, a Stop check that blocks an early stop while open purposes have nothing running, and the fleet idle guard that nudges a coordinator sitting idle with open purposes. Use when coordinating children, when the gate denies a dispatch, or when the fleet scope guard, the scope-closeout check or the gap-map note nudges you.
 ---
 
 # scope-ledger
@@ -18,6 +18,7 @@ than finishing the purposes.
 - The ledger and its enforcement run whenever a ledger exists; there is no off switch other than finishing the purposes.
 - Keep user purpose text verbatim and accepted revisions as verbatim approved quotes. A request contract is a review step, never a gate.
 - A dispatch must serve an open purpose or exact accepted revision. The gate fails closed when a ledger or brief cannot be read; dispatches cannot borrow a sibling command's serves line.
+- A coordinator that has staffed 8+ dispatches in 6h with no gap map recorded in 24h is shown the delivery contract after a dispatch, at most once per 6h (`hooks/gap-map-hook.sh`, PostToolUse). It never denies. Record the map you staff from: `scope-gate.py map <thread> --artifact <path>`.
 - The idle guard nudges an idle coordinator with open work. The Stop check blocks once when open purposes have nothing carrying them; a status report is not completion.
 - Fleet archive holds protect threads with unfinished purposes and review threads. Release only a finished child with evidence in its parent's ledger.
 - The gate's deadline behavior and documented parser limits are part of the contract; retain the `Known limits` section here because `shell_dispatch.py` points to it.
@@ -28,6 +29,7 @@ than finishing the purposes.
 2. Decide whether a dispatch carries text and must serve an open purpose or accepted revision. Read `references/dispatch-gate.md` when you reach this step.
 3. Respond to idle nudges and closeout checks by continuing, completing, or recording the exact user-owned blocker. Read `references/idle-and-closeout.md` when you reach this step.
 4. Hand back circuit successors and release finished children with evidence. Read `references/fleet-lifecycle.md` when you reach this step.
+5. Before staffing work toward a metric or a data gap, trace one representative record end to end, write the gap map (every bucket x count, and the first stage where it breaks), and record it with `scope-gate.py map`. If the gap-map note appears, do that before the next dispatch.
 
 ## Known limits
 
