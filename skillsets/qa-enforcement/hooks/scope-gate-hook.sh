@@ -55,7 +55,8 @@ input as $p | (try input catch null) as $led
    | if type == "object" then . else {} end
    | if (.arguments | type) == "object" then . + .arguments else . end) as $in
 | ((fields | keys) | map(select(. as $k | $tool | test("(^|[^a-z])" + $k + "$"))) | first) as $mcp
-| (if $mcp != null then
+| (if ($tool | ascii_downcase | gsub("^\\s+|\\s+$"; "") | IN("edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool")) then null
+   elif $mcp != null then
      (if (when[$mcp] // null) != null and ([when[$mcp][] as $k | $in[$k] | select(. != null and . != "")] | length) == 0
       then null
       else [[fields[$mcp][] as $k | $in[$k] | select(. != null) | if type == "string" then . else tojson end] | join("\n") | flat] end)
