@@ -148,12 +148,14 @@ ship_scan() {
     if (index(t, "${") || index(t, "$[") || index(t, "$(")) return 0
     HW = out; HK = k; return 1
   }
-  function strip(s,   out, st, top, pd, pw, ps, np, hp, w, i, n, c, nx, j, k, dl, dash, line) {
+  function strip(s,   out, st, top, pd, pw, ps, pq, np, hp, w, i, n, c, nx, j, k, dl, dash, line, x) {
     # The command without heredocs, or SFAIL = 1 when one is not read exactly. Same contract as the ship-gate.py
     # _strip_heredoc_bodies (Hermes r10, r11): a real << is code, not quoted, escaped, commented, arithmetic or in
     # ${...} / $[...]; <<< is a here-string. Its delimiter must be a word hdword() reads (one the shells read
     # alike), its context must still be open where the body starts, a terminator line must exist, and no body
-    # line may start with the delimiter and go on. Anything else is unreadable, so the raw text is scanned.
+    # line may start with the delimiter and go on; with an unquoted delimiter no body line may hold $( or a
+    # backtick, which the shell expands, or end in a backslash, whose newline the shell removes first (Hermes
+    # 2026-10-22). Anything else is unreadable, so the raw text is scanned.
     out = ""; st = ""; np = 0; hp = 1; w = 0; n = length(s); SFAIL = 0
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1); nx = substr(s, i + 1, 1); top = substr(st, length(st), 1)
@@ -185,6 +187,7 @@ ship_scan() {
             if (pd[hp]) sub(/^\t+/, "", line)
             if (line == pw[hp]) break
             if (index(line, pw[hp]) == 1) { SFAIL = 1; return "" }
+            if (!pq[hp] && (index(line, "$(") || index(line, "`") || substr(line, length(line)) == "\\")) { SFAIL = 1; return "" }
           }
         }
         np = 0; hp = 1; w = 0; i--; continue
@@ -194,8 +197,8 @@ ship_scan() {
         j = i + 2; dash = (substr(s, j, 1) == "-"); if (dash) j++
         while (j <= n && (substr(s, j, 1) == " " || substr(s, j, 1) == "\t")) j++
         if (!hdword(s, j)) { SFAIL = 1; return "" }
-        k = HK; dl = HW
-        np++; pd[np] = dash; pw[np] = dl; ps[np] = st; i = k - 1; w = 1; continue
+        k = HK; dl = HW; x = substr(s, j, k - j)
+        np++; pd[np] = dash; pw[np] = dl; ps[np] = st; pq[np] = (index(x, sq) || index(x, "\"") || index(x, "\\")); i = k - 1; w = 1; continue
       }
       out = out c
       if (c == sq || c == "\"") st = st c
