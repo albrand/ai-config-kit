@@ -21,7 +21,7 @@ Output: one JSON object {model, answers: {id: {type, answer, p|confidence, tier,
 Tiers use the human-set thresholds below until the ledger's outcome history for a
 point says otherwise (`decision-ledger.py report`, source system-one).
 
-Environment: TYPESAFE_BASE_URL (API root; default: the gateway set at publish,
+Environment: TYPESAFE_BASE_URL (API root; default: the root set at publish,
 else https://api.typesafe.ai) and
 TYPESAFE_API_KEY (a placeholder is fine behind a gateway that injects the key).
 JEV_DRY_RUN=1 or --dry-run prints the request instead of sending it.
@@ -30,7 +30,7 @@ Exit: 0 answered; 2 refused input (bad spec, secret-looking state); 3 service
 failure after bounded retries. On 3, do not invent an answer: judge it yourself
 and record it with --source none --tier low, or escalate.
 """
-import argparse, json, os, re, subprocess, sys, time, urllib.error, urllib.request
+import argparse, json, math, os, re, subprocess, sys, time, urllib.error, urllib.request
 
 # Human-set thresholds (typed-decisions section 5). Tune from outcome history, never
 # lower them to get a decision through.
@@ -65,7 +65,11 @@ def options(spec):
 def build_questions(a):
     qs = {}
     if a.spec:
-        qs.update(json.load(open(a.spec)))
+        with open(a.spec) as spec_file:
+            spec = json.load(spec_file)
+        if not isinstance(spec, dict):
+            raise Refused("spec must be a questions map")
+        qs.update(spec)
     for qid, text in a.yn or []:
         qs[qid] = {"type": "noul", "instructions": text}
     for qid, text, opts in a.pick or []:
@@ -78,8 +82,20 @@ def build_questions(a):
     if not qs:
         raise Refused("no questions: use --yn, --pick, --level or --spec")
     for qid, q in qs.items():
+        if not isinstance(q, dict):
+            raise Refused("each question must be an object")
         if q.get("type") not in ("noul", "choice", "score"):
             raise Refused(f"{qid}: type must be noul, choice or score")
+        if not isinstance(q.get("instructions"), (str, dict, list)):
+            raise Refused(f"{qid}: instructions must be text, an object or an array")
+        criteria = q.get("criteria")
+        if q["type"] == "choice" and (
+                not isinstance(criteria, dict) or not 2 <= len(criteria) <= 255):
+            raise Refused(f"{qid}: choice needs a map of 2 to 255 options")
+        if q["type"] == "score" and (
+                not isinstance(criteria, list) or not 2 <= len(criteria) <= 10
+                or not all(isinstance(level, (str, dict, list)) and level for level in criteria)):
+            raise Refused(f"{qid}: score needs 2 to 10 written anchors")
     return qs
 
 
@@ -127,15 +143,96 @@ def call(body, timeout):
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")[:400]
+            # Provider bodies may echo credentials or private request state.
+            # Status is enough to diagnose transport; never print the body.
+            e.close()
             if e.code in (429, 500, 502, 503, 504) and attempt == 0:
-                last = f"HTTP {e.code}: {detail}"; time.sleep(2); continue
-            raise RuntimeError(f"HTTP {e.code}: {detail}")
+                last = f"HTTP {e.code}"; time.sleep(2); continue
+            hint = "; check TYPESAFE_API_KEY and TYPESAFE_BASE_URL" if e.code == 401 else ""
+            raise RuntimeError(f"HTTP {e.code}{hint}") from None
+        except (ValueError, UnicodeError):
+            raise RuntimeError("invalid JSON response") from None
         except (urllib.error.URLError, TimeoutError) as e:
             last = f"{type(e).__name__}: {e}"
             if attempt == 0:
                 time.sleep(2); continue
     raise RuntimeError(last or "unknown failure")
+
+
+def validate_response(resp, qs):
+    """Reject the whole batch before raw output, shaping or ledger writes.
+
+    The API contract is https://docs.typesafe.ai/api. Unknown metadata is
+    allowed; answer IDs, types and declared spaces must match exactly.
+    """
+    def invalid(reason):
+        # Only our fixed diagnostics leave this boundary, never provider values.
+        raise RuntimeError("invalid service response: " + reason)
+
+    def number(value, low, high):
+        return (type(value) in (int, float) and low <= value <= high
+                and math.isfinite(value))
+
+    def distribution(value, expected):
+        if not isinstance(value, dict) or set(value) != expected:
+            invalid("probability keys differ from declared space")
+        if not all(number(p, 0, 1) for p in value.values()):
+            invalid("probabilities must be finite numbers between 0 and 1")
+        if not math.isclose(sum(value.values()), 1, rel_tol=0, abs_tol=1e-6):
+            invalid("probabilities must sum to 1")
+
+    if not isinstance(resp, dict):
+        invalid("expected an object")
+    if not isinstance(resp.get("model"), str) or not resp["model"].strip():
+        invalid("missing model identifier")
+    answers = resp.get("answers")
+    if not isinstance(answers, dict) or set(answers) != set(qs):
+        invalid("answer IDs differ from requested questions")
+    usage = resp.get("usage")
+    if not isinstance(usage, dict):
+        invalid("missing token usage")
+    # Both counts are required by the API's Usage schema; a missing one would
+    # be summed as 0 and under-report spend.
+    for key in ("input_tokens", "output_tokens"):
+        if type(usage.get(key)) is not int or usage[key] < 0:
+            invalid("token counts must be nonnegative integers")
+    for key in ("cost_usd", "spend_usd"):
+        if usage.get(key) is not None and not number(usage[key], 0, sys.float_info.max):
+            invalid("reported cost must be a finite nonnegative number")
+    for qid, q in qs.items():
+        ans = answers[qid]
+        if not isinstance(ans, dict) or ans.get("type") != q["type"]:
+            invalid("answer type differs from question type")
+        if q["type"] == "noul":
+            if not number(ans.get("noul"), 0, 1):
+                invalid("noul must be a finite number between 0 and 1")
+            continue
+        if not number(ans.get("confidence"), 0, 1):
+            invalid("confidence must be a finite number between 0 and 1")
+        if q["type"] == "choice":
+            expected = set(q["criteria"])
+            if not isinstance(ans.get("choice"), str) or ans["choice"] not in expected:
+                invalid("choice is outside declared space")
+            distribution(ans.get("probabilities"), expected)
+            if ans["probabilities"][ans["choice"]] < max(ans["probabilities"].values()):
+                invalid("choice is not a highest-probability option")
+        else:
+            expected = {str(i) for i in range(len(q["criteria"]))}
+            if not number(ans.get("score"), 0, len(expected) - 1):
+                invalid("score is outside declared levels")
+            distribution(ans.get("probabilities"), expected)
+            # Score is the probability-weighted level, per the API contract.
+            # Normalize the accepted rounding error in the probability total.
+            probabilities = ans["probabilities"]
+            mean = (sum(int(level) * p for level, p in probabilities.items())
+                    / sum(probabilities.values()))
+            if not math.isclose(ans["score"], mean, rel_tol=0, abs_tol=1e-6):
+                invalid("score differs from its probability-weighted levels")
+            legend = ans.get("legend")
+            if not isinstance(legend, dict) or set(legend) != expected:
+                invalid("legend keys differ from declared levels")
+            if any(legend[str(i)] != level for i, level in enumerate(q["criteria"])):
+                invalid("legend differs from declared rubric")
 
 
 def tier_of(ans):
@@ -254,6 +351,7 @@ def main():
     t0 = time.monotonic()
     try:
         resp = call(body, a.timeout)
+        validate_response(resp, qs)
     except RuntimeError as e:
         print(f"jev: service failure: {e}", file=sys.stderr); return 3
     latency_ms = int((time.monotonic() - t0) * 1000)
