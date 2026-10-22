@@ -301,6 +301,12 @@ function publishLocal(list) {
   return changes;
 }
 
+// sshd runs a command as one `sh -c` argument, and Linux caps a single argument
+// at 128 KiB (MAX_ARG_STRLEN), counted in bytes. One line per file for the whole
+// library passed that on 2026-10-22 ("Argument list too long"), so the reads go
+// in batches measured in UTF-8 bytes; a multibyte path counts at its real size.
+const REMOTE_SCRIPT_MAX = 64 * 1024;
+
 /**
  * Push to a remote machine over ssh.
  *
@@ -313,13 +319,9 @@ function publishLocal(list) {
  * for an agent working there to do — is destroyed with nobody told. So we hash
  * what is there first, write only what differs, and report drift loudly.
  *
- * The hashing is one ssh round trip for the whole machine, not one per file.
+ * The hashing is a few ssh round trips for the whole machine (one per batch
+ * under REMOTE_SCRIPT_MAX), not one per file.
  */
-// sshd runs a command as one `sh -c` argument, and Linux caps a single argument
-// at 128 KiB (MAX_ARG_STRLEN). One line per file for the whole library passed
-// that on 2026-10-22 ("Argument list too long"), so the reads go in batches.
-const REMOTE_SCRIPT_MAX = 64 * 1024;
-
 function remoteHashes(host, targets) {
   // `md5 -q` on macOS, `md5sum` on Linux; emit "<path> <hash>" or nothing.
   const lines = targets.map(
@@ -327,13 +329,19 @@ function remoteHashes(host, targets) {
       `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(md5sum ${t} 2>/dev/null | cut -d' ' -f1 || md5 -q ${t})"; fi`,
   );
   const batches = [];
+  let size = 0;
   for (const line of lines) {
-    const last = batches[batches.length - 1];
-    if (last && last.length + 1 + line.length <= REMOTE_SCRIPT_MAX) batches[batches.length - 1] = `${last}\n${line}`;
-    else batches.push(line);
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (batches.length && size + 1 + bytes <= REMOTE_SCRIPT_MAX) {
+      batches[batches.length - 1].push(line);
+      size += 1 + bytes;
+    } else {
+      batches.push([line]);
+      size = bytes;
+    }
   }
   const map = new Map();
-  for (const script of batches) {
+  for (const script of batches.map((b) => b.join("\n"))) {
     const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
     for (const line of out.split("\n")) {
       const [file, hash] = line.trim().split(/\s+/);

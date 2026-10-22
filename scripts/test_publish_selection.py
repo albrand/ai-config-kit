@@ -203,6 +203,28 @@ class PublishSelectionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(c["input_bytes"] for c in self.remote_calls()), "every hash was read back")
 
+    def test_remote_read_batches_by_utf8_bytes_not_characters(self):
+        # Linux counts the limit in bytes. Batching by JavaScript string length let
+        # 3-byte filename characters build a command over 128 KiB (Hermes 2026-10-22).
+        self.setup_remote()
+        wide = self.root / "skillsets/fixture/shared/wide-lesson"
+        wide.mkdir(parents=True)
+        (wide / "SKILL.md").write_text('---\nname: wide-lesson\ndescription: "Fixture"\nverify: "true"\n'
+                                       'verified: 2026-10-22\n---\nWide\n')
+        name = "参" * 84  # 252 bytes: within a 255-byte path component
+        for i in range(150):
+            folder = wide / "references" / (name[:-3] + f"{i:03d}")
+            folder.mkdir(parents=True)
+            (folder / (name[:-3] + ".md")).write_text(f"{i}\n")
+        result = self.run_cli("--lesson", "wide-lesson", "--remote", "fixture-only.invalid")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reads = [c for c in self.remote_calls() if not c["input_bytes"]]
+        self.assertGreater(len(reads), 1)
+        self.assertTrue(all(len(c["command"].encode()) <= 64 * 1024 for c in reads),
+                        max(len(c["command"].encode()) for c in reads))
+        published = [p for p in (self.remote / "wide-lesson").rglob("*") if p.is_file()]
+        self.assertEqual(len(published), 151)
+
     def test_remote_unknown_edit_is_preserved_without_force(self):
         self.setup_remote()
         self.remote_target.write_text("remote user modification\n")
