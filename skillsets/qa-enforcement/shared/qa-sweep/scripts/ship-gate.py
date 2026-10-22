@@ -1451,7 +1451,11 @@ def _strip_heredoc_bodies(command):
         hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
-      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
+      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`);
+      - with an unquoted delimiter, no body line holds `$(` or a backtick, or ends in a backslash: the shell
+        expands substitutions before the command runs, so `cat <<E` / `$(vercel alias set ...)` / `E` runs the
+        alias, and a backslash-newline joins lines first, so `$\\` / `(git push)` is one (Hermes 2026-10-22,
+        pr94-ship-gate-file-edits r1, r2). A quoted delimiter (any quote or backslash in it) keeps the body literal.
     Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
     raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
     is idempotent. The shell fallback's awk strip() is the same scanner."""
@@ -1497,11 +1501,11 @@ def _strip_heredoc_bodies(command):
             i += 1
             continue
         if c == "\n" and pending:
-            if any(held != stack for _, _, held in pending):
+            if any(held != stack for _, _, held, _ in pending):
                 return None  # the operator's context closed on its own line, as in `x=$(cat <<E)`
             out.append(c)
             i += 1
-            for dash, delim, _ in pending:
+            for dash, delim, _, quoted in pending:
                 while True:
                     if i >= n:
                         return None  # no terminator line
@@ -1513,6 +1517,8 @@ def _strip_heredoc_bodies(command):
                         break
                     if body.startswith(delim):
                         return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
+                    if not quoted and ("$(" in line or "`" in line or line.endswith("\\")):
+                        return None  # an unquoted body expands a substitution (one a continuation may join)
             pending = []
             word = False
             continue
@@ -1532,7 +1538,7 @@ def _strip_heredoc_bodies(command):
             if word is None:
                 return None  # a delimiter the shells may read differently: $(...), `...`, zsh E(x), E), "a(b"
             delim, k = word
-            pending.append((dash, delim, list(stack)))
+            pending.append((dash, delim, list(stack), any(q in command[j:k] for q in "'\"\\")))
             i, word = k, True
             continue
         out.append(c)
@@ -2542,6 +2548,36 @@ def hook(raw=None):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
+# File-edit tools carry file content, not a command line. On 2026-10-16 a Codex apply_patch adding an
+# offline test fixture (`vercel alias set` against candidate.example.test) was read as a production
+# alias, failed provenance and was denied. Edits never ship; only a shell segment does. A shell
+# command is skipped only when it is exactly one apply_patch heredoc with a QUOTED delimiter and
+# nothing after its first closing line: an unquoted heredoc expands `$(...)` before apply_patch
+# runs, and a shell ends the heredoc at the first delimiter line, running whatever follows. A bare
+# patch body given to a shell is shell input, so it is scanned like any other command.
+FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
+_APPLY_PATCH_HEADER = re.compile(r"\A\s*apply_patch[ \t]*<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*\Z")
+
+
+def _is_quoted_apply_patch_heredoc(command):
+    lines = command.strip().split("\n")
+    head = _APPLY_PATCH_HEADER.match(lines[0]) if lines else None
+    if not head:
+        return False
+    strip_tabs, delimiter = head.group(1) == "-", head.group(3)
+    for i, line in enumerate(lines[1:], 1):
+        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+            return i == len(lines) - 1  # the shell runs anything after the first closing line
+    return False
+
+
+def is_file_edit(payload, command):
+    tool = str(payload.get("tool_name") or payload.get("toolName") or "").strip().lower()
+    if tool in FILE_EDIT_TOOLS:
+        return True
+    return _is_quoted_apply_patch_heredoc(command)
+
+
 def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     global _LAST_INPUT, _HOOK_OPTED
@@ -2558,6 +2594,8 @@ def _hook(raw=None):
     command = inp.get("command") or inp.get("cmd") or ""
     if not isinstance(command, str) or not command:
         return 0
+    if is_file_edit(payload, command):
+        return 0  # a patch's text is file content, never a command that ships
     command = join_continuations(command)
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
@@ -3991,6 +4029,52 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json',
           "production API create whose gitSource is unwalked", U)
     deny5(r9, "vercel alias set dpl_unwalked app.example.com", "vercel alias set to an unwalked deployment", U)
+    # 2026-10-16: file edits carry content, never a ship. A patch adding an offline fixture that
+    # mentions an alias command must pass; a heredoc patch followed by a real ship must not.
+    patch_body = ("*** Begin Patch\n*** Update File: scripts/ci/deploy.test.mjs\n@@\n"
+                  "+  expect(cmd).toBe('vercel alias set dpl_unknown claramente.club');\n*** End Patch")
+    for tool, inp in (("apply_patch", {"input": patch_body}), ("apply_patch", {"command": patch_body}),
+                      ("Edit", {"command": "vercel alias set dpl_unknown app.example.com"}),
+                      ("Write", {"command": "vercel promote dpl_unknown"})):
+        p = subprocess.run(["python3", V4GATE, "hook", "--selftest-fixture"], cwd=r9, capture_output=True, text=True,
+                           input=json.dumps({"session_id": "selftest", "tool_name": tool, "tool_input": inp, "cwd": r9}),
+                           env=dict(os.environ, QA_GATE_NO_GH="1"))
+        expect(p.returncode == 0, "v5 ALLOW file edit via %s %s [%s]" % (tool, sorted(inp), " ".join(p.stderr.split())[:100]))
+    allow5(r9, "apply_patch <<'EOF'\n%s\nEOF" % patch_body, "apply_patch heredoc mentioning an alias command")
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com" % patch_body,
+          "apply_patch heredoc followed by a real alias", U)
+    deny5(r9, "vercel alias set dpl_unwalked app.example.com && apply_patch <<'EOF'\n%s\nEOF" % patch_body,
+          "real alias before an apply_patch heredoc", U)
+    # Only a quoted heredoc is literal. Unquoted, the shell expands $(...) before apply_patch runs; and
+    # the heredoc ends at its first closing line, so a later line runs as a command.
+    deny5(r9, "apply_patch <<EOF\n%s\n$(vercel alias set dpl_unwalked app.example.com)\nEOF" % patch_body,
+          "unquoted apply_patch heredoc with a command substitution", U)
+    deny5(r9, "apply_patch <<-EOF\n%s\n`vercel alias set dpl_unwalked app.example.com`\nEOF" % patch_body,
+          "unquoted <<- apply_patch heredoc with a backtick substitution", U)
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted apply_patch heredoc closed early, then a real alias", U)
+    deny5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted <<- heredoc closed early by a tab-indented delimiter, then a real alias", U)
+    deny5(r9, "%s\n$(vercel alias set dpl_unwalked app.example.com)" % patch_body,
+          "a bare patch body given to a shell", U)
+    allow5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF" % patch_body, "quoted <<- apply_patch heredoc")
+    # Not only apply_patch: any unquoted heredoc body expands its substitutions, so they are scanned; a quoted
+    # one stays text, and a merge body with an unquoted heredoc is still a merge (merges are never gated).
+    deny5(r9, "cat <<EOF\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted cat heredoc with a command substitution", U)
+    deny5(r9, "cat > notes.txt <<\\EOF\nok\nEOF\ncat <<EOF\nbuilt `vercel promote dpl_unwalked`\nEOF",
+          "an unquoted heredoc after a quoted one, with a backtick substitution", U)
+    deny5(r9, "cat <<EOF\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted heredoc whose substitution a backslash-newline splits", U)
+    deny5(r9, "cat <<-EOF\n\t`\\\nvercel promote dpl_unwalked`\n\tEOF",
+          "unquoted <<- heredoc whose backtick substitution a continuation splits", U)
+    allow5(r9, "cat <<'EOF'\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted heredoc: a backslash-newline stays text")
+    allow5(r9, "cat <<'EOF'\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted cat heredoc holding a substitution as text")
+    allow5(r9, "cat <<\\EOF\n`vercel promote dpl_unwalked`\nEOF", "backslash-quoted heredoc holding a backtick as text")
+    allow5(r9, 'gh pr merge 5 --squash --body "$(cat <<EOF\nships via git push origin main, built $(date)\nEOF\n)"',
+           "merge body: unquoted heredoc with $(date) and a push line")
     deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
     deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
           "no deployment id")
