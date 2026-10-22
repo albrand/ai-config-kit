@@ -58,6 +58,7 @@ import shlex
 import stat
 import sys
 import tempfile
+import time
 
 sys.dont_write_bytecode = True  # no __pycache__: the four skill homes stay identical
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -74,7 +75,6 @@ GAP_MAP_DISPATCHES = 8   # passed dispatches ...
 GAP_MAP_WINDOW_H = 6     # ... within this many hours
 GAP_MAP_FRESH_H = 24     # a map recorded this recently counts
 GAP_MAP_REPEAT_H = 6     # shown at most once per this many hours
-DECISIONS_TAIL = 4 * 1024 * 1024
 
 FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
 CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
@@ -774,16 +774,28 @@ def passed_marker(thread):
     return os.path.join(os.path.dirname(DECISIONS), "scope-passed", thread)
 
 
-def mark_passed(thread):
-    """Touch the thread's marker: hooks/gap-map-hook.sh starts Python only when it is fresh. A
-    per-thread file, because the shared decision log's tail moves with the whole fleet (Hermes
-    review of #92)."""
+def passed_times(thread):
     try:
+        with open(passed_marker(thread), encoding="utf-8") as f:
+            return [float(x) for x in f.read().split() if re.fullmatch(r"\d+(\.\d+)?", x)]
+    except OSError:
+        return []
+
+
+def mark_passed(thread, when=None):
+    """Record a passed dispatch in the thread's own marker: one epoch per line, pruned to
+    GAP_MAP_WINDOW_H. hooks/gap-map-hook.sh starts Python only when the file is fresh, and the
+    count comes from it. Per thread, because the shared decision log moves with the whole fleet
+    and can evict a thread's dispatches (Hermes review of #92, twice)."""
+    try:
+        when = time.time() if when is None else when
+        keep = [t for t in passed_times(thread) if when - t <= GAP_MAP_WINDOW_H * 3600][-200:]
         path = passed_marker(thread)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a"):
-            pass
-        os.utime(path, None)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            f.write("".join(f"{int(t)}\n" for t in sorted(keep + [when])))
+        os.replace(tmp, path)
     except (OSError, LedgerError):
         pass
 
@@ -797,26 +809,9 @@ def iso_age_h(at, now):
 
 
 def passed_dispatches(thread, now, hours):
-    """scope_passed decisions for `thread` in the last `hours`, from the decision log's tail."""
-    try:
-        with open(DECISIONS, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - DECISIONS_TAIL))
-            tail = f.read().decode("utf-8", "replace")
-    except OSError:
-        return 0
-    n = 0
-    for line in tail.splitlines():
-        if thread not in line or "scope_passed" not in line:
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        age = iso_age_h(e.get("at"), now)
-        if e.get("event") == "scope_passed" and e.get("thread") == thread and age is not None and age <= hours:
-            n += 1
-    return n
+    """Passed dispatches for `thread` in the last `hours`, from its own marker."""
+    ts = now.timestamp()
+    return sum(1 for t in passed_times(thread) if -60 <= ts - t <= hours * 3600)  # a minute of clock skew
 
 
 def gap_map_nudge(thread, now=None):
@@ -1681,11 +1676,8 @@ def selftest():
     utc_now = datetime.datetime.now(datetime.timezone.utc)
 
     def passed(k, hours_ago=0):
-        at = (utc_now - datetime.timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with open(DECISIONS, "a") as f:
-            for _ in range(k):
-                f.write(json.dumps({"schema_version": 1, "at": at, "event": "scope_passed", "thread": gt,
-                                    "tool": "bb thread spawn", "serves": "P1"}) + "\n")
+        for _ in range(k):
+            mark_passed(gt, utc_now.timestamp() - hours_ago * 3600)
 
     def cli_nudge():
         out, env = io.StringIO(), os.environ.get("BB_THREAD_ID")
@@ -1706,6 +1698,14 @@ def selftest():
     passed(GAP_MAP_DISPATCHES - 1)
     below = gap_map_nudge(gt)
     passed(1)
+    # Hermes review of #92: the rest of the fleet's traffic (here > 4 MB of other threads'
+    # dispatches in the shared log) must not evict this thread's count.
+    with open(DECISIONS, "a") as f:
+        line = json.dumps({"schema_version": 1, "at": now_iso(), "event": "scope_passed",
+                           "thread": "thr_otherfixture", "tool": "bb thread tell", "serves": "P1"}) + "\n"
+        f.write(line * (4 * 1024 * 1024 // len(line) + 1000))
+    for i in range(50):
+        mark_passed(f"thr_otherfixture{i}")
     rc, out = cli_nudge()
     shown = json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
     again = gap_map_nudge(gt)

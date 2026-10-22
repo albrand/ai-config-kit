@@ -18,14 +18,10 @@ LOG="$T/.local/state/agent-quality/scope-decisions.jsonl"
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2] want [$3]"; fail=1; fi; }
 hook() { HOME="$T" BB_THREAD_ID="$1" SCOPE_LEDGER_DIR="$T/.local/state/agent-quality/scope" sh "$SRC/hooks/gap-map-hook.sh" </dev/null; }
-passed() {
-  at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  i=0; while [ $i -lt "$1" ]; do
-    echo "{\"schema_version\": 1, \"at\": \"$at\", \"event\": \"scope_passed\", \"thread\": \"$TID\", \"tool\": \"bb thread spawn\", \"serves\": \"P1\"}" >> "$LOG"
-    i=$((i + 1))
-  done
-  mkdir -p "$T/.local/state/agent-quality/scope-passed"
-  touch "$T/.local/state/agent-quality/scope-passed/$TID"  # what the gate does on a passed dispatch
+passed() {  # what the gate does on each passed dispatch (scope-gate.py mark_passed)
+  HOME="$T" python3 -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sg", sys.argv[1]); sg = importlib.util.module_from_spec(spec); spec.loader.exec_module(sg)
+[sg.mark_passed(sys.argv[2]) for _ in range(int(sys.argv[3]))]' "$T/.agents/skills/scope-ledger/scripts/scope-gate.py" "$TID" "$1"
 }
 noise() {  # the rest of the fleet writing the shared log
   i=0; while [ $i -lt "$1" ]; do
