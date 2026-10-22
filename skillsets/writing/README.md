@@ -16,7 +16,9 @@ One skill for text people read: PR bodies, QA steps for testers, reports, docs, 
 | `eval.md` | `skills/no-ai-slop/eval.md` | `8ad8d83ed1abe7fc054ad74966bfca64fc182bc71f59d701b24b962c39d11ad7` |
 | `LICENSE` | `LICENSE` | `b7a7fe370cc4c9e974528c7cea7841cf8ac886bc9ed947edb11b289441fba4a8` |
 
-The files are unmodified. To update, fetch the new commit's files, read the diff (the skill must stay plain writing guidance, with no commands, URLs or tool instructions), then update the commit and the digests here.
+The files are unmodified. To update, fetch the new commit's files, read the diff (the skill must stay plain writing guidance, with no commands, URLs or tool instructions), then update the commit and the digests here, in `install.sh` and in `vendored.json`. `scripts/test-vendored-lessons.mjs` fails when the three disagree.
+
+`vendored.json` is what lets `scripts/publish.mjs` carry this skill to every home and remote host with the rest of the library. A vendored skill has no `verify`/`verified` frontmatter, because adding it would change the pinned digest, so the publisher instead accepts it only when its directory holds exactly the pinned files, byte for byte, with no placeholder to substitute. Anything else is refused before any home is written.
 
 ## Install
 
