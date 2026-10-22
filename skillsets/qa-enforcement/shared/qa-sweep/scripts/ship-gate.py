@@ -1451,7 +1451,10 @@ def _strip_heredoc_bodies(command):
         hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
       - the context that held the operator is still open at the newline where the body starts;
       - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
-      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`).
+      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`);
+      - with an unquoted delimiter, no body line holds `$(` or a backtick: the shell expands those before the
+        command runs, so `cat <<E` / `$(vercel alias set ...)` / `E` runs the alias (Hermes 2026-10-22,
+        pr94-ship-gate-file-edits). A quoted delimiter (any quote or backslash in it) keeps the body literal.
     Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
     raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
     is idempotent. The shell fallback's awk strip() is the same scanner."""
@@ -1497,11 +1500,11 @@ def _strip_heredoc_bodies(command):
             i += 1
             continue
         if c == "\n" and pending:
-            if any(held != stack for _, _, held in pending):
+            if any(held != stack for _, _, held, _ in pending):
                 return None  # the operator's context closed on its own line, as in `x=$(cat <<E)`
             out.append(c)
             i += 1
-            for dash, delim, _ in pending:
+            for dash, delim, _, quoted in pending:
                 while True:
                     if i >= n:
                         return None  # no terminator line
@@ -1513,6 +1516,8 @@ def _strip_heredoc_bodies(command):
                         break
                     if body.startswith(delim):
                         return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
+                    if not quoted and ("$(" in line or "`" in line):
+                        return None  # an unquoted body expands this substitution: it runs
             pending = []
             word = False
             continue
@@ -1532,7 +1537,7 @@ def _strip_heredoc_bodies(command):
             if word is None:
                 return None  # a delimiter the shells may read differently: $(...), `...`, zsh E(x), E), "a(b"
             delim, k = word
-            pending.append((dash, delim, list(stack)))
+            pending.append((dash, delim, list(stack), any(q in command[j:k] for q in "'\"\\")))
             i, word = k, True
             continue
         out.append(c)
@@ -4052,6 +4057,17 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "%s\n$(vercel alias set dpl_unwalked app.example.com)" % patch_body,
           "a bare patch body given to a shell", U)
     allow5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF" % patch_body, "quoted <<- apply_patch heredoc")
+    # Not only apply_patch: any unquoted heredoc body expands its substitutions, so they are scanned; a quoted
+    # one stays text, and a merge body with an unquoted heredoc is still a merge (merges are never gated).
+    deny5(r9, "cat <<EOF\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted cat heredoc with a command substitution", U)
+    deny5(r9, "cat > notes.txt <<\\EOF\nok\nEOF\ncat <<EOF\nbuilt `vercel promote dpl_unwalked`\nEOF",
+          "an unquoted heredoc after a quoted one, with a backtick substitution", U)
+    allow5(r9, "cat <<'EOF'\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted cat heredoc holding a substitution as text")
+    allow5(r9, "cat <<\\EOF\n`vercel promote dpl_unwalked`\nEOF", "backslash-quoted heredoc holding a backtick as text")
+    allow5(r9, 'gh pr merge 5 --squash --body "$(cat <<EOF\nships via git push origin main, built $(date)\nEOF\n)"',
+           "merge body: unquoted heredoc with $(date) and a push line")
     deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
     deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
           "no deployment id")
