@@ -80,8 +80,11 @@ export function vendoredPins(lesson) {
   if (!lesson.origin?.startsWith("shared:")) return null;
   const manifest = path.join(path.dirname(path.dirname(lesson.dir)), "vendored.json");
   if (!fs.existsSync(manifest)) return null;
-  const entry = JSON.parse(fs.readFileSync(manifest, "utf8"))[lesson.name];
-  return entry && typeof entry.files === "object" ? entry.files : null;
+  const manifestData = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  if (!Object.hasOwn(manifestData, lesson.name)) return null;  // not an inherited key such as `constructor`
+  const files = manifestData[lesson.name]?.files;
+  const plain = files && typeof files === "object" && !Array.isArray(files);
+  return plain && Object.values(files).every((d) => typeof d === "string") ? files : null;
 }
 
 /**
@@ -102,7 +105,8 @@ export function vendoredProblems(lesson, pins) {
   };
   walk(lesson.dir);
   for (const relative of found) {
-    if (!(relative in pins)) problems.push(`${lesson.name}: unexpected file ${relative} in a vendored lesson`);
+      // Own keys only: `in` would also accept toString, constructor or __proto__ from Object.prototype.
+    if (!Object.hasOwn(pins, relative)) problems.push(`${lesson.name}: unexpected file ${relative} in a vendored lesson`);
   }
   for (const [relative, digest] of Object.entries(pins)) {
     if (!found.includes(relative)) {

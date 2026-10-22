@@ -52,6 +52,14 @@ const missing = lessonCopy('unit-missing');
 fs.rmSync(path.join(missing.dir, 'eval.md'));
 assert.match(vendoredProblems(missing, vendoredPins(missing)).join('\n'), /pinned file eval\.md is missing/);
 
+// Names Object.prototype carries must not pass as pinned files, and a lesson so named is not vendored.
+for (const name of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+  const proto = lessonCopy(`unit-proto-${name}`);
+  fs.writeFileSync(path.join(proto.dir, name), 'x');
+  assert.match(vendoredProblems(proto, vendoredPins(proto)).join('\n'), new RegExp(`unexpected file ${name} `), name);
+  assert.equal(vendoredPins({ ...proto, name }), null, `a lesson named ${name} is not vendored`);
+}
+
 const linked = lessonCopy('unit-linked');
 fs.rmSync(path.join(linked.dir, 'LICENSE'));
 fs.symlinkSync(path.join(WRITING, 'shared', 'no-ai-slop', 'LICENSE'), path.join(linked.dir, 'LICENSE'));
