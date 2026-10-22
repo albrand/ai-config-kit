@@ -10,7 +10,7 @@
   },
   "excluded": {
     "scripts/verify.mjs": "Runs each lesson's host/service-dependent verification commands; a host anti-rot audit, not a self-contained checkout suite.",
-    "skillsets/qa-enforcement/hooks/test-hook-chain.sh": "Exercises the hooks installed in provider homes; host integration, not a portable checkout-only suite.",
+    "skillsets/qa-enforcement/hooks/test-gap-map-install.sh": "Runs install-scope-gate.sh, whose scope-gate selftest inventories the running BB's help and plugins; host integration, not a checkout-only suite.", "skillsets/qa-enforcement/hooks/test-hook-chain.sh": "Exercises the hooks installed in provider homes; host integration, not a portable checkout-only suite.",
     "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py": "Its selftest inventories the running BB's help, registered RPCs and installed plugin sources; requires the host application and belongs to host integration.",
     "skillsets/repo-bootstrap/shared/verify/templates/journeys/selftest/run.sh": "Browser journey harness requiring an external repository's Playwright installation and an admitted browser QA target; exercised separately from checkout-only tests."
   },
