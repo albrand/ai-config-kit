@@ -1368,6 +1368,16 @@ def selftest():
          {"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.sh", "content": "bb thread tell thr_x go\n"}}, thread, 0),
         ("codex: a shell that runs apply_patch and then bb still dispatches",
          codex_shell("apply_patch <<'EOF'\n+x\nEOF\nbb thread tell thr_x go"), thread, 2),
+        # An output redirect target is not a verb: after the `albrand/bb` slug, `> $L` read as
+        # a run-time-built bb verb ("bb substituted", 2026-10-22).
+        ("claude: owner/bb slug then an output redirect to $L is not a dispatch",
+         claude_bash("gh run view 1 -R albrand/bb --log-failed > $L 2>&1"), thread, 0),
+        ("claude: a dispatch inside a redirect target's substitution still dispatches",
+         claude_bash("echo hi > $(bb thread tell thr_x go)"), thread, 2),
+        ("claude: a redirect before the verb does not hide the dispatch",
+         claude_bash("bb --json > $L thread tell thr_x go"), thread, 2),
+        ("claude: a run-time verb after a redirect is still substituted",
+         claude_bash("bb > /tmp/o thread $(echo tell) thr_x go"), thread, 2),
         ("claude mcp: fleet_member_spawn without serves", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "do x"}}, thread, 2),
         ("claude mcp: fleet_member_spawn serving P1", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "serves: P1\ndo x"}}, thread, 0),
         ("claude mcp: fleet_member_tell without serves", {"tool_name": "mcp__bb-bridge__fleet_member_tell", "tool_input": {"member": "x", "message": "also do y"}}, thread, 2),

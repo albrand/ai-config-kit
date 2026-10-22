@@ -520,7 +520,10 @@ def _unreadable_verb(rest):
     """Whether a word the verb scan reads as the group or verb (`bb
     automation$(echo) run a1`, `bb thread $(echo) tell thr_x hi`, `bb thread
     tell$(x) thr_a hi`) is built at run time: the scan cannot read it, so the
-    dispatch it becomes is unknown."""
+    dispatch it becomes is unknown. Output redirections and their targets are
+    never the verb: `gh run view 1 -R albrand/bb --log-failed > $L 2>&1` read
+    `$L` as a run-time verb after the `albrand/bb` slug (2026-10-22)."""
+    rest = _drop_output_redirects(rest)
     for j, a in enumerate(rest[:5]):
         if a == "plugin":
             nxt = rest[j + 1:j + 4]
@@ -701,7 +704,9 @@ def bare_help(rest, verb):
 def _dispatch_verb(rest):
     """'thread tell', 'thread queue create', 'thread draft set', ... when
     `rest` (the words after bb) is a dispatch, after at most a few global
-    options (`--json`, `--host h`)."""
+    options (`--json`, `--host h`). Output redirections may sit anywhere
+    (`bb --json > $L thread tell ...`) and are skipped with their targets."""
+    rest = _drop_output_redirects(rest)
     for j, a in enumerate(rest[:5]):
         if a == "plugin":
             nxt = rest[j + 1:j + 4]
