@@ -48,7 +48,7 @@ class PublishSelectionTest(unittest.TestCase):
             env.update(PATH=str(self.fake_bin) + os.pathsep + env["PATH"],
                        PUBLISH_SSH_LOG=str(self.ssh_log))
         return subprocess.run(["node", str(self.root / "scripts/publish.mjs"), *args],
-                              env=env, capture_output=True, text=True, timeout=15)
+                              env=env, capture_output=True, text=True, timeout=120)
 
     def files(self):
         return sorted(str(p.relative_to(self.dest)) for p in self.dest.rglob("*") if p.is_file())
@@ -118,6 +118,8 @@ class PublishSelectionTest(unittest.TestCase):
             "body=sys.stdin.buffer.read()\n"
             "with open(os.environ['PUBLISH_SSH_LOG'],'a') as log: "
             "log.write(json.dumps({'command':sys.argv[2],'input_bytes':len(body)})+'\\n')\n"
+            # sshd hands the command to the remote shell as one argument; Linux refuses one over 128 KiB
+            "if len(sys.argv[2].encode()) > 131072: sys.stderr.write('/bin/bash: Argument list too long\\n'); sys.exit(1)\n"
             "sys.exit(subprocess.run(['/bin/sh','-c',sys.argv[2]],input=body).returncode)\n")
         ssh.chmod(0o755)
         # Simulate the Linux peer's md5sum on a macOS fixture host.
@@ -177,6 +179,29 @@ class PublishSelectionTest(unittest.TestCase):
         self.assertFalse(any(call["input_bytes"] for call in self.remote_calls()))
         self.assertTrue(all(str(self.remote_target) in call["command"] for call in self.remote_calls()))
         self.assertTrue(all("other.py" not in call["command"] for call in self.remote_calls()))
+
+    def test_remote_read_of_a_large_library_stays_under_the_argument_limit(self):
+        # 2026-10-22: one hash-read line per file for the whole library made a single ssh
+        # argument over Linux's 128 KiB cap, so every remote publish failed before writing.
+        self.setup_remote()
+        big = self.root / "skillsets/fixture/shared/big-lesson"
+        (big / "references").mkdir(parents=True)
+        (big / "SKILL.md").write_text('---\nname: big-lesson\ndescription: "Fixture"\nverify: "true"\n'
+                                      'verified: 2026-10-22\n---\nBig\n')
+        for i in range(700):
+            (big / "references" / f"reference-file-with-a-long-descriptive-name-{i:04d}.md").write_text(f"{i}\n")
+        result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reads = [c for c in self.remote_calls() if not c["input_bytes"]]
+        self.assertGreater(len(reads), 1, "the read must be split to fit")
+        self.assertTrue(all(len(c["command"].encode()) <= 64 * 1024 for c in reads))
+        published = {str(p.relative_to(self.remote / "big-lesson")) for p in (self.remote / "big-lesson").rglob("*")
+                     if p.is_file()}
+        self.assertEqual(len(published), 701)
+        self.ssh_log.write_text("")
+        result = self.run_cli("--lesson", "big-lesson", "--remote", "fixture-only.invalid")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(c["input_bytes"] for c in self.remote_calls()), "every hash was read back")
 
     def test_remote_unknown_edit_is_preserved_without_force(self):
         self.setup_remote()

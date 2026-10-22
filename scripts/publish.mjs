@@ -315,19 +315,30 @@ function publishLocal(list) {
  *
  * The hashing is one ssh round trip for the whole machine, not one per file.
  */
+// sshd runs a command as one `sh -c` argument, and Linux caps a single argument
+// at 128 KiB (MAX_ARG_STRLEN). One line per file for the whole library passed
+// that on 2026-10-22 ("Argument list too long"), so the reads go in batches.
+const REMOTE_SCRIPT_MAX = 64 * 1024;
+
 function remoteHashes(host, targets) {
   // `md5 -q` on macOS, `md5sum` on Linux; emit "<path> <hash>" or nothing.
-  const script = targets
-    .map(
-      (t) =>
-        `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(md5sum ${t} 2>/dev/null | cut -d' ' -f1 || md5 -q ${t})"; fi`,
-    )
-    .join("\n");
-  const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+  const lines = targets.map(
+    (t) =>
+      `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(md5sum ${t} 2>/dev/null | cut -d' ' -f1 || md5 -q ${t})"; fi`,
+  );
+  const batches = [];
+  for (const line of lines) {
+    const last = batches[batches.length - 1];
+    if (last && last.length + 1 + line.length <= REMOTE_SCRIPT_MAX) batches[batches.length - 1] = `${last}\n${line}`;
+    else batches.push(line);
+  }
   const map = new Map();
-  for (const line of out.split("\n")) {
-    const [file, hash] = line.trim().split(/\s+/);
-    if (file && hash) map.set(file, hash);
+  for (const script of batches) {
+    const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      const [file, hash] = line.trim().split(/\s+/);
+      if (file && hash) map.set(file, hash);
+    }
   }
   return map;
 }
