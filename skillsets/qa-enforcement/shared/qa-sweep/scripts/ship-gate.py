@@ -2542,6 +2542,24 @@ def hook(raw=None):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
+# File-edit tools carry file content, not a command line. On 2026-10-16 a Codex apply_patch adding an
+# offline test fixture (`vercel alias set` against candidate.example.test) was read as a production
+# alias, failed provenance and was denied. Edits never ship; only a shell segment does. A shell
+# command is skipped only when it is exactly one apply_patch heredoc (or a bare patch body) with
+# nothing before or after it, so `apply_patch <<EOF ... EOF; vercel alias set ...` is still scanned.
+FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
+_APPLY_PATCH_HEREDOC = re.compile(
+    r"\A\s*apply_patch\s*<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\n.*?\n[ \t]*\2[ \t]*\n?\s*\Z", re.S)
+_BARE_PATCH = re.compile(r"\A\s*\*\*\* Begin Patch\n.*\n\*\*\* End Patch\s*\Z", re.S)
+
+
+def is_file_edit(payload, command):
+    tool = str(payload.get("tool_name") or payload.get("toolName") or "").strip().lower()
+    if tool in FILE_EDIT_TOOLS:
+        return True
+    return bool(_BARE_PATCH.match(command) or _APPLY_PATCH_HEREDOC.match(command))
+
+
 def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
     global _LAST_INPUT, _HOOK_OPTED
@@ -2558,6 +2576,8 @@ def _hook(raw=None):
     command = inp.get("command") or inp.get("cmd") or ""
     if not isinstance(command, str) or not command:
         return 0
+    if is_file_edit(payload, command):
+        return 0  # a patch's text is file content, never a command that ships
     command = join_continuations(command)
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
@@ -3991,6 +4011,22 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json',
           "production API create whose gitSource is unwalked", U)
     deny5(r9, "vercel alias set dpl_unwalked app.example.com", "vercel alias set to an unwalked deployment", U)
+    # 2026-10-16: file edits carry content, never a ship. A patch adding an offline fixture that
+    # mentions an alias command must pass; a heredoc patch followed by a real ship must not.
+    patch_body = ("*** Begin Patch\n*** Update File: scripts/ci/deploy.test.mjs\n@@\n"
+                  "+  expect(cmd).toBe('vercel alias set dpl_unknown claramente.club');\n*** End Patch")
+    for tool, inp in (("apply_patch", {"input": patch_body}), ("apply_patch", {"command": patch_body}),
+                      ("Edit", {"command": "vercel alias set dpl_unknown app.example.com"}),
+                      ("Write", {"command": "vercel promote dpl_unknown"})):
+        p = subprocess.run(["python3", V4GATE, "hook", "--selftest-fixture"], cwd=r9, capture_output=True, text=True,
+                           input=json.dumps({"session_id": "selftest", "tool_name": tool, "tool_input": inp, "cwd": r9}),
+                           env=dict(os.environ, QA_GATE_NO_GH="1"))
+        expect(p.returncode == 0, "v5 ALLOW file edit via %s %s [%s]" % (tool, sorted(inp), " ".join(p.stderr.split())[:100]))
+    allow5(r9, "apply_patch <<'EOF'\n%s\nEOF" % patch_body, "apply_patch heredoc mentioning an alias command")
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com" % patch_body,
+          "apply_patch heredoc followed by a real alias", U)
+    deny5(r9, "vercel alias set dpl_unwalked app.example.com && apply_patch <<'EOF'\n%s\nEOF" % patch_body,
+          "real alias before an apply_patch heredoc", U)
     deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
     deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
           "no deployment id")
