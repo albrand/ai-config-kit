@@ -1817,9 +1817,8 @@ def selftest():
             for i, c in enumerate(fix_brief_cases):
                 verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
                 verdict_path = os.path.join(tmp, verdict_name)
-                if not c.get("missing_report"):
-                    with open(verdict_path, "w", encoding="utf-8") as f:
-                        f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                with open(verdict_path, "w", encoding="utf-8") as f:
+                    f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
                 report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
@@ -1845,12 +1844,20 @@ def selftest():
                 out, err = sys.stdout, sys.stderr
                 captured_out, captured_err = io.StringIO(), io.StringIO()
                 sys.stdout, sys.stderr = captured_out, captured_err
+                saved_os_open = os.open
                 try:
+                    if c.get("unreadable_report"):
+                        def deny_report_open(path, *args, **kwargs):
+                            if os.fspath(path) == verdict_path:
+                                raise PermissionError(13, "Permission denied", os.fspath(path))
+                            return saved_os_open(path, *args, **kwargs)
+                        os.open = deny_report_open
                     command = (f"bb thread spawn --parent-self --prompt-file {brief_path}"
                                if c.get("spawn_prompt_file") else
                                f"bb thread tell thr_fixbrief --message-file {brief_path}")
                     got = hook(json.dumps(claude_bash(command)), thread)
                 finally:
+                    os.open = saved_os_open
                     sys.stdout, sys.stderr = out, err
                     os.chdir(original_cwd)
                 with open(git_log, encoding="utf-8") as f:
