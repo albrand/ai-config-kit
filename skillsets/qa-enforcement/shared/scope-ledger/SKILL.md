@@ -43,7 +43,8 @@ than finishing the purposes.
   timeout would, but inside the 15 s.
 - A brief that names an absolute Markdown file whose first line starts with
   `VERDICT: FAIL` needs `Checked against <40-hex sha>` and a repository-relative
-  `file.ext:<line>` citation. The gate inspects at most 20 absolute Markdown
+  `file.ext:<line>` citation. A trailing Markdown `#fragment` is ignored when
+  locating the file. The gate inspects at most 20 absolute Markdown
   paths, 20 repository hints and 20 citations; each git call has a 500 ms
   ceiling, and cited blobs total at most 8 MiB. Deadline, git, and limit
   failures deny the dispatch.

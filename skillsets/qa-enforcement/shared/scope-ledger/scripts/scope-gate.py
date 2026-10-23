@@ -76,9 +76,11 @@ FIX_GIT_CALL_TIMEOUT_S = 0.5
 FIX_GIT_DEADLINE_RESERVE_S = 0.25
 FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
 FIX_BRIEF_CHECK_PENDING = False
-FIX_REVIEW_PATH = re.compile(r"""(?<![\w./-])(/[^\s<>]+?\.md)(?=$|[\s)\]},;:!?\"'`])""")
-FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)>")
-FIX_REVIEW_PATH_QUOTED = re.compile(r"(?P<quote>[\"'`])(?P<path>/[^\"'`\r\n]+?\.md)(?P=quote)")
+FIX_REVIEW_PATH = re.compile(r"""(?<![\w./-])(/[^\s<>]+?\.md)(?=$|[\s)\]},;:!?\"'`#])""")
+FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)(?:#[^>\r\n]*)?>")
+FIX_REVIEW_PATH_QUOTED = re.compile(
+    r"(?P<quote>[\"'`])(?P<path>/[^\"'`\r\n]+?\.md)(?:#[^\"'`\r\n]*)?(?P=quote)"
+)
 FIX_CHECKED_SHA = re.compile(r"^\s*Checked against\s+([0-9a-fA-F]{40})\s*$", re.M)
 FIX_CITATION = re.compile(
     r"(?<![\w.-])(?P<path>/?(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9_-]+):(?P<line>[0-9]+)(?![A-Za-z0-9_])"
@@ -1799,7 +1801,11 @@ def selftest():
                 verdict_path = os.path.join(tmp, verdict_name)
                 with open(verdict_path, "w", encoding="utf-8") as f:
                     f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
-                report_ref = f'"{verdict_path}"' if c.get("quote_report") else verdict_path
+                report_path = verdict_path + (c.get("report_anchor") or "")
+                if c.get("angle_report"):
+                    report_ref = f"<{report_path}>"
+                else:
+                    report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
                 lines = ["serves: P1", f"Review verdict: {report_ref}"]
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
