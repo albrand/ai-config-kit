@@ -402,6 +402,9 @@ def _fail_review_paths(paths):
             with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
                 fd = None
                 first_line = report.readline(64).rstrip("\r\n")
+        except (FileNotFoundError, NotADirectoryError):
+            # Output paths named in a brief may not exist until the child writes them.
+            continue
         except OSError as e:
             raise FixBriefCheckError(f"could not read referenced review file `{path}`: {e.strerror}") from e
         finally:
@@ -410,6 +413,19 @@ def _fail_review_paths(paths):
         if re.match(r"^VERDICT: FAIL", first_line):
             found.append(path)
     return found
+
+
+def _brief_needs_fix_check(text):
+    """Whether this text is a FAIL-review fix brief or needs a fail-closed check."""
+    paths = _absolute_markdown_paths(text)
+    if len(paths) > FIX_REVIEW_PATH_LIMIT:
+        return True
+    try:
+        failed_reviews = _fail_review_paths(paths)
+    except FixBriefCheckError:
+        # Keep unreadable existing paths and other inspection failures fail closed.
+        return True
+    return bool(failed_reviews)
 
 
 def _deadline_payload_has_fix_brief(stdin_text):
@@ -422,8 +438,7 @@ def _deadline_payload_has_fix_brief(stdin_text):
             return True  # The saved brief cannot be read again safely at the deadline.
         texts, _ = dispatch_texts(payload)
         for text in texts:
-            paths = _absolute_markdown_paths(text)
-            if len(paths) > FIX_REVIEW_PATH_LIMIT or _fail_review_paths(paths):
+            if _brief_needs_fix_check(text):
                 return True
         return False
     except Exception:
@@ -1042,7 +1057,7 @@ def hook(stdin_text, thread):
         return 0
     allow, served, via = decide(ledger, texts)
     if allow:
-        FIX_BRIEF_CHECK_PENDING = any(_absolute_markdown_paths(text) for text in texts)
+        FIX_BRIEF_CHECK_PENDING = any(_brief_needs_fix_check(text) for text in texts)
         for text in texts:
             try:
                 problem = fix_brief_problem(text)
@@ -1841,11 +1856,19 @@ def selftest():
         os.environ["PATH"] = git_bin + os.pathsep + (saved_path or "")
         try:
             for i, c in enumerate(fix_brief_cases):
-                verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
-                verdict_path = os.path.join(tmp, verdict_name)
-                with open(verdict_path, "w", encoding="utf-8") as f:
-                    f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
-                report_path = verdict_path + (c.get("report_anchor") or "")
+                if c.get("report_parent_is_file"):
+                    report_parent = os.path.join(tmp, f"not-a-directory-{i}")
+                    with open(report_parent, "w", encoding="utf-8") as f:
+                        f.write("not a directory\n")
+                    verdict_path = os.path.join(report_parent, "review.md")
+                    report_path = verdict_path
+                else:
+                    verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
+                    verdict_path = os.path.join(tmp, verdict_name)
+                    if not c.get("missing_report"):
+                        with open(verdict_path, "w", encoding="utf-8") as f:
+                            f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                    report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
                 elif c.get("escaped_report"):
@@ -1853,7 +1876,14 @@ def selftest():
                 else:
                     report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
                 report_ref += c.get("report_suffix", "")
-                lines = ["serves: P1", f"Review verdict: {report_ref}"]
+                lines = ["serves: P1"]
+                if "role_lines" in c:
+                    lines.extend(c["role_lines"])
+                elif c.get("role"):
+                    lines.append(f"Role: {c['role']}")
+                if c.get("read_only"):
+                    lines.append("Read-only" if c["read_only"] is True else f"Read-only: {c['read_only']}")
+                lines.append(f"Review verdict: {report_ref}")
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
                 lines.append(f"{c['repo_field']}: {repo}")

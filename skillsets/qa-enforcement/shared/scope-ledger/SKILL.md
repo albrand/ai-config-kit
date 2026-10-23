@@ -44,8 +44,12 @@ than finishing the purposes.
 - A brief that names an absolute Markdown file whose first line starts with
   `VERDICT: FAIL` needs `Checked against <40-hex sha>` matching the named
   worktree's current HEAD and a repository-relative `file.ext:<line>` citation.
-  An unreadable referenced Markdown file fails closed. A trailing Markdown
-  `#fragment` and trailing sentence punctuation (`.`, `,`, `;`, `:`, `)` or `]`)
+  Reviewer briefs that name a prior FAIL verdict need the same `Repo:` /
+  `Checked against <sha>` / file:line citation header as fix briefs. Missing
+  referenced paths are ignored, while existing unreadable paths still fail
+  closed.
+  A trailing Markdown `#fragment` and trailing sentence punctuation (`.`, `,`,
+  `;`, `:`, `)` or `]`)
   are ignored when locating an unquoted file path; write a backslash before each
   space in an unquoted path.
   The gate inspects at most 20 absolute Markdown
