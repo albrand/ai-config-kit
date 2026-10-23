@@ -245,14 +245,41 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertEqual(self.running(status(old)), [])
         self.assertEqual(self.running(status(ts), status(ts, "completed")), [])
 
+    def observes_processes(self):
+        """Whether this host lets a process see its own child and the file it holds, checked without the hook's code.
+
+        The verify runner's sandbox hides other processes. There the hook must fail closed (nothing is live, the
+        stop is nudged); everywhere else the liveness rule itself is asserted.
+        """
+        out = self.output("probe")
+        with open(out, "w") as fh:
+            child = subprocess.Popen(["sleep", "30"], stdout=fh)
+        try:
+            seen = subprocess.run(["ps", "-o", "ppid=", "-p", str(child.pid)], capture_output=True, text=True).stdout.split()
+            if seen != [str(os.getpid())]:
+                return False
+            try:
+                held = subprocess.run(["lsof", "-t", "--", out], capture_output=True, text=True).stdout.split()
+            except OSError:
+                held = [d for d in os.listdir(f"/proc/{child.pid}/fd")
+                        if os.path.realpath(f"/proc/{child.pid}/fd/{d}") == os.path.realpath(out)] and [str(child.pid)]
+            return str(child.pid) in held
+        except OSError:
+            return False
+        finally:
+            child.kill()
+            child.wait()
+
     def test_native_task_is_live_only_while_this_session_holds_its_output(self):
         # A live shell of this session holds its output open; an ended one doesn't, and an orphan from a crashed
         # session (reparented away from the agent process) is not this session's.
+        observable = self.observes_processes()
         out = self.output("live")
         with open(out, "w") as fh:
             child = subprocess.Popen(["sleep", "30"], stdout=fh)
         try:
-            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), {os.path.realpath(out)})
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()),
+                             {os.path.realpath(out)} if observable else set())
         finally:
             child.kill()
             child.wait()
@@ -279,7 +306,8 @@ class CloseoutStopTests(unittest.TestCase):
                                  input=json.dumps(payload), text=True, capture_output=True, env=self.env(), check=True)
             return json.loads(out.stdout)["decision"]
         labelled = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts))
-        self.assertEqual(stop(labelled, shell=True), "allow")
+        # Where processes can't be observed (the runner's sandbox), even a live labelled shell must not carry.
+        self.assertEqual(stop(labelled, shell=True), "allow" if self.observes_processes() else "block")
         # The regression: a crashed session with no SessionStart hook leaves the start with no end and no shell.
         self.assertEqual(stop(labelled, shell=False), "block")
         self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True), "block")
