@@ -295,6 +295,20 @@ class CloseoutStopTests(unittest.TestCase):
             finally:
                 heir.kill()
                 heir.wait()
+        # A grandchild whose stdout is the file (r7), under a direct child whose own stdout is not: it got that
+        # stdout from another parent, so it is not the task's root shell.
+        nested = subprocess.Popen(["sh", "-c", f'sleep 30 > "{out}" & G=$!; trap "kill $G" TERM; wait'],
+                                  stdout=subprocess.DEVNULL)
+        try:
+            if observable:
+                deadline = time.time() + 5
+                while not CLOSEOUT_MODULE.file_holders([out])[os.path.realpath(out)] and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(CLOSEOUT_MODULE.file_holders([out])[os.path.realpath(out)])
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        finally:
+            nested.terminate()
+            nested.wait()
         # A descendant writing the file only as stderr is not the task's worker either.
         with open(out, "a") as fh:
             child = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, stderr=fh)
@@ -354,12 +368,14 @@ class CloseoutStopTests(unittest.TestCase):
             if shutil.which(tool):
                 (nolsof / tool).symlink_to(shutil.which(tool))
         observable = self.observes_processes()
-        def stop(payload, shell, agent_holds=False, heir=False, reaped=False, proc_only=False):
+        def stop(payload, shell, agent_holds=False, heir=False, reaped=False, grandchild=False, proc_only=False):
             out_file = self.output("bw1")
             hold = f'sleep 30 > "{out_file}" & S=$!; ' if shell or reaped else ""
             hold += 'kill $S; wait $S; S=; ' if reaped else ""
             hold += f'exec 3>>"{out_file}"; ' if agent_holds else ""
             hold += 'sleep 30 >/dev/null 2>&1 & S=$!; ' if heir else ""
+            hold += (f'sh -c \'sleep 30 > "{out_file}" & G=$!; trap "kill $G" TERM; wait\' >/dev/null 2>&1 & S=$!; '
+                     'sleep 1; ') if grandchild else ""
             env = dict(self.env(), PATH=str(nolsof)) if proc_only else self.env()
             out = subprocess.run([str(agent), "-c", hold + 'python3 "$0"; R=$?; [ -n "$S" ] && kill $S; exit $R', str(CLOSEOUT)],
                                  input=json.dumps(payload), text=True, capture_output=True, env=env, check=True)
@@ -381,6 +397,9 @@ class CloseoutStopTests(unittest.TestCase):
                 self.assertEqual(stop(labelled, shell=False, agent_holds=True, proc_only=proc_only), "block")
                 # Another descendant of the agent inherited that descriptor (r5): it is not the task's worker.
                 self.assertEqual(stop(labelled, shell=False, agent_holds=True, heir=True, proc_only=proc_only), "block")
+                # A grandchild of the agent has the output as stdout, under a direct child whose stdout is not
+                # (r7): the task's root shell is gone, so nothing carries.
+                self.assertEqual(stop(labelled, shell=False, grandchild=True, proc_only=proc_only), "block")
                 # The end record wins over a shell still holding the output.
                 self.assertEqual(stop(ended, shell=True, proc_only=proc_only), "block")
                 self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True,

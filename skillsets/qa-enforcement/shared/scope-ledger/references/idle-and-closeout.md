@@ -52,11 +52,15 @@ correction must not hide unfinished work.
   live process; an inherited copy of the descriptor keeps its own number. A
   resumed or restarted session appends to the same file without its
   old shells, so its `SessionStart` record ends every earlier start. A started
-  task carries only while a live process holding its output file descends from
-  the hook's nearest Claude Code ancestor (lsof, else `/proc`), other than that
-  ancestor itself and the hook's own process chain, which inherit its descriptors: a crashed
-  session's shells are gone or orphaned, so they carry nothing, with or without
-  a SessionStart hook. When the output path, ps, or both lsof and `/proc` are
+  task carries only while its output file is the stdout of a live direct child
+  of the hook's nearest Claude Code ancestor (lsof, else `/proc`), other than
+  the hook's own process chain, which inherits the agent's descriptors. Claude
+  Code starts each task's shell there; a deeper process with the file at fd 1
+  got it from another parent and carries nothing, and a crashed session's
+  shells are gone or orphaned, so they carry nothing, with or without a
+  SessionStart hook. The rule trusts that launch shape, as main trusts a
+  bb-recorded task; an agent that were a subreaper could adopt an orphan that
+  holds the file, until the end record is written. When the output path, ps, or both lsof and `/proc` are
   missing, nothing carries and the stop is nudged. Native Codex sessions are
   not read yet.
 - The nudge lists the unattended purposes and allows three outcomes:

@@ -167,7 +167,7 @@ def transcript_background(path, now=None, live=None):
     and each end as a task notification or a TaskStop result. A resumed or restarted session appends to the
     same file and its old shells are gone, so a SessionStart other than a compaction ends every earlier start.
     A task is running when its latest record is a start within BACKGROUND_HORIZON_S and its output file is
-    the stdout of a live descendant of this session's Claude Code process (`live`). A crashed session with no
+    the stdout of a live direct child of this session's Claude Code process (`live`). A crashed session with no
     SessionStart hook writes no restart record; its shells are gone or orphaned, so they carry nothing.
     """
     if not isinstance(path, str) or not path:
@@ -271,17 +271,13 @@ def agent_process(table, pid=None):
     return None
 
 
-def descends(pid, agent, table):
-    """Whether pid is a strict descendant of agent: the agent itself holding an output file is not a live task."""
-    if pid == agent or pid not in table:
-        return False
-    seen, pid = set(), table[pid][0]
-    while pid > 1 and pid not in seen and pid in table:
-        if pid == agent:
-            return True
-        seen.add(pid)
-        pid = table[pid][0]
-    return False
+def is_task_root(pid, agent, table):
+    """Whether pid is a direct child of agent, where Claude Code starts each task's shell with stdout on its output.
+
+    A deeper process with the file at fd 1 got that stdout from some other parent, inherited or redirected, and the
+    agent itself holding the file is not a task.
+    """
+    return pid != agent and pid in table and table[pid][0] == agent
 
 
 def file_holders(paths):
@@ -289,7 +285,7 @@ def file_holders(paths):
 
     Claude Code starts a task's shell with its stdout and stderr on the output file, launched in the background or
     moved there on timeout alike. A descriptor inherited from anywhere else keeps its own number, and the agent's
-    fds 0-2 are its terminal, so only a holder at fd 1 is a task's worker or one of its children.
+    fds 0-2 are its terminal; live_outputs then keeps only the holder that is the task's root shell.
     """
     want = {os.path.realpath(p) for p in paths}
     got = {p: set() for p in want}
@@ -319,7 +315,7 @@ def file_holders(paths):
 
 
 def live_outputs(paths, agent=None):
-    """The output files that are the stdout of a live descendant of this session's Claude Code process."""
+    """The output files that are the stdout of a live direct child of this session's Claude Code process."""
     table = process_table()
     agent = agent or agent_process(table)
     if agent is None:
@@ -330,7 +326,7 @@ def live_outputs(paths, agent=None):
         hook.add(pid)
         pid = table[pid][0]
     return {path for path, pids in file_holders(paths).items()
-            if any(p not in hook and descends(p, agent, table) for p in pids)}
+            if any(p not in hook and is_task_root(p, agent, table) for p in pids)}
 
 
 def message_blocks(entry):
