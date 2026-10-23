@@ -415,18 +415,6 @@ def _fail_review_paths(paths):
     return found
 
 
-def _read_only_reviewer_brief(text):
-    role_lines = re.findall(r"^([ \t]*)Role:[ \t]*(.*)$", text, re.M)
-    role_declares_reviewer = (len(role_lines) == 1
-                              and not role_lines[0][0]
-                              and re.search(r"\breviewer\b", role_lines[0][1], re.I) is not None
-                              and re.search(r"\b(?:writer|non|not|no|never)\b",
-                                            role_lines[0][1], re.I) is None)
-    read_only_marker = re.search(
-        r"^[ \t]*Read-only(?:[ \t]*:[ \t]*(?:yes|true|1))?[ \t]*$", text, re.I | re.M)
-    return bool(role_declares_reviewer and read_only_marker)
-
-
 def _brief_needs_fix_check(text):
     """Whether this text is a FAIL-review fix brief or needs a fail-closed check."""
     paths = _absolute_markdown_paths(text)
@@ -437,7 +425,7 @@ def _brief_needs_fix_check(text):
     except FixBriefCheckError:
         # Keep unreadable existing paths and other inspection failures fail closed.
         return True
-    return bool(failed_reviews) and not _read_only_reviewer_brief(text)
+    return bool(failed_reviews)
 
 
 def _deadline_payload_has_fix_brief(stdin_text):
@@ -605,8 +593,6 @@ def fix_brief_problem(text):
         failed_reviews = _fail_review_paths(review_paths)
     except FixBriefCheckError as e:
         return str(e)
-    if _read_only_reviewer_brief(text):
-        return None
     if not failed_reviews:
         return None
 

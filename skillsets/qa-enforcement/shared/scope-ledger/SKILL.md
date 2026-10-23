@@ -44,12 +44,10 @@ than finishing the purposes.
 - A brief that names an absolute Markdown file whose first line starts with
   `VERDICT: FAIL` needs `Checked against <40-hex sha>` matching the named
   worktree's current HEAD and a repository-relative `file.ext:<line>` citation.
-  Read-only reviewer briefs are exempt only when exactly one unindented
-  `Role:` line clearly names a reviewer without a writer or negation label, and
-  the brief has a positive `Read-only` marker
-  (`Read-only` or `Read-only: yes|true|1`); writer fix briefs do not receive this
-  exemption. Missing referenced paths are ignored, while existing unreadable
-  paths still fail closed.
+  Reviewer briefs that name a prior FAIL verdict need the same `Repo:` /
+  `Checked against <sha>` / file:line citation header as fix briefs. Missing
+  referenced paths are ignored, while existing unreadable paths still fail
+  closed.
   A trailing Markdown `#fragment` and trailing sentence punctuation (`.`, `,`,
   `;`, `:`, `)` or `]`)
   are ignored when locating an unquoted file path; write a backslash before each
