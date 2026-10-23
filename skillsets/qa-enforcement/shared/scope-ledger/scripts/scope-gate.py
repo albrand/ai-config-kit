@@ -422,16 +422,15 @@ def _read_only_reviewer_brief(text):
 
 def _brief_needs_fix_check(text):
     """Whether this text is a FAIL-review fix brief or needs a fail-closed check."""
-    if _read_only_reviewer_brief(text):
-        return False
     paths = _absolute_markdown_paths(text)
     if len(paths) > FIX_REVIEW_PATH_LIMIT:
         return True
     try:
-        return bool(_fail_review_paths(paths))
+        failed_reviews = _fail_review_paths(paths)
     except FixBriefCheckError:
         # Keep unreadable existing paths and other inspection failures fail closed.
         return True
+    return bool(failed_reviews) and not _read_only_reviewer_brief(text)
 
 
 def _deadline_payload_has_fix_brief(stdin_text):
@@ -592,8 +591,6 @@ def _git_line_counts(repo, sha, paths, calls_left):
 
 def fix_brief_problem(text):
     """Return the reason to deny an ungrounded FAIL-review fix brief, if any."""
-    if _read_only_reviewer_brief(text):
-        return None
     review_paths = _absolute_markdown_paths(text)
     if len(review_paths) > FIX_REVIEW_PATH_LIMIT:
         return f"the brief names {len(review_paths)} absolute Markdown files; the gate inspects at most {FIX_REVIEW_PATH_LIMIT}"
@@ -601,6 +598,8 @@ def fix_brief_problem(text):
         failed_reviews = _fail_review_paths(review_paths)
     except FixBriefCheckError as e:
         return str(e)
+    if _read_only_reviewer_brief(text):
+        return None
     if not failed_reviews:
         return None
 
