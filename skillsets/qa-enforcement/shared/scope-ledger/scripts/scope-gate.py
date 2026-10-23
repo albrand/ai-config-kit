@@ -402,7 +402,7 @@ def _fail_review_paths(paths):
             with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
                 fd = None
                 first_line = report.readline(64).rstrip("\r\n")
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             # Output paths named in a brief may not exist until the child writes them.
             continue
         except OSError as e:
@@ -1865,12 +1865,19 @@ def selftest():
         os.environ["PATH"] = git_bin + os.pathsep + (saved_path or "")
         try:
             for i, c in enumerate(fix_brief_cases):
-                verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
-                verdict_path = os.path.join(tmp, verdict_name)
-                if not c.get("missing_report"):
-                    with open(verdict_path, "w", encoding="utf-8") as f:
-                        f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
-                report_path = verdict_path + (c.get("report_anchor") or "")
+                if c.get("report_parent_is_file"):
+                    report_parent = os.path.join(tmp, f"not-a-directory-{i}")
+                    with open(report_parent, "w", encoding="utf-8") as f:
+                        f.write("not a directory\n")
+                    verdict_path = os.path.join(report_parent, "review.md")
+                    report_path = verdict_path
+                else:
+                    verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
+                    verdict_path = os.path.join(tmp, verdict_name)
+                    if not c.get("missing_report"):
+                        with open(verdict_path, "w", encoding="utf-8") as f:
+                            f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                    report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
                 elif c.get("escaped_report"):
