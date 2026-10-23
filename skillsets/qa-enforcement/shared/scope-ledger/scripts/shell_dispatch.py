@@ -292,6 +292,10 @@ def split_script(script, depth=0):
             cur.text.append(c)  # 2>&1, &> file: a redirection, not a separator
             i += 1
             continue
+        if c == "|" and script[i - 1:i] == ">":
+            cur.text.append(c)  # >| file (noclobber override): a redirection, not a pipe
+            i += 1
+            continue
         if script.startswith("<(", i) or script.startswith(">(", i):
             j = _matching(script, i + 1)
             cur.procsubs.append(script[i + 2:j])
@@ -676,7 +680,7 @@ def _draft_set_has_positional_message(words_):
 # or a bare operator whose target is the next word. The source descriptor must
 # be absent, 1 or 2: `0>&3` points stdin at fd 3 and can feed bb text (#30 r1),
 # like input redirections and here-strings, so those are never dropped.
-OUT_REDIRECT = re.compile(r"^(?:[12]?(>>?|>&)|(&>>?))(\S+)?$")
+OUT_REDIRECT = re.compile(r"^(?:[12]?(>\||>>?|>&)|(&>>?))(\S+)?$")
 
 
 def _drop_output_redirects(rest):

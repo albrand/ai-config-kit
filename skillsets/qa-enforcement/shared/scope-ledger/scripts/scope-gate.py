@@ -1378,6 +1378,13 @@ def selftest():
          claude_bash("bb --json > $L thread tell thr_x go"), thread, 2),
         ("claude: a run-time verb after a redirect is still substituted",
          claude_bash("bb > /tmp/o thread $(echo tell) thr_x go"), thread, 2),
+        # `>|` (noclobber override) is a redirection; its `|` was split as a pipe (Hermes #99 r1).
+        ("claude: a run-time verb after >| is still substituted",
+         claude_bash("bb >| /tmp/o thread $(echo tell) thr_x go"), thread, 2),
+        ("claude: a dispatch after an attached >|file still dispatches",
+         claude_bash("bb >|/tmp/o thread tell thr_x go"), thread, 2),
+        ("claude: owner/bb slug then >| $L is not a dispatch",
+         claude_bash("gh run view 1 -R albrand/bb --log-failed >| $L"), thread, 0),
         ("claude mcp: fleet_member_spawn without serves", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "do x"}}, thread, 2),
         ("claude mcp: fleet_member_spawn serving P1", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "serves: P1\ndo x"}}, thread, 0),
         ("claude mcp: fleet_member_tell without serves", {"tool_name": "mcp__bb-bridge__fleet_member_tell", "tool_input": {"member": "x", "message": "also do y"}}, thread, 2),
