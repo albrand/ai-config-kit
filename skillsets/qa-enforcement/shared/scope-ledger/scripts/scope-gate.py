@@ -76,7 +76,9 @@ FIX_GIT_CALL_TIMEOUT_S = 0.5
 FIX_GIT_DEADLINE_RESERVE_S = 0.25
 FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
 FIX_BRIEF_CHECK_PENDING = False
-FIX_REVIEW_PATH = re.compile(r"""(?<![\w./-])(/[^\s<>]+?\.md)(?=$|[\s)\]},;:!?\"'`#])""")
+FIX_REVIEW_PATH = re.compile(
+    r"""(?<![\w./-])(/(?:[^\s<>]|\\[ \t])+?\.md)(?=$|[\s)\]},;:!?\"'`#])"""
+)
 FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)(?:#[^>\r\n]*)?>")
 FIX_REVIEW_PATH_QUOTED = re.compile(
     r"(?P<quote>[\"'`])(?P<path>/[^\"'`\r\n]+?\.md)(?:#[^\"'`\r\n]*)?(?P=quote)"
@@ -1804,6 +1806,8 @@ def selftest():
                 report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
+                elif c.get("escaped_report"):
+                    report_ref = report_path.replace(" ", "\\ ")
                 else:
                     report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
                 lines = ["serves: P1", f"Review verdict: {report_ref}"]
