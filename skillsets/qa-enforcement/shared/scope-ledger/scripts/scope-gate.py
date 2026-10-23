@@ -1789,12 +1789,24 @@ def selftest():
             raise RuntimeError("git is not on PATH")
         repo = os.path.join(tmp, "fixture-repo")
         os.makedirs(repo)
+        fixture_git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        fixture_git_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                                "GIT_OPTIONAL_LOCKS": "0"})
 
         def fixture_git(args):
             return subprocess.run([real_git, "-C", repo, *args], check=True, capture_output=True,
-                                  text=True, timeout=1)
+                                  text=True, timeout=1, env=fixture_git_env)
 
-        fixture_git(["init", "--quiet"])
+        inherited_work_tree = os.environ.get("GIT_WORK_TREE")
+        os.environ["GIT_WORK_TREE"] = tmp
+        try:
+            fixture_git(["init", "--quiet"])
+        finally:
+            if inherited_work_tree is None:
+                os.environ.pop("GIT_WORK_TREE", None)
+            else:
+                os.environ["GIT_WORK_TREE"] = inherited_work_tree
+        print("ok   selftest Git fixture ignores inherited GIT_WORK_TREE")
         fixture_git(["config", "user.name", "Scope Gate Selftest"])
         fixture_git(["config", "user.email", "scope-gate-selftest@example.invalid"])
         cited_file = os.path.join(repo, "skillsets", "qa-enforcement", "shared", "scope-ledger",

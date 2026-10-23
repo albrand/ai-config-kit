@@ -50,8 +50,9 @@ than finishing the purposes.
   space in an unquoted path.
   The gate inspects at most 20 absolute Markdown
   paths, 20 repository hints and 20 citations; selftest creates its own
-  temporary Git repository so it can run outside a checkout. Each git call,
-  including the worktree HEAD check, has a 500 ms ceiling; cited blobs total at most
+  temporary Git repository with inherited Git variables removed so it can run
+  outside a checkout. Each git call, including the worktree HEAD check, has a
+  500 ms ceiling; cited blobs total at most
   8 MiB. Deadline, unreadable-file, git, and limit failures deny the dispatch.
 - At the deadline (only when the gate could not finish), these deny even
   though the normal decision would allow them; each fails closed and a retry
