@@ -1392,6 +1392,16 @@ def selftest():
          claude_bash("printf x \\>& bb thread tell thr_x go"), thread, 2),
         ("claude: a run-time command word after an escaped \\> and a real pipe still dispatches",
          claude_bash('printf x \\>| "$(echo bb)" thread tell thr_x go'), thread, 2),
+        # A quoted `>|` is a literal word, never a redirection: as an option's value it must not
+        # swallow the verb (Hermes #99 r3).
+        ("claude: a quoted '>|' option value does not hide the dispatch",
+         claude_bash("bb --host '>|' thread tell thr_x go"), thread, 2),
+        ("claude: a quoted \">\" option value does not hide the dispatch",
+         claude_bash('bb --host ">" thread tell thr_x go'), thread, 2),
+        ("claude: env's quoted '>|' option value does not hide the dispatch",
+         claude_bash("env bb --host '>|' thread tell thr_x go"), thread, 2),
+        ("claude: a quoted '>|' option value before a run-time verb is still substituted",
+         claude_bash("bb --host '>|' thread $(echo tell) thr_x go"), thread, 2),
         ("claude: an escaped backslash before >| leaves the redirect intact",
          claude_bash("printf x \\\\>| /tmp/o; gh run view 1 -R albrand/bb >| $L"), thread, 0),
         ("claude mcp: fleet_member_spawn without serves", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "do x"}}, thread, 2),

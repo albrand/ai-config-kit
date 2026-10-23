@@ -536,10 +536,8 @@ def _unreadable_verb(rest):
     """Whether a word the verb scan reads as the group or verb (`bb
     automation$(echo) run a1`, `bb thread $(echo) tell thr_x hi`, `bb thread
     tell$(x) thr_a hi`) is built at run time: the scan cannot read it, so the
-    dispatch it becomes is unknown. Output redirections and their targets are
-    never the verb: `gh run view 1 -R albrand/bb --log-failed > $L 2>&1` read
-    `$L` as a run-time verb after the `albrand/bb` slug (2026-10-22)."""
-    rest = _drop_output_redirects(rest)
+    dispatch it becomes is unknown. Callers drop the unquoted output
+    redirections first (_verb_words)."""
     for j, a in enumerate(rest[:5]):
         if a == "plugin":
             nxt = rest[j + 1:j + 4]
@@ -574,8 +572,58 @@ def _printed(script, depth):
     return out
 
 
-def dispatches(script, depth=0):
-    """[(command_text, heredoc_bodies, verb)] for each bb dispatch in the script."""
+def plain_words(text):
+    """One flag per words(text) entry: True when the word was written with no
+    quote or backslash, so the shell reads it as an operator if it is one. None
+    when this reading does not line up with words(), and then no redirection is
+    dropped."""
+    t = mask(ansi_c(text))
+    try:
+        n = len(shlex.split(t, posix=True))
+    except ValueError:
+        return None
+    flags, plain, intok, q, i = [], True, False, None, 0
+    while i < len(t):
+        c = t[i]
+        if q:
+            if c == q:
+                q = None
+            elif q == '"' and c == "\\":
+                i += 1
+            i += 1
+            continue
+        if c in " \t\r\n":
+            if intok:
+                flags.append(plain)
+            plain, intok = True, False
+            i += 1
+            continue
+        intok = True
+        if c in "'\"":
+            q, plain = c, False
+        elif c == "\\":
+            plain = False
+            i += 1
+        i += 1
+    if intok:
+        flags.append(plain)
+    return flags if len(flags) == n else None
+
+
+def _verb_words(words_after, plain):
+    """The words a verb scan reads: the unquoted output redirections and their
+    targets are never the verb (`gh run view 1 -R albrand/bb --log-failed > $L
+    2>&1` read `$L` as a run-time verb after the `albrand/bb` slug, 2026-10-22),
+    and may sit before it (`bb --json > $L thread tell`)."""
+    if plain is None:
+        return words_after
+    return _drop_output_redirects(words_after, plain)
+
+
+def dispatches(script, depth=0, literal=False):
+    """[(command_text, heredoc_bodies, verb)] for each bb dispatch in the script.
+    `literal`: the script was rebuilt from words that lost their quoting (env's
+    command), so no word can be trusted as an operator."""
     found = []
     for cmd in split_script(script, depth):
         text = cmd.string()
@@ -583,8 +631,9 @@ def dispatches(script, depth=0):
         split = _env_split(w)
         if split is not None:
             if depth < MAX_DEPTH:
-                found.extend(dispatches(split, depth + 1))
+                found.extend(dispatches(split, depth + 1, literal=True))
             continue
+        plain = None if literal else plain_words(text)
         k = _command_word(w)
         if k is None:
             continue
@@ -616,16 +665,18 @@ def dispatches(script, depth=0):
                     for p in cmd.procsubs:
                         scripts += _printed(p, depth)
                 for s in scripts:
-                    found.extend(dispatches(s, depth + 1))
+                    found.extend(dispatches(s, depth + 1, literal))
             continue
         if base == "eval" and depth < MAX_DEPTH:
-            found.extend(dispatches(" ".join(rest), depth + 1))
+            found.extend(dispatches(" ".join(rest), depth + 1, literal))
             continue
         if is_bb(head) or maybe_bb(head) or glued(head):
-            verb = _dispatch_verb(rest)
+            # Dropping redirects may only add a verb, never hide one: the raw words are read first.
+            vrest = _verb_words(rest, plain and plain[k + 1:])
+            verb = _dispatch_verb(rest) or _dispatch_verb(vrest)
             if verb and not bare_help(rest, verb):
                 found.append((text, list(cmd.heredocs), verb))
-            elif glued(head) or _unreadable_verb(rest):
+            elif glued(head) or _unreadable_verb(vrest):
                 # the command, group or verb word is built at run time: what
                 # runs is unknown, so the call is dispatch-shaped (review r2d)
                 found.append((text, list(cmd.heredocs), "substituted"))
@@ -644,11 +695,12 @@ def dispatches(script, depth=0):
         # text is one shlex word, so a sentence that mentions a dispatch
         # never matches.
         for b in [i for i in range(k + 1, len(w)) if is_bb(w[i])]:
-            verb = _dispatch_verb(w[b + 1:])
+            vrest = _verb_words(w[b + 1:], plain and plain[b + 1:])
+            verb = _dispatch_verb(w[b + 1:]) or _dispatch_verb(vrest)
             if verb and not bare_help(w[b + 1:], verb):
                 found.append((text, list(cmd.heredocs), verb))
                 break
-            if _unreadable_verb(w[b + 1:]):
+            if _unreadable_verb(vrest):
                 found.append((text, list(cmd.heredocs), "substituted"))
                 break
     return found
@@ -692,14 +744,19 @@ def _draft_set_has_positional_message(words_):
 # or a bare operator whose target is the next word. The source descriptor must
 # be absent, 1 or 2: `0>&3` points stdin at fd 3 and can feed bb text (#30 r1),
 # like input redirections and here-strings, so those are never dropped.
-OUT_REDIRECT = re.compile(r"^(?:[12]?(>\||>>?|>&)|(&>>?))(\S+)?$")
+# `>|`, `>>|` and zsh's `>!`, `>>!`, `&>|`, `&>!` override noclobber (Codex runs zsh -lc).
+OUT_REDIRECT = re.compile(r"^(?:[12]?(>>?[|!]?|>&)|(&>>?[|!]?))(\S+)?$")
 
 
-def _drop_output_redirects(rest):
+def _drop_output_redirects(rest, plain=None):
+    """`rest` without its output redirections. With `plain` (one flag per
+    word, from plain_words), only a word written with no quote or backslash
+    counts as an operator: `bb '>|' thread tell` passes bb a literal `>|`
+    (Hermes #99 r3)."""
     out, i = [], 0
     while i < len(rest):
         m = OUT_REDIRECT.match(rest[i])
-        if m:
+        if m and (plain is None or plain[i]):
             i += 1 if m.group(3) else 2  # a bare operator also takes its target word
             continue
         out.append(rest[i])
@@ -720,9 +777,8 @@ def bare_help(rest, verb):
 def _dispatch_verb(rest):
     """'thread tell', 'thread queue create', 'thread draft set', ... when
     `rest` (the words after bb) is a dispatch, after at most a few global
-    options (`--json`, `--host h`). Output redirections may sit anywhere
-    (`bb --json > $L thread tell ...`) and are skipped with their targets."""
-    rest = _drop_output_redirects(rest)
+    options (`--json`, `--host h`). Callers drop the unquoted output
+    redirections first (_verb_words)."""
     for j, a in enumerate(rest[:5]):
         if a == "plugin":
             nxt = rest[j + 1:j + 4]
