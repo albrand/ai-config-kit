@@ -69,6 +69,20 @@ DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jso
 THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
 STATUSES = ("open", "done", "blocked-on-user")
 OWNER_ONLY = ("hard-prohibition-approval", "owner-decision", "material-new-fact")
+FIX_REVIEW_PATH_LIMIT = 20
+FIX_REPO_HINT_LIMIT = 20
+FIX_CITATION_LIMIT = 20
+FIX_GIT_CALL_TIMEOUT_S = 0.5
+FIX_GIT_DEADLINE_RESERVE_S = 0.25
+FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
+FIX_BRIEF_CHECK_PENDING = False
+FIX_REVIEW_PATH = re.compile(r"""(?<![\w./-])(/[^\s<>]+?\.md)(?=$|[\s)\]},;:!?\"'`])""")
+FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)>")
+FIX_REVIEW_PATH_QUOTED = re.compile(r"(?P<quote>[\"'`])(?P<path>/[^\"'`\r\n]+?\.md)(?P=quote)")
+FIX_CHECKED_SHA = re.compile(r"^\s*Checked against\s+([0-9a-fA-F]{40})\s*$", re.M)
+FIX_CITATION = re.compile(
+    r"(?<![\w.-])(?P<path>/?(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9_-]+):(?P<line>[0-9]+)(?![A-Za-z0-9_])"
+)
 # Gap-map nudge (owner-approved 2026-10-22): a coordinator that keeps staffing work with no gap
 # map is shown the delivery contract after a dispatch. It never denies.
 GAP_MAP_DISPATCHES = 8   # passed dispatches ...
@@ -359,6 +373,235 @@ def read_file_text(path, cwd, assigned=frozenset(), after_cd=False):
     finally:
         if fd is not None:
             os.close(fd)
+
+
+class FixBriefCheckError(Exception):
+    pass
+
+
+def _absolute_markdown_paths(text):
+    paths = FIX_REVIEW_PATH.findall(text)
+    paths.extend(FIX_REVIEW_PATH_ANGLE.findall(text))
+    paths.extend(match.group("path") for match in FIX_REVIEW_PATH_QUOTED.finditer(text))
+    return list(dict.fromkeys(path.replace("\\ ", " ") for path in paths))
+
+
+def _fail_review_paths(paths):
+    found = []
+    for path in paths:
+        fd = None
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                continue
+            with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
+                fd = None
+                first_line = report.readline(64).rstrip("\r\n")
+        except OSError:
+            continue
+        finally:
+            if fd is not None:
+                os.close(fd)
+        if re.match(r"^VERDICT: FAIL", first_line):
+            found.append(path)
+    return found
+
+
+def _deadline_payload_has_fix_brief(stdin_text):
+    try:
+        payload = json.loads(stdin_text or "{}")
+        _, inp = tool_and_input(payload) if isinstance(payload, dict) else ("", {})
+        command = command_text(inp) or ""
+        if (re.search(r"\bautomations?\s+(?:create|update|run|resume)\b", command, re.I)
+                and not re.search(r"--(?:prompt|script|script-file)(?:=|\s)", command)):
+            return True  # The saved brief cannot be read again safely at the deadline.
+        texts, _ = dispatch_texts(payload)
+        for text in texts:
+            paths = _absolute_markdown_paths(text)
+            if len(paths) > FIX_REVIEW_PATH_LIMIT or _fail_review_paths(paths):
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def _git_repo_candidates(text):
+    candidates = []
+    for label in ("Worktree", "Repo"):
+        pattern = re.compile(rf"^[ \t]*{label}:[ \t]*(.*?)[ \t]*$", re.I | re.M)
+        for match in pattern.finditer(text):
+            path = match.group(1).strip().strip("`\"")
+            if path.startswith("<") and path.endswith(">"):
+                path = path[1:-1].strip()
+            path = os.path.expanduser(path)
+            if os.path.isabs(path):
+                candidates.append((label, path))
+                if len(candidates) > FIX_REPO_HINT_LIMIT:
+                    return candidates
+    return candidates
+
+
+def _fix_git_call(repo, args, *, input_bytes=None, calls_left=1):
+    import subprocess
+
+    remaining = HOOK_HARD_S - hook_elapsed() - FIX_GIT_DEADLINE_RESERVE_S
+    if remaining <= 0:
+        raise FixBriefCheckError("the hook deadline left no time for the required git check")
+    timeout = min(FIX_GIT_CALL_TIMEOUT_S, remaining / max(1, calls_left))
+    if timeout <= 0.005:
+        raise FixBriefCheckError("the hook deadline left too little time for the required git check")
+    git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    git_env["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        result = subprocess.run(["git", *args], cwd=repo, input=input_bytes, capture_output=True,
+                                timeout=timeout, env=git_env)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise FixBriefCheckError(f"git could not answer within {timeout:.3f}s ({e})") from e
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        suffix = f": {detail[0][:180]}" if detail else ""
+        raise FixBriefCheckError(f"git could not verify the cited object{suffix}")
+    return result.stdout
+
+
+def _fix_brief_repo(text, calls_left):
+    last_error = None
+    candidates = _git_repo_candidates(text)
+    if len(candidates) > FIX_REPO_HINT_LIMIT:
+        raise FixBriefCheckError(f"the brief names more than {FIX_REPO_HINT_LIMIT} repository paths")
+    for i, (label, path) in enumerate(candidates):
+        if not os.path.isdir(path):
+            last_error = f"{label}: {path} is not a directory"
+            continue
+        try:
+            root = _fix_git_call(path, ["rev-parse", "--show-toplevel"],
+                                 calls_left=max(1, calls_left - i)).decode("utf-8", "replace").strip()
+        except FixBriefCheckError as e:
+            last_error = str(e)
+            continue
+        if root and os.path.isabs(root):
+            return os.path.realpath(root)
+        last_error = f"git did not return a repository root for {path}"
+    if not candidates:
+        raise FixBriefCheckError("the brief does not name a worktree; add `Repo: <absolute path>`")
+    raise FixBriefCheckError(f"could not find the brief's git repository; add `Repo: <absolute path>` ({last_error})")
+
+
+def _fix_line_citations(text):
+    found = [(m.group("path"), m.group("line")) for m in FIX_CITATION.finditer(text)]
+    if len(found) > FIX_CITATION_LIMIT:
+        raise FixBriefCheckError(f"the brief has {len(found)} citations; the gate checks at most {FIX_CITATION_LIMIT}")
+    citations = []
+    for path, line_text in found:
+        if path.startswith("/"):
+            raise FixBriefCheckError(f"citation `{path}:{line_text}` must be relative to the named repository")
+        if any(part in ("", ".", "..") for part in path.split("/")):
+            raise FixBriefCheckError(f"citation `{path}:{line_text}` is not a repository-relative path")
+        if len(line_text) > 10:
+            raise FixBriefCheckError(f"citation `{path}:{line_text[:24]}…` has an invalid line number")
+        line_number = int(line_text)
+        if line_number < 1:
+            raise FixBriefCheckError(f"citation `{path}:0` must use a positive line number")
+        citations.append((path, line_number))
+    if not citations:
+        raise FixBriefCheckError("a FAIL review brief needs at least one file:line citation")
+    return citations
+
+
+def _git_line_counts(repo, sha, paths, calls_left):
+    specs = [f"{sha}:{path}" for path in paths]
+    for i, path in enumerate(paths):
+        try:
+            _fix_git_call(repo, ["cat-file", "-e", specs[i]], calls_left=calls_left - i)
+        except FixBriefCheckError as e:
+            raise FixBriefCheckError(f"citation path `{path}` does not exist at {sha}: {e}") from e
+
+    batch_input = ("\n".join(specs) + "\n").encode("utf-8")
+    checks = _fix_git_call(repo, ["cat-file", "--batch-check"], input_bytes=batch_input,
+                           calls_left=max(1, calls_left - len(paths))).decode("utf-8", "replace").splitlines()
+    if len(checks) != len(specs):
+        raise FixBriefCheckError(f"git returned an incomplete line-count preflight for {sha}")
+    total_bytes, sizes = 0, []
+    for spec, result in zip(specs, checks):
+        fields = result.rsplit(" ", 2)
+        if len(fields) != 3 or fields[1] != "blob":
+            raise FixBriefCheckError(f"git could not read `{spec}` as a file at {sha}")
+        try:
+            size = int(fields[2])
+        except ValueError as e:
+            raise FixBriefCheckError(f"git returned an invalid size for `{spec}`") from e
+        if size < 0:
+            raise FixBriefCheckError(f"git returned an invalid size for `{spec}`")
+        sizes.append(size)
+        total_bytes += size
+    if total_bytes > FIX_GIT_BLOB_LIMIT:
+        raise FixBriefCheckError(f"the cited Git blobs total {total_bytes} bytes; the gate reads at most {FIX_GIT_BLOB_LIMIT}")
+
+    batch = _fix_git_call(repo, ["cat-file", "--batch"], input_bytes=batch_input,
+                          calls_left=max(1, calls_left - len(paths) - 1))
+    line_counts, offset = {}, 0
+    for spec, expected_size in zip(specs, sizes):
+        header_end = batch.find(b"\n", offset)
+        if header_end < 0:
+            raise FixBriefCheckError(f"git returned an incomplete blob header for `{spec}`")
+        header = batch[offset:header_end].decode("utf-8", "replace").rsplit(" ", 2)
+        if len(header) != 3 or header[1] != "blob":
+            raise FixBriefCheckError(f"git returned an invalid blob header for `{spec}`")
+        try:
+            actual_size = int(header[2])
+        except ValueError as e:
+            raise FixBriefCheckError(f"git returned an invalid blob size for `{spec}`") from e
+        if actual_size != expected_size:
+            raise FixBriefCheckError(f"git returned inconsistent blob sizes for `{spec}`")
+        start = header_end + 1
+        end = start + actual_size
+        if end >= len(batch) or batch[end:end + 1] != b"\n":
+            raise FixBriefCheckError(f"git returned a truncated blob for `{spec}`")
+        blob = batch[start:end]
+        line_ends = blob.count(b"\n") + blob.count(b"\r") - blob.count(b"\r\n")
+        line_counts[spec.split(":", 1)[1]] = line_ends + int(bool(blob) and not blob.endswith((b"\n", b"\r")))
+        offset = end + 1
+    return line_counts
+
+
+def fix_brief_problem(text):
+    """Return the reason to deny an ungrounded FAIL-review fix brief, if any."""
+    review_paths = _absolute_markdown_paths(text)
+    if len(review_paths) > FIX_REVIEW_PATH_LIMIT:
+        return f"the brief names {len(review_paths)} absolute Markdown files; the gate inspects at most {FIX_REVIEW_PATH_LIMIT}"
+    failed_reviews = _fail_review_paths(review_paths)
+    if not failed_reviews:
+        return None
+
+    checked = FIX_CHECKED_SHA.findall(text)
+    if not checked:
+        return "a FAIL review brief needs a line `Checked against <40-hex sha>`"
+    if len({sha.lower() for sha in checked}) != 1:
+        return "the FAIL review brief has conflicting `Checked against` SHAs"
+    sha = checked[0].lower()
+    try:
+        citations = _fix_line_citations(text)
+    except FixBriefCheckError as e:
+        return str(e)
+    if len(citations) > FIX_CITATION_LIMIT:
+        return f"the FAIL review brief has more than {FIX_CITATION_LIMIT} citations"
+
+    unique_paths = list(dict.fromkeys(path for path, _ in citations))
+    candidate_count = len(_git_repo_candidates(text))
+    calls_left = max(1, candidate_count + len(unique_paths) + 2)
+    try:
+        repo = _fix_brief_repo(text, calls_left)
+        line_counts = _git_line_counts(repo, sha, unique_paths,
+                                       max(1, len(unique_paths) + 2))
+    except FixBriefCheckError as e:
+        return str(e)
+    for path, line_number in citations:
+        count = line_counts.get(path)
+        if count is None:
+            return f"git did not return a line count for `{path}` at {sha}"
+        if line_number > count:
+            return f"citation `{path}:{line_number}` exceeds the {count} lines in that file at {sha}"
+    return None
 
 
 def command_text(inp):
@@ -720,10 +963,24 @@ def hook_under_deadline(thread, stdin=None):
     held = {"text": ""}
 
     def expire(signum, frame):
+        signal.setitimer(signal.ITIMER_REAL, 0)
         try:
             has = bool(thread) and bool(THREAD_ID.match(thread)) and os.path.exists(ledger_path(thread))
         except Exception:
             has = False
+        if has:
+            try:
+                if FIX_BRIEF_CHECK_PENDING or _deadline_payload_has_fix_brief(held["text"]):
+                    deny(f"[scope-gate] fix brief denied: the required FAIL-review citation check could not finish "
+                         f"before the {HOOK_HARD_S:.0f} s gate deadline")
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    os._exit(2)
+            except Exception as e:
+                deny(f"[scope-gate] fix brief denied: citation check failed closed at the deadline ({e})")
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os._exit(2)
         text = shape_text(held["text"]) if has else None
         if text is not None and not shape_serves(thread, text):
             deny(f"[scope-gate] the gate could not finish within {HOOK_HARD_S:.0f} s of the hook chain starting "
@@ -749,6 +1006,8 @@ def hook_under_deadline(thread, stdin=None):
 
 
 def hook(stdin_text, thread):
+    global FIX_BRIEF_CHECK_PENDING
+    FIX_BRIEF_CHECK_PENDING = False
     if not thread or not THREAD_ID.match(thread):
         return 0
     try:
@@ -769,6 +1028,17 @@ def hook(stdin_text, thread):
         return 0
     allow, served, via = decide(ledger, texts)
     if allow:
+        FIX_BRIEF_CHECK_PENDING = any(_absolute_markdown_paths(text) for text in texts)
+        for text in texts:
+            try:
+                problem = fix_brief_problem(text)
+            except Exception as e:
+                problem = f"FAIL-review citation check failed closed: {e}"
+            if problem:
+                record({"event": "scope_denied", "thread": thread, "tool": label,
+                        "why": f"fix brief: {problem}"})
+                return deny(f"[scope-gate] fix brief denied: {problem}")
+        FIX_BRIEF_CHECK_PENDING = False
         record({"event": "scope_passed", "thread": thread, "tool": label, "serves": via})
         mark_passed(thread)
         return 0
@@ -1496,7 +1766,86 @@ def selftest():
         if got != want:
             failed += 1
         print(f"{mark} {label}: rc={got} want={want}")
-    import io
+    import io, subprocess
+    with open(os.path.join(here, "..", "tests", "fixtures", "dispatch-cases.json"), encoding="utf-8") as f:
+        fix_brief_cases = json.load(f)["fix_brief_cases"]
+    real_git = shutil_which("git")
+    try:
+        if not real_git:
+            raise RuntimeError("git is not on PATH")
+        repo = subprocess.run([real_git, "rev-parse", "--show-toplevel"], cwd=here, check=True,
+                              capture_output=True, text=True, timeout=1).stdout.strip()
+        sha = subprocess.run([real_git, "rev-parse", "HEAD"], cwd=repo, check=True,
+                             capture_output=True, text=True, timeout=1).stdout.strip()
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        for c in fix_brief_cases:
+            failed += 1
+            print(f"FAIL {c['label']}: could not prepare a git fixture ({e})")
+    else:
+        git_bin = os.path.join(tmp, "git-bin")
+        os.makedirs(git_bin)
+        git_log = os.path.join(tmp, "git-calls.log")
+        git_wrapper = os.path.join(git_bin, "git")
+        with open(git_wrapper, "w", encoding="utf-8") as f:
+            f.write(f"#!{sys.executable}\nimport os, sys\n")
+            f.write(f"with open({git_log!r}, 'a', encoding='utf-8') as log: log.write(' '.join(sys.argv[1:]) + '\\n')\n")
+            f.write(f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n")
+        os.chmod(git_wrapper, 0o755)
+        saved_path, original_cwd = os.environ.get("PATH"), os.getcwd()
+        os.environ["PATH"] = git_bin + os.pathsep + (saved_path or "")
+        try:
+            for i, c in enumerate(fix_brief_cases):
+                verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
+                verdict_path = os.path.join(tmp, verdict_name)
+                with open(verdict_path, "w", encoding="utf-8") as f:
+                    f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                report_ref = f'"{verdict_path}"' if c.get("quote_report") else verdict_path
+                lines = ["serves: P1", f"Review verdict: {report_ref}"]
+                if c.get("invalid_worktree"):
+                    lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
+                lines.append(f"{c['repo_field']}: {repo}")
+                if c["checked"]:
+                    lines.append(f"Checked against {sha}")
+                if c["citation"]:
+                    lines.append(f"Finding: {c['citation']}")
+                brief_path = os.path.join(tmp, f"fix-brief-{i}.md")
+                with open(brief_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+                with open(git_log, "w", encoding="utf-8"):
+                    pass
+                os.chdir(tmp)
+                out, err = sys.stdout, sys.stderr
+                captured_out, captured_err = io.StringIO(), io.StringIO()
+                sys.stdout, sys.stderr = captured_out, captured_err
+                try:
+                    command = (f"bb thread spawn --parent-self --prompt-file {brief_path}"
+                               if c.get("spawn_prompt_file") else
+                               f"bb thread tell thr_fixbrief --message-file {brief_path}")
+                    got = hook(json.dumps(claude_bash(command)), thread)
+                finally:
+                    sys.stdout, sys.stderr = out, err
+                    os.chdir(original_cwd)
+                with open(git_log, encoding="utf-8") as f:
+                    git_calls = f.read()
+                if c["git_spec"]:
+                    cited_path = c["git_spec"].rsplit(":", 1)[0]
+                    checked_object = f"cat-file -e {sha}:{cited_path}" in git_calls
+                else:
+                    checked_object = not git_calls
+                needle = c.get("needle")
+                said = captured_out.getvalue() + captured_err.getvalue()
+                has_message = needle in said if needle else True
+                good = got == c["want"] and checked_object and has_message
+                failed += not good
+                print(f"{'ok  ' if good else 'FAIL'} fix brief: {c['label']}: rc={got} want={c['want']}"
+                      f"; git-check={'yes' if checked_object else 'no'}"
+                      f"; message={'yes' if has_message else 'no'}")
+        finally:
+            os.chdir(original_cwd)
+            if saved_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = saved_path
     for label, cmd, needle in [
         ("a missing brief file says to write it in a separate step",
          "printf 'serves: P1' > $TMPDIR/late.md && bb thread tell thr_x --message-file $TMPDIR/late.md", "separate step"),
@@ -1649,6 +1998,12 @@ def selftest():
     main(["mark", thread, "P1", "open"])
     spent = "%.3f" % (time.time() - HOOK_HARD_S - 1)
     future = "%.3f" % (time.time() + 3600)
+    deadline_review = os.path.join(tmp, "deadline-review.md")
+    with open(deadline_review, "w", encoding="utf-8") as f:
+        f.write("VERDICT: FAIL\nA failing review.\n")
+    deadline_brief = os.path.join(tmp, "deadline-fix-brief.md")
+    with open(deadline_brief, "w", encoding="utf-8") as f:
+        f.write(f"serves: P1\nReview: {deadline_review}\n")
     for label, cmd, t0, want, text in [
         # review r2b: at the deadline only the call's own words count; a
         # comment or the tool call's description does not serve.
@@ -1657,6 +2012,8 @@ def selftest():
          {**claude_bash("bb thread tell thr_x hi"), "tool_input": {"command": "bb thread tell thr_x hi", "description": "serves: P1"}},
          spent, 2, "could not finish"),
         ("deadline: '#' inside the quoted brief is not a comment", "bb thread tell thr_x 'fix #3, serves: P1'", spent, 0, ""),
+        ("deadline: a FAIL-review fix brief is denied when citation checks cannot run",
+         f"bb thread tell thr_x --message-file {deadline_brief}", spent, 2, "fix brief denied"),
         ("deadline: a FIFO brief is not opened", f"bb thread tell thr_x --message-file {fifo}", spent, 2, "could not finish"),
         ("deadline: a description that mentions a tell is not a dispatch",
          {"tool_name": "Bash", "tool_input": {"command": "ls", "description": "then bb thread tell thr_x"}}, spent, 0, ""),
