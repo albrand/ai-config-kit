@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fixtures for the scope-ledger closeout check at Stop and its place in the stop chain."""
+import datetime
 import json
 from contextlib import closing
 import importlib.util
@@ -8,6 +9,7 @@ import pathlib
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -174,6 +176,219 @@ class CloseoutStopTests(unittest.TestCase):
         # Positive control: the coordinator waits on background work it labels as serving P2.
         self.set_state(children=[], background=["Wait for the Hermes verdict", "serves: P2 — run the QA walk"])
         self.assertEqual(self.closeout()["decision"], "allow")
+
+    def native_transcript(self, *entries):
+        """A Claude Code transcript; bb records nothing for a native terminal session's background tasks."""
+        path = pathlib.Path(self.tmp.name) / f"native-{len(list(pathlib.Path(self.tmp.name).glob('native-*.jsonl')))}.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+        return {"transcript_path": str(path)}
+
+    def output(self, task):
+        return str(pathlib.Path(self.tmp.name) / f"{task}.output")
+
+    def started(self, task, desc, ts, timed_out=False):
+        use = f"toolu_{task}"
+        call = {"command": "sh watch.sh", "description": desc}
+        call.update({"timeout": 600000} if timed_out else {"run_in_background": True})
+        result = {"stdout": "", "backgroundTaskId": task}
+        result.update({"timedOutAfterMs": 600000} if timed_out else {})
+        said = f"Command running in background with ID: {task}. Output is being written to: {self.output(task)}. You will be notified."
+        return [{"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": use, "name": "Bash", "input": call}]}},
+                {"type": "user", "timestamp": ts, "toolUseResult": result,
+                 "message": {"role": "user", "content": [{"tool_use_id": use, "type": "tool_result", "content": said}]}}]
+
+    @staticmethod
+    def notified(task):
+        return (f"<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n"
+                f"<summary>Background command completed (exit code 0)</summary>\n</task-notification>")
+
+    def running(self, *entries):
+        """Descriptions transcript_background reports, with every output file treated as held by a live shell."""
+        path = self.native_transcript(*entries)["transcript_path"]
+        return CLOSEOUT_MODULE.transcript_background(path, live=lambda outs: {os.path.realpath(o) for o in outs})
+
+    def test_native_session_transcript_starts_and_ends(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ts = (now - datetime.timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        old = (now - datetime.timedelta(hours=25)).isoformat().replace("+00:00", "Z")
+        start = self.started("bw1", "serves: P4 — wait for a head", ts)
+        self.assertEqual(self.running(*start), ["serves: P4 — wait for a head"])
+        # A command moved to the background on timeout has no background flag; its description still counts.
+        self.assertEqual(self.running(*self.started("bw3", "serves: P4 — verify", ts, timed_out=True)), ["serves: P4 — verify"])
+        ends = {
+            "user notification": {"type": "user", "timestamp": ts, "message": {"role": "user", "content": self.notified("bw1")}},
+            "queued mid-turn": {"type": "queue-operation", "operation": "enqueue", "timestamp": ts, "content": self.notified("bw1")},
+            "queued attachment": {"type": "attachment", "timestamp": ts,
+                                  "attachment": {"type": "queued_command", "prompt": self.notified("bw1")}},
+            "TaskStop": {"type": "user", "timestamp": ts, "toolUseResult": {
+                "message": "Successfully stopped task: bw1 (sh watch.sh)", "task_id": "bw1", "task_type": "local_bash"},
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_x", "content": "stopped"}]}},
+        }
+        for name, end in ends.items():
+            with self.subTest(end=name):
+                self.assertEqual(self.running(*start, end), [])
+        # A tool result that quotes a notification is not one.
+        quoted = {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_y", "content": self.notified("bw1")}]}}
+        self.assertEqual(self.running(*start, quoted), ["serves: P4 — wait for a head"])
+        # A resumed or restarted process lost its shells; a compaction keeps them.
+        session = lambda source: {"type": "attachment", "timestamp": ts, "attachment": {
+            "type": "hook_success", "hookName": f"SessionStart:{source}", "hookEvent": "SessionStart"}}
+        for source, kept in (("resume", []), ("startup", []), ("compact", ["serves: P4 — wait for a head"])):
+            with self.subTest(session=source):
+                self.assertEqual(self.running(*start, session(source)), kept)
+        # After a compaction the start survives only as a task_status attachment; past the horizon it is lost.
+        status = lambda when, state="running": {"type": "attachment", "timestamp": when, "attachment": {
+            "type": "task_status", "taskId": "bw2", "taskType": "local_bash", "description": "serves: P4 — wait",
+            "status": state, "outputFilePath": self.output("bw2")}}
+        self.assertEqual(self.running(status(ts)), ["serves: P4 — wait"])
+        self.assertEqual(self.running(status(old)), [])
+        self.assertEqual(self.running(status(ts), status(ts, "completed")), [])
+
+    def observes_processes(self):
+        """Whether this host lets a process see its own child and the file it holds, checked without the hook's code.
+
+        The verify runner's sandbox hides other processes. There the hook must fail closed (nothing is live, the
+        stop is nudged); everywhere else the liveness rule itself is asserted.
+        """
+        out = self.output("probe")
+        with open(out, "w") as fh:
+            child = subprocess.Popen(["sleep", "30"], stdout=fh)
+        try:
+            seen = subprocess.run(["ps", "-o", "ppid=", "-p", str(child.pid)], capture_output=True, text=True).stdout.split()
+            if seen != [str(os.getpid())]:
+                return False
+            held = subprocess.run(["lsof", "-t", "--", out], capture_output=True, text=True).stdout.split()
+            return str(child.pid) in held
+        except OSError:
+            return False
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_native_task_is_live_only_while_this_session_holds_its_output(self):
+        # A live shell of this session holds its output open; an ended one doesn't, and an orphan from a crashed
+        # session (reparented away from the agent process) is not this session's. Native starts carry only on macOS.
+        observable = self.observes_processes()
+        carries = observable and sys.platform == "darwin"
+        out = self.output("live")
+        with open(out, "w") as fh:
+            child = subprocess.Popen(["sleep", "30"], stdout=fh)
+        try:
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()),
+                             {os.path.realpath(out)} if carries else set())
+        finally:
+            child.kill()
+            child.wait()
+        self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        # The agent holding the output open after its shell exited is not a live task, and neither is another
+        # descendant that inherited that descriptor: only a holder whose stdout is the file is a task's worker.
+        with open(out, "a") as held:
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+            heir = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, pass_fds=(held.fileno(),))
+            try:
+                self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+            finally:
+                heir.kill()
+                heir.wait()
+        # A grandchild whose stdout is the file (r7), under a direct child whose own stdout is not: it got that
+        # stdout from another parent, so it is not the task's root shell.
+        nested = subprocess.Popen(["sh", "-c", f'sleep 30 > "{out}" & G=$!; trap "kill $G" TERM; wait'],
+                                  stdout=subprocess.DEVNULL)
+        try:
+            if observable:
+                deadline = time.time() + 5
+                while not CLOSEOUT_MODULE.file_holders([out])[os.path.realpath(out)] and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(CLOSEOUT_MODULE.file_holders([out])[os.path.realpath(out)])
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        finally:
+            nested.terminate()
+            nested.wait()
+        # A descendant writing the file only as stderr is not the task's worker either.
+        with open(out, "a") as fh:
+            child = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, stderr=fh)
+        try:
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        finally:
+            child.kill()
+            child.wait()
+        orphan_out = self.output("orphan")
+        orphan = int(subprocess.run(["sh", "-c", f'sleep 30 > "{orphan_out}" 2>&1 & echo $!'],
+                                    capture_output=True, text=True, check=True).stdout)
+        try:
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([orphan_out], agent=os.getpid()), set())
+        finally:
+            os.kill(orphan, 9)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "PR_SET_CHILD_SUBREAPER is Linux's")
+    def test_an_adopted_orphan_carries_nothing_on_linux(self):
+        # r8: a subreaper agent adopts an orphan that still has the output as stdout, which makes it a direct child.
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        PR_SET_CHILD_SUBREAPER = 36
+        self.assertEqual(libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0), 0)
+        out = os.path.realpath(self.output("adopted"))
+        try:
+            # Its own stdin, or a non-interactive dash on Linux lets the background sleep exit at once.
+            orphan = int(subprocess.run(["sh", "-c", f'sleep 30 > "{out}" 2>&1 < /dev/null & echo $!'],
+                                        capture_output=True, text=True, check=True).stdout)
+            try:
+                ppid = subprocess.run(["ps", "-o", "ppid=", "-p", str(orphan)], capture_output=True, text=True).stdout
+                self.assertEqual(ppid.split(), [str(os.getpid())])
+                if shutil.which("lsof"):
+                    deadline = time.time() + 5
+                    while not CLOSEOUT_MODULE.file_holders([out])[out] and time.time() < deadline:
+                        time.sleep(0.05)
+                    self.assertEqual(CLOSEOUT_MODULE.file_holders([out]), {out: {orphan}})
+                self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+            finally:
+                os.kill(orphan, 9)
+                os.waitpid(orphan, 0)
+        finally:
+            libc.prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+
+    def test_native_session_stop_is_carried_only_by_a_live_labelled_task(self):
+        self.write_ledger(self.purpose("P4", text="merge root's PRs"))
+        self.set_state(children=[])
+        ts = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        # Run the hook under a process named claude, the way Claude Code runs it, with or without a live shell.
+        agent = pathlib.Path(self.tmp.name) / "bin" / "claude"
+        agent.parent.mkdir()
+        agent.symlink_to("/bin/sh")
+        carries = self.observes_processes() and sys.platform == "darwin"
+        def stop(payload, shell, agent_holds=False, heir=False, reaped=False, grandchild=False):
+            out_file = self.output("bw1")
+            hold = f'sleep 30 > "{out_file}" & S=$!; ' if shell or reaped else ""
+            hold += 'kill $S; wait $S; S=; ' if reaped else ""
+            hold += f'exec 3>>"{out_file}"; ' if agent_holds else ""
+            hold += 'sleep 30 >/dev/null 2>&1 & S=$!; ' if heir else ""
+            hold += (f'sh -c \'sleep 30 > "{out_file}" & G=$!; trap "kill $G" TERM; wait\' >/dev/null 2>&1 & S=$!; '
+                     'sleep 1; ') if grandchild else ""
+            out = subprocess.run([str(agent), "-c", hold + 'python3 "$0"; R=$?; [ -n "$S" ] && kill $S; exit $R', str(CLOSEOUT)],
+                                 input=json.dumps(payload), text=True, capture_output=True, env=self.env(), check=True)
+            return json.loads(out.stdout)["decision"]
+        labelled = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts))
+        ended = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts),
+                                       {"type": "user", "timestamp": ts, "message": {"role": "user", "content": self.notified("bw1")}})
+        # Off macOS (Linux can adopt orphans) and where processes can't be observed (the runner's sandbox, no
+        # lsof), even a live labelled shell must not carry.
+        self.assertEqual(stop(labelled, shell=True), "allow" if carries else "block")
+        # The regression: a crashed session with no SessionStart hook leaves the start with no end and no shell.
+        self.assertEqual(stop(labelled, shell=False), "block")
+        # The worker was killed and reaped before the stop.
+        self.assertEqual(stop(labelled, shell=False, reaped=True), "block")
+        # The shell exited but the agent process still holds the output open: still nothing carries.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True), "block")
+        # Another descendant of the agent inherited that descriptor (r5): it is not the task's worker.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True, heir=True), "block")
+        # A grandchild of the agent has the output as stdout, under a direct child whose stdout is not (r7): the
+        # task's root shell is gone, so nothing carries.
+        self.assertEqual(stop(labelled, shell=False, grandchild=True), "block")
+        # The end record wins over a shell still holding the output.
+        self.assertEqual(stop(ended, shell=True), "block")
+        self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True), "block")
 
     def test_child_with_no_serves_line_carries_nothing(self):
         self.write_ledger(self.purpose())

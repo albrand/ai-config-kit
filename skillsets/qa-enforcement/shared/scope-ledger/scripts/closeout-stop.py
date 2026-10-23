@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,11 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.expanduser("~/.local/s
 NUDGED = os.environ.get("CLOSEOUT_NUDGED_FILE") or os.path.expanduser("~/.local/state/agent-quality/closeout-ledger-nudged.json")
 BACKGROUND_HORIZON_S = 24 * 3600
 TRANSCRIPT_TAIL = 4 * 1024 * 1024
+# A watcher can run for hours of transcript; only lines naming a background task are parsed from this tail.
+BACKGROUND_TAIL = 32 * 1024 * 1024
+BACKGROUND_MARKS = ("backgroundTaskId", "task_status", "<task-id>", '"task_id"', "SessionStart:")
+TASK_ID = re.compile(r"<task-id>([^<\s]+)</task-id>")
+TASK_OUTPUT = re.compile(r"Output is being written to: (\S+?\.output)\b")
 BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(
@@ -150,6 +156,187 @@ def thread_state(thread, want_self=True):
             db.close()
     except sqlite3.Error:
         return {"children": None, "self": None}
+
+
+def transcript_background(path, now=None, live=None):
+    """Descriptions of the Claude Code background tasks still running in this transcript.
+
+    A native terminal session records nothing in bb's store, so thread_state never sees its watchers. Claude
+    Code writes each start into the transcript (a Bash result carrying `backgroundTaskId`, whether it was
+    launched in the background or moved there on timeout, or a `task_status` attachment after a compaction)
+    and each end as a task notification or a TaskStop result. A resumed or restarted session appends to the
+    same file and its old shells are gone, so a SessionStart other than a compaction ends every earlier start.
+    A task is running when its latest record is a start within BACKGROUND_HORIZON_S and its output file is
+    the stdout of a live direct child of this session's Claude Code process (`live`). A crashed session with no
+    SessionStart hook writes no restart record; its shells are gone or orphaned, so they carry nothing.
+    """
+    if not isinstance(path, str) or not path:
+        return []
+    try:
+        with open(os.path.expanduser(path), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - BACKGROUND_TAIL))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines:
+        if not any(m in line for m in BACKGROUND_MARKS):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    # The description lives on the Bash call, which carries no background flag when the command timed out.
+    uses = {u for e in entries for u in [start_use(e)] if u}
+    asked = {}
+    for line in lines:
+        if '"tool_use"' not in line or not any(u in line for u in uses):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        for b in message_blocks(entry) if isinstance(entry, dict) and entry.get("type") == "assistant" else []:
+            if b.get("type") == "tool_use" and b.get("id") in uses and isinstance(b.get("input"), dict):
+                asked[b["id"]] = str(b["input"].get("description") or "")
+    since = (now or datetime.datetime.now(datetime.timezone.utc)) - datetime.timedelta(seconds=BACKGROUND_HORIZON_S)
+    running = {}
+    for entry in entries:
+        ts = parse_ts(entry.get("timestamp"))
+        attachment = entry.get("attachment") if isinstance(entry.get("attachment"), dict) else {}
+        hook = str(attachment.get("hookName") or "")
+        if hook.startswith("SessionStart:") and hook != "SessionStart:compact":
+            running.clear()
+            continue
+        if attachment.get("type") == "task_status" and attachment.get("taskId"):
+            if attachment.get("status") == "running":
+                running[attachment["taskId"]] = (str(attachment.get("description") or ""), ts,
+                                                 attachment.get("outputFilePath"))
+            else:
+                running.pop(attachment["taskId"], None)
+            continue
+        # A notification that lands mid-turn is queued (queue-operation, queued_command), not a user message.
+        texts = [entry.get("content") if entry.get("type") == "queue-operation" else None, attachment.get("prompt")]
+        if entry.get("type") == "user":
+            content = (entry.get("message") or {}).get("content") if isinstance(entry.get("message"), dict) else None
+            texts += [content] if isinstance(content, str) else [b.get("text") for b in message_blocks(entry)]
+            result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
+            if result.get("backgroundTaskId"):
+                said = " ".join(str(b.get("content")) for b in message_blocks(entry) if b.get("type") == "tool_result")
+                out = TASK_OUTPUT.search(said)
+                running[result["backgroundTaskId"]] = (asked.get(start_use(entry), ""), ts, out and out.group(1))
+            elif result.get("task_id") and str(result.get("message") or "").startswith("Successfully stopped task"):
+                running.pop(result["task_id"], None)
+        for text in texts:
+            if isinstance(text, str) and "<task-notification>" in text:
+                for tid in TASK_ID.findall(text):
+                    running.pop(tid, None)
+    recent = [(desc, out) for desc, ts, out in running.values() if ts is not None and ts > since and out]
+    held = (live or live_outputs)([out for _, out in recent]) if recent else set()
+    return [desc for desc, out in recent if os.path.realpath(out) in held]
+
+
+def process_table():
+    """{pid: (ppid, args)} for every process, or {} when ps can't be read."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    table = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) > 2 else "")
+    return table
+
+
+def is_claude(args):
+    words = args.split()
+    names = [os.path.basename(w) for w in words[:2]]
+    return bool(names) and (names[0] == "claude" or (names[0].startswith("node") and names[1:] == ["claude"]))
+
+
+def agent_process(table, pid=None):
+    """The nearest ancestor of this hook that is a Claude Code process, or None."""
+    pid, seen = pid or os.getpid(), set()
+    while pid > 1 and pid not in seen and pid in table:
+        seen.add(pid)
+        ppid, args = table[pid]
+        if is_claude(args):
+            return pid
+        pid = ppid
+    return None
+
+
+def is_task_root(pid, agent, table):
+    """Whether pid is a direct child of agent, where Claude Code starts each task's shell with stdout on its output.
+
+    A deeper process with the file at fd 1 got that stdout from some other parent, inherited or redirected, and the
+    agent itself holding the file is not a task.
+    """
+    return pid != agent and pid in table and table[pid][0] == agent
+
+
+def file_holders(paths):
+    """{realpath: pids whose stdout (fd 1) is that file}, from lsof. Without lsof nothing is live.
+
+    Claude Code starts a task's shell with its stdout and stderr on the output file, launched in the background or
+    moved there on timeout alike. A descriptor inherited from anywhere else keeps its own number, and the agent's
+    fds 0-2 are its terminal; live_outputs then keeps only the holder that is the task's root shell.
+    """
+    want = {os.path.realpath(p) for p in paths}
+    got = {p: set() for p in want}
+    try:
+        out = subprocess.run(["lsof", "-F", "pfn", "--", *sorted(want)], capture_output=True, text=True, timeout=5).stdout
+        pid = fd = None
+        for line in out.splitlines():
+            if line.startswith("p") and line[1:].isdigit():
+                pid, fd = int(line[1:]), None
+            elif line.startswith("f"):
+                fd = line[1:]
+            elif line.startswith("n") and pid is not None and fd == "1" and os.path.realpath(line[1:]) in got:
+                got[os.path.realpath(line[1:])].add(pid)
+    except (OSError, subprocess.SubprocessError):
+        return {p: set() for p in want}
+    return got
+
+
+def live_outputs(paths, agent=None):
+    """The output files that are the stdout of a live direct child of this session's Claude Code process.
+
+    macOS only. There an orphan always goes to launchd, since a process can't adopt one, so a direct child of the
+    agent is a process the agent started. Linux lets any process adopt orphans (PR_SET_CHILD_SUBREAPER), so a stale
+    task's leftover could pass as its root shell; nothing carries there, as on main.
+    """
+    if sys.platform != "darwin":
+        return set()
+    table = process_table()
+    agent = agent or agent_process(table)
+    if agent is None:
+        return set()
+    # This hook and the shells between it and the agent inherit the agent's descriptors; they are not a task.
+    hook, pid = set(), os.getpid()
+    while pid > 1 and pid != agent and pid not in hook and pid in table:
+        hook.add(pid)
+        pid = table[pid][0]
+    return {path for path, pids in file_holders(paths).items()
+            if any(p not in hook and is_task_root(p, agent, table) for p in pids)}
+
+
+def message_blocks(entry):
+    content = (entry.get("message") or {}).get("content") if isinstance(entry.get("message"), dict) else None
+    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+
+
+def start_use(entry):
+    """The Bash call whose result started a background task, else None."""
+    result = entry.get("toolUseResult") if entry.get("type") == "user" else None
+    if not isinstance(result, dict) or not result.get("backgroundTaskId"):
+        return None
+    return next((b.get("tool_use_id") for b in message_blocks(entry) if b.get("type") == "tool_result"), None)
 
 
 def child_serves(child_ids, serves_pattern):
@@ -416,7 +603,11 @@ def decide(payload, thread, gate, state_reader=thread_state):
     if not pending:
         return allow("no open purposes")
     ids = [p["id"] for p in pending]
-    got = carried_by(state_reader(thread), ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
+    state = state_reader(thread)
+    if isinstance(state.get("self"), dict):
+        state["self"]["background"] = list(state["self"].get("background") or []) + transcript_background(
+            payload.get("transcript_path") or payload.get("transcriptPath"))
+    got = carried_by(state, ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
     if got is None:
         log(thread, "ledger", "allow", "state unreadable", ids)
         return allow("thread state unreadable")
