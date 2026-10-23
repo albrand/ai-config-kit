@@ -77,7 +77,8 @@ FIX_GIT_DEADLINE_RESERVE_S = 0.25
 FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
 FIX_BRIEF_CHECK_PENDING = False
 FIX_REVIEW_PATH = re.compile(
-    r"""(?<![\w./~$}{-])(/(?:[^\s<>]|\\[ \t])+?\.md)(?=$|[\s)\]},;:!?\"'`#])"""
+    r"""(?<![\w./~$}{-])(/(?:[^\s<>]|\\[ \t])+?\.md)"""
+    r"""(?=$|[\s)\]},;:!?\"'`#]|[.,;:)\]]+(?=$|[\s)\]},;:!?\"'`#]))"""
 )
 FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)(?:#[^>\r\n]*)?>")
 FIX_REVIEW_PATH_QUOTED = re.compile(
@@ -1786,17 +1787,42 @@ def selftest():
     try:
         if not real_git:
             raise RuntimeError("git is not on PATH")
-        repo = subprocess.run([real_git, "rev-parse", "--show-toplevel"], cwd=here, check=True,
-                              capture_output=True, text=True, timeout=1).stdout.strip()
-        sha = subprocess.run([real_git, "rev-parse", "HEAD"], cwd=repo, check=True,
-                             capture_output=True, text=True, timeout=1).stdout.strip()
-        parent_sha = subprocess.run([real_git, "rev-parse", "HEAD^"], cwd=repo, check=True,
-                                    capture_output=True, text=True, timeout=1).stdout.strip()
+        repo = os.path.join(tmp, "fixture-repo")
+        os.makedirs(repo)
+        fixture_git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        fixture_git_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                                "GIT_OPTIONAL_LOCKS": "0"})
+
+        def fixture_git(args):
+            return subprocess.run([real_git, "-C", repo, *args], check=True, capture_output=True,
+                                  text=True, timeout=1, env=fixture_git_env)
+
+        inherited_work_tree = os.environ.get("GIT_WORK_TREE")
+        os.environ["GIT_WORK_TREE"] = tmp
+        try:
+            fixture_git(["init", "--quiet"])
+        finally:
+            if inherited_work_tree is None:
+                os.environ.pop("GIT_WORK_TREE", None)
+            else:
+                os.environ["GIT_WORK_TREE"] = inherited_work_tree
+        print("ok   selftest Git fixture ignores inherited GIT_WORK_TREE")
+        fixture_git(["config", "user.name", "Scope Gate Selftest"])
+        fixture_git(["config", "user.email", "scope-gate-selftest@example.invalid"])
+        cited_file = os.path.join(repo, "skillsets", "qa-enforcement", "shared", "scope-ledger",
+                                  "scripts", "scope-gate.py")
+        os.makedirs(os.path.dirname(cited_file))
+        with open(cited_file, "w", encoding="utf-8") as f:
+            f.write("fixture citation line one\nfixture citation line two\n")
+        fixture_git(["add", "."])
+        fixture_git(["commit", "--quiet", "-m", "create scope gate citation fixture"])
+        fixture_git(["commit", "--quiet", "--allow-empty", "-m", "create current fixture head"])
+        sha = fixture_git(["rev-parse", "HEAD"]).stdout.strip()
+        parent_sha = fixture_git(["rev-parse", "HEAD^"]).stdout.strip()
         for case in fix_brief_cases:
             if case.get("exists_at_checked_sha"):
                 cited_path = case["citation"].rsplit(":", 1)[0]
-                subprocess.run([real_git, "cat-file", "-e", f"{parent_sha}:{cited_path}"], cwd=repo,
-                               check=True, capture_output=True, text=True, timeout=1)
+                fixture_git(["cat-file", "-e", f"{parent_sha}:{cited_path}"])
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
         for c in fix_brief_cases:
             failed += 1
@@ -1826,6 +1852,7 @@ def selftest():
                     report_ref = report_path.replace(" ", "\\ ")
                 else:
                     report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
+                report_ref += c.get("report_suffix", "")
                 lines = ["serves: P1", f"Review verdict: {report_ref}"]
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
