@@ -30,6 +30,10 @@ EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.expanduser("~/.local/s
 NUDGED = os.environ.get("CLOSEOUT_NUDGED_FILE") or os.path.expanduser("~/.local/state/agent-quality/closeout-ledger-nudged.json")
 BACKGROUND_HORIZON_S = 24 * 3600
 TRANSCRIPT_TAIL = 4 * 1024 * 1024
+# A watcher can run for hours of transcript; only lines naming a background task are parsed from this tail.
+BACKGROUND_TAIL = 32 * 1024 * 1024
+BACKGROUND_MARKS = ("backgroundTaskId", "task_status", "<task-id>", '"task_id"', "SessionStart:")
+TASK_ID = re.compile(r"<task-id>([^<\s]+)</task-id>")
 BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(
@@ -150,6 +154,93 @@ def thread_state(thread, want_self=True):
             db.close()
     except sqlite3.Error:
         return {"children": None, "self": None}
+
+
+def transcript_background(path, now=None):
+    """Descriptions of the Claude Code background tasks still running in this transcript.
+
+    A native terminal session records nothing in bb's store, so thread_state never sees its watchers. Claude
+    Code writes each start into the transcript (a Bash result carrying `backgroundTaskId`, whether it was
+    launched in the background or moved there on timeout, or a `task_status` attachment after a compaction)
+    and each end as a task notification or a TaskStop result. A resumed or restarted session appends to the
+    same file and its old shells are gone, so a SessionStart other than a compaction ends every earlier start.
+    A task is running when its latest record is a start within BACKGROUND_HORIZON_S.
+    """
+    if not isinstance(path, str) or not path:
+        return []
+    try:
+        with open(os.path.expanduser(path), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - BACKGROUND_TAIL))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines:
+        if not any(m in line for m in BACKGROUND_MARKS):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    # The description lives on the Bash call, which carries no background flag when the command timed out.
+    uses = {u for e in entries for u in [start_use(e)] if u}
+    asked = {}
+    for line in lines:
+        if '"tool_use"' not in line or not any(u in line for u in uses):
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        for b in message_blocks(entry) if isinstance(entry, dict) and entry.get("type") == "assistant" else []:
+            if b.get("type") == "tool_use" and b.get("id") in uses and isinstance(b.get("input"), dict):
+                asked[b["id"]] = str(b["input"].get("description") or "")
+    since = (now or datetime.datetime.now(datetime.timezone.utc)) - datetime.timedelta(seconds=BACKGROUND_HORIZON_S)
+    running = {}
+    for entry in entries:
+        ts = parse_ts(entry.get("timestamp"))
+        attachment = entry.get("attachment") if isinstance(entry.get("attachment"), dict) else {}
+        hook = str(attachment.get("hookName") or "")
+        if hook.startswith("SessionStart:") and hook != "SessionStart:compact":
+            running.clear()
+            continue
+        if attachment.get("type") == "task_status" and attachment.get("taskId"):
+            if attachment.get("status") == "running":
+                running[attachment["taskId"]] = (str(attachment.get("description") or ""), ts)
+            else:
+                running.pop(attachment["taskId"], None)
+            continue
+        # A notification that lands mid-turn is queued (queue-operation, queued_command), not a user message.
+        texts = [entry.get("content") if entry.get("type") == "queue-operation" else None, attachment.get("prompt")]
+        if entry.get("type") == "user":
+            content = (entry.get("message") or {}).get("content") if isinstance(entry.get("message"), dict) else None
+            texts += [content] if isinstance(content, str) else [b.get("text") for b in message_blocks(entry)]
+            result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
+            if result.get("backgroundTaskId"):
+                running[result["backgroundTaskId"]] = (asked.get(start_use(entry), ""), ts)
+            elif result.get("task_id") and str(result.get("message") or "").startswith("Successfully stopped task"):
+                running.pop(result["task_id"], None)
+        for text in texts:
+            if isinstance(text, str) and "<task-notification>" in text:
+                for tid in TASK_ID.findall(text):
+                    running.pop(tid, None)
+    return [desc for desc, ts in running.values() if ts is not None and ts > since]
+
+
+def message_blocks(entry):
+    content = (entry.get("message") or {}).get("content") if isinstance(entry.get("message"), dict) else None
+    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+
+
+def start_use(entry):
+    """The Bash call whose result started a background task, else None."""
+    result = entry.get("toolUseResult") if entry.get("type") == "user" else None
+    if not isinstance(result, dict) or not result.get("backgroundTaskId"):
+        return None
+    return next((b.get("tool_use_id") for b in message_blocks(entry) if b.get("type") == "tool_result"), None)
 
 
 def child_serves(child_ids, serves_pattern):
@@ -416,7 +507,11 @@ def decide(payload, thread, gate, state_reader=thread_state):
     if not pending:
         return allow("no open purposes")
     ids = [p["id"] for p in pending]
-    got = carried_by(state_reader(thread), ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
+    state = state_reader(thread)
+    if isinstance(state.get("self"), dict):
+        state["self"]["background"] = list(state["self"].get("background") or []) + transcript_background(
+            payload.get("transcript_path") or payload.get("transcriptPath"))
+    got = carried_by(state, ids, lambda c: child_serves(c, gate.SERVES_P), gate.SERVES_P)
     if got is None:
         log(thread, "ledger", "allow", "state unreadable", ids)
         return allow("thread state unreadable")

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fixtures for the scope-ledger closeout check at Stop and its place in the stop chain."""
+import datetime
 import json
 from contextlib import closing
 import importlib.util
@@ -174,6 +175,73 @@ class CloseoutStopTests(unittest.TestCase):
         # Positive control: the coordinator waits on background work it labels as serving P2.
         self.set_state(children=[], background=["Wait for the Hermes verdict", "serves: P2 — run the QA walk"])
         self.assertEqual(self.closeout()["decision"], "allow")
+
+    def native_transcript(self, *entries):
+        """A Claude Code transcript; bb records nothing for a native terminal session's background tasks."""
+        path = pathlib.Path(self.tmp.name) / "native.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+        return {"transcript_path": str(path)}
+
+    def started(self, task, desc, ts, timed_out=False):
+        use = f"toolu_{task}"
+        call = {"command": "sh watch.sh", "description": desc}
+        call.update({"timeout": 600000} if timed_out else {"run_in_background": True})
+        result = {"stdout": "", "backgroundTaskId": task}
+        result.update({"timedOutAfterMs": 600000} if timed_out else {})
+        return [{"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": use, "name": "Bash", "input": call}]}},
+                {"type": "user", "timestamp": ts, "toolUseResult": result,
+                 "message": {"role": "user", "content": [{"tool_use_id": use, "type": "tool_result",
+                                                          "content": f"Command running in background with ID: {task}."}]}}]
+
+    @staticmethod
+    def notified(task):
+        return (f"<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n"
+                f"<summary>Background command completed (exit code 0)</summary>\n</task-notification>")
+
+    def test_native_session_background_task_carries_the_purposes_it_names(self):
+        self.write_ledger(self.purpose("P4", text="merge root's PRs"))
+        self.set_state(children=[])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ts = (now - datetime.timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        old = (now - datetime.timedelta(hours=25)).isoformat().replace("+00:00", "Z")
+        self.assertEqual(self.closeout(self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts)))["decision"], "allow")
+        # An unrelated watcher carries nothing, and an ended task carries nothing however its end was recorded.
+        self.assertEqual(self.closeout(self.native_transcript(*self.started("bw1", "Wait for CI", ts)))["decision"], "block")
+        ends = {
+            "user notification": {"type": "user", "timestamp": ts, "message": {"role": "user", "content": self.notified("bw1")}},
+            "queued mid-turn": {"type": "queue-operation", "operation": "enqueue", "timestamp": ts, "content": self.notified("bw1")},
+            "queued attachment": {"type": "attachment", "timestamp": ts,
+                                  "attachment": {"type": "queued_command", "prompt": self.notified("bw1")}},
+            "TaskStop": {"type": "user", "timestamp": ts, "toolUseResult": {
+                "message": "Successfully stopped task: bw1 (sh watch.sh)", "task_id": "bw1", "task_type": "local_bash"},
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_x", "content": "stopped"}]}},
+        }
+        for name, end in ends.items():
+            with self.subTest(end=name):
+                self.nudged.unlink(missing_ok=True)
+                payload = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts), end)
+                self.assertEqual(self.closeout(payload)["decision"], "block")
+        # A tool result that quotes a notification is not one.
+        quoted = {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_y", "content": self.notified("bw1")}]}}
+        self.assertEqual(self.closeout(self.native_transcript(*self.started("bw1", "serves: P4 — wait", ts), quoted))["decision"], "allow")
+        # A command moved to the background on timeout has no background flag; its description still counts.
+        self.assertEqual(self.closeout(self.native_transcript(
+            *self.started("bw3", "serves: P4 — strict verify", ts, timed_out=True)))["decision"], "allow")
+        # A resumed or restarted process lost its shells; a compaction keeps them.
+        session = lambda source: {"type": "attachment", "timestamp": ts, "attachment": {
+            "type": "hook_success", "hookName": f"SessionStart:{source}", "hookEvent": "SessionStart"}}
+        for source, expected in (("resume", "block"), ("startup", "block"), ("compact", "allow")):
+            with self.subTest(session=source):
+                payload = self.native_transcript(*self.started("bw1", "serves: P4 — wait", ts), session(source))
+                self.assertEqual(self.closeout(payload)["decision"], expected)
+        # After a compaction the start survives only as a task_status attachment; past the horizon it is lost.
+        status = lambda when, state="running": {"type": "attachment", "timestamp": when, "attachment": {
+            "type": "task_status", "taskId": "bw2", "taskType": "local_bash", "description": "serves: P4 — wait", "status": state}}
+        self.assertEqual(self.closeout(self.native_transcript(status(ts)))["decision"], "allow")
+        self.assertEqual(self.closeout(self.native_transcript(status(old)))["decision"], "block")
+        self.assertEqual(self.closeout(self.native_transcript(status(ts), status(ts, "completed")))["decision"], "block")
 
     def test_child_with_no_serves_line_carries_nothing(self):
         self.write_ledger(self.purpose())

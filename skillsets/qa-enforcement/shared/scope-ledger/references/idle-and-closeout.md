@@ -43,6 +43,15 @@ correction must not hide unfinished work.
   ~290 each CLI call took 4-20 s, past Codex's 5 s Stop-hook budget, so the
   check would have failed open whenever the fleet was busy. A background task
   is running while its start (within 24 h) has no completion.
+- A native Claude Code terminal session records nothing in bb's store, so its
+  background tasks are also read from the Stop payload's transcript: a Bash
+  call's `backgroundTaskId` result (launched in the background or moved there
+  on timeout) or a `task_status` attachment after a compaction starts one; a
+  task notification, as a message or queued mid-turn, or a TaskStop result
+  ends it. A resumed or restarted session appends to the same file without its
+  old shells, so its `SessionStart` record ends every earlier start. A session
+  with no SessionStart hook writes no such record; its dead starts count for
+  up to 24 h. Native Codex sessions are not read yet.
 - The nudge lists the unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask … --why-owner <category>` for a decision only the user owns (money, an
