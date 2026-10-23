@@ -77,7 +77,7 @@ FIX_GIT_DEADLINE_RESERVE_S = 0.25
 FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
 FIX_BRIEF_CHECK_PENDING = False
 FIX_REVIEW_PATH = re.compile(
-    r"""(?<![\w./-])(/(?:[^\s<>]|\\[ \t])+?\.md)(?=$|[\s)\]},;:!?\"'`#])"""
+    r"""(?<![\w./~$}{-])(/(?:[^\s<>]|\\[ \t])+?\.md)(?=$|[\s)\]},;:!?\"'`#])"""
 )
 FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)(?:#[^>\r\n]*)?>")
 FIX_REVIEW_PATH_QUOTED = re.compile(
@@ -397,12 +397,12 @@ def _fail_review_paths(paths):
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             if not stat.S_ISREG(os.fstat(fd).st_mode):
-                continue
+                raise FixBriefCheckError(f"could not read referenced review file `{path}`: not a regular file")
             with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
                 fd = None
                 first_line = report.readline(64).rstrip("\r\n")
-        except OSError:
-            continue
+        except OSError as e:
+            raise FixBriefCheckError(f"could not read referenced review file `{path}`: {e.strerror}") from e
         finally:
             if fd is not None:
                 os.close(fd)
@@ -573,7 +573,10 @@ def fix_brief_problem(text):
     review_paths = _absolute_markdown_paths(text)
     if len(review_paths) > FIX_REVIEW_PATH_LIMIT:
         return f"the brief names {len(review_paths)} absolute Markdown files; the gate inspects at most {FIX_REVIEW_PATH_LIMIT}"
-    failed_reviews = _fail_review_paths(review_paths)
+    try:
+        failed_reviews = _fail_review_paths(review_paths)
+    except FixBriefCheckError as e:
+        return str(e)
     if not failed_reviews:
         return None
 
@@ -592,9 +595,15 @@ def fix_brief_problem(text):
 
     unique_paths = list(dict.fromkeys(path for path, _ in citations))
     candidate_count = len(_git_repo_candidates(text))
-    calls_left = max(1, candidate_count + len(unique_paths) + 2)
+    calls_left = max(1, candidate_count + len(unique_paths) + 3)
     try:
         repo = _fix_brief_repo(text, calls_left)
+        repo_head = _fix_git_call(repo, ["rev-parse", "--verify", "HEAD^{commit}"],
+                                  calls_left=max(1, calls_left - candidate_count)).decode("utf-8", "replace").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", repo_head):
+            raise FixBriefCheckError("git did not return a 40-hex commit for the named worktree HEAD")
+        if sha != repo_head:
+            raise FixBriefCheckError(f"Checked against {sha} does not match the named worktree HEAD {repo_head}")
         line_counts = _git_line_counts(repo, sha, unique_paths,
                                        max(1, len(unique_paths) + 2))
     except FixBriefCheckError as e:
@@ -1781,6 +1790,13 @@ def selftest():
                               capture_output=True, text=True, timeout=1).stdout.strip()
         sha = subprocess.run([real_git, "rev-parse", "HEAD"], cwd=repo, check=True,
                              capture_output=True, text=True, timeout=1).stdout.strip()
+        parent_sha = subprocess.run([real_git, "rev-parse", "HEAD^"], cwd=repo, check=True,
+                                    capture_output=True, text=True, timeout=1).stdout.strip()
+        for case in fix_brief_cases:
+            if case.get("exists_at_checked_sha"):
+                cited_path = case["citation"].rsplit(":", 1)[0]
+                subprocess.run([real_git, "cat-file", "-e", f"{parent_sha}:{cited_path}"], cwd=repo,
+                               check=True, capture_output=True, text=True, timeout=1)
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
         for c in fix_brief_cases:
             failed += 1
@@ -1801,8 +1817,9 @@ def selftest():
             for i, c in enumerate(fix_brief_cases):
                 verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
                 verdict_path = os.path.join(tmp, verdict_name)
-                with open(verdict_path, "w", encoding="utf-8") as f:
-                    f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                if not c.get("missing_report"):
+                    with open(verdict_path, "w", encoding="utf-8") as f:
+                        f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
                 report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
@@ -1814,8 +1831,9 @@ def selftest():
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
                 lines.append(f"{c['repo_field']}: {repo}")
+                checked_sha = parent_sha if c.get("checked_sha") == "parent" else sha
                 if c["checked"]:
-                    lines.append(f"Checked against {sha}")
+                    lines.append(f"Checked against {checked_sha}")
                 if c["citation"]:
                     lines.append(f"Finding: {c['citation']}")
                 brief_path = os.path.join(tmp, f"fix-brief-{i}.md")
@@ -1837,9 +1855,12 @@ def selftest():
                     os.chdir(original_cwd)
                 with open(git_log, encoding="utf-8") as f:
                     git_calls = f.read()
-                if c["git_spec"]:
+                if c.get("git_head_check"):
+                    checked_object = ("rev-parse --verify HEAD^{commit}" in git_calls
+                                      and "cat-file -e" not in git_calls)
+                elif c["git_spec"]:
                     cited_path = c["git_spec"].rsplit(":", 1)[0]
-                    checked_object = f"cat-file -e {sha}:{cited_path}" in git_calls
+                    checked_object = f"cat-file -e {checked_sha}:{cited_path}" in git_calls
                 else:
                     checked_object = not git_calls
                 needle = c.get("needle")

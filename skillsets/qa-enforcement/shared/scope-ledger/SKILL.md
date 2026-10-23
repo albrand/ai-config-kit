@@ -42,13 +42,15 @@ than finishing the purposes.
   edit blocks), is cut at 12.5 s after `HOOK_T0` and then passes, as a host
   timeout would, but inside the 15 s.
 - A brief that names an absolute Markdown file whose first line starts with
-  `VERDICT: FAIL` needs `Checked against <40-hex sha>` and a repository-relative
-  `file.ext:<line>` citation. A trailing Markdown `#fragment` is ignored when
-  locating the file; write a backslash before each space in an unquoted path.
+  `VERDICT: FAIL` needs `Checked against <40-hex sha>` matching the named
+  worktree's current HEAD and a repository-relative `file.ext:<line>` citation.
+  An unreadable referenced Markdown file fails closed. A trailing Markdown
+  `#fragment` is ignored when locating the file; write a backslash before each
+  space in an unquoted path.
   The gate inspects at most 20 absolute Markdown
-  paths, 20 repository hints and 20 citations; each git call has a 500 ms
-  ceiling, and cited blobs total at most 8 MiB. Deadline, git, and limit
-  failures deny the dispatch.
+  paths, 20 repository hints and 20 citations; each git call, including the
+  worktree HEAD check, has a 500 ms ceiling, and cited blobs total at most
+  8 MiB. Deadline, unreadable-file, git, and limit failures deny the dispatch.
 - At the deadline (only when the gate could not finish), these deny even
   though the normal decision would allow them; each fails closed and a retry
   gets the normal decision: a command whose words read like a dispatch
