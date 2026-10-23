@@ -49,9 +49,13 @@ correction must not hide unfinished work.
   on timeout) or a `task_status` attachment after a compaction starts one; a
   task notification, as a message or queued mid-turn, or a TaskStop result
   ends it. A resumed or restarted session appends to the same file without its
-  old shells, so its `SessionStart` record ends every earlier start. A session
-  with no SessionStart hook writes no such record; its dead starts count for
-  up to 24 h. Native Codex sessions are not read yet.
+  old shells, so its `SessionStart` record ends every earlier start. A started
+  task carries only while a live process holding its output file descends from
+  the hook's nearest Claude Code ancestor (lsof, else `/proc`): a crashed
+  session's shells are gone or orphaned, so they carry nothing, with or without
+  a SessionStart hook. When the output path, ps, or both lsof and `/proc` are
+  missing, nothing carries and the stop is nudged. Native Codex sessions are
+  not read yet.
 - The nudge lists the unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask … --why-owner <category>` for a decision only the user owns (money, an

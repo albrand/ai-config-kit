@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +35,7 @@ TRANSCRIPT_TAIL = 4 * 1024 * 1024
 BACKGROUND_TAIL = 32 * 1024 * 1024
 BACKGROUND_MARKS = ("backgroundTaskId", "task_status", "<task-id>", '"task_id"', "SessionStart:")
 TASK_ID = re.compile(r"<task-id>([^<\s]+)</task-id>")
+TASK_OUTPUT = re.compile(r"Output is being written to: (\S+?\.output)\b")
 BB_DB = os.environ.get("CLOSEOUT_BB_DB") or os.path.expanduser("~/.bb/bb.db")
 # Inputs bb and the hooks compose; a turn opened by one of these is not the user answering an ask.
 MACHINE_INPUT = re.compile(
@@ -156,7 +158,7 @@ def thread_state(thread, want_self=True):
         return {"children": None, "self": None}
 
 
-def transcript_background(path, now=None):
+def transcript_background(path, now=None, live=None):
     """Descriptions of the Claude Code background tasks still running in this transcript.
 
     A native terminal session records nothing in bb's store, so thread_state never sees its watchers. Claude
@@ -164,7 +166,9 @@ def transcript_background(path, now=None):
     launched in the background or moved there on timeout, or a `task_status` attachment after a compaction)
     and each end as a task notification or a TaskStop result. A resumed or restarted session appends to the
     same file and its old shells are gone, so a SessionStart other than a compaction ends every earlier start.
-    A task is running when its latest record is a start within BACKGROUND_HORIZON_S.
+    A task is running when its latest record is a start within BACKGROUND_HORIZON_S and its output file is
+    held open by a live descendant of this session's Claude Code process (`live`). A crashed session with no
+    SessionStart hook writes no restart record; its shells are gone or orphaned, so they carry nothing.
     """
     if not isinstance(path, str) or not path:
         return []
@@ -209,7 +213,8 @@ def transcript_background(path, now=None):
             continue
         if attachment.get("type") == "task_status" and attachment.get("taskId"):
             if attachment.get("status") == "running":
-                running[attachment["taskId"]] = (str(attachment.get("description") or ""), ts)
+                running[attachment["taskId"]] = (str(attachment.get("description") or ""), ts,
+                                                 attachment.get("outputFilePath"))
             else:
                 running.pop(attachment["taskId"], None)
             continue
@@ -220,14 +225,97 @@ def transcript_background(path, now=None):
             texts += [content] if isinstance(content, str) else [b.get("text") for b in message_blocks(entry)]
             result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
             if result.get("backgroundTaskId"):
-                running[result["backgroundTaskId"]] = (asked.get(start_use(entry), ""), ts)
+                said = " ".join(str(b.get("content")) for b in message_blocks(entry) if b.get("type") == "tool_result")
+                out = TASK_OUTPUT.search(said)
+                running[result["backgroundTaskId"]] = (asked.get(start_use(entry), ""), ts, out and out.group(1))
             elif result.get("task_id") and str(result.get("message") or "").startswith("Successfully stopped task"):
                 running.pop(result["task_id"], None)
         for text in texts:
             if isinstance(text, str) and "<task-notification>" in text:
                 for tid in TASK_ID.findall(text):
                     running.pop(tid, None)
-    return [desc for desc, ts in running.values() if ts is not None and ts > since]
+    recent = [(desc, out) for desc, ts, out in running.values() if ts is not None and ts > since and out]
+    held = (live or live_outputs)([out for _, out in recent]) if recent else set()
+    return [desc for desc, out in recent if os.path.realpath(out) in held]
+
+
+def process_table():
+    """{pid: (ppid, args)} for every process, or {} when ps can't be read."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    table = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) > 2 else "")
+    return table
+
+
+def is_claude(args):
+    words = args.split()
+    names = [os.path.basename(w) for w in words[:2]]
+    return bool(names) and (names[0] == "claude" or (names[0].startswith("node") and names[1:] == ["claude"]))
+
+
+def agent_process(table, pid=None):
+    """The nearest ancestor of this hook that is a Claude Code process, or None."""
+    pid, seen = pid or os.getpid(), set()
+    while pid > 1 and pid not in seen and pid in table:
+        seen.add(pid)
+        ppid, args = table[pid]
+        if is_claude(args):
+            return pid
+        pid = ppid
+    return None
+
+
+def descends(pid, agent, table):
+    seen = set()
+    while pid > 1 and pid not in seen and pid in table:
+        if pid == agent:
+            return True
+        seen.add(pid)
+        pid = table[pid][0]
+    return False
+
+
+def file_holders(paths):
+    """{realpath: pids holding it open}; lsof, else /proc. Missing tools give {} (nothing is live)."""
+    want = {os.path.realpath(p) for p in paths}
+    got = {p: set() for p in want}
+    try:
+        out = subprocess.run(["lsof", "-F", "pn", "--", *sorted(want)], capture_output=True, text=True, timeout=5).stdout
+        pid = None
+        for line in out.splitlines():
+            if line.startswith("p") and line[1:].isdigit():
+                pid = int(line[1:])
+            elif line.startswith("n") and pid is not None and os.path.realpath(line[1:]) in got:
+                got[os.path.realpath(line[1:])].add(pid)
+        return got
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for proc in os.listdir("/proc") if os.path.isdir("/proc") else []:
+        if not proc.isdigit():
+            continue
+        try:
+            for fd in os.listdir(f"/proc/{proc}/fd"):
+                target = os.path.realpath(f"/proc/{proc}/fd/{fd}")
+                if target in got:
+                    got[target].add(int(proc))
+        except OSError:
+            continue
+    return got
+
+
+def live_outputs(paths, agent=None):
+    """The output files held open by a live descendant of this session's Claude Code process."""
+    table = process_table()
+    agent = agent or agent_process(table)
+    if agent is None:
+        return set()
+    return {path for path, pids in file_holders(paths).items() if any(descends(p, agent, table) for p in pids)}
 
 
 def message_blocks(entry):
