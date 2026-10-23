@@ -420,7 +420,8 @@ def _read_only_reviewer_brief(text):
     role_declares_reviewer = (len(role_lines) == 1
                               and not role_lines[0][0]
                               and re.search(r"\breviewer\b", role_lines[0][1], re.I) is not None
-                              and re.search(r"\bwriter\b", role_lines[0][1], re.I) is None)
+                              and re.search(r"\b(?:writer|non|not|no|never)\b",
+                                            role_lines[0][1], re.I) is None)
     read_only_marker = re.search(
         r"^[ \t]*Read-only(?:[ \t]*:[ \t]*(?:yes|true|1))?[ \t]*$", text, re.I | re.M)
     return bool(role_declares_reviewer and read_only_marker)
