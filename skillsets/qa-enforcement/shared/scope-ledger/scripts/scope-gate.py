@@ -1392,6 +1392,10 @@ def selftest():
          claude_bash("printf x \\>& bb thread tell thr_x go"), thread, 2),
         ("claude: a run-time command word after an escaped \\> and a real pipe still dispatches",
          claude_bash('printf x \\>| "$(echo bb)" thread tell thr_x go'), thread, 2),
+        # bb's first argument a literal `>|`: bb exits "unknown command '>|'" and sends nothing, so the
+        # scanner must not read past it to the later `thread tell` (Hermes #99 r4).
+        ("claude: a quoted '>|' first argument is not a dispatch",
+         claude_bash("bb '>|' thread tell thr_x go"), thread, 0),
         # A quoted `>|` is a literal word, never a redirection: as an option's value it must not
         # swallow the verb (Hermes #99 r3).
         ("claude: a quoted '>|' option value does not hide the dispatch",
