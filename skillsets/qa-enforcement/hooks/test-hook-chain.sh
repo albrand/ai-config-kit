@@ -185,6 +185,68 @@ cases="$cases
 0|2|must say|bb th\`x\`read tell thr_x hi
 0|2|must say|bb thread \$(echo) tell thr_x hi
 0|0|-|bb thread show \$ID"
+# Remote ref deletion (owner rule: deleting a remote branch needs approval for that exact ref;
+# 2026-10-15 incident). Decided by shape in the adapter before any gate stage, so the verdict
+# holds whatever the gate stage does (instant, hung, or slow python). @LF@ is a newline.
+rdel_why="explicit approval for that exact ref"
+cases="$cases
+0|2|$rdel_why|git push origin --delete old-branch
+0|2|$rdel_why|git push origin old-branch --delete
+0|2|$rdel_why|git push -d origin old-branch
+0|2|$rdel_why|git push --del origin old-branch
+0|2|$rdel_why|git push origin :old-branch
+0|2|$rdel_why|git push origin +:old-branch
+0|2|$rdel_why|git push origin \":old-branch\"
+0|2|$rdel_why|git push --mirror
+0|2|$rdel_why|git push --prune origin
+0|2|$rdel_why|git -C /some/repo push origin --delete old-branch
+0|2|$rdel_why|git -c core.x=y push -q origin --delete old-branch
+0|2|$rdel_why|GIT_TERMINAL_PROMPT=0 git push -q origin --delete old-branch
+0|2|$rdel_why|git @NL@  push origin @NL@  --delete old-branch
+0|2|$rdel_why|cd /some/repo && git push origin --delete old-branch
+0|2|$rdel_why|echo start; git push origin --delete old-branch; echo done
+0|2|$rdel_why|echo old-branch | git push origin --delete old-branch
+0|2|$rdel_why|ls || git push origin :old-branch
+0|2|$rdel_why|if true; then git push origin --delete old-branch; fi
+0|2|$rdel_why|x=\$(git push origin --delete old-branch)
+0|2|$rdel_why|echo \"\$(git push origin --delete old-branch)\"
+0|2|$rdel_why|bash -c \"git push origin --delete old-branch\"
+0|2|$rdel_why|bash -c \"cd x && git push origin :old-branch\"
+0|2|$rdel_why|sh -c 'echo ok; git push origin --delete old-branch'
+0|2|$rdel_why|cat <<EOF@LF@note@LF@EOF@LF@git push origin --delete old-branch
+0|2|$rdel_why|gh api -X DELETE repos/o/r/git/refs/heads/old-branch
+0|2|$rdel_why|gh api repos/o/r/git/refs/heads/old-branch --method DELETE
+0|2|$rdel_why|gh api --method=DELETE repos/o/r/git/refs/heads/old-branch
+0|2|$rdel_why|gh api -XDELETE repos/o/r/git/refs/heads/old-branch
+0|2|$rdel_why|gh api -X DELETE repos/o/r/branches/old-branch
+0|2|$rdel_why|cd x && gh api repos/o/r/git/refs/heads/old-branch -X DELETE | cat
+13|2|$rdel_why|git push origin --delete old-branch
+13|2|$rdel_why|git push origin :old-branch
+13|2|$rdel_why|gh api -X DELETE repos/o/r/git/refs/heads/old-branch
+30|2|$rdel_why|git push origin --delete old-branch
+30|2|$rdel_why|cd x && gh api --method DELETE repos/o/r/branches/old-branch
+0|0|-|git push origin feature-x
+0|0|-|git push -u origin HEAD
+0|0|-|git push origin HEAD:refs/heads/feature-x
+0|0|-|git push origin --tags
+0|0|-|git push --force-with-lease origin feature-x
+0|0|-|git branch -d local-branch
+0|0|-|git branch -D local-branch
+0|0|-|git branch local-branch -d
+0|0|-|git worktree remove ../wt
+0|0|-|git remote prune origin
+0|0|-|gh pr merge 5 --delete-branch
+0|0|-|gh api repos/o/r/pulls
+0|0|-|gh api -X GET repos/o/r/git/refs/heads/old-branch
+0|0|-|gh api -X DELETE repos/o/r/issues/comments/9
+0|0|-|echo \"to remove it run: git push origin --delete old-branch\"
+0|0|-|echo git push origin --delete old-branch
+0|0|-|git commit -m \"docs: never run git push origin --delete without approval\"
+0|0|-|gh pr create --title \"mention git push --delete\" --body \"gh api -X DELETE repos/o/r/git/refs/heads/x\"
+0|0|-|cat <<EOF@LF@git push origin --delete old-branch@LF@EOF
+0|0|-|git commit -F - <<EOF@LF@git push origin --delete old-branch@LF@EOF
+13|0|-|git push origin feature-x
+13|0|-|echo \"git push origin --delete old-branch\""
 for mode in plain slowpy; do
   path="$PATH"
   [ "$mode" = slowpy ] && path="$H/slowpy:$PATH"
