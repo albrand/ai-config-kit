@@ -45,7 +45,8 @@ than finishing the purposes.
   `VERDICT: FAIL` needs `Checked against <40-hex sha>` matching the named
   worktree's current HEAD and a repository-relative `file.ext:<line>` citation.
   Read-only reviewer briefs are exempt only when a `Role:` line matches
-  `^Role: .*reviewer` and the brief has a positive `Read-only` marker
+  `^Role: .*reviewer` before any `writer` label in that line, and the brief has a
+  positive `Read-only` marker
   (`Read-only` or `Read-only: yes|true|1`); writer fix briefs do not receive this
   exemption. Missing referenced paths are ignored, while existing unreadable
   paths still fail closed.

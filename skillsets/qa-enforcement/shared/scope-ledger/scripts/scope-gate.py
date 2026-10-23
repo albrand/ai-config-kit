@@ -416,7 +416,11 @@ def _fail_review_paths(paths):
 
 
 def _read_only_reviewer_brief(text):
-    role_declares_reviewer = re.search(r"^Role: .*reviewer\b", text, re.M)
+    role_line = re.search(r"^Role: (.*)$", text, re.M)
+    role = role_line.group(1) if role_line else ""
+    reviewer_at = re.search(r"\breviewer\b", role, re.I)
+    role_declares_reviewer = (reviewer_at is not None
+                              and not re.search(r"\bwriter\b", role[:reviewer_at.start()], re.I))
     read_only_marker = re.search(
         r"^[ \t]*Read-only(?:[ \t]*:[ \t]*(?:yes|true|1))?[ \t]*$", text, re.I | re.M)
     return bool(role_declares_reviewer and read_only_marker)
