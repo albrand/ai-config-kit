@@ -402,6 +402,9 @@ def _fail_review_paths(paths):
             with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
                 fd = None
                 first_line = report.readline(64).rstrip("\r\n")
+        except FileNotFoundError:
+            # Output paths named in a brief may not exist until the child writes them.
+            continue
         except OSError as e:
             raise FixBriefCheckError(f"could not read referenced review file `{path}`: {e.strerror}") from e
         finally:
@@ -410,6 +413,25 @@ def _fail_review_paths(paths):
         if re.match(r"^VERDICT: FAIL", first_line):
             found.append(path)
     return found
+
+
+def _read_only_reviewer_brief(text):
+    role_declares_reviewer = re.search(r"^Role: .*reviewer\b", text, re.M)
+    return bool(role_declares_reviewer and re.search(r"\bRead-only\b", text))
+
+
+def _brief_needs_fix_check(text):
+    """Whether this text is a FAIL-review fix brief or needs a fail-closed check."""
+    if _read_only_reviewer_brief(text):
+        return False
+    paths = _absolute_markdown_paths(text)
+    if len(paths) > FIX_REVIEW_PATH_LIMIT:
+        return True
+    try:
+        return bool(_fail_review_paths(paths))
+    except FixBriefCheckError:
+        # Keep unreadable existing paths and other inspection failures fail closed.
+        return True
 
 
 def _deadline_payload_has_fix_brief(stdin_text):
@@ -422,8 +444,7 @@ def _deadline_payload_has_fix_brief(stdin_text):
             return True  # The saved brief cannot be read again safely at the deadline.
         texts, _ = dispatch_texts(payload)
         for text in texts:
-            paths = _absolute_markdown_paths(text)
-            if len(paths) > FIX_REVIEW_PATH_LIMIT or _fail_review_paths(paths):
+            if _brief_needs_fix_check(text):
                 return True
         return False
     except Exception:
@@ -571,6 +592,8 @@ def _git_line_counts(repo, sha, paths, calls_left):
 
 def fix_brief_problem(text):
     """Return the reason to deny an ungrounded FAIL-review fix brief, if any."""
+    if _read_only_reviewer_brief(text):
+        return None
     review_paths = _absolute_markdown_paths(text)
     if len(review_paths) > FIX_REVIEW_PATH_LIMIT:
         return f"the brief names {len(review_paths)} absolute Markdown files; the gate inspects at most {FIX_REVIEW_PATH_LIMIT}"
@@ -1042,7 +1065,7 @@ def hook(stdin_text, thread):
         return 0
     allow, served, via = decide(ledger, texts)
     if allow:
-        FIX_BRIEF_CHECK_PENDING = any(_absolute_markdown_paths(text) for text in texts)
+        FIX_BRIEF_CHECK_PENDING = any(_brief_needs_fix_check(text) for text in texts)
         for text in texts:
             try:
                 problem = fix_brief_problem(text)
@@ -1843,8 +1866,9 @@ def selftest():
             for i, c in enumerate(fix_brief_cases):
                 verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
                 verdict_path = os.path.join(tmp, verdict_name)
-                with open(verdict_path, "w", encoding="utf-8") as f:
-                    f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                if not c.get("missing_report"):
+                    with open(verdict_path, "w", encoding="utf-8") as f:
+                        f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
                 report_path = verdict_path + (c.get("report_anchor") or "")
                 if c.get("angle_report"):
                     report_ref = f"<{report_path}>"
@@ -1853,7 +1877,12 @@ def selftest():
                 else:
                     report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
                 report_ref += c.get("report_suffix", "")
-                lines = ["serves: P1", f"Review verdict: {report_ref}"]
+                lines = ["serves: P1"]
+                if c.get("role"):
+                    lines.append(f"Role: {c['role']}")
+                if c.get("read_only"):
+                    lines.append("Read-only: inspect the prior verdict as context only")
+                lines.append(f"Review verdict: {report_ref}")
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
                 lines.append(f"{c['repo_field']}: {repo}")
