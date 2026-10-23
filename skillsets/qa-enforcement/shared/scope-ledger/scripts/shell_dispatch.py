@@ -187,6 +187,18 @@ def _matching(s, k, open_ch="(", close_ch=")"):
     return len(s) - 1
 
 
+def _redirect_gt(script, j):
+    """Whether script[j] is a `>` the shell reads as a redirection operator: an
+    escaped `\\>` is a literal character, so in `printf x \\>| bb thread tell`
+    the `|` is a real pipe (Hermes #99 r2). Quoted text never reaches here."""
+    if j < 0 or script[j] != ">":
+        return False
+    k = j
+    while k > 0 and script[k - 1] == "\\":
+        k -= 1
+    return (j - k) % 2 == 0
+
+
 def split_script(script, depth=0):
     """Split a shell script into Command objects (simple commands)."""
     out = []
@@ -288,11 +300,11 @@ def split_script(script, depth=0):
                 owner.heredocs.append("\n".join(body))
             pending.clear()
             continue
-        if c == "&" and (script[i - 1:i] == ">" or script[i + 1:i + 2] == ">"):
+        if c == "&" and (_redirect_gt(script, i - 1) or script[i + 1:i + 2] == ">"):
             cur.text.append(c)  # 2>&1, &> file: a redirection, not a separator
             i += 1
             continue
-        if c == "|" and script[i - 1:i] == ">":
+        if c == "|" and _redirect_gt(script, i - 1):
             cur.text.append(c)  # >| file (noclobber override): a redirection, not a pipe
             i += 1
             continue
