@@ -167,7 +167,7 @@ def transcript_background(path, now=None, live=None):
     and each end as a task notification or a TaskStop result. A resumed or restarted session appends to the
     same file and its old shells are gone, so a SessionStart other than a compaction ends every earlier start.
     A task is running when its latest record is a start within BACKGROUND_HORIZON_S and its output file is
-    held open by a live descendant of this session's Claude Code process (`live`). A crashed session with no
+    the stdout of a live descendant of this session's Claude Code process (`live`). A crashed session with no
     SessionStart hook writes no restart record; its shells are gone or orphaned, so they carry nothing.
     """
     if not isinstance(path, str) or not path:
@@ -285,16 +285,23 @@ def descends(pid, agent, table):
 
 
 def file_holders(paths):
-    """{realpath: pids holding it open}; lsof, else /proc. Missing tools give {} (nothing is live)."""
+    """{realpath: pids whose stdout (fd 1) is that file}; lsof, else /proc. Missing tools give {} (nothing is live).
+
+    Claude Code starts a task's shell with its stdout and stderr on the output file, launched in the background or
+    moved there on timeout alike. A descriptor inherited from anywhere else keeps its own number, and the agent's
+    fds 0-2 are its terminal, so only a holder at fd 1 is a task's worker or one of its children.
+    """
     want = {os.path.realpath(p) for p in paths}
     got = {p: set() for p in want}
     try:
-        out = subprocess.run(["lsof", "-F", "pn", "--", *sorted(want)], capture_output=True, text=True, timeout=5).stdout
-        pid = None
+        out = subprocess.run(["lsof", "-F", "pfn", "--", *sorted(want)], capture_output=True, text=True, timeout=5).stdout
+        pid = fd = None
         for line in out.splitlines():
             if line.startswith("p") and line[1:].isdigit():
-                pid = int(line[1:])
-            elif line.startswith("n") and pid is not None and os.path.realpath(line[1:]) in got:
+                pid, fd = int(line[1:]), None
+            elif line.startswith("f"):
+                fd = line[1:]
+            elif line.startswith("n") and pid is not None and fd == "1" and os.path.realpath(line[1:]) in got:
                 got[os.path.realpath(line[1:])].add(pid)
         return got
     except (OSError, subprocess.SubprocessError):
@@ -303,17 +310,16 @@ def file_holders(paths):
         if not proc.isdigit():
             continue
         try:
-            for fd in os.listdir(f"/proc/{proc}/fd"):
-                target = os.path.realpath(f"/proc/{proc}/fd/{fd}")
-                if target in got:
-                    got[target].add(int(proc))
+            target = os.path.realpath(f"/proc/{proc}/fd/1")
         except OSError:
             continue
+        if target in got:
+            got[target].add(int(proc))
     return got
 
 
 def live_outputs(paths, agent=None):
-    """The output files held open by a live descendant of this session's Claude Code process."""
+    """The output files that are the stdout of a live descendant of this session's Claude Code process."""
     table = process_table()
     agent = agent or agent_process(table)
     if agent is None:

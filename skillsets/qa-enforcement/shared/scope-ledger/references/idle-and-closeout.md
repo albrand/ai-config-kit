@@ -48,7 +48,9 @@ correction must not hide unfinished work.
   call's `backgroundTaskId` result (launched in the background or moved there
   on timeout) or a `task_status` attachment after a compaction starts one; a
   task notification, as a message or queued mid-turn, or a TaskStop result
-  ends it. A resumed or restarted session appends to the same file without its
+  ends it. A start carries only while its output file is the stdout (fd 1) of a
+  live process; an inherited copy of the descriptor keeps its own number. A
+  resumed or restarted session appends to the same file without its
   old shells, so its `SessionStart` record ends every earlier start. A started
   task carries only while a live process holding its output file descends from
   the hook's nearest Claude Code ancestor (lsof, else `/proc`), other than that

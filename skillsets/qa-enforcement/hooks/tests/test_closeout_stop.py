@@ -284,9 +284,24 @@ class CloseoutStopTests(unittest.TestCase):
             child.kill()
             child.wait()
         self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
-        # The agent process itself holding the output after its shell exited is not a live task.
-        with open(out, "a"):
+        # The agent holding the output open after its shell exited is not a live task, and neither is another
+        # descendant that inherited that descriptor: only a holder whose stdout is the file is a task's worker.
+        with open(out, "a") as held:
             self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+            heir = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, pass_fds=(held.fileno(),))
+            try:
+                self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+            finally:
+                heir.kill()
+                heir.wait()
+        # A descendant writing the file only as stderr is not the task's worker either.
+        with open(out, "a") as fh:
+            child = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, stderr=fh)
+        try:
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        finally:
+            child.kill()
+            child.wait()
         orphan_out = self.output("orphan")
         orphan = int(subprocess.run(["sh", "-c", f'sleep 30 > "{orphan_out}" 2>&1 & echo $!'],
                                     capture_output=True, text=True, check=True).stdout)
@@ -303,9 +318,10 @@ class CloseoutStopTests(unittest.TestCase):
         agent = pathlib.Path(self.tmp.name) / "bin" / "claude"
         agent.parent.mkdir()
         agent.symlink_to("/bin/sh")
-        def stop(payload, shell, agent_holds=False):
+        def stop(payload, shell, agent_holds=False, heir=False):
             hold = f'sleep 30 > "{self.output("bw1")}" & S=$!; ' if shell else ""
             hold += f'exec 3>>"{self.output("bw1")}"; ' if agent_holds else ""
+            hold += 'sleep 30 >/dev/null 2>&1 & S=$!; ' if heir else ""
             out = subprocess.run([str(agent), "-c", hold + 'python3 "$0"; R=$?; [ -n "$S" ] && kill $S; exit $R', str(CLOSEOUT)],
                                  input=json.dumps(payload), text=True, capture_output=True, env=self.env(), check=True)
             return json.loads(out.stdout)["decision"]
@@ -316,6 +332,12 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertEqual(stop(labelled, shell=False), "block")
         # The shell exited but the agent process still holds the output open: still nothing carries.
         self.assertEqual(stop(labelled, shell=False, agent_holds=True), "block")
+        # Another descendant of the agent inherited that descriptor (r5): it is not the task's worker.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True, heir=True), "block")
+        # The end record wins over a shell still holding the output.
+        ended = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts),
+                                       {"type": "user", "timestamp": ts, "message": {"role": "user", "content": self.notified("bw1")}})
+        self.assertEqual(stop(ended, shell=True), "block")
         self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True), "block")
 
     def test_child_with_no_serves_line_carries_nothing(self):
