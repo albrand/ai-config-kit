@@ -417,7 +417,9 @@ def _fail_review_paths(paths):
 
 def _read_only_reviewer_brief(text):
     role_declares_reviewer = re.search(r"^Role: .*reviewer\b", text, re.M)
-    return bool(role_declares_reviewer and re.search(r"\bRead-only\b", text))
+    read_only_marker = re.search(
+        r"^[ \t]*Read-only(?:[ \t]*:[ \t]*(?:yes|true|1))?[ \t]*$", text, re.I | re.M)
+    return bool(role_declares_reviewer and read_only_marker)
 
 
 def _brief_needs_fix_check(text):
@@ -1880,7 +1882,7 @@ def selftest():
                 if c.get("role"):
                     lines.append(f"Role: {c['role']}")
                 if c.get("read_only"):
-                    lines.append("Read-only: inspect the prior verdict as context only")
+                    lines.append("Read-only" if c["read_only"] is True else f"Read-only: {c['read_only']}")
                 lines.append(f"Review verdict: {report_ref}")
                 if c.get("invalid_worktree"):
                     lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
