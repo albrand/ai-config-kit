@@ -51,7 +51,8 @@ correction must not hide unfinished work.
   ends it. A resumed or restarted session appends to the same file without its
   old shells, so its `SessionStart` record ends every earlier start. A started
   task carries only while a live process holding its output file descends from
-  the hook's nearest Claude Code ancestor (lsof, else `/proc`): a crashed
+  the hook's nearest Claude Code ancestor (lsof, else `/proc`), other than that
+  ancestor itself and the hook's own process chain, which inherit its descriptors: a crashed
   session's shells are gone or orphaned, so they carry nothing, with or without
   a SessionStart hook. When the output path, ps, or both lsof and `/proc` are
   missing, nothing carries and the stop is nudged. Native Codex sessions are

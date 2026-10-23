@@ -284,6 +284,9 @@ class CloseoutStopTests(unittest.TestCase):
             child.kill()
             child.wait()
         self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
+        # The agent process itself holding the output after its shell exited is not a live task.
+        with open(out, "a"):
+            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
         orphan_out = self.output("orphan")
         orphan = int(subprocess.run(["sh", "-c", f'sleep 30 > "{orphan_out}" 2>&1 & echo $!'],
                                     capture_output=True, text=True, check=True).stdout)
@@ -300,8 +303,9 @@ class CloseoutStopTests(unittest.TestCase):
         agent = pathlib.Path(self.tmp.name) / "bin" / "claude"
         agent.parent.mkdir()
         agent.symlink_to("/bin/sh")
-        def stop(payload, shell):
+        def stop(payload, shell, agent_holds=False):
             hold = f'sleep 30 > "{self.output("bw1")}" & S=$!; ' if shell else ""
+            hold += f'exec 3>>"{self.output("bw1")}"; ' if agent_holds else ""
             out = subprocess.run([str(agent), "-c", hold + 'python3 "$0"; R=$?; [ -n "$S" ] && kill $S; exit $R', str(CLOSEOUT)],
                                  input=json.dumps(payload), text=True, capture_output=True, env=self.env(), check=True)
             return json.loads(out.stdout)["decision"]
@@ -310,6 +314,8 @@ class CloseoutStopTests(unittest.TestCase):
         self.assertEqual(stop(labelled, shell=True), "allow" if self.observes_processes() else "block")
         # The regression: a crashed session with no SessionStart hook leaves the start with no end and no shell.
         self.assertEqual(stop(labelled, shell=False), "block")
+        # The shell exited but the agent process still holds the output open: still nothing carries.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True), "block")
         self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True), "block")
 
     def test_child_with_no_serves_line_carries_nothing(self):

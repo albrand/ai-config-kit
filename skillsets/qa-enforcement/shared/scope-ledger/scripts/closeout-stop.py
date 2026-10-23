@@ -272,7 +272,10 @@ def agent_process(table, pid=None):
 
 
 def descends(pid, agent, table):
-    seen = set()
+    """Whether pid is a strict descendant of agent: the agent itself holding an output file is not a live task."""
+    if pid == agent or pid not in table:
+        return False
+    seen, pid = set(), table[pid][0]
     while pid > 1 and pid not in seen and pid in table:
         if pid == agent:
             return True
@@ -315,7 +318,13 @@ def live_outputs(paths, agent=None):
     agent = agent or agent_process(table)
     if agent is None:
         return set()
-    return {path for path, pids in file_holders(paths).items() if any(descends(p, agent, table) for p in pids)}
+    # This hook and the shells between it and the agent inherit the agent's descriptors; they are not a task.
+    hook, pid = set(), os.getpid()
+    while pid > 1 and pid != agent and pid not in hook and pid in table:
+        hook.add(pid)
+        pid = table[pid][0]
+    return {path for path, pids in file_holders(paths).items()
+            if any(p not in hook and descends(p, agent, table) for p in pids)}
 
 
 def message_blocks(entry):
