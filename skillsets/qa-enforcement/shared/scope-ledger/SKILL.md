@@ -45,11 +45,13 @@ than finishing the purposes.
   `VERDICT: FAIL` needs `Checked against <40-hex sha>` matching the named
   worktree's current HEAD and a repository-relative `file.ext:<line>` citation.
   An unreadable referenced Markdown file fails closed. A trailing Markdown
-  `#fragment` is ignored when locating the file; write a backslash before each
+  `#fragment` and trailing sentence punctuation (`.`, `,`, `;`, `:`, `)` or `]`)
+  are ignored when locating an unquoted file path; write a backslash before each
   space in an unquoted path.
   The gate inspects at most 20 absolute Markdown
-  paths, 20 repository hints and 20 citations; each git call, including the
-  worktree HEAD check, has a 500 ms ceiling, and cited blobs total at most
+  paths, 20 repository hints and 20 citations; selftest creates its own
+  temporary Git repository so it can run outside a checkout. Each git call,
+  including the worktree HEAD check, has a 500 ms ceiling; cited blobs total at most
   8 MiB. Deadline, unreadable-file, git, and limit failures deny the dispatch.
 - At the deadline (only when the gate could not finish), these deny even
   though the normal decision would allow them; each fails closed and a retry
