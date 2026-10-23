@@ -1,0 +1,14 @@
+{
+  "name": "ai-config-kit",
+  "owner": {
+    "name": "Alexandre Brandizzi"
+  },
+  "description": "Installable plugins from ai-config-kit.",
+  "plugins": [
+    {
+      "name": "qa-test-builder",
+      "source": "./skillsets/qa-test-builder",
+      "description": "Turns board tickets into QA-confirmed Playwright test scenarios with Allure reports and a CI gate, in any repository."
+    }
+  ]
+}

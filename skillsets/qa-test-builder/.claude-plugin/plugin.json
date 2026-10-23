@@ -1,0 +1,8 @@
+{
+  "name": "qa-test-builder",
+  "description": "Turns board tickets into QA-confirmed Playwright test scenarios, proves them, reports them through Allure and gates pull requests on them in CI, in any repository.",
+  "author": {
+    "name": "Alexandre Brandizzi"
+  },
+  "repository": "https://github.com/albrand/ai-config-kit"
+}

@@ -14,8 +14,10 @@ function walk(dir, out = []) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
     // shared/ skills are published to every home, ~/.codex/skills included.
+    // skills/ holds Claude Code plugin skills, which are also copied into Codex and Cursor.
     else if (entry.isFile() && entry.name === 'SKILL.md'
-      && (full.includes(`${path.sep}codex${path.sep}`) || full.includes(`${path.sep}shared${path.sep}`))) out.push(full);
+      && (full.includes(`${path.sep}codex${path.sep}`) || full.includes(`${path.sep}shared${path.sep}`)
+        || full.includes(`${path.sep}skills${path.sep}`))) out.push(full);
   }
   return out;
 }
