@@ -14,24 +14,23 @@ One file per ticket, `qa/scenarios/<KEY>.json`:
   "scenarios": [
     {
       "id": "QAS-7K2M9P",
-      "title": "Vendor dialog shows the street address with a map below it",
+      "title": "Order summary shows the delivery address and a delivery estimate",
       "criteria": ["AC-1f3a9c2e"],
       "basis": "explicit",
       "layer": "ui-mocked",
       "scope": ["feature", "regression"],
-      "preconditions": ["Work order WO-801 is assigned to vendor Harbor Plumbing"],
-      "steps": ["Open the work orders board", "Open WO-801's vendor dialog"],
+      "preconditions": ["Customer Ana Test has order ORD-1001 for delivery to '12 Example Road, Testville'"],
+      "steps": ["Open My orders", "Open order ORD-1001"],
       "expected": [
-        "The dialog shows '500 Pine St, St. Louis, MO 63101'",
-        "A map of that address is shown below it"
+        "The summary shows '12 Example Road, Testville'",
+        "A delivery estimate is shown below the address"
       ],
-      "data": "synthetic vendor and work order, defined in the test",
+      "data": "synthetic customer and order, defined in the test",
       "binding": {
         "status": "unbound",
         "file": null,
         "awaiting": null
-      },
-      "approvedBy": null
+      }
     }
   ],
   "decisions": [
@@ -68,10 +67,9 @@ One file per ticket, `qa/scenarios/<KEY>.json`:
   asserted at this layer, split the scenario or change the layer.
 - `binding.status`: `unbound` (designed, no test), `awaiting-implementation`
   (test written, feature not built; `awaiting` names the branch or pull request),
-  `draft` (test written and passing, not yet QA-approved), `ready` (QA-approved).
-- `approvedBy`: the QA's GitHub login. CI checks it against the pull request
-  author or approving reviewer and the QA team (`qa-authorship.md`); the file
-  value alone proves nothing.
+  `draft` (test written and passing), `ready` (merged with QA authorship).
+  Who approved a scenario is never written here: CI derives it from the pull
+  request's author and reviews (`qa-authorship.md`).
 
 ### Decisions
 
@@ -108,7 +106,7 @@ Show the design as a table, one row per scenario, plus one row per decision:
 
 | Scenario | Criterion | Layer | What it checks |
 |---|---|---|---|
-| QAS-7K2M9P | AC-1f3a9c2e "shows the address" | ui-mocked | WO-801's dialog shows "500 Pine St..." with a map below |
+| QAS-7K2M9P | AC-1f3a9c2e "shows the address" | ui-mocked | ORD-1001's summary shows "12 Example Road..." with an estimate below |
 | — | AC-77b0d1aa "sends an SMS" | manual-only | needs a real phone |
 
 Ask: "Is this the right set of checks for this ticket? Anything missing or

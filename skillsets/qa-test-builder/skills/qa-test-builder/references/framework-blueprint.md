@@ -6,6 +6,29 @@ version and size. A small repository gets a small layer. Reuse whatever already
 exists (a Playwright config, a reporter, a CI job) instead of adding a second
 one.
 
+## Ready repositories
+
+When the repository already has a QA framework, its own schema, file names,
+commands and instructions win over this blueprint and the other references.
+Write scenarios in its format and run its checks. The concepts usually map
+like this, under different names:
+
+| This skill | Common names in existing frameworks |
+|---|---|
+| `ui-mocked` | `frontend-mocked`, `component`, `mocked` |
+| `covered-by` | `inherits`, `duplicate-of` |
+| QA approval derived from the pull request | an approvals folder, an approve command, a reviewer field |
+| `qa.mjs check / plan / run / gate` | `qa:check`, `qa:plan`, `qa:run`, `qa:gate`, `qa:doctor` |
+
+Add only what it lacks: Allure, a separate-repository wiring, the authorship
+check, board reporting. Propose changes to its rules as a pull request the
+owner reviews; never bypass them.
+
+One exception: QA write their tests in Playwright. When the existing QA runner
+for a layer is something else (for example a backend whose QA tests are xUnit,
+pytest or JUnit), keep those tests and their runner, and add a Playwright API
+project next to them for the QA's scenarios, wired into the same gate.
+
 ## Pieces
 
 ```
@@ -60,8 +83,7 @@ under `qa/tests/`), so nothing touches the app's own build.
   "retries": 2,
   "flaky": "block",
   "nonBlockingStatuses": ["awaiting-implementation"],
-  "allowedBaseUrls": ["http://127.0.0.1", "http://localhost"],
-  "requireQaApproval": true
+  "allowedBaseUrls": ["http://127.0.0.1", "http://localhost"]
 }
 ```
 
@@ -118,13 +140,15 @@ The verdict is the first that applies:
 |---|---|---|
 | `FAILED` | any mandatory scenario failed, did not run, or is flaky under `flaky: block` | 1 |
 | `NO_SCENARIOS` | a named ticket has no scenarios and no decisions | 1 |
-| `UNAPPROVED` | everything passed, but a feature scenario is not QA-approved | 0 |
 | `NO_TICKET` | no ticket named; only the baseline ran and passed | 0 |
-| `VERIFIED` | tickets named, all their scenarios passed and are QA-approved | 0 |
+| `VERIFIED` | tickets named, and all their mandatory scenarios passed | 0 |
 
 The first line of `verdict.md` is `# QA gate: <VERDICT>`, then a table of
 scenarios with result, ticket and test title, then the failures with their
-error lines. The approval job in CI reads this file.
+error lines. `verdict.json` also lists the scenarios the pull request added,
+changed or removed compared with the base. The approval workflow reads both;
+whether those changes are QA-approved is decided there (`qa-authorship.md`),
+because the gate runs without access to team membership.
 
 ### `report`
 

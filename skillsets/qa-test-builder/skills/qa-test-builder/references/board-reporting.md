@@ -35,16 +35,23 @@ see it, and never ask for it in chat.
 
 ## The job
 
-A separate job after the gate, like the comment job:
+The board credential must never be reachable from the pull request. A job in
+`qa-gate` is not safe even without a checkout: on `pull_request` events the
+workflow file comes from the pull request, so a branch could rewrite the job
+and print the secret. Put the reporting in a `workflow_run` workflow, like
+`qa-approval` (or as a step of it):
 
-- `needs: qa-gate`, runs `if: always()` on pull requests from the same
-  repository only (never from forks, which must not reach the secrets);
-- no checkout of the pull request's code: it downloads `verdict.json` and posts
-  from it, so code under review never holds the board credential;
-- uses the secrets only in that step's environment;
-- posts only for tickets in the plan, and only to keys that match
-  `board.keyPattern`;
-- never fails the gate: if the board is down, it logs and exits 0.
+- triggered when `qa-gate` completes, so it runs the default branch's file;
+- never checks out or runs the pull request's code; it downloads
+  `verdict.json` from the triggering run as data;
+- takes the pull request number, head SHA, title and body from the API, and
+  re-extracts the ticket keys from them with `board.keyPattern`; it posts only
+  to those keys, never to keys read from the artifact;
+- treats titles and error lines from the artifact as untrusted text: caps
+  their length and strips links and mentions before posting;
+- skips pull requests from forks;
+- puts the secrets only in that step's environment;
+- never fails: if the board is down, it logs and exits 0.
 
 ## Proving it works
 

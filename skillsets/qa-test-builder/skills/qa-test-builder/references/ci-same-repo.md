@@ -60,12 +60,19 @@ cannot be trusted. It never checks out or runs the pull request's code. It
 downloads the verdict artifact from the triggering run and acts on the pull
 request whose head SHA matches that run:
 
-| Gate result and verdict | Action |
+It also publishes the `qa-authorship` check (`qa-authorship.md`).
+
+| Gate result, verdict and authorship | Action |
 |---|---|
-| success, `VERIFIED`, tickets named | Approve: "QA tests for PROJ-123 passed at `<sha>`", with the run link |
+| success, `VERIFIED`, tickets named, `qa-authorship` passed | Approve: "QA tests for PROJ-123 passed at `<sha>`", with the run link |
 | failure | Request changes, listing each failed scenario with its test title and first error line, and the run link |
-| success, `NO_TICKET` or `UNAPPROVED` | No approval. Dismiss this bot's earlier approval if there is one, with the reason |
+| success, but `NO_TICKET`, or `qa-authorship` failed | No approval. Dismiss this bot's earlier approval if there is one, with the reason |
 | the pull request changes the QA workflows, `qa/tools/` or `qa/policy.json` | No approval, and dismiss an earlier one: a change to the rules needs a human review |
+
+Everything read from the triggering run's artifacts (scenario titles, error
+lines) is untrusted text from the pull request: cap its length, strip
+mentions and links, and take the pull request number, head SHA and changed
+files from the API, never from the artifact.
 
 Before acting, re-read the pull request and do nothing if its head moved past
 the run's SHA (a newer run will decide). Edit or replace the bot's previous
@@ -75,15 +82,27 @@ review instead of stacking new ones.
 requests: write; members: read for the QA team check), using a pinned
 `actions/create-github-app-token` and the App's client ID and private key as
 secrets. The repository owner creates the App; guide them step by step. The
-alternative, the built-in token with the repository setting "Allow GitHub
-Actions to create and approve pull requests", works only if the organisation
-allows it; ask the owner which they prefer. Whether the bot's approval counts
-toward required reviews is the owner's choice in branch protection.
+alternative is the built-in token with the repository setting "Allow GitHub
+Actions to create and approve pull requests". Warn the owner before they choose
+it: with that setting on, a workflow edited in any branch can approve its own
+pull request as `github-actions[bot]`, so that identity's approvals must not
+count toward required reviews. Whether the App's approval counts is the
+owner's choice in branch protection.
 
-### 4. `qa-authorship`: who approved the scenarios
+### 4. `qa-review-trigger`: re-decide on reviews
 
-See `qa-authorship.md`. It can be a job in `qa-gate` (it needs the App token to
-read team membership) or its own workflow.
+A workflow on `pull_request_review` with no permissions and no steps that
+touch the code, listed in `qa-approval`'s `workflow_run` triggers, so a QA's
+approving review re-runs the authorship decision (`qa-authorship.md`).
+
+### Secrets stay out of pull request code
+
+On `pull_request` events the workflow file itself comes from the pull request,
+so anything a `qa-gate` job can reach, the pull request can reach. Never give
+`qa-gate` a secret or a write token. The App key and any board credential live
+only in `workflow_run` workflows, which run the default branch's file and never
+check out or run the pull request's code. Check out with
+`persist-credentials: false`.
 
 ## Making sure it works
 

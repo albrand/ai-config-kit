@@ -44,7 +44,7 @@ how much you build, never whether you can proceed:
 
 | State | What you find | What you do |
 |---|---|---|
-| Ready | A QA framework already maps scenarios to tickets (for example `qa/qa.config.json`, scenario files with IDs, a gate workflow) | Use it as it is. Follow its own instructions files. Add only what is missing. |
+| Ready | A QA framework already maps scenarios to tickets (for example `qa/qa.config.json`, scenario files with IDs, a gate workflow) | Use it as it is. Its schema, names and instructions files win over these references (see "Ready repositories" in `references/framework-blueprint.md`). Add only what is missing. |
 | Partial | Playwright (or another runner) exists, with no ticket traceability, gate or Allure | Keep the existing tests. Add the QA layer around them. |
 | Other tooling | Tests in another framework (Jest, Cypress, xUnit, pytest...) | Leave them alone. Add Playwright next to them for QA scenarios. |
 | None | No tests, no CI, or no test config | Build the whole layer from `references/framework-blueprint.md`. |

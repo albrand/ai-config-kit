@@ -18,7 +18,7 @@ and runs in CI. Report it in this shape, in plain language.
 
 | Criterion | Scenario | Test | Seen failing | Local | CI |
 |---|---|---|---|---|---|
-| AC-1f3a9c2e "shows the address" | QAS-7K2M9P | `e2e/qa/vendors/vendor-dialog.spec.ts` "vendor dialog shows..." | inverted the address assertion: "expected '500 Pine St' not found" | passed | passed, run 123, commit `abc1234` |
+| AC-1f3a9c2e "shows the address" | QAS-7K2M9P | `e2e/qa/orders/order-summary.spec.ts` "order summary shows..." | inverted the address assertion: "expected '12 Example Road' not found" | passed | passed, run 123, commit `abc1234` |
 
 Followed by the decisions (criteria with no automated scenario and why), the
 questions asked with their answers and who answered, and anything blocked or

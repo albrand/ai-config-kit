@@ -42,7 +42,7 @@ the Playwright reporter.
 - Grouping by ticket: add `allure.epic(<epic or project>)`,
   `allure.feature(<ticket title>)` and `allure.story(<scenario title>)` in the
   helper, so the report's Behaviors tab reads as tickets and scenarios.
-- Steps for multi-step scenarios (`await test.step("Open the vendor dialog", ...)`),
+- Steps for multi-step scenarios (`await test.step("Open the order summary", ...)`),
   so a failure points at the step.
 - Screenshots and traces on failure (`use: { screenshot: "only-on-failure",
   trace: "retain-on-failure" }`). Allure attaches them.

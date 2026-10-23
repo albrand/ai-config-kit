@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test";
 import * as allure from "allure-js-commons";
 
 test(
-  "vendor dialog shows the street address with a map below it",
+  "order summary shows the delivery address and estimate",
   { tag: ["@QAS-7K2M9P", "@PROJ-123"] },
   async ({ page }) => {
     await allure.issue("PROJ-123", "https://example.atlassian.net/browse/PROJ-123");
@@ -48,18 +48,18 @@ QA tests for a backend use Playwright's `request` fixture against the API that
 the config's `webServer` starts:
 
 ```ts
-test("rejects a work order without a vendor", { tag: ["@QAS-2B8QXN", "@PROJ-140"] }, async ({ request }) => {
+test("rejects an order without a delivery address", { tag: ["@QAS-2B8QXN", "@PROJ-140"] }, async ({ request }) => {
   const login = await request.post("/api/auth/login", { data: { email: testUsers.admin.email, password: testUsers.admin.password } });
   expect(login.ok()).toBeTruthy();
   const { token } = await login.json();
 
-  const res = await request.post("/api/work-orders", {
+  const res = await request.post("/api/orders", {
     headers: { authorization: `Bearer ${token}` },
-    data: { title: "Leaking pipe", vendorId: null },
+    data: { items: [{ bookId: "BK-1", quantity: 1 }], deliveryAddress: null },
   });
 
   expect(res.status()).toBe(400);
-  expect(await res.json()).toMatchObject({ errors: { vendorId: expect.anything() } });
+  expect(await res.json()).toMatchObject({ errors: { deliveryAddress: expect.anything() } });
 });
 ```
 
@@ -102,6 +102,6 @@ when the behaviour is gone is not a test.
 
 ## After the tests pass
 
-Set each scenario's `binding` (`status: "draft"`, `file`), set `approvedBy` to
-the QA's GitHub login, run `qa:check` and `qa:local`, and check the Allure
-report shows every scenario with its ticket link.
+Set each scenario's `binding` (`status: "draft"`, `file`), run `qa:check` and
+`qa:local`, and check the Allure report shows every scenario with its ticket
+link.

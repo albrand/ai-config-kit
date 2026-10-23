@@ -31,18 +31,18 @@ Write one file per ticket, `qa/requirements/<KEY>.json`:
 {
   "key": "PROJ-123",
   "url": "https://board.example/browse/PROJ-123",
-  "title": "Vendor dialog shows the company address",
+  "title": "Order summary shows the delivery address",
   "fetchedAt": "2026-01-15T14:02:00Z",
   "revision": "sha256 of the normalised title, description, criteria and pinned comments",
   "criteria": [
     {
       "id": "AC-1f3a9c2e",
-      "text": "The dialog shows the vendor's street address",
+      "text": "The order summary shows the customer's delivery address",
       "source": "explicit",
       "from": "description, 'Acceptance criteria' section"
     }
   ],
-  "rules": ["Only for assigned vendors"],
+  "rules": ["Only for signed-in customers"],
   "links": ["PROJ-100 (parent epic)"]
 }
 ```
