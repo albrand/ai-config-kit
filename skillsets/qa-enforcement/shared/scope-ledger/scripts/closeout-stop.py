@@ -281,7 +281,7 @@ def is_task_root(pid, agent, table):
 
 
 def file_holders(paths):
-    """{realpath: pids whose stdout (fd 1) is that file}; lsof, else /proc. Missing tools give {} (nothing is live).
+    """{realpath: pids whose stdout (fd 1) is that file}, from lsof. Without lsof nothing is live.
 
     Claude Code starts a task's shell with its stdout and stderr on the output file, launched in the background or
     moved there on timeout alike. A descriptor inherited from anywhere else keeps its own number, and the agent's
@@ -299,23 +299,20 @@ def file_holders(paths):
                 fd = line[1:]
             elif line.startswith("n") and pid is not None and fd == "1" and os.path.realpath(line[1:]) in got:
                 got[os.path.realpath(line[1:])].add(pid)
-        return got
     except (OSError, subprocess.SubprocessError):
-        pass
-    for proc in os.listdir("/proc") if os.path.isdir("/proc") else []:
-        if not proc.isdigit():
-            continue
-        try:
-            target = os.path.realpath(f"/proc/{proc}/fd/1")
-        except OSError:
-            continue
-        if target in got:
-            got[target].add(int(proc))
+        return {p: set() for p in want}
     return got
 
 
 def live_outputs(paths, agent=None):
-    """The output files that are the stdout of a live direct child of this session's Claude Code process."""
+    """The output files that are the stdout of a live direct child of this session's Claude Code process.
+
+    macOS only. There an orphan always goes to launchd, since a process can't adopt one, so a direct child of the
+    agent is a process the agent started. Linux lets any process adopt orphans (PR_SET_CHILD_SUBREAPER), so a stale
+    task's leftover could pass as its root shell; nothing carries there, as on main.
+    """
+    if sys.platform != "darwin":
+        return set()
     table = process_table()
     agent = agent or agent_process(table)
     if agent is None:

@@ -52,17 +52,17 @@ correction must not hide unfinished work.
   live process; an inherited copy of the descriptor keeps its own number. A
   resumed or restarted session appends to the same file without its
   old shells, so its `SessionStart` record ends every earlier start. A started
-  task carries only while its output file is the stdout of a live direct child
-  of the hook's nearest Claude Code ancestor (lsof, else `/proc`), other than
-  the hook's own process chain, which inherits the agent's descriptors. Claude
-  Code starts each task's shell there; a deeper process with the file at fd 1
-  got it from another parent and carries nothing, and a crashed session's
-  shells are gone or orphaned, so they carry nothing, with or without a
-  SessionStart hook. The rule trusts that launch shape, as main trusts a
-  bb-recorded task; an agent that were a subreaper could adopt an orphan that
-  holds the file, until the end record is written. When the output path, ps, or both lsof and `/proc` are
-  missing, nothing carries and the stop is nudged. Native Codex sessions are
-  not read yet.
+  task carries only on macOS, and only while its output file is the stdout of
+  a live direct child of the hook's nearest Claude Code ancestor (from lsof),
+  other than the hook's own process chain, which inherits the agent's
+  descriptors. Claude Code starts each task's shell there; a deeper process
+  with the file at fd 1 got it from another parent and carries nothing, and a
+  crashed session's shells are gone or orphaned to launchd, so they carry
+  nothing, with or without a SessionStart hook. On Linux a process can adopt
+  orphans (`PR_SET_CHILD_SUBREAPER`), so a leftover could pose as a task's root
+  shell: native starts carry nothing there, as on main, and a stop with only a
+  native background task is nudged. When the output path, ps or lsof is
+  missing, nothing carries either. Native Codex sessions are not read yet.
 - The nudge lists the unattended purposes and allows three outcomes:
   continue the next authorized step, `mark … done --evidence`, or
   `mark … blocked-on-user --ask … --why-owner <category>` for a decision only the user owns (money, an

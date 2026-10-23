@@ -9,10 +9,10 @@ import pathlib
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
-from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -259,11 +259,7 @@ class CloseoutStopTests(unittest.TestCase):
             seen = subprocess.run(["ps", "-o", "ppid=", "-p", str(child.pid)], capture_output=True, text=True).stdout.split()
             if seen != [str(os.getpid())]:
                 return False
-            try:
-                held = subprocess.run(["lsof", "-t", "--", out], capture_output=True, text=True).stdout.split()
-            except OSError:
-                held = [d for d in os.listdir(f"/proc/{child.pid}/fd")
-                        if os.path.realpath(f"/proc/{child.pid}/fd/{d}") == os.path.realpath(out)] and [str(child.pid)]
+            held = subprocess.run(["lsof", "-t", "--", out], capture_output=True, text=True).stdout.split()
             return str(child.pid) in held
         except OSError:
             return False
@@ -273,14 +269,15 @@ class CloseoutStopTests(unittest.TestCase):
 
     def test_native_task_is_live_only_while_this_session_holds_its_output(self):
         # A live shell of this session holds its output open; an ended one doesn't, and an orphan from a crashed
-        # session (reparented away from the agent process) is not this session's.
+        # session (reparented away from the agent process) is not this session's. Native starts carry only on macOS.
         observable = self.observes_processes()
+        carries = observable and sys.platform == "darwin"
         out = self.output("live")
         with open(out, "w") as fh:
             child = subprocess.Popen(["sleep", "30"], stdout=fh)
         try:
             self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()),
-                             {os.path.realpath(out)} if observable else set())
+                             {os.path.realpath(out)} if carries else set())
         finally:
             child.kill()
             child.wait()
@@ -325,33 +322,32 @@ class CloseoutStopTests(unittest.TestCase):
         finally:
             os.kill(orphan, 9)
 
-    def test_proc_fallback_finds_only_a_live_worker(self):
-        # With lsof unavailable, file_holders reads /proc/<pid>/fd/1. Without /proc either, nothing is live.
-        observable = self.observes_processes()
-        real_run = subprocess.run
-        def no_lsof(cmd, *args, **kwargs):
-            if cmd and cmd[0] == "lsof":
-                raise FileNotFoundError("lsof")
-            return real_run(cmd, *args, **kwargs)
-        out = os.path.realpath(self.output("procfb"))
-        with mock.patch.object(CLOSEOUT_MODULE.subprocess, "run", no_lsof):
-            with open(out, "w") as fh:
-                child = subprocess.Popen(["sleep", "30"], stdout=fh)
+    @unittest.skipUnless(sys.platform.startswith("linux"), "PR_SET_CHILD_SUBREAPER is Linux's")
+    def test_an_adopted_orphan_carries_nothing_on_linux(self):
+        # r8: a subreaper agent adopts an orphan that still has the output as stdout, which makes it a direct child.
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        PR_SET_CHILD_SUBREAPER = 36
+        self.assertEqual(libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0), 0)
+        out = os.path.realpath(self.output("adopted"))
+        try:
+            # Its own stdin, or a non-interactive dash on Linux lets the background sleep exit at once.
+            orphan = int(subprocess.run(["sh", "-c", f'sleep 30 > "{out}" 2>&1 < /dev/null & echo $!'],
+                                        capture_output=True, text=True, check=True).stdout)
             try:
-                live = CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid())
-                self.assertEqual(live, {out} if observable and os.path.isdir("/proc") else set())
+                ppid = subprocess.run(["ps", "-o", "ppid=", "-p", str(orphan)], capture_output=True, text=True).stdout
+                self.assertEqual(ppid.split(), [str(os.getpid())])
+                if shutil.which("lsof"):
+                    deadline = time.time() + 5
+                    while not CLOSEOUT_MODULE.file_holders([out])[out] and time.time() < deadline:
+                        time.sleep(0.05)
+                    self.assertEqual(CLOSEOUT_MODULE.file_holders([out]), {out: {orphan}})
+                self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
             finally:
-                child.kill()
-                child.wait()
-            self.assertEqual(CLOSEOUT_MODULE.file_holders([out]), {out: set()})
-            self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
-            with open(out, "a") as held:
-                heir = subprocess.Popen(["sleep", "30"], stdout=subprocess.DEVNULL, pass_fds=(held.fileno(),))
-                try:
-                    self.assertEqual(CLOSEOUT_MODULE.live_outputs([out], agent=os.getpid()), set())
-                finally:
-                    heir.kill()
-                    heir.wait()
+                os.kill(orphan, 9)
+                os.waitpid(orphan, 0)
+        finally:
+            libc.prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
 
     def test_native_session_stop_is_carried_only_by_a_live_labelled_task(self):
         self.write_ledger(self.purpose("P4", text="merge root's PRs"))
@@ -361,14 +357,8 @@ class CloseoutStopTests(unittest.TestCase):
         agent = pathlib.Path(self.tmp.name) / "bin" / "claude"
         agent.parent.mkdir()
         agent.symlink_to("/bin/sh")
-        # A PATH with no lsof sends the hook to its /proc fallback.
-        nolsof = pathlib.Path(self.tmp.name) / "nolsof"
-        nolsof.mkdir()
-        for tool in ("python3", "sleep", "ps", "sh", "kill"):
-            if shutil.which(tool):
-                (nolsof / tool).symlink_to(shutil.which(tool))
-        observable = self.observes_processes()
-        def stop(payload, shell, agent_holds=False, heir=False, reaped=False, grandchild=False, proc_only=False):
+        carries = self.observes_processes() and sys.platform == "darwin"
+        def stop(payload, shell, agent_holds=False, heir=False, reaped=False, grandchild=False):
             out_file = self.output("bw1")
             hold = f'sleep 30 > "{out_file}" & S=$!; ' if shell or reaped else ""
             hold += 'kill $S; wait $S; S=; ' if reaped else ""
@@ -376,34 +366,29 @@ class CloseoutStopTests(unittest.TestCase):
             hold += 'sleep 30 >/dev/null 2>&1 & S=$!; ' if heir else ""
             hold += (f'sh -c \'sleep 30 > "{out_file}" & G=$!; trap "kill $G" TERM; wait\' >/dev/null 2>&1 & S=$!; '
                      'sleep 1; ') if grandchild else ""
-            env = dict(self.env(), PATH=str(nolsof)) if proc_only else self.env()
             out = subprocess.run([str(agent), "-c", hold + 'python3 "$0"; R=$?; [ -n "$S" ] && kill $S; exit $R', str(CLOSEOUT)],
-                                 input=json.dumps(payload), text=True, capture_output=True, env=env, check=True)
+                                 input=json.dumps(payload), text=True, capture_output=True, env=self.env(), check=True)
             return json.loads(out.stdout)["decision"]
         labelled = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts))
         ended = self.native_transcript(*self.started("bw1", "serves: P4 — wait for a head", ts),
                                        {"type": "user", "timestamp": ts, "message": {"role": "user", "content": self.notified("bw1")}})
-        for proc_only in (False, True):
-            with self.subTest(proc_only=proc_only):
-                # Where processes can't be observed (the runner's sandbox, or no lsof and no /proc), even a live
-                # labelled shell must not carry.
-                sees = observable and (not proc_only or os.path.isdir("/proc"))
-                self.assertEqual(stop(labelled, shell=True, proc_only=proc_only), "allow" if sees else "block")
-                # The regression: a crashed session with no SessionStart hook leaves the start with no end and no shell.
-                self.assertEqual(stop(labelled, shell=False, proc_only=proc_only), "block")
-                # The worker was killed and reaped before the stop.
-                self.assertEqual(stop(labelled, shell=False, reaped=True, proc_only=proc_only), "block")
-                # The shell exited but the agent process still holds the output open: still nothing carries.
-                self.assertEqual(stop(labelled, shell=False, agent_holds=True, proc_only=proc_only), "block")
-                # Another descendant of the agent inherited that descriptor (r5): it is not the task's worker.
-                self.assertEqual(stop(labelled, shell=False, agent_holds=True, heir=True, proc_only=proc_only), "block")
-                # A grandchild of the agent has the output as stdout, under a direct child whose stdout is not
-                # (r7): the task's root shell is gone, so nothing carries.
-                self.assertEqual(stop(labelled, shell=False, grandchild=True, proc_only=proc_only), "block")
-                # The end record wins over a shell still holding the output.
-                self.assertEqual(stop(ended, shell=True, proc_only=proc_only), "block")
-                self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True,
-                                      proc_only=proc_only), "block")
+        # Off macOS (Linux can adopt orphans) and where processes can't be observed (the runner's sandbox, no
+        # lsof), even a live labelled shell must not carry.
+        self.assertEqual(stop(labelled, shell=True), "allow" if carries else "block")
+        # The regression: a crashed session with no SessionStart hook leaves the start with no end and no shell.
+        self.assertEqual(stop(labelled, shell=False), "block")
+        # The worker was killed and reaped before the stop.
+        self.assertEqual(stop(labelled, shell=False, reaped=True), "block")
+        # The shell exited but the agent process still holds the output open: still nothing carries.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True), "block")
+        # Another descendant of the agent inherited that descriptor (r5): it is not the task's worker.
+        self.assertEqual(stop(labelled, shell=False, agent_holds=True, heir=True), "block")
+        # A grandchild of the agent has the output as stdout, under a direct child whose stdout is not (r7): the
+        # task's root shell is gone, so nothing carries.
+        self.assertEqual(stop(labelled, shell=False, grandchild=True), "block")
+        # The end record wins over a shell still holding the output.
+        self.assertEqual(stop(ended, shell=True), "block")
+        self.assertEqual(stop(self.native_transcript(*self.started("bw1", "Wait for CI", ts)), shell=True), "block")
 
     def test_child_with_no_serves_line_carries_nothing(self):
         self.write_ledger(self.purpose())
