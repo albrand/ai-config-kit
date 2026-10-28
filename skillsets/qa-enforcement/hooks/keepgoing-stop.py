@@ -11,14 +11,18 @@ PROMISE = re.compile(
     r"let\s+me\s+(?!know\b)[a-z]+|let\s+me\s+know\s+(?:when|once|as\s+soon\s+as))\b",
     re.IGNORECASE,
 )
-WAITING = re.compile(
+# A conditional counts only when it names an outside event finishing or arriving, not more of our own work.
+CONDITIONAL = re.compile(
+    r"\b(?:when|once|as\s+soon\s+as|after)\s+(?!(?:i|we)\b|i'|we')[^.;!?]{0,60}?\b(?:arriv|finish|land|comes?\s+back|"
+    r"return|complet|pass|green|done|clean|merged|report|repl|respond|ready|exit|end)\w*",
+    re.IGNORECASE,
+)
+STATE_WAIT = re.compile(
     r"\b(?:still\s+(?:running|in\s+progress|pending)|in\s+progress|waiting\s+(?:on|for)|watch(?:ing|er)|notif\w*|"
-    # A conditional counts only when it names an outside event finishing or arriving, not more of our own work.
-    r"(?:when|once|as\s+soon\s+as|after)\s+(?!(?:i|we)\b|i'|we')[^.;!?]{0,60}?\b(?:arriv|finish|land|comes?\s+back|return|complet|"
-    r"pass|green|done|clean|merged|report|repl|respond|ready|exit|end)\w*|"
     r"(?:monitor|child|worker)\s+will)\b",
     re.IGNORECASE,
 )
+WAITING = re.compile(f"(?:{CONDITIONAL.pattern})|(?:{STATE_WAIT.pattern})", re.IGNORECASE)
 CLAUSE = re.compile(
     r"(?<=[.!?])\s+|\n|;|,?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|,?\s*\b(?:and\s+then|then|and)\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
@@ -141,7 +145,14 @@ def open_promise(text):
     """
     # Quoted text is an example or a citation, not a commitment.
     body = QUOTED.sub("", text.replace("**", "").replace("`", ""))
-    return any(PROMISE.search(c) and (IMMEDIATE.search(c) or not WAITING.search(c)) for c in CLAUSE.split(body))
+    return any(PROMISE.search(c) and (IMMEDIATE.search(c) or not excused(c)) for c in CLAUSE.split(body))
+
+
+def excused(clause):
+    """A when/once conditional governs its whole clause; a state wait only the comma part it sits in."""
+    if CONDITIONAL.search(clause):
+        return True
+    return all(STATE_WAIT.search(part) for part in clause.split(",") if PROMISE.search(part))
 
 
 def runnable_open(text):

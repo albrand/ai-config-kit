@@ -99,6 +99,9 @@ class KeepGoingTests(unittest.TestCase):
             "When CI finishes, I will inspect the result, then I will run the tests.",
             "Once the child reports I'll read it and then we'll update the README.",
             "I will run the tests when I finish reviewing the code.",
+            # A state wait does not govern a comma-joined promise; a when/once conditional does.
+            "Waiting on CI, I'll update the README.",
+            "The child is still running, I'll fix the parser.",
             "Once we're done with the refactor I'll update the docs.",
         )
         allowed = ("When the child finishes, I'll verify its diff.",
