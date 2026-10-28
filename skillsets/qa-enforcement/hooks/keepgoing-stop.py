@@ -17,6 +17,8 @@ WAITING = re.compile(
     r"(?:monitor|child|worker)\s+will)\b",
     re.IGNORECASE,
 )
+CLAUSE = re.compile(r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b", re.IGNORECASE)
+IMMEDIATE = re.compile(r"\b(?:now|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
     r"\b(?:(?:do\s+you\s+)?want\s+me\s+to|would\s+you\s+like\s+me\s+to|(?:should|shall)\s+i|"
     r"if\s+you(?:'d|\s+would)?\s+(?:like|want),?\s+i\s+(?:can|could|will|'ll))\b",
@@ -125,8 +127,8 @@ def runnable_open(text):
         tail = rest
     if PERMISSION.search(tail):
         return True
-    # A wait excuses only the promise in its own sentence, not unrelated runnable work beside it.
-    if any(PROMISE.search(s) and not WAITING.search(s) for s in re.split(r"(?<=[.!?])\s+|\n", tail)):
+    # A wait excuses only the promise in its own clause, and never one marked as immediate.
+    if any(PROMISE.search(c) and (IMMEDIATE.search(c) or not WAITING.search(c)) for c in CLAUSE.split(tail)):
         return True
     return bool(BLOCKED.search(tail)) and "?" not in tail
 

@@ -84,9 +84,18 @@ class KeepGoingTests(unittest.TestCase):
                 self.assertNudged(self.stop(build("Status noted.\n\n" + text)))
 
     def test_wait_excuses_only_its_own_sentence(self):
-        text = "Status noted.\n\nOnce the CI result arrives, I'll inspect it. I'll also rerun the tests now."
+        nudged = (
+            "Once the CI result arrives, I'll inspect it. I'll also rerun the tests now.",
+            "The child is still running, but I'll run the tests now.",
+            "Waiting on CI; meanwhile I'll update the README.",
+            "While the watcher runs I'll fix the parser right away.",
+        )
+        allowed = ("When the child finishes, I'll verify its diff.", "Waiting on the child; I'll verify its diff.")
         for build in (self.claude, self.codex):
-            self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
+            for text in nudged:
+                self.assertNudged(self.stop(build("Status noted.\n\n" + text), "keepgoing-stop.py"))
+            for text in allowed:
+                self.assertAllowed(self.stop(build("Status noted.\n\n" + text), "keepgoing-stop.py"))
 
     def test_permission_question_is_nudged(self):
         text = "The branch is pushed.\n\nWant me to open the PR?"
