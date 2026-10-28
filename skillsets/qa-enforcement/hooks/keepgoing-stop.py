@@ -24,7 +24,9 @@ STATE_WAIT = re.compile(
 )
 WAITING = re.compile(f"(?:{CONDITIONAL.pattern})|(?:{STATE_WAIT.pattern})", re.IGNORECASE)
 CLAUSE = re.compile(
-    r"(?<=[.!?])\s+|\n|;|,?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|,?\s*\b(?:and\s+then|then|and)\s+(?=(?:i|we)\b)",
+    r"(?<=[.!?])\s+|\n|;|,?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|,?\s*\b(?:and\s+then|then|and)\s+(?=(?:i|we)\b)"
+    # A conditional after a comma starts its own clause, so it cannot excuse a promise made before it.
+    r"|,\s*(?:and\s+|then\s+)?(?=(?:when|once|after|as\s+soon\s+as)\b)",
     re.IGNORECASE,
 )
 UNFINISHED = re.compile(
