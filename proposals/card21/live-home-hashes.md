@@ -238,7 +238,18 @@ dropped the bb-only lines the live bb home keeps; the current render restores th
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `67650e5a12bede5b4af7e80891b80a1553c9e44cd536ece1c345ce1d07bb8164` |
 
-### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 52359fc
+### Accepted live profile: canonical hard prohibitions, second wording at 6f15150 (never installed)
+
+This PR's second render was the current profile at 6f15150, so the history test keeps it here. Its Hermes line predates the owner's 2026-10-28 ruling.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f` |
+
+### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 3bcf947
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
 output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
@@ -252,7 +263,7 @@ OpenCode render as before.
 | Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
 | Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
-| bb | `30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f` |
+| bb | `f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
