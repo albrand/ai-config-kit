@@ -13,7 +13,9 @@ PROMISE = re.compile(
 )
 WAITING = re.compile(
     r"\b(?:still\s+(?:running|in\s+progress|pending)|in\s+progress|waiting\s+(?:on|for)|watch(?:ing|er)|notif\w*|"
-    r"(?:when|once|as\s+soon\s+as|after)\s+[\w'-]+|"
+    # A conditional counts only when it names an outside event finishing or arriving, not more of our own work.
+    r"(?:when|once|as\s+soon\s+as|after)\b[^.;!?]{0,60}?\b(?:arriv|finish|land|comes?\s+back|return|complet|"
+    r"pass|green|done|clean|merged|report|repl|respond|ready|exit|end)\w*|"
     r"(?:monitor|child|worker)\s+will)\b",
     re.IGNORECASE,
 )

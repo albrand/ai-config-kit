@@ -91,6 +91,8 @@ class KeepGoingTests(unittest.TestCase):
             "While the watcher runs I'll fix the parser right away.",
             "The child is still running and I'll run the tests now.",
             "The child is still running and I'll update the README.",
+            "I'll update the README after reviewing the code.",
+            "When I have a moment I'll fix the parser.",
         )
         allowed = ("When the child finishes, I'll verify its diff.", "Waiting on the child; I'll verify its diff.",
                    "Once CI is green and the review is clean, I'll merge it.")
