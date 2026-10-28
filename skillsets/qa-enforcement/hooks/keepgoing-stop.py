@@ -33,7 +33,7 @@ UNFINISHED = re.compile(
     r"needs?\s+to\s+be\s+(?:run|tested|verified|done|finished)|left\s+to\s+do)\b",
     re.IGNORECASE,
 )
-NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|needs?|requires?|owner|hold)\b", re.IGNORECASE)
+NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|owner|hold)\b", re.IGNORECASE)
 # "because I haven't run them" names no outside blocker.
 SELF_CAUSED = re.compile(r"\bbecause\s+(?:i|we)\b", re.IGNORECASE)
 STATED_ASK = re.compile(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", re.IGNORECASE)
