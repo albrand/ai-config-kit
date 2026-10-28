@@ -150,6 +150,13 @@ class KeepGoingTests(unittest.TestCase):
             for text in texts:
                 self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
 
+    def test_quoted_promise_example_is_allowed(self):
+        text = 'Fixed it.\n\nThe case ("I will run tests." then "Done.") failed before the fix and passes now.'
+        for build in (self.claude, self.codex):
+            self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
+            self.assertAllowed(self.stop(build(text.replace('"', "“", 1).replace('"', "”", 1)),
+                                         "keepgoing-stop.py"))
+
     def test_report_describing_the_menu_rule_is_allowed(self):
         text = ("The hook's suggested line and the `STATUS: needs-owner` return were the source.\n\n"
                 "A NEEDS-OWNER that offers options such as (a)/(b) or says choose or pick is now sent back.")

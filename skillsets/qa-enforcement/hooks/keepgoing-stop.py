@@ -23,6 +23,7 @@ CLAUSE = re.compile(
     r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|[,;]?\s*\band\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
 )
+QUOTED = re.compile(r"\"[^\"\n]{1,300}\"|“[^”\n]{1,300}”")
 IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
     r"\b(?:(?:do\s+you\s+)?want\s+me\s+to|would\s+you\s+like\s+me\s+to|(?:should|shall)\s+i|"
@@ -127,7 +128,8 @@ def open_promise(text):
 
     A wait excuses only the promise in its own clause, and never one marked as immediate.
     """
-    body = text.replace("**", "").replace("`", "")
+    # Quoted text is an example or a citation, not a commitment.
+    body = QUOTED.sub("", text.replace("**", "").replace("`", ""))
     return any(PROMISE.search(c) and (IMMEDIATE.search(c) or not WAITING.search(c)) for c in CLAUSE.split(body))
 
 
