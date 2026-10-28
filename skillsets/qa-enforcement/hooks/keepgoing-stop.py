@@ -31,7 +31,17 @@ NUDGE = (
     "[keep-going] Your last paragraph leaves runnable work open: a promise, a permission question about something "
     "you could just do, or a blocker with no owner-only input.\n"
     "Do the promised or runnable work now with tool calls instead of describing it.\n"
-    "Stop only with a line `NEEDS-OWNER: <the decision, login or approval only the owner can give>`."
+    "Stop only with a line `NEEDS-OWNER: <the login, code or approval only the owner can give>`."
+)
+MENU = re.compile(
+    r"(?:^|\s)\(?[a-d]\)\s|\boption\s+[a-d1-4]\b|\b(?:choose|pick|decide)\b|\bwhich\s+(?:do\s+you|one|option|route|path)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+MENU_NUDGE = (
+    "[keep-going] Your NEEDS-OWNER: hands the owner a choice of routes. The owner already asked for the outcome, "
+    "so every step needed to reach it is authorized: pick the route yourself, say why in one line, and do it now.\n"
+    "Keep NEEDS-OWNER only for input the owner has not given and only they can give: a login or code, or a hard "
+    "prohibition's specific approval. Then ask for that one thing, with your recommendation, never a menu."
 )
 
 
@@ -84,6 +94,11 @@ def last_paragraph(text):
     return parts[-1] if parts else ""
 
 
+def owner_menu(text):
+    match = OWNER.search(text)
+    return bool(match) and bool(MENU.search(text[match.start():].replace("**", "").replace("`", "")))
+
+
 def runnable_open(text):
     if OWNER.search(text):
         return False
@@ -103,7 +118,9 @@ def main():
         text = payload.get("last_assistant_message") or payload.get("lastAssistantMessage") or payload.get("text")
         if not isinstance(text, str) or not text:
             text = transcript_text(payload.get("transcript_path") or payload.get("transcriptPath"))
-        if text and runnable_open(text):
+        if text and owner_menu(text):
+            print(json.dumps({"decision": "block", "reason": MENU_NUDGE}))
+        elif text and runnable_open(text):
             print(json.dumps({"decision": "block", "reason": NUDGE}))
     except Exception:
         return 0

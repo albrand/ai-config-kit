@@ -93,6 +93,21 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(build(NEEDS_OWNER)))
             self.assertAllowed(self.stop(build("Waiting.\n\nSTATUS: needs-owner")))
 
+    def test_needs_owner_menu_is_nudged_once(self):
+        menus = (
+            "Stopped before building.\n\nNEEDS-OWNER: Alexandre to choose how the backend reaches staging:\n"
+            "- (a) Approve a CI change to the backend deploy.\n- (b) Ship backend main as it is.\n"
+            "- (c) Wait until QA approves those 4 tickets.",
+            "Two routes exist.\n\nNEEDS-OWNER: option A rebases, option B cherry-picks. Which do you prefer?",
+            "Done with the audit.\n\nSTATUS: needs-owner\nNEEDS-OWNER: pick between the staging and release branch.",
+        )
+        for build in (self.claude, self.codex):
+            for text in menus:
+                result = self.stop(build(text))
+                self.assertNudged(result)
+                self.assertIn("already asked for", result["reason"])
+                self.assertAllowed(self.stop(build(text, active=True), "keepgoing-stop.py"))
+
     def test_completed_report_is_allowed(self):
         text = "Changed the parser and added two tests.\n\n- Suite: 41 passed, 0 failed\n- Exit code: 0"
         for build in (self.claude, self.codex):
