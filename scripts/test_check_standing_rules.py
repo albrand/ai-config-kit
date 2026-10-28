@@ -79,6 +79,22 @@ class StandingRuleCheckerTest(unittest.TestCase):
         _, missing = CHECKER.check_baseline_preservation(baseline, damaged)
         self.assertIn("safety-hook-block-cannot-be-bypassed", missing)
 
+    def test_only_the_recorded_fork_swap_exception_is_admitted_for_the_app_rules(self):
+        swap = (
+            "Never quit, kill, replace or restart the running bb app, except through "
+            "`~/projects/bb-fork-tools/fork-swap.sh` when Alexandre asks for a swap or an install "
+            "in the current conversation."
+        )
+        self.assertFalse(CHECKER.contradicted_rule("bb-app-never-quit", swap))
+        for wider in (
+            swap + " Also unless needed to finish the task.",
+            swap + " Or except in recovery.",
+            "Never quit the running bb app, except through the script.",
+            "Never quit the running bb app unless needed.",
+        ):
+            with self.subTest(text=wider):
+                self.assertTrue(CHECKER.contradicted_rule("bb-app-never-quit", wider))
+
     def test_baseline_entrypoint_returns_success_for_intact_source(self):
         baseline = (
             SCRIPT.parent.parent / "proposals/card21/baseline/"

@@ -558,6 +558,11 @@ HOME_FILES = (
     Path("~/.config/opencode/AGENTS.md").expanduser(),
     Path("~/.bb/AGENTS.md").expanduser(),
 )
+# The one exception the owner recorded (2026-10-11) to the bb-app rules: a swap through the guarded script.
+SANCTIONED_APP_SWAP = re.compile(
+    r"except through `?[^\s`]*fork-swap\.sh`? when [A-Za-z]+ asks for a swap or an install in the current conversation",
+    re.IGNORECASE,
+)
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 # These inventories are selected by exact content fingerprints at native paths.
@@ -714,7 +719,7 @@ RENDERED_HOME_SHA256 = {
     "f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919": "proposal-claude",
     "92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2": "proposal-codex",
     "95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed": "proposal-opencode",
-    "0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270": "proposal-bb",
+    "67650e5a12bede5b4af7e80891b80a1553c9e44cd536ece1c345ce1d07bb8164": "proposal-bb",
 }
 
 
@@ -964,7 +969,7 @@ def contradicted_rule(name: str, text: str) -> bool:
                 policy += " " + continuation.strip()
                 if len(policy) > len(line) + 240:
                     break
-            if re.search(r"\b(?:unless|except)\b", policy, re.IGNORECASE):
+            if re.search(r"\b(?:unless|except)\b", SANCTIONED_APP_SWAP.sub("", policy), re.IGNORECASE):
                 return True
         permission_patterns = (
             rf"\b(?:you\s+)?(?:may|can)\s+(?:[a-z]+\s+){{0,3}}{action}\b.{{0,100}}{target}",
