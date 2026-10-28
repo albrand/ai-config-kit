@@ -17,7 +17,10 @@ WAITING = re.compile(
     r"(?:monitor|child|worker)\s+will)\b",
     re.IGNORECASE,
 )
-CLAUSE = re.compile(r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b", re.IGNORECASE)
+CLAUSE = re.compile(
+    r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|[,;]?\s*\band\s+(?=(?:i|we)\b)",
+    re.IGNORECASE,
+)
 IMMEDIATE = re.compile(r"\b(?:now|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
     r"\b(?:(?:do\s+you\s+)?want\s+me\s+to|would\s+you\s+like\s+me\s+to|(?:should|shall)\s+i|"

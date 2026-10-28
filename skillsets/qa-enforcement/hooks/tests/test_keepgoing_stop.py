@@ -89,8 +89,11 @@ class KeepGoingTests(unittest.TestCase):
             "The child is still running, but I'll run the tests now.",
             "Waiting on CI; meanwhile I'll update the README.",
             "While the watcher runs I'll fix the parser right away.",
+            "The child is still running and I'll run the tests now.",
+            "The child is still running and I'll update the README.",
         )
-        allowed = ("When the child finishes, I'll verify its diff.", "Waiting on the child; I'll verify its diff.")
+        allowed = ("When the child finishes, I'll verify its diff.", "Waiting on the child; I'll verify its diff.",
+                   "Once CI is green and the review is clean, I'll merge it.")
         for build in (self.claude, self.codex):
             for text in nudged:
                 self.assertNudged(self.stop(build("Status noted.\n\n" + text), "keepgoing-stop.py"))
