@@ -111,6 +111,22 @@ class StopHooksTests(unittest.TestCase):
             with self.subTest(rows=odd):
                 self.assertTrue(evidence.has_evidence_packet(head + odd))
 
+    def test_a_live_non_code_target_with_its_ids_is_a_packet(self):
+        # The meta-ads coordinator (2026-10-28) wrote this for live Meta objects with no code commit; it was rejected.
+        packet = ("- **Persona:** a Brazilian psychologist who sees the ad in their Facebook or Instagram feed.\n"
+                  "- **Target:** Meta ad account 1647974420038709, campaign 120251523582330475, ad set "
+                  "120251523582540475, read live from Meta at 19:58.\n\n"
+                  "| User outcome | Verdict | Evidence |\n|---|---|---|\n"
+                  "| The ad reaches psychologists | PASS | Read back from Meta |\n"
+                  "| Psychologists click the ad | NOT RUN | No delivery yet |\n")
+        self.assertTrue(evidence.has_evidence_packet(packet))
+        # Still not a target: a resource named with no identifier, or a bare number with no resource.
+        self.assertFalse(evidence.has_evidence_packet(packet.replace(
+            "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475", "the live ad")))
+        self.assertFalse(evidence.has_evidence_packet(packet.replace(
+            "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475, read live "
+            "from Meta at 19:58.", "1647974420038709")))
+
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
         table = ("### QA evidence packet\n\n- **Persona:** Scheduler team engineer\n"

@@ -243,7 +243,13 @@ def has_evidence_packet(text):
         re.search(r"\b(?:stack|repo|project|commit|sha|head|branch|worktree)\b", target, re.IGNORECASE)
         and re.search(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", target, re.IGNORECASE)
     )
-    return has_deployment or has_stack_sha
+    # A live target with no code commit (an ad account, a cloud job) is identified by its resource and id.
+    has_resource_id = bool(re.search(
+        r"\b(?:accounts?|campaigns?|ad\s?sets?|ads?|instances?|objects?|resources?|records?|jobs?|runs?|builds?|"
+        r"releases?|services?|databases?|buckets?|queues?|orders?|threads?)\b[^.;\n]{0,12}?"
+        r"\b(?:\d{6,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z]+_[a-z0-9]{8,})\b",
+        target, re.IGNORECASE))
+    return has_deployment or has_stack_sha or has_resource_id
 
 
 def first_claim(text):
