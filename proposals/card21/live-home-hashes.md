@@ -226,14 +226,10 @@ input.
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
 
-### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 52359fc
+### Accepted profile: canonical hard prohibitions, first wording at 659742c (never installed)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
-The kit baseline's `## Hard prohibitions` section is now the canonical set the
-live homes carry, with the Hermes and bb-app lines the standing-rule checker
-requires kept in a separate section. Only the bb home changes; Claude, Codex and
-OpenCode render as before.
+This PR's first render was the current profile at 659742c, so the history test keeps it here. Its bb home
+dropped the bb-only lines the live bb home keeps; the current render restores them.
 
 | Home | SHA-256 |
 |---|---|
@@ -241,6 +237,22 @@ OpenCode render as before.
 | Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `67650e5a12bede5b4af7e80891b80a1553c9e44cd536ece1c345ce1d07bb8164` |
+
+### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 52359fc
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+The kit baseline's `## Hard prohibitions` section is now the canonical set the
+live homes carry, with the Hermes and bb-app lines the standing-rule checker
+requires kept in a separate section; the bb-only lines of the live bb home sit inside the hard prohibitions. Only the bb home changes; Claude, Codex and
+OpenCode render as before.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

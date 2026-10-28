@@ -87,13 +87,21 @@ bb appends this baseline to every provider-backed thread. It holds the rules eve
 - A hard sandbox/guardian/DLP block must be reported exactly; a provider policy refusal is final; continue only independently authorized local work.
 - OpenCode workers never recursively delegate; the coordinator owns integration and final validation.
 - Never bypass an active fleet route hold with “Send now”; wait for verified handover or report the hold.
+- Use the approved survival-gated swap or stage a build. Never use `pkill` or `pgrep -f`.
+- Never quit, kill, replace, or restart the running bb app outside the `fork-swap.sh` exception above. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.
+- Clone Node dependencies with `wt-deps`; never symlink `node_modules`. Below 20 GB free, do not install/build. Validate focused, use native toolchains, and stop every task-owned process tree before closeout.
+- Never place or retain a project source on Hermes (srv1677963). Send review context only as the bounded claim, scope, and staged evidence via `bb fleet validate`; never ask Hermes to mount a project source.
+- Use only the approved broker to send bounded Hermes prompts via SSH stdin. Never put prompts in argv or require a local terminal socket; never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
+- Run `worktree-gc` dry-run. Load `shared-host-capacity`.
+- For expensive/release/migration operations, use `execution-ownership`.
+- Stop on bot challenges. Before login takeover, pass `verified-qa-e2e`'s gate; disclose shared-window tab count/title. Load `isolated-browser`.
+- These broker limits also do not restrict in-session subagents.
 
 ## Hermes and bb app rules
 
 These repeat or refine the hard prohibitions above for the bb app and the Hermes reviewer.
 
 - Never publicly expose a service or run `bb connect expose` unless the user explicitly asks in this conversation to expose that named service/port. Any authorized share is temporary and task-scoped: close it when the task ends, then run `bb connect shares` before closeout.
-- Never quit, kill, replace, or restart the running bb app. Keep remote Hermes independent; use its approved broker, bounded prompts, one task/worktree/writer, and no secrets. Details: `CMUX_HERMES_ORCHESTRATION.md`.
 - Never quit the running bb app.
 - Never kill the running bb app.
 - Never replace the running bb app.
@@ -101,9 +109,6 @@ These repeat or refine the hard prohibitions above for the bb app and the Hermes
 - Never move `/Applications/bb.app`.
 - Never delete `/Applications/bb.app`.
 - Never overwrite `/Applications/bb.app`.
-- Never place or retain a project source on Hermes (srv1677963). Send review context only as the bounded claim, scope, and staged evidence via `bb fleet validate`; never ask Hermes to mount a project source.
-- Use only the approved broker to send bounded Hermes prompts via SSH stdin. Never put prompts in argv or require a local terminal socket; never create reverse SSH or listeners, forward broad environment values, or export `CMUX_SOCKET_CAPABILITY`/`CMUX_*` values. Never pass a `--model` override to `acp-hermes-agent`.
-- Hermes/cmux broker delegation defaults off with concurrency/depth 1; model calls require explicit bounded activation. These broker limits do not restrict bb child threads or in-session subagents.
 
 <!-- typed-decisions:begin -->
 ## Typed decisions

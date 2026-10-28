@@ -91,6 +91,10 @@ class StandingRuleCheckerTest(unittest.TestCase):
             swap + " Or except in recovery.",
             "Never quit the running bb app, except through the script.",
             "Never quit the running bb app unless needed.",
+            "Never quit the running bb app, except when convenient.",
+            "Never quit the running bb app unless the user asks.",
+            swap.replace("Alexandre asks", "anyone asks"),
+            swap.replace("`~/projects/bb-fork-tools/fork-swap.sh`", "the install script"),
         ):
             with self.subTest(text=wider):
                 self.assertTrue(CHECKER.contradicted_rule("bb-app-never-quit", wider))

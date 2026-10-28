@@ -560,7 +560,7 @@ HOME_FILES = (
 )
 # The one exception the owner recorded (2026-10-11) to the bb-app rules: a swap through the guarded script.
 SANCTIONED_APP_SWAP = re.compile(
-    r"except through `?[^\s`]*fork-swap\.sh`? when [A-Za-z]+ asks for a swap or an install in the current conversation",
+    r"except through `?[^\s`]*fork-swap\.sh`? when Alexandre asks for a swap or an install in the current conversation",
     re.IGNORECASE,
 )
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
@@ -719,7 +719,7 @@ RENDERED_HOME_SHA256 = {
     "f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919": "proposal-claude",
     "92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2": "proposal-codex",
     "95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed": "proposal-opencode",
-    "67650e5a12bede5b4af7e80891b80a1553c9e44cd536ece1c345ce1d07bb8164": "proposal-bb",
+    "30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f": "proposal-bb",
 }
 
 
