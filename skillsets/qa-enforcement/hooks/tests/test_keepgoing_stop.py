@@ -74,7 +74,7 @@ class KeepGoingTests(unittest.TestCase):
         allowed = (
             "I'm watching both cards. When the map arrives I'll check it, then plan the actual trim from it.",
             "Once CI comes back green I'll merge it.",
-            "Waiting on the child; I'll verify its diff.",
+            "Waiting on the child, and when it finishes I'll verify its diff.",
         )
         nudged = ("I'll run the tests next.", "Next I'll update the README.")
         for build in (self.claude, self.codex):
@@ -93,8 +93,11 @@ class KeepGoingTests(unittest.TestCase):
             "The child is still running and I'll update the README.",
             "I'll update the README after reviewing the code.",
             "When I have a moment I'll fix the parser.",
+            # A semicolon separates two statements; the wait in one cannot excuse the other.
+            "Waiting on CI; I'll update the README.",
+            "Waiting on the child; I'll verify its diff.",
         )
-        allowed = ("When the child finishes, I'll verify its diff.", "Waiting on the child; I'll verify its diff.",
+        allowed = ("When the child finishes, I'll verify its diff.",
                    "Once CI is green and the review is clean, I'll merge it.")
         for build in (self.claude, self.codex):
             for text in nudged:
