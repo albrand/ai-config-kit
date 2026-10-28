@@ -29,7 +29,8 @@ CLAUSE = re.compile(
 )
 UNFINISHED = re.compile(
     r"\b(?:remain(?:s|ing)?\s+(?:unrun|untested|unverified|undone|to\s+(?:run|do))|"
-    r"(?:not|never)\s+(?:yet\s+)?(?:run|tested|verified|done|finished)|left\s+to\s+do)\b",
+    r"(?:not|never|\w+n't)\s+(?:yet\s+)?(?:been\s+)?(?:yet\s+)?(?:run|tested|verified|done|finished)|"
+    r"needs?\s+to\s+be\s+(?:run|tested|verified|done|finished)|left\s+to\s+do)\b",
     re.IGNORECASE,
 )
 NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|needs?|requires?|owner|hold)\b", re.IGNORECASE)

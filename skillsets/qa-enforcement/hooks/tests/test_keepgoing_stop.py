@@ -123,7 +123,10 @@ class KeepGoingTests(unittest.TestCase):
     def test_unrun_tests_closeout_is_blocked_by_the_stop_chain(self):
         for build in (self.claude, self.codex):
             for text in ("Changed the parser; tests remain unrun.", "Changed the parser.\n\nTests remain unrun.",
-                         "Changed the parser.\n\nTests remain unrun because I haven't run them."):
+                         "Changed the parser.\n\nTests remain unrun because I haven't run them.",
+                         "Changed the parser.\n\nTests have not been run yet.",
+                         "Changed the parser.\n\nTests need to be run.",
+                         "Changed the parser.\n\nThe suite hasn't been run."):
                 result = self.stop(build(text))
                 self.assertEqual(result.get("decision"), "block", result)
                 self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
