@@ -209,7 +209,7 @@ did not ask for (Hermes r1); homes in this state get the line back when the curr
 | OpenCode | `d5fa4f1ffeb7cb343abc79c13fdc88a22fa8b87936b1f844c06ad4ce3a19ae35` |
 | bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
 
-### Current rendered profile: session-input guard retired, based on dc52be1
+### Accepted live profile: session-input guard retired at dc52be1 (replaced by the next render)
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
 output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
@@ -225,6 +225,45 @@ input.
 | Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
+
+### Accepted live profile: canonical hard prohibitions, first wording at 659742c (never installed)
+
+This PR's first render was the current profile at 659742c, so the history test keeps it here. Its bb home
+dropped the bb-only lines the live bb home keeps; the current render restores them.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `67650e5a12bede5b4af7e80891b80a1553c9e44cd536ece1c345ce1d07bb8164` |
+
+### Accepted live profile: canonical hard prohibitions, second wording at 6f15150 (never installed)
+
+This PR's second render was the current profile at 6f15150, so the history test keeps it here. Its Hermes line predates the owner's 2026-10-28 ruling.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f` |
+
+### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 3bcf947
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+The kit baseline's `## Hard prohibitions` section is now the canonical set the
+live homes carry, with the Hermes and bb-app lines the standing-rule checker
+requires kept in a separate section; the bb-only lines of the live bb home sit inside the hard prohibitions. Only the bb home changes; Claude, Codex and
+OpenCode render as before.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
