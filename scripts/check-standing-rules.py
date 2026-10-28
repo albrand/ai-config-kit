@@ -558,6 +558,11 @@ HOME_FILES = (
     Path("~/.config/opencode/AGENTS.md").expanduser(),
     Path("~/.bb/AGENTS.md").expanduser(),
 )
+# The one exception the owner recorded (2026-10-11) to the bb-app rules: a swap through the guarded script.
+SANCTIONED_APP_SWAP = re.compile(
+    r"except through `?[^\s`]*fork-swap\.sh`? when Alexandre asks for a swap or an install in the current conversation",
+    re.IGNORECASE,
+)
 KIT_SOURCE = Path(__file__).resolve().parents[1] / "GLOBAL_AGENTS.md"
 
 # These inventories are selected by exact content fingerprints at native paths.
@@ -964,7 +969,7 @@ def contradicted_rule(name: str, text: str) -> bool:
                 policy += " " + continuation.strip()
                 if len(policy) > len(line) + 240:
                     break
-            if re.search(r"\b(?:unless|except)\b", policy, re.IGNORECASE):
+            if re.search(r"\b(?:unless|except)\b", SANCTIONED_APP_SWAP.sub("", policy), re.IGNORECASE):
                 return True
         permission_patterns = (
             rf"\b(?:you\s+)?(?:may|can)\s+(?:[a-z]+\s+){{0,3}}{action}\b.{{0,100}}{target}",
