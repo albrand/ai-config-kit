@@ -102,6 +102,13 @@ class KeepGoingTests(unittest.TestCase):
             for text in allowed:
                 self.assertAllowed(self.stop(build("Status noted.\n\n" + text), "keepgoing-stop.py"))
 
+    def test_immediate_promise_earlier_is_not_hidden_by_a_closing_paragraph(self):
+        text = "Parser changed.\n\nI'll run the tests next.\n\nDone."
+        for build in (self.claude, self.codex):
+            self.assertNudged(self.stop(build(text)))
+            self.assertAllowed(self.stop(build("Earlier I said I would refactor it; that landed.\n\nDone."),
+                                         "keepgoing-stop.py"))
+
     def test_permission_question_is_nudged(self):
         text = "The branch is pushed.\n\nWant me to open the PR?"
         for build in (self.claude, self.codex):

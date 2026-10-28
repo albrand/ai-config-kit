@@ -23,7 +23,7 @@ CLAUSE = re.compile(
     r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|[,;]?\s*\band\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
 )
-IMMEDIATE = re.compile(r"\b(?:now|right\s+away|immediately)\b", re.IGNORECASE)
+IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
     r"\b(?:(?:do\s+you\s+)?want\s+me\s+to|would\s+you\s+like\s+me\s+to|(?:should|shall)\s+i|"
     r"if\s+you(?:'d|\s+would)?\s+(?:like|want),?\s+i\s+(?:can|could|will|'ll))\b",
@@ -122,7 +122,16 @@ def clean_owner_stop(tail):
     return "\n".join(line for line in tail.splitlines() if not OWNER_LINE.match(line))
 
 
+def immediate_promise(text):
+    """A promise to act now or next anywhere in the message; a closing paragraph must not hide it."""
+    body = "\n".join(line for line in text.replace("**", "").replace("`", "").splitlines()
+                     if not OWNER_LINE.match(line))
+    return any(PROMISE.search(c) and IMMEDIATE.search(c) for c in CLAUSE.split(body))
+
+
 def runnable_open(text):
+    if immediate_promise(text):
+        return True
     tail = last_paragraph(text)
     # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
     rest = clean_owner_stop(tail)
