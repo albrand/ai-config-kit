@@ -110,6 +110,17 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(build("Earlier I said I would refactor it; that landed.\n\nDone."),
                                          "keepgoing-stop.py"))
 
+    def test_unrun_tests_closeout_is_blocked_by_the_stop_chain(self):
+        for build in (self.claude, self.codex):
+            for text in ("Changed the parser; tests remain unrun.", "Changed the parser.\n\nTests remain unrun."):
+                result = self.stop(build(text))
+                self.assertEqual(result.get("decision"), "block", result)
+                self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
+            for text in ("Changed the parser; the parser suite ran: 41 passed, 0 failed.",
+                         "Changed the parser.\n\nThe walk is NOT RUN: blocked because hsrpc is on owner hold.",
+                         "Changed the parser.\n\nHermes is NOT RUN yet: still running on the review host."):
+                self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_permission_question_is_nudged(self):
         text = "The branch is pushed.\n\nWant me to open the PR?"
         for build in (self.claude, self.codex):

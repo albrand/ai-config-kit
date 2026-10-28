@@ -23,6 +23,12 @@ CLAUSE = re.compile(
     r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|[,;]?\s*\band\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
 )
+UNFINISHED = re.compile(
+    r"\b(?:remain(?:s|ing)?\s+(?:unrun|untested|unverified|undone|to\s+(?:run|do))|"
+    r"(?:not|never)\s+(?:yet\s+)?(?:run|tested|verified|done|finished)|left\s+to\s+do)\b",
+    re.IGNORECASE,
+)
+NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|needs?|requires?|owner|hold)\b", re.IGNORECASE)
 STATED_ASK = re.compile(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", re.IGNORECASE)
 QUOTED = re.compile(r"\"[^\"\n]{1,300}\"|“[^”\n]{1,300}”")
 IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
@@ -149,6 +155,9 @@ def runnable_open(text):
             return False
         tail = rest
     if PERMISSION.search(tail):
+        return True
+    # Work stated as not done, with no blocker named beside it, is still runnable.
+    if any(UNFINISHED.search(c) and not (NAMED_BLOCKER.search(c) or WAITING.search(c)) for c in CLAUSE.split(tail)):
         return True
     return bool(BLOCKED.search(tail)) and "?" not in tail
 
