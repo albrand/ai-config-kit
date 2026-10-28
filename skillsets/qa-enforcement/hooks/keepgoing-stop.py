@@ -122,15 +122,17 @@ def clean_owner_stop(tail):
     return "\n".join(line for line in tail.splitlines() if not OWNER_LINE.match(line))
 
 
-def immediate_promise(text):
-    """A promise to act now or next anywhere in the message; a closing paragraph must not hide it."""
-    body = "\n".join(line for line in text.replace("**", "").replace("`", "").splitlines()
-                     if not OWNER_LINE.match(line))
-    return any(PROMISE.search(c) and IMMEDIATE.search(c) for c in CLAUSE.split(body))
+def open_promise(text):
+    """A promise anywhere in the message that no outside wait excuses; a closing paragraph must not hide it.
+
+    A wait excuses only the promise in its own clause, and never one marked as immediate.
+    """
+    body = text.replace("**", "").replace("`", "")
+    return any(PROMISE.search(c) and (IMMEDIATE.search(c) or not WAITING.search(c)) for c in CLAUSE.split(body))
 
 
 def runnable_open(text):
-    if immediate_promise(text):
+    if open_promise(text):
         return True
     tail = last_paragraph(text)
     # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
@@ -140,9 +142,6 @@ def runnable_open(text):
             return False
         tail = rest
     if PERMISSION.search(tail):
-        return True
-    # A wait excuses only the promise in its own clause, and never one marked as immediate.
-    if any(PROMISE.search(c) and (IMMEDIATE.search(c) or not WAITING.search(c)) for c in CLAUSE.split(tail)):
         return True
     return bool(BLOCKED.search(tail)) and "?" not in tail
 
