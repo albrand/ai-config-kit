@@ -120,7 +120,10 @@ class StopHooksTests(unittest.TestCase):
                   "| The ad reaches psychologists | PASS | Read back from Meta |\n"
                   "| Psychologists click the ad | NOT RUN | No delivery yet |\n")
         self.assertTrue(evidence.has_evidence_packet(packet))
-        # Still not a target: a resource named with no identifier, or a bare number with no resource.
+        # Still not a target: a measurement next to a resource word, a resource with no id, a bare number.
+        self.assertFalse(evidence.has_evidence_packet(packet.replace(
+            "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475",
+            "Python test run took 123456 seconds")))
         self.assertFalse(evidence.has_evidence_packet(packet.replace(
             "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475", "the live ad")))
         self.assertFalse(evidence.has_evidence_packet(packet.replace(
