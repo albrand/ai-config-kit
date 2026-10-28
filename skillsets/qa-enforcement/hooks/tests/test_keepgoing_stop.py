@@ -185,6 +185,18 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(build(text.replace('"', "“", 1).replace('"', "”", 1)),
                                          "keepgoing-stop.py"))
 
+    def test_genuine_owner_decision_is_never_told_to_self_select(self):
+        menu = ("Retention is a policy call.\n\nNEEDS-OWNER: choose the retention policy:\n"
+                "- (a) 30 days\n- (b) 90 days")
+        single = ("Retention is a policy call.\n\nNEEDS-OWNER: approve 90-day retention for audit logs? "
+                  "I recommend 90 days, because the SOC 2 audit window is 90 days.")
+        for build in (self.claude, self.codex):
+            reason = self.stop(build(menu), "keepgoing-stop.py")["reason"]
+            # A menu is still sent back, but a choice that is truly the owner's becomes one recommended question.
+            self.assertIn("one question with your recommendation", reason)
+            self.assertIn("policy", reason)
+            self.assertAllowed(self.stop(build(single), "keepgoing-stop.py"))
+
     def test_report_describing_the_menu_rule_is_allowed(self):
         text = ("The hook's suggested line and the `STATUS: needs-owner` return were the source.\n\n"
                 "A NEEDS-OWNER that offers options such as (a)/(b) or says choose or pick is now sent back.")

@@ -60,10 +60,11 @@ MENU = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 MENU_NUDGE = (
-    "[keep-going] Your NEEDS-OWNER: hands the owner a choice of routes. The owner already asked for the outcome, "
-    "so every step needed to reach it is authorized: pick the route yourself, say why in one line, and do it now.\n"
-    "Keep NEEDS-OWNER only for input the owner has not given and only they can give: a login or code, or a hard "
-    "prohibition's specific approval. Then ask for that one thing, with your recommendation, never a menu."
+    "[keep-going] Your NEEDS-OWNER: hands the owner a menu. If the owner already asked for the outcome and this is "
+    "only a route to it, every step is authorized: pick the route yourself, say why in one line, and do it now.\n"
+    "If the choice is truly the owner's (a policy, money, an irreversible or outward effect, a login or code, or a "
+    "hard prohibition's specific approval), never choose it for them: ask one question with your recommendation, "
+    "never a menu."
 )
 
 
