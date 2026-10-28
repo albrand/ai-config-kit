@@ -23,6 +23,7 @@ CLAUSE = re.compile(
     r"(?<=[.!?])\s+|\n|[,;]?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|[,;]?\s*\band\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
 )
+STATED_ASK = re.compile(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", re.IGNORECASE)
 QUOTED = re.compile(r"\"[^\"\n]{1,300}\"|“[^”\n]{1,300}”")
 IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
@@ -120,6 +121,8 @@ def clean_owner_stop(tail):
     asks = [line for line in tail.splitlines() if OWNER_LINE.match(line)]
     if not asks or any(PROMISE.search(line) and not WAITING.search(line) for line in asks):
         return None
+    if not any(STATED_ASK.match(line) for line in asks):
+        return None
     return "\n".join(line for line in tail.splitlines() if not OWNER_LINE.match(line))
 
 
@@ -139,6 +142,8 @@ def runnable_open(text):
     tail = last_paragraph(text)
     # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
     rest = clean_owner_stop(tail)
+    if rest is None and OWNER_LINE.search(tail):
+        return True  # an owner label with no stated owner-only ask is not a stop
     if rest is not None:
         if not rest.strip():
             return False

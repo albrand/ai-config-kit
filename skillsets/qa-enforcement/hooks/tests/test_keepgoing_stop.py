@@ -118,7 +118,10 @@ class KeepGoingTests(unittest.TestCase):
     def test_needs_owner_line_is_allowed(self):
         for build in (self.claude, self.codex):
             self.assertAllowed(self.stop(build(NEEDS_OWNER)))
-            self.assertAllowed(self.stop(build("Waiting.\n\nSTATUS: needs-owner")))
+            self.assertAllowed(self.stop(build("Waiting.\n\nSTATUS: needs-owner\nNEEDS-OWNER: approve the force-push")))
+            # A bare status with no stated ask is not an owner-only request.
+            self.assertNudged(self.stop(build("Checked it.\n\nSTATUS: needs-owner"), "keepgoing-stop.py"))
+            self.assertNudged(self.stop(build("Checked it.\n\nNEEDS-OWNER:"), "keepgoing-stop.py"))
 
     def test_needs_owner_menu_is_nudged_once(self):
         menus = (
