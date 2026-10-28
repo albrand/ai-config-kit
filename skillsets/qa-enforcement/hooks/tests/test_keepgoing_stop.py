@@ -113,6 +113,16 @@ class KeepGoingTests(unittest.TestCase):
         for build in (self.claude, self.codex):
             self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
 
+    def test_owner_label_mention_does_not_hide_a_promise(self):
+        texts = (
+            "Status.\n\nNEEDS-OWNER: is only a policy label; I will run the tests next.",
+            "Status.\n\nNEEDS-OWNER: approve the force-push to main\nI'll run the tests next.",
+            "Status.\n\nThe NEEDS-OWNER: line is a label. I'll run the tests next.",
+        )
+        for build in (self.claude, self.codex):
+            for text in texts:
+                self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_report_describing_the_menu_rule_is_allowed(self):
         text = ("The hook's suggested line and the `STATUS: needs-owner` return were the source.\n\n"
                 "A NEEDS-OWNER that offers options such as (a)/(b) or says choose or pick is now sent back.")

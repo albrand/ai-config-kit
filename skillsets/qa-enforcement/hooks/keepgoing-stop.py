@@ -5,7 +5,7 @@ import re
 import sys
 
 
-OWNER = re.compile(r"NEEDS-OWNER:|STATUS:\s*needs-owner", re.IGNORECASE)
+OWNER_LINE = re.compile(r"^[\s>*-]*(?:NEEDS-OWNER:|STATUS:\s*needs-owner)", re.IGNORECASE | re.MULTILINE)
 PROMISE = re.compile(
     r"\b(?:i(?:'ll|\s+will|'m\s+going\s+to|\s+am\s+going\s+to)|we(?:'ll|\s+will)|next,?\s+i\s+will|next\s+up|"
     r"let\s+me\s+(?!know\b)[a-z]+|let\s+me\s+know\s+(?:when|once|as\s+soon\s+as))\b",
@@ -94,9 +94,6 @@ def last_paragraph(text):
     return parts[-1] if parts else ""
 
 
-OWNER_LINE = re.compile(r"^[\s>*-]*(?:NEEDS-OWNER:|STATUS:\s*needs-owner)", re.IGNORECASE | re.MULTILINE)
-
-
 def owner_menu(text):
     """A stop line (not a mention of one) whose paragraph offers the owner routes to choose from."""
     text = text.replace("**", "").replace("`", "")
@@ -107,11 +104,25 @@ def owner_menu(text):
     return False
 
 
+def clean_owner_stop(tail):
+    """The tail minus its owner lines, if it closes on a real owner ask; None otherwise.
+
+    A real ask starts its line and makes no promise of its own; a mention of the label does not count.
+    """
+    asks = [line for line in tail.splitlines() if OWNER_LINE.match(line)]
+    if not asks or any(PROMISE.search(line) and not WAITING.search(line) for line in asks):
+        return None
+    return "\n".join(line for line in tail.splitlines() if not OWNER_LINE.match(line))
+
+
 def runnable_open(text):
     tail = last_paragraph(text)
     # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
-    if OWNER.search(tail):
-        return False
+    rest = clean_owner_stop(tail)
+    if rest is not None:
+        if not rest.strip():
+            return False
+        tail = rest
     if PERMISSION.search(tail):
         return True
     if PROMISE.search(tail) and not WAITING.search(tail):
