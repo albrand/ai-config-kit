@@ -108,6 +108,17 @@ class KeepGoingTests(unittest.TestCase):
                 self.assertIn("already asked for", result["reason"])
                 self.assertAllowed(self.stop(build(text, active=True), "keepgoing-stop.py"))
 
+    def test_needs_owner_earlier_does_not_hide_a_later_promise(self):
+        text = "NEEDS-OWNER: approve the force-push to main\n\nMeanwhile I'll run the tests next."
+        for build in (self.claude, self.codex):
+            self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
+
+    def test_report_describing_the_menu_rule_is_allowed(self):
+        text = ("The hook's suggested line and the `STATUS: needs-owner` return were the source.\n\n"
+                "A NEEDS-OWNER that offers options such as (a)/(b) or says choose or pick is now sent back.")
+        for build in (self.claude, self.codex):
+            self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_completed_report_is_allowed(self):
         text = "Changed the parser and added two tests.\n\n- Suite: 41 passed, 0 failed\n- Exit code: 0"
         for build in (self.claude, self.codex):

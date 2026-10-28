@@ -94,15 +94,24 @@ def last_paragraph(text):
     return parts[-1] if parts else ""
 
 
+OWNER_LINE = re.compile(r"^[\s>*-]*(?:NEEDS-OWNER:|STATUS:\s*needs-owner)", re.IGNORECASE | re.MULTILINE)
+
+
 def owner_menu(text):
-    match = OWNER.search(text)
-    return bool(match) and bool(MENU.search(text[match.start():].replace("**", "").replace("`", "")))
+    """A stop line (not a mention of one) whose paragraph offers the owner routes to choose from."""
+    text = text.replace("**", "").replace("`", "")
+    for match in OWNER_LINE.finditer(text):
+        paragraph = re.split(r"\n\s*\n", text[match.start():], maxsplit=1)[0]
+        if MENU.search(paragraph):
+            return True
+    return False
 
 
 def runnable_open(text):
-    if OWNER.search(text):
-        return False
     tail = last_paragraph(text)
+    # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
+    if OWNER.search(tail):
+        return False
     if PERMISSION.search(tail):
         return True
     if PROMISE.search(tail) and not WAITING.search(tail):
