@@ -17,6 +17,7 @@ done
 # 2. agent-hooks wrappers
 cp "$STAGE/hooks/qa-ship-gate-hook.sh" "$HOME/.agent-hooks/qa-ship-gate-hook.sh"
 cp "$STAGE/hooks/qa-stop-hook.sh" "$HOME/.agent-hooks/qa-stop-hook.sh"
+cp "$STAGE/hooks/keepgoing-stop.py" "$HOME/.agent-hooks/keepgoing-stop.py"
 cp "$STAGE/hooks/codex-hook-trust.py" "$HOME/.agent-hooks/codex-hook-trust.py"
 mkdir -p "$HOME/.config/opencode/plugin"
 cp "$STAGE/hooks/plugin/opencode-qa-evidence.js" "$HOME/.config/opencode/plugin/qa-evidence-gate.js"
