@@ -20,7 +20,7 @@ WAITING = re.compile(
     re.IGNORECASE,
 )
 CLAUSE = re.compile(
-    r"(?<=[.!?])\s+|\n|;|,?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|,?\s*\band\s+(?=(?:i|we)\b)",
+    r"(?<=[.!?])\s+|\n|;|,?\s*\b(?:but|also|meanwhile|in\s+the\s+meantime)\b|,?\s*\b(?:and\s+then|then|and)\s+(?=(?:i|we)\b)",
     re.IGNORECASE,
 )
 UNFINISHED = re.compile(

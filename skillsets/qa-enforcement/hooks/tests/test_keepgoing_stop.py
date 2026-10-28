@@ -96,6 +96,8 @@ class KeepGoingTests(unittest.TestCase):
             # A semicolon separates two statements; the wait in one cannot excuse the other.
             "Waiting on CI; I'll update the README.",
             "Waiting on the child; I'll verify its diff.",
+            "When CI finishes, I will inspect the result, then I will run the tests.",
+            "Once the child reports I'll read it and then we'll update the README.",
         )
         allowed = ("When the child finishes, I'll verify its diff.",
                    "Once CI is green and the review is clean, I'll merge it.")
