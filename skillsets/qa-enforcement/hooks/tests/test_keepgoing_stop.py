@@ -98,6 +98,8 @@ class KeepGoingTests(unittest.TestCase):
             "Waiting on the child; I'll verify its diff.",
             "When CI finishes, I will inspect the result, then I will run the tests.",
             "Once the child reports I'll read it and then we'll update the README.",
+            "I will run the tests when I finish reviewing the code.",
+            "Once we're done with the refactor I'll update the docs.",
         )
         allowed = ("When the child finishes, I'll verify its diff.",
                    "Once CI is green and the review is clean, I'll merge it.")
