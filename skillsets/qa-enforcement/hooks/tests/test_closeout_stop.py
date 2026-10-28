@@ -322,6 +322,23 @@ class CloseoutStopTests(unittest.TestCase):
         finally:
             os.kill(orphan, 9)
 
+    def test_process_table_survives_command_lines_that_are_not_utf8(self):
+        # A host process with stray bytes in its argv (Linux's ps prints them raw) must not take the table down.
+        bin_dir = pathlib.Path(self.tmp.name) / "fakebin"
+        bin_dir.mkdir()
+        fake = bin_dir / "ps"
+        fake.write_bytes(b"#!/bin/sh\nprintf '  101     1 /usr/bin/odd \\377\\376 arg\\n  102   101 claude --flag\\n'\n")
+        fake.chmod(0o755)
+        saved = os.environ["PATH"]
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved}"
+        try:
+            table = CLOSEOUT_MODULE.process_table()
+        finally:
+            os.environ["PATH"] = saved
+        self.assertEqual(sorted(table), [101, 102])
+        self.assertEqual(table[102], (101, "claude --flag"))
+        self.assertEqual(CLOSEOUT_MODULE.agent_process(table, pid=102), 102)
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "PR_SET_CHILD_SUBREAPER is Linux's")
     def test_an_adopted_orphan_carries_nothing_on_linux(self):
         # r8: a subreaper agent adopts an orphan that still has the output as stdout, which makes it a direct child.

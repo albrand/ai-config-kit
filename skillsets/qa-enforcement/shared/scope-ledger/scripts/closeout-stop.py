@@ -239,10 +239,15 @@ def transcript_background(path, now=None, live=None):
     return [desc for desc, out in recent if os.path.realpath(out) in held]
 
 
+def run_text(cmd):
+    """stdout of cmd as text. A command line or path can hold bytes that aren't UTF-8; they decode to U+FFFD."""
+    return subprocess.run(cmd, capture_output=True, timeout=5).stdout.decode("utf-8", "replace")
+
+
 def process_table():
     """{pid: (ppid, args)} for every process, or {} when ps can't be read."""
     try:
-        out = subprocess.run(["ps", "-axo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=5).stdout
+        out = run_text(["ps", "-axo", "pid=,ppid=,args="])
     except (OSError, subprocess.SubprocessError):
         return {}
     table = {}
@@ -290,7 +295,7 @@ def file_holders(paths):
     want = {os.path.realpath(p) for p in paths}
     got = {p: set() for p in want}
     try:
-        out = subprocess.run(["lsof", "-F", "pfn", "--", *sorted(want)], capture_output=True, text=True, timeout=5).stdout
+        out = run_text(["lsof", "-F", "pfn", "--", *sorted(want)])
         pid = fd = None
         for line in out.splitlines():
             if line.startswith("p") and line[1:].isdigit():
