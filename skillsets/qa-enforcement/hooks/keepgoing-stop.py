@@ -12,10 +12,9 @@ PROMISE = re.compile(
     re.IGNORECASE,
 )
 WAITING = re.compile(
-    r"\b(?:still\s+(?:running|in\s+progress|pending)|waiting\s+(?:on|for)|"
-    r"(?:when|once|as\s+soon\s+as|after)\s+(?:it|they|that|this|the\s+[\w-]+(?:\s+[\w-]+)?)\s+"
-    r"(?:is\s+|are\s+|has\s+|have\s+)?(?:finish\w*|complete\w*|report\w*|land\w*|staged|merg\w*|done|ready)|"
-    r"(?:watcher|monitor|notification|child|worker)\s+will)\b",
+    r"\b(?:still\s+(?:running|in\s+progress|pending)|in\s+progress|waiting\s+(?:on|for)|watch(?:ing|er)|notif\w*|"
+    r"(?:when|once|as\s+soon\s+as|after)\s+[\w'-]+|"
+    r"(?:monitor|child|worker)\s+will)\b",
     re.IGNORECASE,
 )
 PERMISSION = re.compile(

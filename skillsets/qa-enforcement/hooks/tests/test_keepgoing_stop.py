@@ -70,6 +70,19 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(build(wait)))
             self.assertNudged(self.stop(build("The child is still running.\n\nI'll run the tests next.")))
 
+    def test_generalized_waits_are_allowed_and_plain_promises_are_not(self):
+        allowed = (
+            "I'm watching both cards. When the map arrives I'll check it, then plan the actual trim from it.",
+            "Once CI comes back green I'll merge it.",
+            "Waiting on the child; I'll verify its diff.",
+        )
+        nudged = ("I'll run the tests next.", "Next I'll update the README.")
+        for build in (self.claude, self.codex):
+            for text in allowed:
+                self.assertAllowed(self.stop(build("Status noted.\n\n" + text)))
+            for text in nudged:
+                self.assertNudged(self.stop(build("Status noted.\n\n" + text)))
+
     def test_permission_question_is_nudged(self):
         text = "The branch is pushed.\n\nWant me to open the PR?"
         for build in (self.claude, self.codex):
