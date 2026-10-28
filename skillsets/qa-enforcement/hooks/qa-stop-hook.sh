@@ -19,10 +19,15 @@ result='{}'
 if [ -f "$closeout" ]; then
   result=$(printf '%s' "$payload" | python3 "$closeout") || result='{}'
 fi
-QA_STOP_EVIDENCE="$evidence" QA_STOP_CLOSEOUT="$result" python3 -c '
+keepgoing="$HOME/.agent-hooks/keepgoing-stop.py"
+nudge='{}'
+if [ -f "$keepgoing" ]; then
+  nudge=$(printf '%s' "$payload" | python3 "$keepgoing") || nudge='{}'
+fi
+QA_STOP_EVIDENCE="$evidence" QA_STOP_CLOSEOUT="$result" QA_STOP_KEEPGOING="$nudge" python3 -c '
 import json,os
 reasons=[]
-for key in ("QA_STOP_EVIDENCE", "QA_STOP_CLOSEOUT"):
+for key in ("QA_STOP_EVIDENCE", "QA_STOP_CLOSEOUT", "QA_STOP_KEEPGOING"):
     try:
         result=json.loads(os.environ[key])
     except (ValueError, KeyError):
