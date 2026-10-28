@@ -226,7 +226,7 @@ input.
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `0a7376c054bf5520513add11d4b0e6aed7eaca0bd36a27f72a8379cdd671f270` |
 
-### Accepted profile: canonical hard prohibitions, first wording at 659742c (never installed)
+### Accepted live profile: canonical hard prohibitions, first wording at 659742c (never installed)
 
 This PR's first render was the current profile at 659742c, so the history test keeps it here. Its bb home
 dropped the bb-only lines the live bb home keeps; the current render restores them.
