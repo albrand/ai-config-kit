@@ -83,6 +83,11 @@ class KeepGoingTests(unittest.TestCase):
             for text in nudged:
                 self.assertNudged(self.stop(build("Status noted.\n\n" + text)))
 
+    def test_wait_excuses_only_its_own_sentence(self):
+        text = "Status noted.\n\nOnce the CI result arrives, I'll inspect it. I'll also rerun the tests now."
+        for build in (self.claude, self.codex):
+            self.assertNudged(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_permission_question_is_nudged(self):
         text = "The branch is pushed.\n\nWant me to open the PR?"
         for build in (self.claude, self.codex):

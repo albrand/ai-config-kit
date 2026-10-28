@@ -125,7 +125,8 @@ def runnable_open(text):
         tail = rest
     if PERMISSION.search(tail):
         return True
-    if PROMISE.search(tail) and not WAITING.search(tail):
+    # A wait excuses only the promise in its own sentence, not unrelated runnable work beside it.
+    if any(PROMISE.search(s) and not WAITING.search(s) for s in re.split(r"(?<=[.!?])\s+|\n", tail)):
         return True
     return bool(BLOCKED.search(tail)) and "?" not in tail
 
