@@ -244,10 +244,12 @@ def has_evidence_packet(text):
         and re.search(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", target, re.IGNORECASE)
     )
     # A live target with no code commit (an ad account, a cloud job) is identified by its resource and id.
+    # A plural word before a bare number is a count ("Jobs: 123456 pending"); it needs an id label to name one.
+    resource = (r"(?:account|campaign|ad\s?set|ad|instance|object|resource|record|job|run|build|release|service|"
+                r"database|bucket|queue|order|thread)")
+    ident = r"\b(?:\d{6,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z]+_[a-z0-9]{8,})\b"
     has_resource_id = bool(re.search(
-        r"\b(?:accounts?|campaigns?|ad\s?sets?|ads?|instances?|objects?|resources?|records?|jobs?|runs?|builds?|"
-        r"releases?|services?|databases?|buckets?|queues?|orders?|threads?)\b[\s:#=]*(?:ids?\b[\s:#=]*)?"
-        r"\b(?:\d{6,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z]+_[a-z0-9]{8,})\b",
+        rf"\b{resource}\b[\s:#=]*(?:ids?\b[\s:#=]*)?{ident}|\b{resource}s\b[\s:#=]*ids?\b[\s:#=]*{ident}",
         target, re.IGNORECASE))
     return has_deployment or has_stack_sha or has_resource_id
 

@@ -120,7 +120,15 @@ class StopHooksTests(unittest.TestCase):
                   "| The ad reaches psychologists | PASS | Read back from Meta |\n"
                   "| Psychologists click the ad | NOT RUN | No delivery yet |\n")
         self.assertTrue(evidence.has_evidence_packet(packet))
-        # Still not a target: a measurement next to a resource word, a resource with no id, a bare number.
+        # Still not a target: an aggregate count, a measurement next to a resource word, no id, a bare number.
+        for count in ("Jobs: 123456 pending", "runs 1234567 total", "Builds = 2000000 queued"):
+            self.assertFalse(evidence.has_evidence_packet(packet.replace(
+                "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475", count)),
+                count)
+        # A labelled id still passes.
+        self.assertTrue(evidence.has_evidence_packet(packet.replace(
+            "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475",
+            "GitHub Actions run id 40776263617")))
         self.assertFalse(evidence.has_evidence_packet(packet.replace(
             "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475",
             "Python test run took 123456 seconds")))

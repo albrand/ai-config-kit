@@ -102,6 +102,9 @@ class KeepGoingTests(unittest.TestCase):
             # A state wait does not govern a comma-joined promise; a when/once conditional does.
             "Waiting on CI, I'll update the README.",
             "The child is still running, I'll fix the parser.",
+            # A conditional excuses only what follows it, not a promise made before it.
+            "I'll update the README, and when CI passes I'll report.",
+            "I'll fix the parser, then once the child finishes I'll merge.",
             "Once we're done with the refactor I'll update the docs.",
         )
         allowed = ("When the child finishes, I'll verify its diff.",
