@@ -88,7 +88,14 @@ BB_LIFECYCLE = [
     re.compile(r'tell\s+application\s+(?:id\s+)?[\\"]*(?:dev\.bb\.desktop|bb)[\\"]*\s+to\s+quit', re.I),
     re.compile(r'\b(?:mv|rm|ditto|rsync)\b[^\n;&|]*?/Applications/bb\.app(?![\w./-]*/Contents/)'),
     re.compile(r'\bkillall\s+(?:-\S+\s+)*[\\"]*bb[\\"]*(?:\s|$|[\\";])'),
-    re.compile(r'\bpkill\b[^\n;&|]*(?:bb\.app|dev\.bb\.desktop)'),
+    re.compile(r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'),
+]
+# fork-stage.sh repairs the bb Electron runtime only from this cache. A session
+# freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
+# next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
+# Caches directory deletes it too.
+ELECTRON_CACHE = [
+    re.compile(r'\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?Library/Caches/(?:electron(?:-builder)?(?![\w.-])|\*|["\']?(?=\s|$|[;&|"\']))'),
 ]
 NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view", "readfile", "grep", "glob"}
 
@@ -151,6 +158,12 @@ def bb_lifecycle_guard(raw):
                 text = head
     except Exception:
         pass
+    if any(rx.search(text) for rx in ELECTRON_CACHE):
+        verdict(True,
+            "[electron-cache] ~/Library/Caches/electron and electron-builder hold the Electron "
+            "runtime that fork-stage.sh installs bb from, offline and checksum-verified. Without "
+            "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
+            "pip or Homebrew caches, ~/.cache, or merged worktrees.")
     if any(rx.search(text) for rx in BB_LIFECYCLE) or kills_bb_pid(text):
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
