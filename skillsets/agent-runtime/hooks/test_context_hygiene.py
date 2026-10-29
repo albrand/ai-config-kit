@@ -54,6 +54,30 @@ class ContextHygiene(unittest.TestCase):
         self.assertTrue(v["reason"].startswith("[bb-lifecycle]"))
         self.assertNotIn("Not a safety rule", v["reason"])
 
+    def test_the_electron_cache_that_fork_stage_installs_from_is_never_deleted(self):
+        # A seahaven session freeing disk (2026-10-28 14:17Z) ran the first of these; the next bb install
+        # (i31) then refused with "no cached electron-v44.9.3-darwin-arm64.zip". The fixtures are data only.
+        for cmd in ("rm -rf ~/Library/Caches/com.tidal.desktop.ShipIt/* ~/Library/Caches/electron/* "
+                    "~/Library/Caches/node-gyp/*",
+                    "rm -r ~/Library/Caches/node-gyp ~/Library/Caches/electron ~/Library/Caches/pnpm",
+                    'rm -rf "$HOME/Library/Caches/electron-builder"',
+                    "rm -rf ~/Library/Caches/*",
+                    "cd /tmp && rm -rf ~/Library/Caches/",
+                    "rm -rf ~/Library/Caches",
+                    'rm -rf "$HOME/Library/Caches"; df -h',
+                    "mv ~/Library/Caches/electron /tmp/old-electron"):
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"])
+                self.assertTrue(v["reason"].startswith("[electron-cache]"))
+        # Other caches stay deletable, and reading the Electron cache is fine.
+        for cmd in ("rm -rf ~/Library/Caches/node-gyp ~/Library/Caches/pnpm",
+                    "rm -rf ~/Library/Caches/electronic-music-app",
+                    "ls -la ~/Library/Caches/electron/",
+                    "du -sh ~/Library/Caches/electron"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd))["block"])
+
 
 if __name__ == "__main__":
     unittest.main()
