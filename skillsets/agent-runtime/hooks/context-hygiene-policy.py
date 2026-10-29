@@ -95,7 +95,7 @@ BB_LIFECYCLE = [
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
 # Caches directory deletes it too.
 ELECTRON_CACHE = [
-    re.compile(r'\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?Library/Caches/(?:electron(?:-builder)?(?![\w.-])|\*|["\']?(?=\s|$|[;&|"\']))'),
+    re.compile(r'\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?Library/Caches(?:/(?:electron(?:-builder)?(?![\w.-])|\*)|/?["\']?(?=\s|$|[;&|"\']))'),
 ]
 NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view", "readfile", "grep", "glob"}
 

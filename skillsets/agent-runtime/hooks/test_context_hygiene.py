@@ -63,6 +63,8 @@ class ContextHygiene(unittest.TestCase):
                     'rm -rf "$HOME/Library/Caches/electron-builder"',
                     "rm -rf ~/Library/Caches/*",
                     "cd /tmp && rm -rf ~/Library/Caches/",
+                    "rm -rf ~/Library/Caches",
+                    'rm -rf "$HOME/Library/Caches"; df -h',
                     "mv ~/Library/Caches/electron /tmp/old-electron"):
             with self.subTest(cmd=cmd):
                 v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
