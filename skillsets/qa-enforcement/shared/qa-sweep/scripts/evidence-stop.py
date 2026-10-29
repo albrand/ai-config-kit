@@ -240,7 +240,7 @@ def has_evidence_packet(text):
     target = values["target"]
     has_deployment = bool(re.search(r"https?://\S+", target) and re.search(r"\bdeployment(?:\s+id)?\b", target, re.IGNORECASE))
     has_stack_sha = bool(
-        re.search(r"\b(?:stack|repo|project|commit|sha|head|branch|worktree)\b", target, re.IGNORECASE)
+        re.search(r"\b(?:stacks?|repos?|projects?|commits?|shas?|heads?|branch(?:es)?|worktrees?)\b", target, re.IGNORECASE)
         and re.search(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", target, re.IGNORECASE)
     )
     # A live target with no code commit (an ad account, a cloud job) is identified by its resource and id.
