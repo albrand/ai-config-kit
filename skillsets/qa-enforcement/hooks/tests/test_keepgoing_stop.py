@@ -80,7 +80,11 @@ class KeepGoingTests(unittest.TestCase):
             "Once the child posts its diff I'll review it.",
             "When the coordinator delivers the map I'll plan from it.",
         )
-        nudged = ("I'll run the tests next.", "Next I'll update the README.")
+        nudged = ("I'll run the tests next.", "Next I'll update the README.",
+                  # nouns that share a stem with the new event verbs are not events
+                  "Once the deliverables are clear, I'll update the README.",
+                  "After the postmortem draft, I'll update the README.",
+                  "I'll update the README; P6 sends status often.")
         for build in (self.claude, self.codex):
             for text in allowed:
                 self.assertAllowed(self.stop(build("Status noted.\n\n" + text)))

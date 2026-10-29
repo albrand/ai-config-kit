@@ -13,8 +13,10 @@ PROMISE = re.compile(
 )
 # A conditional counts only when it names an outside event finishing or arriving, not more of our own work.
 CONDITIONAL = re.compile(
-    r"\b(?:when|once|as\s+soon\s+as|after)\s+(?!(?:i|we)\b|i'|we')[^.;!?]{0,60}?\b(?:arriv|finish|land|comes?\s+back|"
-    r"return|complet|pass|green|done|clean|merged|report|repl|respond|ready|exit|end|send|sent|post|deliver)\w*",
+    r"\b(?:when|once|as\s+soon\s+as|after)\s+(?!(?:i|we)\b|i'|we')[^.;!?]{0,60}?\b(?:(?:arriv|finish|land|comes?\s+back|"
+    r"return|complet|pass|green|done|clean|merged|report|repl|respond|ready|exit|end)\w*"
+    # verb forms only: "deliverables", "sentence" or "postpone" are not events
+    r"|(?:sends?|sent|posts?|posted|delivers?|delivered)\b)",
     re.IGNORECASE,
 )
 STATE_WAIT = re.compile(
