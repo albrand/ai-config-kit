@@ -68,6 +68,11 @@ class ContextHygiene(unittest.TestCase):
                     "find ~/Library/Caches/electron -mindepth 1 -delete",
                     "find ~/Library/Caches -name '*.zip' -delete",
                     "find ~/Library/Caches/electron -type f -exec rm {} +",
+                    "cd ~/Library/Caches/electron && find . -mindepth 1 -delete",
+                    "cd ~/Library/Caches && rm -rf electron",
+                    'cd "$HOME/Library/Caches/electron"; rm -rf ./*',
+                    "cd ~/Library/Caches && rm -rf ./*",
+                    "cd ~/Library/Caches && find . -mindepth 1 -delete",
                     "mv ~/Library/Caches/electron /tmp/old-electron"):
             with self.subTest(cmd=cmd):
                 v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
@@ -79,7 +84,10 @@ class ContextHygiene(unittest.TestCase):
                     "ls -la ~/Library/Caches/electron/",
                     "du -sh ~/Library/Caches/electron",
                     "find ~/Library/Caches/electron -name '*.zip'",
-                    "find ~/Library/Caches/pnpm -mindepth 1 -delete"):
+                    "find ~/Library/Caches/pnpm -mindepth 1 -delete",
+                    "cd ~/Library/Caches/pnpm && rm -rf ./*",
+                    "cd ~/Library/Caches/electron && ls -la",
+                    "cd ~/Library/Caches && rm -rf pnpm node-gyp"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd))["block"])
 
