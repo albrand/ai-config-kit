@@ -101,7 +101,7 @@ ELECTRON_CACHE = [
     # cd into the cache, then any relative delete in the same command
     re.compile(r'\b(?:cd|pushd)\s+["\']?\S*Library/Caches/electron(?:-builder)?/?["\']?(?=\s|$|[;&|])[^\n]*?(?:\b(?:rm|mv|trash|rmdir)\s|\bfind\b[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b))'),
     # cd into Caches, then a delete naming the cache or every entry
-    re.compile(r'\b(?:cd|pushd)\s+["\']?\S*Library/Caches/?["\']?(?=\s|$|[;&|])[^\n]*?(?:\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?(?:(?<![\w.-])electron(?:-builder)?(?![\w.-])|(?<![\w.-])(?:\./)?\*)|\bfind\s+\.(?=\s)[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b))'),
+    re.compile(r'\b(?:cd|pushd)\s+["\']?\S*Library/Caches/?["\']?(?=\s|$|[;&|])[^\n]*?(?:\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?(?:(?<![\w.-])electron(?:-builder)?(?![\w.-])|(?<![\w.-])(?:\./)?\*)|\bfind\s+(?:\.|(?:\./)?electron(?:-builder)?)/?(?=\s)[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b))'),
 ]
 NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view", "readfile", "grep", "glob"}
 
