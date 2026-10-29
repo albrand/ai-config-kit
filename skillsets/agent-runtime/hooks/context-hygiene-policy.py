@@ -97,7 +97,7 @@ BB_LIFECYCLE = [
 ELECTRON_CACHE = [
     re.compile(r'\b(?:rm|mv|trash|rmdir)\b[^\n;&|]*?Library/Caches(?:/(?:electron(?:-builder)?(?![\w.-])|\*)|/?["\']?(?=\s|$|[;&|"\']))'),
     # find that deletes, started at the cache or at Caches itself
-    re.compile(r'\bfind\s+["\']?\S*Library/Caches(?:/electron(?:-builder)?)?/?["\']?(?=\s|$)[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b)'),
+    re.compile(r'\bfind\s+["\']?\S*Library/Caches(?:/(?:electron(?:-builder)?(?![\w.-])|\*)\S*)?/?["\']?(?=\s|$)[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b)'),
     # cd into the cache, then any relative delete in the same command
     re.compile(r'\b(?:cd|pushd)\s+["\']?\S*Library/Caches/electron(?:-builder)?/?["\']?(?=\s|$|[;&|])[^\n]*?(?:\b(?:rm|mv|trash|rmdir)\s|\bfind\b[^\n;&|]*?(?:-delete\b|-exec(?:dir)?\s+(?:\S*/)?(?:rm|mv|trash)\b))'),
     # cd into Caches, then a delete naming the cache or every entry

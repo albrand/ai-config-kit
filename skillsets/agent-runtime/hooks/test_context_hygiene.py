@@ -68,6 +68,9 @@ class ContextHygiene(unittest.TestCase):
                     "find ~/Library/Caches/electron -mindepth 1 -delete",
                     "find ~/Library/Caches -name '*.zip' -delete",
                     "find ~/Library/Caches/electron -type f -exec rm {} +",
+                    "find ~/Library/Caches/electron/* -mindepth 1 -delete",
+                    "find ~/Library/Caches/electron/*/ -type f -exec rm {} +",
+                    "find ~/Library/Caches/* -name '*.zip' -delete",
                     "cd ~/Library/Caches/electron && find . -mindepth 1 -delete",
                     "cd ~/Library/Caches && rm -rf electron",
                     'cd "$HOME/Library/Caches/electron"; rm -rf ./*',
@@ -87,6 +90,7 @@ class ContextHygiene(unittest.TestCase):
                     "du -sh ~/Library/Caches/electron",
                     "find ~/Library/Caches/electron -name '*.zip'",
                     "find ~/Library/Caches/pnpm -mindepth 1 -delete",
+                    "find ~/Library/Caches/pnpm/* -mindepth 1 -delete",
                     "cd ~/Library/Caches/pnpm && rm -rf ./*",
                     "cd ~/Library/Caches/electron && ls -la",
                     "cd ~/Library/Caches && rm -rf pnpm node-gyp"):
