@@ -51,7 +51,7 @@ Don't add fixes, files or refactors to the PR that weren't asked for.
 
 Every PR review attempts one. The local reviewer stays responsible for evidence, falsification, the final verdict, freshness and posting; Hermes advice never substitutes for code, ticket, board, runtime or hosted-check evidence, so verify each load-bearing claim against the exact head.
 
-**Route.** `bb fleet validate "<claim>" --topic <name> --scope "<what was asked>" --evidence <file>...` stages the evidence on Hermes's machine, runs the review, and removes the evidence after the verdict. Send bounded evidence only:
+**Route.** `bb fleet validate "<claim>" --topic <name> --scope "<what was asked>" --evidence <file1> --evidence <file2>` stages the evidence on Hermes's machine, runs the review, and removes the evidence after the verdict. Give each file its own `--evidence` flag: a second path after one flag is not staged. `scripts/hermes-bundle.py` builds the command that way. The result's first line reads "N artifact(s) staged"; when N is smaller than the number of files you meant to send, the round reviewed less than you think, so fix the command and rerun before reading its verdict. Send bounded evidence only:
 - the claim, written as what the change does and why;
 - the commits and diffstat;
 - the diff, in chunks of at most about 28 KB split at file boundaries;
