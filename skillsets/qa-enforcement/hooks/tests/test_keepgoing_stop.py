@@ -75,8 +75,20 @@ class KeepGoingTests(unittest.TestCase):
             "I'm watching both cards. When the map arrives I'll check it, then plan the actual trim from it.",
             "Once CI comes back green I'll merge it.",
             "Waiting on the child, and when it finishes I'll verify its diff.",
+            # Root (2026-10-28) was nudged on these: a sibling thread sending, posting or delivering is outside.
+            "I'll report the walk verdicts when P6 sends them.",
+            "Once the child posts its diff I'll review it.",
+            "When the coordinator delivers the map I'll plan from it.",
         )
-        nudged = ("I'll run the tests next.", "Next I'll update the README.")
+        nudged = ("I'll run the tests next.", "Next I'll update the README.",
+                  # nouns that share a stem with the new event verbs are not events
+                  "Once the deliverables are clear, I'll update the README.",
+                  "After the postmortem draft, I'll update the README.",
+                  "I'll update the README; P6 sends status often.",
+                  # our own later action after "after ..." is not an outside event, old words or new
+                  "After reviewing the diff, I will post the review.",
+                  "After reviewing the diff, I will send the report.",
+                  "After reviewing the diff I'll report back.")
         for build in (self.claude, self.codex):
             for text in allowed:
                 self.assertAllowed(self.stop(build("Status noted.\n\n" + text)))
