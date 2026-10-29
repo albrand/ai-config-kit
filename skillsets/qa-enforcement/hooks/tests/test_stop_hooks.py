@@ -138,6 +138,18 @@ class StopHooksTests(unittest.TestCase):
             "Meta ad account 1647974420038709, campaign 120251523582330475, ad set 120251523582540475, read live "
             "from Meta at 19:58.", "1647974420038709")))
 
+    def test_a_target_naming_several_commits_is_a_packet(self):
+        # Root (2026-10-28) wrote this for a guard checked at two commits; the plural "commits" was rejected.
+        packet = ("Persona: root, as merge operator, staging i31.\n"
+                  "Target: `fork-features-check.sh` against bb-fork commits `8392165246` and `7a4932cfba`.\n"
+                  "Goals:\n1. The guard finds every fork feature. **PASS:** both runs print all present.\n")
+        self.assertTrue(evidence.has_evidence_packet(packet))
+        for word in ("SHAs", "heads", "branches", "repos", "worktrees"):
+            self.assertTrue(evidence.has_evidence_packet(packet.replace("commits", word)), word)
+        # A plural word still needs a hex id beside it.
+        self.assertFalse(evidence.has_evidence_packet(
+            packet.replace("bb-fork commits `8392165246` and `7a4932cfba`", "the latest commits")))
+
     def test_packets_written_by_the_live_probe_are_recognised(self):
         # thr_v4rqr4jadx (2026-10-01) wrote both of these; the hook rejected both.
         table = ("### QA evidence packet\n\n- **Persona:** Scheduler team engineer\n"
