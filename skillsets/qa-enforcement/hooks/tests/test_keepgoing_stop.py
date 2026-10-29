@@ -75,6 +75,10 @@ class KeepGoingTests(unittest.TestCase):
             "I'm watching both cards. When the map arrives I'll check it, then plan the actual trim from it.",
             "Once CI comes back green I'll merge it.",
             "Waiting on the child, and when it finishes I'll verify its diff.",
+            # Root (2026-10-28) was nudged on these: a sibling thread sending, posting or delivering is outside.
+            "I'll report the walk verdicts when P6 sends them.",
+            "Once the child posts its diff I'll review it.",
+            "When the coordinator delivers the map I'll plan from it.",
         )
         nudged = ("I'll run the tests next.", "Next I'll update the README.")
         for build in (self.claude, self.codex):
