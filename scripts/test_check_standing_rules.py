@@ -45,7 +45,9 @@ HARD_RULES_BASELINE = SCRIPT.parent.parent / "proposals/card21/hard-rules.md"
 HARD_RULES_HARD_PROHIBITION_BULLET_COUNT = 34
 
 # 45-rule archived kit baseline (old test_archived_kit_baseline_rules_are_retained_with_deletion_coverage):
-# proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md, rule ids from origin/main checker.
+# proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md.
+# HISTORICAL_CHECKER_REF is the last main before the back-port; it stays an ancestor after squash-merge.
+HISTORICAL_CHECKER_REF = "7aab2a17d7a69bf3acd1dd6e4a67f76205a36fd4"
 ARCHIVED_OLD_BASELINE_PATH = SCRIPT.parent.parent / "proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md"
 OLD_BASELINE_RULE_COUNT = 45
 OLD_BASELINE_RULE_IDS = (
@@ -120,27 +122,54 @@ HERMES_DEFECT_BLOCKING_CRITERIA = (
 )
 
 
+def _historical_checker_source() -> str:
+    repo_root = SCRIPT.parent.parent
+    object_ref = HISTORICAL_CHECKER_REF
+    probe = subprocess.run(
+        ["git", "cat-file", "-e", object_ref],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(
+            f"HISTORICAL_CHECKER_REF {HISTORICAL_CHECKER_REF} is not available in "
+            f"{repo_root} (missing object; use a full clone or fetch that commit)"
+        )
+    blob = f"{HISTORICAL_CHECKER_REF}:scripts/check-standing-rules.py"
+    try:
+        return subprocess.check_output(
+            ["git", "show", blob],
+            cwd=repo_root,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Cannot load historical checker at {blob}: {exc.stderr or exc}"
+        ) from exc
+
+
 def _archive_baseline_checker():
-    """Standing-rule patterns from origin/main for the frozen archived kit baseline."""
+    """Standing-rule patterns pinned at HISTORICAL_CHECKER_REF for the archived kit baseline."""
     cached = getattr(_archive_baseline_checker, "_module", None)
     if cached is not None:
         return cached
-    main_src = subprocess.check_output(
-        ["git", "show", "origin/main:scripts/check-standing-rules.py"],
-        cwd=SCRIPT.parent.parent,
-        text=True,
-    )
+    main_src = _historical_checker_source()
     spec = importlib.util.spec_from_file_location(
-        "check_standing_rules_archive_baseline", SCRIPT.with_name("_archive_baseline_checker.py")
+        "check_standing_rules_archive_baseline",
+        f"{HISTORICAL_CHECKER_REF}/scripts/check-standing-rules.py",
     )
     module = importlib.util.module_from_spec(spec)
-    exec(compile(main_src, "origin/main/scripts/check-standing-rules.py", "exec"), module.__dict__)
+    exec(
+        compile(main_src, f"{HISTORICAL_CHECKER_REF}/scripts/check-standing-rules.py", "exec"),
+        module.__dict__,
+    )
     _archive_baseline_checker._module = module
     return module
 
 
 def archive_baseline_matched_rule_ids(archived_text: str) -> tuple[str, ...]:
-    """Rule ids origin/main's checker matches in the archived baseline file."""
+    """Rule ids the pinned historical checker matches in the archived baseline file."""
     archive_checker = _archive_baseline_checker()
     return tuple(
         sorted(
