@@ -651,21 +651,18 @@ def build(
         )
     out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
     out.mkdir(parents=True, exist_ok=True)
-
-    def clear_prior_bundle(root: Path) -> None:
-        for name in ("MANIFEST.md", "head.json", "pr-body.md", "pr.diff"):
-            path = root / name
+    stamp_path = out / ".hermes-bundle-artifacts.json"
+    if stamp_path.is_file():
+        try:
+            prior = json.loads(stamp_path.read_text())
+        except json.JSONDecodeError:
+            prior = []
+        for rel in prior:
+            path = out / rel
             if path.is_file():
                 path.unlink()
-        for path in root.glob("pr.diff.*"):
-            if path.is_file():
-                path.unlink()
-        for sub in ("tests", "fixtures", "provenance"):
-            path = root / sub
-            if path.is_dir():
+            elif path.is_dir():
                 shutil.rmtree(path)
-
-    clear_prior_bundle(out)
     written: list[Path] = []
 
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
@@ -796,6 +793,11 @@ def build(
     final_total = bundle_byte_total(out, manifest_size_hint=0)
     if final_total > total_budget and not over_note:
         over_note = f"bundle is {final_total} bytes, over the {total_budget}-byte total budget"
+
+    stamp_paths = sorted(
+        str(p.relative_to(out)) for p in bundle_file_paths(out) if p.name != ".hermes-bundle-artifacts.json"
+    )
+    stamp_path.write_text(json.dumps(stamp_paths, indent=2) + "\n")
 
     evidence_paths = bundle_file_paths(out)
     claim = (

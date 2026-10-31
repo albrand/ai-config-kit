@@ -100,12 +100,20 @@ class BundleCase(unittest.TestCase):
     def test_reused_out_preserves_unrelated_files(self):
         self.serve(["src/a.py"], diff_block("src/a.py"))
         self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "tests").mkdir(exist_ok=True)
+        (self.out / "fixtures").mkdir(exist_ok=True)
+        (self.out / "provenance").mkdir(exist_ok=True)
         keeper = self.out / "stale.env"
-        keeper.write_text("TOPSECRET=1\n")
+        keep_test = self.out / "tests" / "keep.py"
+        keep_fix = self.out / "fixtures" / "keep.md"
+        keep_prov = self.out / "provenance" / "keep.log"
+        for path, body in ((keeper, "TOPSECRET=1\n"), (keep_test, "# stay\n"), (keep_fix, "stay\n"), (keep_prov, "stay\n")):
+            path.write_text(body)
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(keeper.exists())
-        self.assertEqual(keeper.read_text(), "TOPSECRET=1\n")
+        for path, body in ((keeper, "TOPSECRET=1\n"), (keep_test, "# stay\n"), (keep_fix, "stay\n"), (keep_prov, "stay\n")):
+            self.assertTrue(path.exists(), path)
+            self.assertEqual(path.read_text(), body)
 
     def test_four_parts_present(self):
         self.serve(["src/a.py", "tests/test_a.py"],
