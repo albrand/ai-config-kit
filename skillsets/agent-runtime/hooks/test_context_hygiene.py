@@ -242,6 +242,22 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
 
+    def test_pgrep_dense_inputs_finish_within_deadline(self):
+        import time
+
+        cases = (
+            (False, "echo " + " ".join(["pgrep"] * 1800)),
+            (True, "; ".join(["pgrep -f x"] * 600)),
+            (False, "echo " + " ".join(["'pgrep -f'"] * 1500)),
+        )
+        for want_block, cmd in cases:
+            with self.subTest(cmd=cmd[:48]):
+                t0 = time.monotonic()
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                elapsed = time.monotonic() - t0
+                self.assertLess(elapsed, 2.0)
+                self.assertEqual(v["block"], want_block)
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"
