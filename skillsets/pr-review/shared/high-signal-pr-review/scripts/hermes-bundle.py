@@ -46,7 +46,7 @@ def redact_secret_diff_text(diff_text: str) -> str:
     out: list[str] = []
     for line in diff_text.splitlines(keepends=True):
         raw = line.encode("utf-8")
-        if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-"):
+        if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-", b" "):
             out.append(line)
             continue
         prefix, payload = raw[:1], raw[1:]

@@ -319,6 +319,23 @@ class BundleCase(unittest.TestCase):
                 self.assertNotIn(body.split("=", 1)[1][:3].encode(), blob)
                 self.assertIn(b"[redacted: secret-like content]", blob)
 
+    def test_secret_diff_context_line_redacted(self):
+        diff = (
+            "diff --git a/src/a.env b/src/a.env\n"
+            "--- a/src/a.env\n"
+            "+++ b/src/a.env\n"
+            "@@ -1,3 +1,3 @@\n"
+            " API_TOKEN=unchanged\n"
+            "-OLD=1\n"
+            "+NEW=2\n"
+        )
+        self.serve(["src/a.env"], diff)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"unchanged", blob)
+        self.assertIn(b"[redacted: secret-like content]", blob)
+
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py") + diff_block("web/a.test.ts"),
