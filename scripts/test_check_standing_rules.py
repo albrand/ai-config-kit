@@ -43,6 +43,77 @@ def remove_bullet_from_hard_section(text: str, bullet: str) -> str:
 HARD_RULES_BASELINE = SCRIPT.parent.parent / "proposals/card21/hard-rules.md"
 # 34 hard-prohibition bullets under ## Hard prohibitions in proposals/card21/hard-rules.md.
 HARD_RULES_HARD_PROHIBITION_BULLET_COUNT = 34
+
+# 45-rule archived kit baseline (old test_archived_kit_baseline_rules_are_retained_with_deletion_coverage):
+# proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md, rule ids from origin/main checker.
+ARCHIVED_OLD_BASELINE_PATH = SCRIPT.parent.parent / "proposals/card21/baseline/GLOBAL_AGENTS.card21-baseline.md"
+OLD_BASELINE_RULE_COUNT = 45
+OLD_BASELINE_RULE_IDS = (
+    "agent-push-is-not-completion",
+    "automation-single-flight-per-target",
+    "bb-app-never-kill",
+    "bb-app-never-quit",
+    "bb-app-never-replace",
+    "bb-app-process",
+    "board-adjacent-detail-read",
+    "board-incomplete-inventory-and-traceability-block",
+    "board-plausible-regression-blocks",
+    "browser-no-foreground-takeover-claim",
+    "child-thread-cap-six-with-orchestration",
+    "dependencies-no-node-modules-symlink",
+    "disk-no-install-build-below-20gb",
+    "email-compose-send",
+    "email-exact-message-approval",
+    "email-general-approval-is-insufficient",
+    "email-open-compose-left-alone",
+    "email-other-message-approval-is-insufficient",
+    "email-safe-path-verification",
+    "hermes-defects-block",
+    "no-ai-signatures",
+    "no-new-feature-flags",
+    "public-exposure",
+    "security-first",
+    "security-residual-exposure",
+    "security-supply-chain-priority",
+    "testing-claim",
+    "testing-pass-full-workflow",
+    "typed-decisions-confidence-keeps-release-checks",
+    "typed-decisions-jev-never-sole-control",
+    "typed-decisions-jev-no-hooks-or-secrets",
+    "typed-decisions-jev-system-one",
+    "typed-decisions-out-of-space-fails",
+    "typed-decisions-resolve-origin",
+    "worktree-collision-reread-diff",
+    "worktree-collision-stop",
+    "worktree-detached-lifetime",
+    "worktree-dirty-protection",
+    "worktree-keep-protection",
+    "worktree-never-force",
+    "worktree-no-sibling-edits",
+    "worktree-not-owned",
+    "worktree-one-writer",
+    "worktree-removal",
+    "worktree-unreferenced-detached",
+)
+# old rule id -> (replacement rule id, owner decision date)
+REPLACED_OLD_RULES = {
+    "typed-decisions-confidence-keeps-release-checks": (
+        "typed-decisions-confidence-keeps-release-checks",
+        "2026-10-28",
+    ),
+    "typed-decisions-jev-never-sole-control": (
+        "typed-decisions-jev-never-sole-control",
+        "2026-10-28",
+    ),
+    "typed-decisions-jev-no-hooks-or-secrets": (
+        "typed-decisions-jev-no-hooks-or-secrets",
+        "2026-10-28",
+    ),
+    "typed-decisions-jev-system-one": ("typed-decisions-jev-system-one", "2026-10-28"),
+    "typed-decisions-out-of-space-fails": ("typed-decisions-out-of-space-fails", "2026-10-28"),
+    "typed-decisions-resolve-origin": ("typed-decisions-resolve-origin", "2026-10-28"),
+}
+
 HERMES_DEFECT_BLOCKING_CRITERIA = (
     "A regression, correctness, security or data-loss defect it names blocks merge until "
     "fixed and cleared on the same topic"
@@ -77,6 +148,75 @@ Never bypass an active fleet route hold with “Send now”; wait for verified h
 
 
 class StandingRuleCheckerTest(unittest.TestCase):
+
+    def test_old_45_rule_baseline_coverage_in_kit_global(self):
+        archived = ARCHIVED_OLD_BASELINE_PATH.read_text(encoding="utf-8")
+        self.assertIn("# Global Agent Instructions", archived)
+        self.assertGreater(len(archived), 1000)
+        kit = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        rendered_claude = (
+            SCRIPT.parent.parent / "proposals/card21/rendered-homes/CLAUDE.md"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(len(OLD_BASELINE_RULE_IDS), OLD_BASELINE_RULE_COUNT)
+        matched: list[str] = []
+        replaced: list[str] = []
+        for rule in OLD_BASELINE_RULE_IDS:
+            if CHECKER.RULES[rule].search(kit):
+                matched.append(rule)
+                self.assertNotIn(
+                    rule,
+                    REPLACED_OLD_RULES,
+                    msg=f"{rule} still matches kit but is listed as replaced",
+                )
+            elif rule in REPLACED_OLD_RULES:
+                replaced.append(rule)
+                new_id, _decision = REPLACED_OLD_RULES[rule]
+                if new_id.startswith("typed-decisions-"):
+                    self.assertIsNotNone(
+                        CHECKER.RULES[new_id].search(rendered_claude),
+                        msg=f"replacement target {new_id} for relocated {rule}",
+                    )
+                else:
+                    self.assertIsNotNone(
+                        CHECKER.RULES[new_id].search(kit),
+                        msg=f"replacement target {new_id} for {rule}",
+                    )
+            else:
+                self.fail(f"old baseline rule {rule} neither matches kit nor is replaced")
+        self.assertEqual(len(matched) + len(replaced), OLD_BASELINE_RULE_COUNT)
+        self.assertEqual(len(replaced), len(REPLACED_OLD_RULES))
+
+    def test_old_45_baseline_still_matched_rule_deletion_fails(self):
+        kit = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        rule = "worktree-one-writer"
+        self.assertIn(rule, OLD_BASELINE_RULE_IDS)
+        self.assertIsNotNone(CHECKER.RULES[rule].search(kit))
+        damaged = CHECKER.RULES[rule].sub("", kit)
+        self.assertIsNone(CHECKER.RULES[rule].search(damaged))
+        missing = CHECKER.missing_rules(damaged, required_optional={rule})
+        self.assertIn(rule, missing)
+
+    def test_old_45_baseline_replacement_target_deletion_fails(self):
+        rule = "typed-decisions-jev-system-one"
+        self.assertIn(rule, REPLACED_OLD_RULES)
+        rendered_path = SCRIPT.parent.parent / "proposals/card21/rendered-homes/CLAUDE.md"
+        source = rendered_path.read_text(encoding="utf-8")
+        damaged = CHECKER.RULES[rule].sub("", source)
+        self.assertIsNone(CHECKER.RULES[rule].search(damaged))
+        with tempfile.TemporaryDirectory(prefix="card21-old45-repl-") as temp_dir:
+            candidate = Path(temp_dir) / "rendered-homes/CLAUDE.md"
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text(damaged, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        output = result.stdout + result.stderr
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn(rule, output)
+
     def test_kit_global_rules_are_retained_with_deletion_coverage(self):
         baseline_path = HARD_RULES_BASELINE
         baseline = baseline_path.read_text(encoding="utf-8")
