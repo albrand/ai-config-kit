@@ -287,6 +287,15 @@ class BundleCase(unittest.TestCase):
         pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
         self.assertNotIn(b"SECRET", pr_diff)
 
+    def test_sensitive_id_rsa_redacted(self):
+        name = "keys/id_rsa"
+        body = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        self.serve([name, "src/a.py"], diff_block(name, body) + diff_block("src/a.py"), tests={name: body.encode()})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"BEGIN OPENSSH", pr_diff)
+
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py") + diff_block("web/a.test.ts"),

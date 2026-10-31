@@ -26,7 +26,7 @@ TOTAL_BUDGET = 128 * 1024
 PR_BODY_CAP = 8 * 1024
 CHANGED_ASSERTIONS_CAP = 16 * 1024
 NEW_TESTS_CAP = 4 * 1024
-SENSITIVE_GLOBS = (".env*", "*.pem", "*secret*", "*credential*")
+SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_ecdsa*", "*secret*", "*credential*")
 PROVENANCE_SECRET = re.compile(
     rb"(?i)(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
 )
