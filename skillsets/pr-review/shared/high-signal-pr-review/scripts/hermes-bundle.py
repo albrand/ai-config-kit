@@ -68,6 +68,45 @@ def is_sensitive(path: str) -> bool:
     return any(fnmatch.fnmatch(name, g) for g in SENSITIVE_GLOBS)
 
 
+def decode_git_diff_path(raw: str) -> str:
+    if raw.startswith('"') and raw.endswith('"'):
+        inner = raw[1:-1]
+        out: list[str] = []
+        i = 0
+        while i < len(inner):
+            if inner[i] == "\\" and i + 1 < len(inner):
+                out.append(inner[i + 1])
+                i += 2
+            else:
+                out.append(inner[i])
+                i += 1
+        raw = "".join(out)
+    if raw.startswith("a/") or raw.startswith("b/"):
+        raw = raw[2:]
+    return raw
+
+
+def parse_diff_git_header(line: str) -> tuple[str, str] | None:
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[len("diff --git ") :].strip()
+    quoted = re.match(r'"((?:\\.|[^"\\])*)" "((?:\\.|[^"\\])*)"$', rest)
+    if quoted:
+        a = decode_git_diff_path('"' + quoted.group(1) + '"')
+        b = decode_git_diff_path('"' + quoted.group(2) + '"')
+        return a, b
+    plain = re.match(r"a/(.+?) b/(.+)$", rest)
+    if plain:
+        return plain.group(1), plain.group(2)
+    return None
+
+
+def diff_block_repo_path(block: str) -> str | None:
+    first = block.split("\n", 1)[0]
+    parsed = parse_diff_git_header(first)
+    return parsed[1] if parsed else None
+
+
 def is_test_path(path: str) -> bool:
     p = PurePosixPath(path)
     return bool({x.lower() for x in p.parts[:-1]} & TEST_DIRS) or bool(TEST_NAME.search(p.name))
@@ -130,9 +169,10 @@ def redact_diff(diff: str, sensitive: set[str]) -> str:
         return diff
     kept = []
     for b in re.split(r"(?m)^(?=diff --git )", diff):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", b)
-        if m and (m.group(1) in sensitive or m.group(2) in sensitive):
-            kept.append(f"diff --git a/{m.group(1)} b/{m.group(2)}\n[content omitted: sensitive file name]\n")
+        first = b.split("\n", 1)[0]
+        parsed = parse_diff_git_header(first)
+        if parsed and (parsed[0] in sensitive or parsed[1] in sensitive):
+            kept.append(first + "\n[content omitted: sensitive file name]\n")
         else:
             kept.append(b)
     return "".join(kept)
@@ -268,10 +308,9 @@ def collect_safety_state_files(
                 matched.add(path)
                 break
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m:
+        path = diff_block_repo_path(block)
+        if not path:
             continue
-        path = m.group(2)
         if (
             is_test_path(path)
             or is_sensitive(path)
@@ -328,10 +367,9 @@ def build_changed_assertions_section(
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
         if not block.strip():
             continue
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m:
+        path = diff_block_repo_path(block)
+        if not path:
             continue
-        path = m.group(2)
         if path in sensitive or status_by_path.get(path) in ("", "added"):
             continue
         if not is_test_path(path):
@@ -460,8 +498,8 @@ def write(path: Path, data: bytes) -> None:
 def changed_line_ranges(diff_text: str, repo_path: str) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m or m.group(2) != repo_path:
+        path = diff_block_repo_path(block)
+        if not path or path != repo_path:
             continue
         for hunk in HUNK_NEW.finditer(block):
             start = int(hunk.group(1))
