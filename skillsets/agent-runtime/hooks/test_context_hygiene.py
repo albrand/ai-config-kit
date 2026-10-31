@@ -92,6 +92,7 @@ class ContextHygiene(unittest.TestCase):
             'git commit -m "block pgrep -f in hooks"',
             "grep -n 'pgrep -f' file.py",
             "grep pgrep -f file.txt",
+            "echo pgrep -f bb",
         )
         for cmd in allowed:
             with self.subTest(cmd=cmd):

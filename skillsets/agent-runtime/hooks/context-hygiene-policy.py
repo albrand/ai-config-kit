@@ -131,13 +131,19 @@ def _pgrep_token_is_command(text, pos):
     before = text[:pos].rstrip()
     if not before:
         return True
-    if re.search(r"\b(?:grep|rg)\s*$", before, re.I):
-        return False
     if re.search(r"(?:&&|\|\|)\s*$", before):
         return True
-    if re.search(r"(?:^|[;&|()]\s*(?:(?:sudo|env)\s+\S+\s+)*?(?:\S+/)*$)", before):
+    if re.search(r"[;&|]\s*$", before):
         return True
-    return False
+    last = re.search(r"([\w.-]+)\s*$", before)
+    if last:
+        cmd = last.group(1).split("/")[-1].lower()
+        if cmd in {
+            "echo", "printf", "grep", "rg", "git", "sed", "awk", "cat", "head", "tail",
+            "wc", "sort", "less", "more", "find", "xargs",
+        }:
+            return False
+    return True
 
 def _pgrep_quote_opener_is_executable(text, start):
     before = text[:start].rstrip()
