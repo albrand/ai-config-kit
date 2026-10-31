@@ -92,6 +92,19 @@ def gh(*args: str, binary: bool = False) -> bytes | str:
     return proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
 
 
+def collect_sensitive_paths(files: list[dict]) -> list[str]:
+    names: set[str] = set()
+    for entry in files:
+        path = entry["path"]
+        if is_sensitive(path):
+            names.add(path)
+        prev = entry.get("previous_filename") or ""
+        if prev and is_sensitive(prev):
+            names.add(path)
+            names.add(prev)
+    return sorted(names)
+
+
 def is_sensitive(path: str) -> bool:
     name = PurePosixPath(path).name.lower()
     return any(fnmatch.fnmatch(name, g) for g in SENSITIVE_GLOBS)
@@ -222,7 +235,7 @@ def changed_files(repo: str, pr: int) -> list[dict]:
             break
         page, i = dec.raw_decode(out, i)
         files.extend(page)
-    return [{"path": f["filename"], "status": f.get("status", "")} for f in files]
+    return [{"path": f["filename"], "status": f.get("status", ""), "previous_filename": f.get("previous_filename") or ""} for f in files]
 
 
 def _block_touches_sensitive_path(block: str, sensitive: set[str]) -> bool:
@@ -755,7 +768,7 @@ def build(
     head = fetch_head(repo, pr)
     sha = head["head_sha"]
     files = changed_files(repo, pr)
-    sensitive = sorted(f["path"] for f in files if is_sensitive(f["path"]))
+    sensitive = collect_sensitive_paths(files)
     if sensitive and not allow_sensitive:
         raise BundleError(
             "refusing: changed files with sensitive names: "

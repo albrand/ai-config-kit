@@ -67,7 +67,7 @@ class BundleCase(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.out = self.tmp / "out"
 
-    def serve(self, files, diff, tests=None, checks=None, statuses=None, body="PR explains the behaviour change."):
+    def serve(self, files, diff, tests=None, checks=None, statuses=None, renames=None, body="PR explains the behaviour change."):
         view = {
             "headRefOid": HEAD, "baseRefOid": BASE, "title": "Add thing",
             "url": "https://github.com/o/r/pull/7", "mergeable": "MERGEABLE", "state": "OPEN",
@@ -80,9 +80,15 @@ class BundleCase(unittest.TestCase):
         (self.fake / "view.json").write_text(json.dumps(view))
         (self.fake / "diff.txt").write_text(diff)
         status_map = statuses or {}
-        (self.fake / "files.json").write_text(json.dumps([
-            {"filename": f, "status": status_map.get(f, "modified")} for f in files
-        ]))
+        renames = renames or {}
+        file_entries = []
+        for f in files:
+            entry = {"filename": f, "status": status_map.get(f, "modified")}
+            if f in renames:
+                entry["status"] = "renamed"
+                entry["previous_filename"] = renames[f]
+            file_entries.append(entry)
+        (self.fake / "files.json").write_text(json.dumps(file_entries))
         for p, body in (tests or {}).items():
             fp = self.fake / "contents" / p
             fp.parent.mkdir(parents=True, exist_ok=True)
@@ -335,6 +341,24 @@ class BundleCase(unittest.TestCase):
         blob = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
         self.assertNotIn(b"unchanged", blob)
         self.assertIn(b"[redacted: secret-like content]", blob)
+
+    def test_sensitive_rename_redacted(self):
+        old, new = "my_secret.txt", "notes.txt"
+        diff = (
+            f"diff --git a/{old} b/{new}\n"
+            f"rename from {old}\n"
+            f"rename to {new}\n"
+            f"--- a/{old}\n"
+            f"+++ b/{new}\n"
+            "@@ -1 +1 @@\n"
+            "-SECRET=1\n"
+            "+SECRET=2\n"
+        )
+        self.serve([new], diff, renames={new: old}, statuses={new: "renamed"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET=", blob)
 
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
