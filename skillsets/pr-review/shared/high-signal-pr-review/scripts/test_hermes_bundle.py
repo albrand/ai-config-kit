@@ -336,6 +336,54 @@ class BundleCase(unittest.TestCase):
         self.assertNotIn(b"BEGIN EC PRIVATE KEY", blob)
         self.assertIn(b"[redacted: secret-like content]", blob)
 
+
+    def test_multiline_pem_redacted_in_added_diff_hunk(self):
+        diff = (
+            "diff --git a/src/added.ts b/src/added.ts\n"
+            "--- a/src/added.ts\n+++ b/src/added.ts\n"
+            "@@ -0,0 +1,4 @@\n"
+            "+-----BEGIN RSA PRIVATE KEY-----\n"
+            "+MIIBFAKEKEYPAYLOAD\n"
+            "+YW5vdGhlcmxpbmU=\n"
+            "+-----END RSA PRIVATE KEY-----\n"
+        )
+        self.serve(["src/added.ts"], diff)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"MIIBFAKEKEYPAYLOAD", pr_diff)
+        self.assertNotIn(b"YW5vdGhlcmxpbmU=", pr_diff)
+
+    def test_multiline_pem_redacted_in_context_diff_hunk(self):
+        diff = (
+            "diff --git a/src/ctx.ts b/src/ctx.ts\n"
+            "--- a/src/ctx.ts\n+++ b/src/ctx.ts\n"
+            "@@ -1,5 +1,5 @@\n"
+            " -----BEGIN OPENSSH PRIVATE KEY-----\n"
+            " MIIBFAKEKEYPAYLOAD\n"
+            " YW5vdGhlcmxpbmU=\n"
+            " -----END OPENSSH PRIVATE KEY-----\n"
+            "-old\n"
+            "+new\n"
+        )
+        self.serve(["src/ctx.ts"], diff)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"MIIBFAKEKEYPAYLOAD", pr_diff)
+
+    def test_multiline_pem_redacted_in_staged_test_file(self):
+        path = "tests/fixture_key.ts"
+        body = (
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+            "MIIBFAKEKEYPAYLOAD\n"
+            "-----END ENCRYPTED PRIVATE KEY-----\n"
+        )
+        self.serve([path], diff_block(path, "x"), tests={path: body.encode()})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("*") if p.is_file())
+        self.assertNotIn(b"MIIBFAKEKEYPAYLOAD", blob)
     def test_prefixed_env_secret_names_redacted(self):
         for body in (
             "OPENAI_API_KEY=sk-live\n",

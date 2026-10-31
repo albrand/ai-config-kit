@@ -30,13 +30,33 @@ SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_e
 PROVENANCE_SECRET = re.compile(
     rb"(?i)(?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]+_)*(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY"
 )
+PEM_BEGIN = re.compile(rb"^\s*-----BEGIN (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+PEM_END = re.compile(rb"^\s*-----END (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+REDACT_LINE = b"[redacted: secret-like content]\n"
+
+
+def _pem_stays_open(payload: bytes, in_block: bool) -> bool:
+    if in_block:
+        return not PEM_END.search(payload)
+    if PEM_BEGIN.search(payload):
+        return not PEM_END.search(payload)
+    return False
 
 
 def redact_secret_bytes(data: bytes) -> bytes:
     out: list[bytes] = []
+    in_block = False
     for line in data.splitlines(keepends=True):
+        if in_block:
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, True)
+            continue
+        if PEM_BEGIN.search(line):
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, False)
+            continue
         if PROVENANCE_SECRET.search(line):
-            out.append(b"[redacted: secret-like content]\n")
+            out.append(REDACT_LINE)
         else:
             out.append(line)
     return b"".join(out)
@@ -44,12 +64,25 @@ def redact_secret_bytes(data: bytes) -> bytes:
 
 def redact_secret_diff_text(diff_text: str) -> str:
     out: list[str] = []
+    in_block = False
     for line in diff_text.splitlines(keepends=True):
         raw = line.encode("utf-8")
+        if raw.startswith(b"@@"):
+            in_block = False
+            out.append(line)
+            continue
         if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-", b" "):
             out.append(line)
             continue
         prefix, payload = raw[:1], raw[1:]
+        if in_block:
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, True)
+            continue
+        if PEM_BEGIN.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, False)
+            continue
         if PROVENANCE_SECRET.search(payload):
             out.append(prefix.decode() + "[redacted: secret-like content]\n")
         else:
