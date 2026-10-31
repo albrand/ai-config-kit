@@ -67,7 +67,7 @@ class BundleCase(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.out = self.tmp / "out"
 
-    def serve(self, files, diff, tests=None, checks=None, statuses=None, body="PR explains the behaviour change."):
+    def serve(self, files, diff, tests=None, checks=None, statuses=None, renames=None, body="PR explains the behaviour change."):
         view = {
             "headRefOid": HEAD, "baseRefOid": BASE, "title": "Add thing",
             "url": "https://github.com/o/r/pull/7", "mergeable": "MERGEABLE", "state": "OPEN",
@@ -80,9 +80,15 @@ class BundleCase(unittest.TestCase):
         (self.fake / "view.json").write_text(json.dumps(view))
         (self.fake / "diff.txt").write_text(diff)
         status_map = statuses or {}
-        (self.fake / "files.json").write_text(json.dumps([
-            {"filename": f, "status": status_map.get(f, "modified")} for f in files
-        ]))
+        renames = renames or {}
+        file_entries = []
+        for f in files:
+            entry = {"filename": f, "status": status_map.get(f, "modified")}
+            if f in renames:
+                entry["status"] = "renamed"
+                entry["previous_filename"] = renames[f]
+            file_entries.append(entry)
+        (self.fake / "files.json").write_text(json.dumps(file_entries))
         for p, body in (tests or {}).items():
             fp = self.fake / "contents" / p
             fp.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +103,38 @@ class BundleCase(unittest.TestCase):
             capture_output=True, text=True, env=env)
 
     # --- the four parts -------------------------------------------------
+    def test_stamp_cleanup_rejects_traversal(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        outside = self.tmp / "outside.txt"
+        outside.write_text("keep\n")
+        stamp = self.out / ".hermes-bundle-artifacts.json"
+        stamp.write_text('["../outside.txt"]\n')
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(outside.exists())
+        self.assertEqual(outside.read_text(), "keep\n")
+
+    def test_reused_out_preserves_unrelated_files(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "tests").mkdir(exist_ok=True)
+        (self.out / "fixtures").mkdir(exist_ok=True)
+        (self.out / "provenance").mkdir(exist_ok=True)
+        keeper = self.out / "stale.env"
+        keep_test = self.out / "tests" / "keep.py"
+        keep_fix = self.out / "fixtures" / "keep.md"
+        keep_prov = self.out / "provenance" / "keep.log"
+        for path, body in ((keeper, "TOPSECRET=1\n"), (keep_test, "# stay\n"), (keep_fix, "stay\n"), (keep_prov, "stay\n")):
+            path.write_text(body)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for path, body in ((keeper, "TOPSECRET=1\n"), (keep_test, "# stay\n"), (keep_fix, "stay\n"), (keep_prov, "stay\n")):
+            self.assertTrue(path.exists(), path)
+            self.assertEqual(path.read_text(), body)
+        self.assertNotIn("stale.env", r.stdout)
+        self.assertNotIn("keep.py", r.stdout)
+
     def test_four_parts_present(self):
         self.serve(["src/a.py", "tests/test_a.py"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py"),
@@ -204,6 +242,150 @@ class BundleCase(unittest.TestCase):
         self.assertNotIn(b"TOPSECRET", blob)
 
     # --- manifest digests -----------------------------------------------
+    def test_sensitive_quoted_path_with_embedded_quote_redacted(self):
+        name = 'keys/private"key.pem'
+        esc = name.replace('"', '\\"')
+        header = f'diff --git "a/{esc}" "b/{esc}"\n'
+        diff = (
+            header
+            + f'--- "a/{esc}"\n'
+            + f'+++ "b/{esc}"\n'
+            + "@@ -0,0 +1 @@\n"
+            + "+SECRET\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"SECRET\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET", pr_diff)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn(name, man)
+        self.assertIn("content withheld", man)
+
+    def test_sensitive_git_octal_quoted_space_redacted(self):
+        name = "keys/private key.pem"
+        header = 'diff --git "a/keys/private\\040key.pem" "b/keys/private\\040key.pem"\n'
+        diff = (
+            header
+            + '--- "a/keys/private\\040key.pem"\n'
+            + '+++ "b/keys/private\\040key.pem"\n'
+            + "@@ -0,0 +1 @@\n"
+            + "+SECRET\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"SECRET\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET", pr_diff)
+
+
+    def test_sensitive_git_octal_quoted_utf8_path_redacted(self):
+        name = "café/id_rsa"
+        esc = "caf\\303\\251/id_rsa"
+        header = f'diff --git "a/{esc}" "b/{esc}"\n'
+        diff = (
+            header
+            + f'--- "a/{esc}"\n'
+            + f'+++ "b/{esc}"\n'
+            + "@@ -0,0 +1 @@\n"
+            + "+-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"KEY\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"BEGIN OPENSSH", pr_diff)
+    def test_sensitive_unquoted_path_with_space_redacted(self):
+        name = "private b/server.pem"
+        diff = (
+            f"diff --git a/{name} b/{name}\n"
+            f"--- a/{name}\n"
+            f"+++ b/{name}\n"
+            + "@@ -0,0 +1 @@\n"
+            + "+SECRET\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"SECRET\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET", pr_diff)
+
+    def test_sensitive_id_rsa_redacted(self):
+        name = "keys/id_rsa"
+        body = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        self.serve([name, "src/a.py"], diff_block(name, body) + diff_block("src/a.py"), tests={name: body.encode()})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"BEGIN OPENSSH", pr_diff)
+
+    def test_secret_in_ordinary_path_redacted(self):
+        self.serve(["src/config.ts"], diff_block("src/config.ts", 'api_key: "leak"'))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("*") if p.is_file())
+        self.assertNotIn(b"leak", blob)
+        self.assertIn(b"[redacted: secret-like content]", blob)
+
+    def test_ec_private_key_redacted(self):
+        body = "-----BEGIN EC PRIVATE KEY-----\nMIIB\n"
+        self.serve(["src/config.ts"], diff_block("src/config.ts", body.strip()))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("*") if p.is_file())
+        self.assertNotIn(b"BEGIN EC PRIVATE KEY", blob)
+        self.assertIn(b"[redacted: secret-like content]", blob)
+
+    def test_prefixed_env_secret_names_redacted(self):
+        for body in (
+            "OPENAI_API_KEY=sk-live\n",
+            "CLIENT_SECRET=abc\n",
+            "refresh_token=rt\n",
+        ):
+            with self.subTest(body=body):
+                shutil.rmtree(self.out, ignore_errors=True)
+                self.serve(["src/config.ts"], diff_block("src/config.ts", body.strip()))
+                r = self.run_script()
+                self.assertEqual(r.returncode, 0, r.stderr)
+                blob = b"".join(p.read_bytes() for p in self.out.rglob("*") if p.is_file())
+                self.assertNotIn(body.split("=", 1)[1][:3].encode(), blob)
+                self.assertIn(b"[redacted: secret-like content]", blob)
+
+    def test_secret_diff_context_line_redacted(self):
+        diff = (
+            "diff --git a/src/a.env b/src/a.env\n"
+            "--- a/src/a.env\n"
+            "+++ b/src/a.env\n"
+            "@@ -1,3 +1,3 @@\n"
+            " API_TOKEN=unchanged\n"
+            "-OLD=1\n"
+            "+NEW=2\n"
+        )
+        self.serve(["src/a.env"], diff)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"unchanged", blob)
+        self.assertIn(b"[redacted: secret-like content]", blob)
+
+    def test_sensitive_rename_redacted(self):
+        old, new = "my_secret.txt", "notes.txt"
+        diff = (
+            f"diff --git a/{old} b/{new}\n"
+            f"rename from {old}\n"
+            f"rename to {new}\n"
+            f"--- a/{old}\n"
+            f"+++ b/{new}\n"
+            "@@ -1 +1 @@\n"
+            "-SECRET=1\n"
+            "+SECRET=2\n"
+        )
+        self.serve([new], diff, renames={new: old}, statuses={new: "renamed"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET=", blob)
+
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py") + diff_block("web/a.test.ts"),
@@ -247,6 +429,14 @@ class BundleCase(unittest.TestCase):
         self.assertFalse((self.out / "fixtures/src/x.json").exists())
         self.assertFalse((self.out / "tests/src/x.json").exists())
         self.assertIn("fixtures changed; no provenance supplied", manifest)
+
+    def test_provenance_refuses_secret_content(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        source = self.tmp / "regen.log"
+        source.write_bytes(b"export API_KEY=supersecret\n")
+        r = self.run_script("--provenance", str(source))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("secret-like content", r.stderr)
 
     def test_provenance_is_copied_and_listed(self):
         self.serve(["src/__fixtures__/a.ndjson"], diff_block("src/__fixtures__/a.ndjson"),
@@ -370,6 +560,63 @@ class BundleCase(unittest.TestCase):
         self.assertRegex(man, r"L\d+: \+  it\('interrupts")
         self.assertIn("rule on every entry under", r.stdout)
         self.assertIn("Changed assertions in tests this PR did not create", r.stdout)
+
+    def test_unittest_assert_in_not_in_in_changed_assertions(self):
+        path = "scripts/test_hermes_bundle.py"
+        diff = (
+            f"diff --git a/{path} b/{path}\n"
+            f"--- a/{path}\n+++ b/{path}\n"
+            "@@ -120,6 +120,6 @@\n"
+            "         for path, body in ((keeper, \"STALE=1\\n\"),):\n"
+            "             self.assertTrue(path.exists(), path)\n"
+            "             self.assertEqual(path.read_text(), body)\n"
+            '-        self.assertIn("stale.env", r.stdout)\n'
+            '+        self.assertNotIn("stale.env", r.stdout)\n'
+        )
+        self.serve([path], diff, tests={path: b"class T(unittest.TestCase): pass\n"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("assertIn", man)
+        self.assertIn("assertNotIn", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
+
+    def test_removed_existing_test_file_lists_assertions(self):
+        path = "tests/old.test.ts"
+        diff = (
+            "diff --git a/tests/old.test.ts b/tests/old.test.ts\n"
+            "deleted file mode 100644\n"
+            "--- a/tests/old.test.ts\n"
+            "+++ /dev/null\n"
+            "@@ -1,3 +0,0 @@\n"
+            "-expect(1).toBe(1);\n"
+            "-it('kept', () => {});\n"
+        )
+        self.serve([path], diff, statuses={path: "removed"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("toBe(1)", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
+
+    def test_changed_rule_strings_in_existing_test(self):
+        path = "scripts/test_review_skill_source.py"
+        diff = (
+            f"diff --git a/{path} b/{path}\n"
+            f"--- a/{path}\n+++ b/{path}\n"
+            "@@ -320,7 +320,7 @@\n"
+            '         for rule in (\n'
+            '             "Hermes reviews every one of our PRs before merge",\n'
+            '+            "Hermes reviews every one of our PRs. Start its round when the PR opens, alongside CI, not after CI is green",\n'
+            "-            \"Hermes reviews every one of our PRs before merge\",\n"
+            "         ):\n"
+        )
+        self.serve([path], diff, tests={path: b"def test_x(): pass\n"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("before merge", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
 
     def test_added_test_file_not_listed_in_changed_assertions(self):
         path = "tests/new.test.ts"
@@ -513,6 +760,35 @@ class BundleCase(unittest.TestCase):
         self.assertEqual((self.out / "MANIFEST.md").read_text(), FIXTURE.read_text())
 
 
+
+
+    def test_safety_state_durability_skips_prose_and_bundler_detector(self):
+        bundler = "skillsets/pr-review/shared/high-signal-pr-review/scripts/hermes-bundle.py"
+        md = "docs/incident-runbook.md"
+        agents = "GLOBAL_AGENTS.md"
+        diff = (
+            diff_block(bundler, "# detector tweak")
+            + (
+                f"diff --git a/{md} b/{md}\n"
+                f"--- a/{md}\n+++ b/{md}\n"
+                "@@ -1,1 +1,1 @@\n"
+                "-When quarantine triggers, document the workflow.\n"
+                "+When quarantine triggers, document the workflow for reviewers.\n"
+            )
+            + (
+                f"diff --git a/{agents} b/{agents}\n"
+                f"--- a/{agents}\n+++ b/{agents}\n"
+                "@@ -1,1 +1,1 @@\n"
+                "-No quarantine here.\n"
+                "+Browser quarantine must survive restart.\n"
+            )
+        )
+        self.serve([bundler, md, agents], diff)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertNotIn("## Safety-state durability", man)
+        self.assertNotIn("Safety-state durability", r.stdout)
 
     def test_safety_state_durability_lockfile_and_clock_excluded_target_lock_included(self):
         diff = (
