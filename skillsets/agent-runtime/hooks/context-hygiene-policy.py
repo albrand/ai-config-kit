@@ -218,6 +218,19 @@ def _pgrep_prepare_scan_text(text):
         return _pgrep_blank_data_quotes(chunk)
     return normalize(text)
 
+
+def _pgrep_var_alias_sets(text, flag_vars):
+    binary = {m.group(1) for m in PGREP_VAR.finditer(text)}
+    script = set()
+    for m in re.finditer(r"\b(\w+)\s*=\s*['\"]([^'\"]*)['\"]", text):
+        payload = pgrep_obfuscation_fold(m.group(2)).strip()
+        wm = re.match(r"(?:\S+/)*pgrep\b", payload, re.I)
+        if not wm:
+            continue
+        if pgrep_segment_has_full_flag(payload[wm.end() :]):
+            script.add(m.group(1))
+    return binary, script
+
 def pgrep_segment_has_full_flag(segment):
     segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
     if PGREP_FULL_FLAG.search(segment):
@@ -233,8 +246,10 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text):
+    raw = pgrep_obfuscation_fold(text)
+    flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(raw)}
+    binary_aliases, script_aliases = _pgrep_var_alias_sets(raw, flag_vars)
     text = _pgrep_prepare_scan_text(text)
-    flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(text)}
     for m in PGREP_WORD.finditer(text):
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:
@@ -242,10 +257,11 @@ def pgrep_full_match(text):
         seg = segment.group(0)
         if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
             return True
-    aliases = {m.group(1) for m in PGREP_VAR.finditer(text)}
     for m in PGREP_VAR_INVOKE.finditer(text):
         var = m.group(1) or m.group(2)
-        if var not in aliases:
+        if var in script_aliases:
+            return True
+        if var not in binary_aliases:
             continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:
