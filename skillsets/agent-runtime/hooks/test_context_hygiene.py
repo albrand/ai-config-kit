@@ -59,6 +59,8 @@ class ContextHygiene(unittest.TestCase):
             'P=pgrep; "$P" -f bb',
             "p''grep -f bb",
             'p"g"rep -f bb',
+            "pgrep '-f' bb",
+            'pgrep "--full" bb',
             "pgrep -l -f node",
             "pgrep -af node",
             "bash -c 'pgrep -f bb'",

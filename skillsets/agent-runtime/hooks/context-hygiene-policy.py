@@ -123,11 +123,18 @@ def pgrep_obfuscation_fold(text):
     text = re.sub(r"(?<=[a-zA-Z0-9_])'([a-zA-Z0-9_])'(?=[a-zA-Z0-9_])", r"\1", text)
     return text
 
+def pgrep_segment_has_full_flag(segment):
+    if PGREP_FULL_FLAG.search(segment):
+        return True
+    unquoted = re.sub(r"(?:^|\s)'(-f|--full)'(?=\s|$)", r" \1", segment)
+    unquoted = re.sub(r'(?:^|\s)"(-f|--full)"(?=\s|$)', r" \1", unquoted)
+    return bool(PGREP_FULL_FLAG.search(unquoted))
+
 def pgrep_full_match(text):
     text = pgrep_obfuscation_fold(text)
     for m in PGREP_WORD.finditer(text):
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
-        if segment and PGREP_FULL_FLAG.search(segment.group(0)):
+        if segment and pgrep_segment_has_full_flag(segment.group(0)):
             return True
     aliases = {m.group(1) for m in PGREP_VAR.finditer(text)}
     for m in PGREP_VAR_INVOKE.finditer(text):
@@ -135,7 +142,7 @@ def pgrep_full_match(text):
         if var not in aliases:
             continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
-        if segment and PGREP_FULL_FLAG.search(segment.group(0)):
+        if segment and pgrep_segment_has_full_flag(segment.group(0)):
             return True
     return False
 
