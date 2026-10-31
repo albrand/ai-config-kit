@@ -69,6 +69,7 @@ class ContextHygiene(unittest.TestCase):
             "pgrep -af node",
             "bash -c 'pgrep -f bb'",
             "echo $(pgrep -f bb)",
+            'echo "$(pgrep -f bb)"',
             "/usr/bin/pgrep --full=bb.app",
         )
         for cmd in blocked:

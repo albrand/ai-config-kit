@@ -168,6 +168,8 @@ def _pgrep_blank_data_quotes(text):
         if _pgrep_quote_opener_is_executable(text, start):
             continue
         inner = text[start + 1 : end - 1]
+        if "$(" in inner or "`" in inner:
+            continue
         if not PGREP_WORD.search(pgrep_obfuscation_fold(inner)):
             continue
         for k in range(start + 1, end - 1):
