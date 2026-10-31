@@ -113,7 +113,7 @@ def is_sensitive(path: str) -> bool:
 def decode_git_diff_path(raw: str) -> str:
     if raw.startswith('"') and raw.endswith('"'):
         inner = raw[1:-1]
-        out: list[str] = []
+        out = bytearray()
         i = 0
         while i < len(inner):
             if inner[i] == "\\":
@@ -121,17 +121,17 @@ def decode_git_diff_path(raw: str) -> str:
                     j = i + 1
                     while j < len(inner) and j < i + 4 and "0" <= inner[j] <= "7":
                         j += 1
-                    out.append(chr(int(inner[i + 1 : j], 8)))
+                    out.append(int(inner[i + 1 : j], 8))
                     i = j
                 elif i + 1 < len(inner):
-                    out.append(inner[i + 1])
+                    out.extend(inner[i + 1].encode("utf-8"))
                     i += 2
                 else:
                     i += 1
             else:
-                out.append(inner[i])
+                out.extend(inner[i].encode("utf-8"))
                 i += 1
-        raw = "".join(out)
+        raw = out.decode("utf-8")
     if raw.startswith("a/") or raw.startswith("b/"):
         raw = raw[2:]
     return raw

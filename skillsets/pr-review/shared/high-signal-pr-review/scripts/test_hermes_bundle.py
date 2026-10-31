@@ -278,6 +278,23 @@ class BundleCase(unittest.TestCase):
         pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
         self.assertNotIn(b"SECRET", pr_diff)
 
+
+    def test_sensitive_git_octal_quoted_utf8_path_redacted(self):
+        name = "café/id_rsa"
+        esc = "caf\\303\\251/id_rsa"
+        header = f'diff --git "a/{esc}" "b/{esc}"\n'
+        diff = (
+            header
+            + f'--- "a/{esc}"\n'
+            + f'+++ "b/{esc}"\n'
+            + "@@ -0,0 +1 @@\n"
+            + "+-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"KEY\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"BEGIN OPENSSH", pr_diff)
     def test_sensitive_unquoted_path_with_space_redacted(self):
         name = "private b/server.pem"
         diff = (
