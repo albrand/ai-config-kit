@@ -483,7 +483,7 @@ class BundleCase(unittest.TestCase):
             f"diff --git a/{path} b/{path}\n"
             f"--- a/{path}\n+++ b/{path}\n"
             "@@ -120,6 +120,6 @@\n"
-            "         for path, body in ((keeper, \"TOPSECRET=1\\n\"),):\n"
+            "         for path, body in ((keeper, \"STALE=1\\n\"),):\n"
             "             self.assertTrue(path.exists(), path)\n"
             "             self.assertEqual(path.read_text(), body)\n"
             '-        self.assertIn("stale.env", r.stdout)\n'
