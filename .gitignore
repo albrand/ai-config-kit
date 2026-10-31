@@ -4,3 +4,4 @@ __pycache__/
 
 # editor/agent backups
 *.bak-*
+!skillsets/pr-review/shared/high-signal-pr-review/scripts/hermes-bundle.py.bak-20261030-durability

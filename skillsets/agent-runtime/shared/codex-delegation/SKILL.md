@@ -40,6 +40,14 @@ live route change in Hermes's own config.
 5. Treat worker output as evidence. Re-read changed files, rerun important
    checks, resolve disagreements against source, and keep final integration and
    validation with the coordinator.
+6. End every brief with a typed return, so the first lines are readable at a
+   glance: `STATUS: done|needs-owner`, `SHA:` or `PR:`, `DECISIONS:` (every
+   value the brief left open, and what the worker chose), `Verified:` (the
+   commands that decided it, with exit codes), `Not covered:` (only checks that
+   could not run, and why), and `NEEDS-OWNER: <one question: a login, code or hard-prohibition approval not yet given>; your recommendation; what you kept
+   doing` when needed. A choice of routes is never needs-owner: a step the requested outcome needs is yours to pick and do. Anything short of done or needs-owner is not a stopping
+   point: diagnose, try another route, keep going. A report that says done is a
+   claim, not a result.
 
 For Hermes PR review, use `bb fleet validate` with bounded evidence. After its
 replacement is verified, the route uses Codex (model set in Hermes's own
