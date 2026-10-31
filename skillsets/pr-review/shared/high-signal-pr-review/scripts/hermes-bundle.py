@@ -807,7 +807,7 @@ def build(
     stamp_paths = sorted(str(p.relative_to(out)) for p in bundle_artifacts())
     stamp_path.write_text(json.dumps(stamp_paths, indent=2) + "\n")
 
-    evidence_paths = bundle_artifacts() + [out / "MANIFEST.md"]
+    evidence_paths = bundle_artifacts() + [out / "MANIFEST.md", stamp_path]
     claim = (
         f"Review {repo} PR #{pr} at head {sha}: report defects only; "
         "rule on every entry under 'Changed assertions in tests this PR did not create'"
