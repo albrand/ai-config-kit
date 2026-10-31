@@ -97,8 +97,6 @@ PGREP_F_DENY = (
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
-PGREP_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?(?:\S*/)?pgrep["\']?\b')
-PGREP_FLAG_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?(-f|--full)["\']?\b')
 PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
@@ -485,25 +483,28 @@ def _pgrep_each_backtick(text):
         i += 1
 
 
-def _pgrep_pgrep_match_in_fragment(text, flag_vars):
+def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None):
+    raw = text if raw_for_bindings is None else raw_for_bindings
     for m in PGREP_WORD.finditer(text):
         if not _pgrep_position_is_invocation(text, m.start()):
             continue
+        _, _, flags_here = _pgrep_bindings_at_pos(raw, m.start())
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:
             continue
         seg = segment.group(0)
-        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flags_here):
             return True
     for start, end in _pgrep_iter_quoted_spans(text):
         if _pgrep_quote_opener_is_executable(text, start):
-            if _pgrep_pgrep_match_in_fragment(text[start + 1 : end - 1], flag_vars):
+            inner = text[start + 1 : end - 1]
+            if _pgrep_pgrep_match_in_fragment(inner):
                 return True
     for inner in _pgrep_each_dollar_paren(text):
-        if _pgrep_pgrep_match_in_fragment(inner, flag_vars):
+        if _pgrep_pgrep_match_in_fragment(inner):
             return True
     for inner in _pgrep_each_backtick(text):
-        if _pgrep_pgrep_match_in_fragment(inner, flag_vars):
+        if _pgrep_pgrep_match_in_fragment(inner):
             return True
     return False
 
@@ -638,17 +639,79 @@ def _pgrep_prepare_scan_text(text):
     return normalize(text)
 
 
-def _pgrep_var_alias_sets(text, flag_vars):
-    binary = {m.group(1) for m in PGREP_VAR.finditer(text)}
-    script = set()
-    for m in re.finditer(r"\b(\w+)\s*=\s*['\"]([^'\"]*)['\"]", text):
-        payload = pgrep_obfuscation_fold(m.group(2)).strip()
-        wm = re.match(r"(?:\S+/)*pgrep\b", payload, re.I)
-        if not wm:
-            continue
-        if pgrep_segment_has_full_flag(payload[wm.end() :]):
-            script.add(m.group(1))
-    return binary, script
+_PGREP_ASSIGNMENT = re.compile(
+    r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+)
+
+
+def _pgrep_unquote_assign_value(val):
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in "'\"":
+        return val[1:-1]
+    return val
+
+
+def _pgrep_assignment_at(text, i, limit):
+    m = _PGREP_ASSIGNMENT.match(text[i:limit])
+    if not m:
+        return None
+    name = m.group(1)
+    val = text[i + len(name) + 1 : i + m.end()]
+    return name, val, i + m.end()
+
+
+def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):
+    binary.discard(name)
+    script.discard(name)
+    flag_vars.discard(name)
+    raw = _pgrep_unquote_assign_value(val)
+    folded = pgrep_obfuscation_fold(raw).strip()
+    if re.match(r"^(-f|--full)$", folded):
+        flag_vars.add(name)
+        return
+    wm = re.match(r"(?:\S+/)*pgrep\b", folded, re.I)
+    if not wm:
+        return
+    tail = folded[wm.end() :]
+    if pgrep_segment_has_full_flag(tail):
+        script.add(name)
+    else:
+        binary.add(name)
+
+
+def _pgrep_collect_var_bindings(text):
+    binary, script, flag_vars = set(), set(), set()
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        i = _pgrep_after_command_leaders(text, cmd_start)
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if not asn:
+                break
+            name, val, nxt = asn
+            _pgrep_apply_var_binding(name, val, binary, script, flag_vars)
+            i = nxt
+    return binary, script, flag_vars
+
+
+def _pgrep_bindings_at_pos(text, pos):
+    binary, script, flag_vars = set(), set(), set()
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        i = _pgrep_after_command_leaders(text, cmd_start)
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if not asn:
+                break
+            name, val, nxt = asn
+            _pgrep_apply_var_binding(name, val, binary, script, flag_vars)
+            i = nxt
+        if pos < cmd_start:
+            break
+        if cmd_start <= pos < cmd_end:
+            return binary, script, flag_vars
+    return binary, script, flag_vars
 
 def pgrep_segment_has_full_flag(segment):
     segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
@@ -665,23 +728,21 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text):
-    raw = pgrep_obfuscation_fold(text)
-    flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(raw)}
-    binary_aliases, script_aliases = _pgrep_var_alias_sets(raw, flag_vars)
-    text = _pgrep_prepare_scan_text(text)
-    if _pgrep_pgrep_match_in_fragment(text, flag_vars):
+    scan = _pgrep_prepare_scan_text(text)
+    if _pgrep_pgrep_match_in_fragment(scan, raw_for_bindings=text):
         return True
-    for m in PGREP_VAR_INVOKE.finditer(text):
+    for m in PGREP_VAR_INVOKE.finditer(scan):
         var = m.group(1) or m.group(2)
+        binary_aliases, script_aliases, flag_vars = _pgrep_bindings_at_pos(text, m.start())
         if var in script_aliases:
-            if _pgrep_position_is_var_invocation(text, m.start(), var):
+            if _pgrep_position_is_var_invocation(scan, m.start(), var):
                 return True
             continue
         if var not in binary_aliases:
             continue
-        if not _pgrep_position_is_var_invocation(text, m.start(), var):
+        if not _pgrep_position_is_var_invocation(scan, m.start(), var):
             continue
-        segment = re.match(r"[^\n;&|]*", text[m.end() :])
+        segment = re.match(r"[^\n;&|]*", scan[m.end() :])
         if not segment:
             continue
         seg = segment.group(0)
