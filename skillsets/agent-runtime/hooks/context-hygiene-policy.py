@@ -838,9 +838,25 @@ def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):
         binary.add(name)
 
 
+def _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    saw = False
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return saw
+        asn = _pgrep_assignment_at(text, i, cmd_end)
+        if not asn:
+            return False
+        saw = True
+        i = asn[2]
+    return saw
+
+
 def _pgrep_collect_var_bindings(text):
     binary, script, flag_vars = set(), set(), set()
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        eb, es, ef = set(binary), set(script), set(flag_vars)
         i = _pgrep_after_command_leaders(text, cmd_start)
         while i < cmd_end:
             i = _pgrep_skip_space(text, i)
@@ -850,27 +866,34 @@ def _pgrep_collect_var_bindings(text):
             if not asn:
                 break
             name, val, nxt = asn
-            _pgrep_apply_var_binding(name, val, binary, script, flag_vars)
+            _pgrep_apply_var_binding(name, val, eb, es, ef)
             i = nxt
+        if _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+            binary, script, flag_vars = eb, es, ef
     return binary, script, flag_vars
 
 
 def _pgrep_bindings_at_pos(text, pos):
     binary, script, flag_vars = set(), set(), set()
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start:
+            break
+        eb, es, ef = set(binary), set(script), set(flag_vars)
         i = _pgrep_after_command_leaders(text, cmd_start)
         while i < cmd_end:
             i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
             asn = _pgrep_assignment_at(text, i, cmd_end)
             if not asn:
                 break
             name, val, nxt = asn
-            _pgrep_apply_var_binding(name, val, binary, script, flag_vars)
+            _pgrep_apply_var_binding(name, val, eb, es, ef)
             i = nxt
-        if pos < cmd_start:
-            break
         if cmd_start <= pos < cmd_end:
-            return binary, script, flag_vars
+            return eb, es, ef
+        if _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+            binary, script, flag_vars = eb, es, ef
     return binary, script, flag_vars
 
 def pgrep_segment_has_full_flag(segment):

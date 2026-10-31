@@ -173,6 +173,25 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_prefix_assignments_do_not_persist_across_commands(self):
+        allowed = (
+            "P=echo; P=pgrep echo; $P -f x",
+            "P=pgrep true; $P -f x",
+        )
+        blocked = (
+            "P=pgrep; $P -f x",
+            "P=pgrep F=-f; $P $F x",
+            "P=x pgrep -f y",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"
