@@ -350,6 +350,23 @@ def _pgrep_first_word_span(text, cmd_start, cmd_end):
     i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
     if i >= cmd_end:
         return None
+    if text[i] == '"':
+        j = i + 1
+        while j < cmd_end:
+            if text[j] == "\\" and j + 1 < cmd_end:
+                j += 2
+                continue
+            if text[j] == '"':
+                return i, j + 1
+            j += 1
+        return i, cmd_end
+    if text[i] == "'":
+        j = i + 1
+        while j < cmd_end and text[j] != "'":
+            j += 1
+        if j < cmd_end:
+            j += 1
+        return i, j
     m = re.match(r"((?:[^\s\"';|&]+/)*pgrep)\b", text[i:cmd_end], re.I)
     if m:
         return i, i + m.end()
@@ -358,16 +375,43 @@ def _pgrep_first_word_span(text, cmd_start, cmd_end):
         return i, i + m.end()
     return None
 
-def _pgrep_position_is_invocation(text, pos):
+
+def _pgrep_position_in_command_word(text, pos):
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         if pos < cmd_start or pos >= cmd_end:
             continue
         span = _pgrep_first_word_span(text, cmd_start, cmd_end)
         if span and span[0] <= pos < span[1]:
-            word = text[span[0]:span[1]]
-            return bool(re.search(r"pgrep$", word, re.I))
+            return span, text[span[0] : span[1]]
+        return None, None
+    return None, None
+
+
+def _pgrep_word_is_var_command(word, var):
+    if re.match(rf"^\$\{{{var}\}}$|^\${var}\b$", word):
+        return True
+    return bool(re.match(rf'^"\$\{{{var}\}}"$|^"\${var}"$', word))
+
+
+# pgrep invocation routes (each must be the first word of a simple command):
+# - literal pgrep or path-prefixed pgrep with -f/--full or flag-var tail
+# - $VAR / ${VAR} binary alias (P=pgrep, P=/usr/bin/pgrep) with -f/--full or flag-var tail
+# - script-alias variable as command word (CMD='pgrep -f …'; $CMD)
+# - the same rules inside bash -c / eval / ssh / $(…) / backticks
+
+
+def _pgrep_position_is_var_invocation(text, pos, var):
+    span, word = _pgrep_position_in_command_word(text, pos)
+    if not span:
         return False
-    return False
+    return _pgrep_word_is_var_command(word, var)
+
+
+def _pgrep_position_is_invocation(text, pos):
+    span, word = _pgrep_position_in_command_word(text, pos)
+    if not span:
+        return False
+    return bool(re.search(r"pgrep$", word, re.I))
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
@@ -630,8 +674,12 @@ def pgrep_full_match(text):
     for m in PGREP_VAR_INVOKE.finditer(text):
         var = m.group(1) or m.group(2)
         if var in script_aliases:
-            return True
+            if _pgrep_position_is_var_invocation(text, m.start(), var):
+                return True
+            continue
         if var not in binary_aliases:
+            continue
+        if not _pgrep_position_is_var_invocation(text, m.start(), var):
             continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:

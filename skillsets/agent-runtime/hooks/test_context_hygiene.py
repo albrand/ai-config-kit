@@ -66,11 +66,13 @@ class ContextHygiene(unittest.TestCase):
             r"pgrep \-f node",
             r"p\grep -f bb",
             'P=/usr/bin/pgrep; "$P" -f bb',
+            "P=/usr/bin/pgrep; $P -f bb",
             'F=-f; pgrep "$F" bb',
             "CMD='pgrep -f bb'; $CMD",
             "pgrep -l -f node",
             "pgrep -af node",
             "bash -c 'pgrep -f bb'",
+            "bash -c 'pgrep -f x'",
             "echo $(pgrep -f bb)",
             'echo "$(pgrep -f bb)"',
             'echo "`pgrep -f bb`"',
@@ -108,6 +110,28 @@ class ContextHygiene(unittest.TestCase):
         for cmd in allowed:
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
+    def test_pgrep_invocation_routes_use_command_position(self):
+        allowed = (
+            'P=pgrep; echo "$P" -f bb',
+            "P=pgrep; printf '%s\\n' $P -f",
+            'F=-f; echo pgrep "$F" x',
+            "bash -c 'echo pgrep -f x'",
+        )
+        blocked = (
+            'P=pgrep; "$P" -f bb',
+            "P=/usr/bin/pgrep; $P -f bb",
+            'F=-f; pgrep "$F" bb',
+            "bash -c 'pgrep -f x'",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
