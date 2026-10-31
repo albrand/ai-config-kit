@@ -53,6 +53,7 @@ class ContextHygiene(unittest.TestCase):
             "env FOO=1 pgrep --full bb",
             "true && pgrep -f bb",
             "pgrep -l -f node",
+            "pgrep -af node",
             "bash -c 'pgrep -f bb'",
             "echo $(pgrep -f bb)",
             "/usr/bin/pgrep --full=bb.app",

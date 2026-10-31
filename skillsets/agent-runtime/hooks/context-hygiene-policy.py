@@ -92,7 +92,8 @@ BB_LIFECYCLE = [
 ]
 PGREP_INVOCATION = re.compile(
     r'(?:^|[;&|(`\n"\'])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pgrep\b')
-PGREP_FULL_FLAG = re.compile(r'(?:^|\s)(?:-f(?:\s|$|=)|--full(?:\s|$|=))')
+PGREP_FULL_FLAG = re.compile(
+    r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
 PGREP_F_DENY = (
     "[no-pgrep-f] Hard prohibition: never use pgrep -f or pgrep --full. "
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
