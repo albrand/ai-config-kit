@@ -631,6 +631,10 @@ def _pgrep_skip_wrapper_consumer(name, text, i, limit):
             long_with_arg=("interval", "differences", "errexit", "color", "exec"),
             long_flags=("beep", "color", "exact", "no-title", "precise", "show", "differences"),
         )
+    if n == "command":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="p", short_flags="v", long_with_arg=(), long_flags=()
+        )
     return i
 
 
@@ -677,6 +681,141 @@ def _pgrep_skip_assignments_and_wrappers(text, i, limit):
         i += wm.end()
         i = _pgrep_skip_wrapper_consumer(w, text, i, limit)
     return i
+
+
+def _pgrep_bare_word(word):
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+        return word[1:-1]
+    return word
+
+
+def _pgrep_command_words(text, cmd_start, cmd_end):
+    words = []
+    i = cmd_start
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            break
+        s = i
+        e = _pgrep_skip_one_word(text, i, cmd_end)
+        words.append((s, e, text[s:e]))
+        i = e
+    return words
+
+
+def _pgrep_skip_launcher_options(text, i, limit, short_with_arg, short_flags, long_with_arg=(), long_flags=()):
+    return _pgrep_skip_dash_options(
+        text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags
+    )
+
+
+def _pgrep_prefix_launch_region(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
+    if i >= cmd_end:
+        return None
+    s = i
+    e = _pgrep_skip_one_word(text, i, cmd_end)
+    base = _pgrep_bare_word(text[s:e]).rsplit("/", 1)[-1].lower()
+    if base == "chroot":
+        i = _pgrep_skip_one_word(text, e, cmd_end)
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return None
+        return i, cmd_end
+    if base in ("strace", "ltrace"):
+        i = _pgrep_skip_launcher_options(
+            text,
+            e,
+            cmd_end,
+            short_with_arg="p",
+            short_flags="faehikqrstvxy",
+            long_with_arg=("trace", "trace-path", "output", "write", "chdir", "stack-traces", "follow-execve"),
+            long_flags=("follow-forks", "follow-fork", "follow-clone", "follow-vfork"),
+        )
+        return i, cmd_end
+    if base == "nsenter":
+        i = _pgrep_skip_launcher_options(
+            text, e, cmd_end, short_with_arg="tU", short_flags="F", long_with_arg=("target", "user"), long_flags=()
+        )
+        return i, cmd_end
+    if base == "unshare":
+        i = _pgrep_skip_launcher_options(
+            text, e, cmd_end, short_with_arg="f", short_flags="", long_with_arg=("mount-proc", "mount-sys"), long_flags=()
+        )
+        return i, cmd_end
+    if base == "valgrind":
+        i = _pgrep_skip_launcher_options(
+            text,
+            e,
+            cmd_end,
+            short_with_arg="",
+            short_flags="",
+            long_with_arg=("tool", "log-file", "log-fd", "log-socket", "xml-file", "xml-fd", "xml-socket"),
+            long_flags=("help", "version", "quiet", "trace-children", "track-fds", "time-stamp"),
+        )
+        return i, cmd_end
+    if base == "gdb":
+        words = _pgrep_command_words(text, s, cmd_end)
+        for idx, (ws, we, w) in enumerate(words):
+            if _pgrep_bare_word(w) == "--args" and idx + 1 < len(words):
+                return words[idx + 1][0], cmd_end
+        return None
+    return None
+
+
+def _pgrep_embedded_launch_regions(text, cmd_start, cmd_end):
+    words = _pgrep_command_words(text, cmd_start, cmd_end)
+    if not words:
+        return
+    first = _pgrep_bare_word(words[0][2]).rsplit("/", 1)[-1].lower()
+    if first == "parallel":
+        j = 1
+        while j < len(words):
+            w = words[j][2]
+            if _pgrep_bare_word(w) == ":::":
+                break
+            if w.startswith("-"):
+                j += 1
+                continue
+            inner_start = words[j][0]
+            inner_end = cmd_end
+            for k in range(j, len(words)):
+                if _pgrep_bare_word(words[k][2]) == ":::":
+                    inner_end = words[k][0]
+                    break
+            yield inner_start, inner_end
+            return
+    for idx, (ws, we, w) in enumerate(words):
+        bare = _pgrep_bare_word(w)
+        if bare in ("-exec", "-execdir", "-ok", "-okdir") and idx + 1 < len(words):
+            inner_start = words[idx + 1][0]
+            inner_end = cmd_end
+            for j in range(idx + 2, len(words)):
+                bj = _pgrep_bare_word(words[j][2])
+                if bj in ("\\;", ";", "+"):
+                    inner_end = words[j][0]
+                    break
+            yield inner_start, inner_end
+
+
+def _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+    pref = _pgrep_prefix_launch_region(text, cmd_start, cmd_end)
+    if pref:
+        yield pref
+    yield from _pgrep_embedded_launch_regions(text, cmd_start, cmd_end)
+
+
+def _pgrep_position_is_launched_pgrep(text, pos):
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start or pos >= cmd_end:
+            continue
+        for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+            span = _pgrep_first_word_span(text, ls, le)
+            if span and span[0] <= pos < span[1]:
+                return bool(re.search(r"pgrep$", text[span[0] : span[1]], re.I))
+        return False
+    return False
 
 def _pgrep_first_word_span(text, cmd_start, cmd_end):
     i = _pgrep_after_command_leaders(text, cmd_start)
@@ -742,9 +881,9 @@ def _pgrep_position_is_var_invocation(text, pos, var):
 
 def _pgrep_position_is_invocation(text, pos):
     span, word = _pgrep_position_in_command_word(text, pos)
-    if not span:
-        return False
-    return bool(re.search(r"pgrep$", word, re.I))
+    if span and re.search(r"pgrep$", word, re.I):
+        return True
+    return _pgrep_position_is_launched_pgrep(text, pos)
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
@@ -860,6 +999,8 @@ def _pgrep_quote_opener_is_executable(text, start):
     if re.search(r"\bxargs\b(?:\s+\S+)*\s+$", before):
         return True
     if re.search(r"\bwatch\b(?:\s+\S+)*$", before):
+        return True
+    if re.search(r"\b(?:su|runuser|script)\b(?:\s+\S+)*\s+-c\s*$", before):
         return True
     return False
 

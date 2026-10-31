@@ -218,6 +218,30 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
 
+    def test_pgrep_command_launch_arguments(self):
+        blocked = (
+            r"find . -exec pgrep -f worker \;",
+            "find . -execdir pgrep -f w {} +",
+            "parallel pgrep -f ::: a b",
+            "su root -c 'pgrep -f w'",
+            "script -q -c 'pgrep -f w' /dev/null",
+            "chroot /srv pgrep -f w",
+            "strace -f pgrep -f w",
+        )
+        allowed = (
+            "find . -name '*pgrep -f*'",
+            r"find . -exec grep -l 'pgrep -f' {} \;",
+            "strace -f ls",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"
