@@ -179,7 +179,7 @@ class BundleCase(unittest.TestCase):
         (self.out / "pr.diff").symlink_to(victim)
         r = self.run_script()
         self.assertNotEqual(r.returncode, 0, r.stdout)
-        self.assertIn("symlink", r.stderr.lower())
+        self.assertIn("refusing", r.stderr.lower())
         self._assert_victim_unchanged(victim, before_mtime, "unchanged\n")
 
     def test_write_refuses_symlink_at_stamp_path(self):
@@ -191,7 +191,7 @@ class BundleCase(unittest.TestCase):
         (self.out / ".hermes-bundle-artifacts.json").symlink_to(victim)
         r = self.run_script()
         self.assertNotEqual(r.returncode, 0, r.stdout)
-        self.assertIn("symlink", r.stderr.lower())
+        self.assertIn("refusing", r.stderr.lower())
         self._assert_victim_unchanged(victim, before_mtime, '["prior"]\n')
 
     def test_write_refuses_symlink_parent_directory(self):
@@ -209,7 +209,7 @@ class BundleCase(unittest.TestCase):
         (self.out / "tests").symlink_to(outside)
         r = self.run_script()
         self.assertNotEqual(r.returncode, 0, r.stdout)
-        self.assertIn("symlink", r.stderr.lower())
+        self.assertIn("refusing", r.stderr.lower())
         self._assert_victim_unchanged(victim, before_mtime, "stay\n")
 
     def test_stamp_cleanup_directory_leaves_unlisted_files(self):

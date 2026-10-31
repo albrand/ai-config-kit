@@ -614,47 +614,44 @@ def split_lines(data: bytes, cap: int) -> list[tuple[bytes, int, int]]:
     return parts
 
 
-def _refuse_symlink_components(out: Path, target: Path) -> None:
-    try:
-        rel = target.relative_to(out)
-    except ValueError as exc:
-        raise BundleError(f"refusing write outside bundle output dir: {target}") from exc
-    cur = out
-    for part in rel.parts:
-        cur = cur / part
-        if cur.is_symlink():
-            raise BundleError(f"refusing symlink in bundle output dir: {cur}")
-
-
-def _ensure_parent_dirs(out: Path, target: Path) -> None:
-    try:
-        rel_parent = target.parent.relative_to(out)
-    except ValueError as exc:
-        raise BundleError(f"refusing write outside bundle output dir: {target}") from exc
-    cur = out
-    for part in rel_parent.parts:
-        cur = cur / part
-        if cur.is_symlink():
-            raise BundleError(f"refusing symlink in bundle output dir: {cur}")
-        if not cur.exists():
-            cur.mkdir(mode=0o755)
-
-
 def write(path: Path, data: bytes, out: Path) -> None:
-    _refuse_symlink_components(out, path)
-    _ensure_parent_dirs(out, path)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags, 0o644)
-    except OSError as exc:
-        raise BundleError(f"refusing write to {path}: {exc}") from exc
+        rel_parts = path.relative_to(out).parts
+    except ValueError as exc:
+        raise BundleError(f"refusing write outside bundle output dir: {path}") from exc
+    if not rel_parts:
+        raise BundleError(f"refusing write outside bundle output dir: {path}")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
+    out_fd = os.open(out, dir_flags)
+    dir_fd = out_fd
     try:
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view) :]
+        for part in rel_parts[:-1]:
+            try:
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except FileNotFoundError:
+                os.mkdir(part, mode=0o755, dir_fd=dir_fd)
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except OSError as exc:
+                raise BundleError(f"refusing write to {path}: {exc}") from exc
+            if dir_fd != out_fd:
+                os.close(dir_fd)
+            dir_fd = next_fd
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
+        try:
+            file_fd = os.open(rel_parts[-1], file_flags, dir_fd=dir_fd, mode=0o644)
+        except OSError as exc:
+            raise BundleError(f"refusing write to {path}: {exc}") from exc
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(file_fd, view) :]
+        finally:
+            os.close(file_fd)
     finally:
-        os.close(fd)
+        if dir_fd != out_fd:
+            os.close(dir_fd)
+        os.close(out_fd)
 
 
 def changed_line_ranges(diff_text: str, repo_path: str) -> list[tuple[int, int]]:
