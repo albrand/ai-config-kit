@@ -672,6 +672,9 @@ def build(
                 shutil.rmtree(path)
     written: list[Path] = []
 
+    def bundle_artifacts() -> list[Path]:
+        return sorted(set(written), key=lambda path: str(path))
+
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
     diff = diff_text.encode("utf-8")
     split_note = ""
@@ -773,12 +776,12 @@ def build(
     if split_note:
         lines.append(f"- {split_note}; see pr.diff.index.md")
     over_note = ""
-    pre_manifest_total = sum(p.stat().st_size for p in bundle_file_paths(out))
+    pre_manifest_total = sum(p.stat().st_size for p in bundle_artifacts())
     if pre_manifest_total + 4096 > total_budget:
         over_note = f"bundle is at least {pre_manifest_total} bytes before MANIFEST.md, over the {total_budget}-byte total budget"
         lines.append(f"- **Warning:** {over_note}")
     lines += ["", "## Files", "", "| file | bytes | sha256 |", "|---|---|---|"]
-    on_disk = bundle_file_paths(out)
+    on_disk = bundle_artifacts()
     for p in sorted(on_disk):
         if p.name == "MANIFEST.md":
             continue
@@ -801,12 +804,10 @@ def build(
     if final_total > total_budget and not over_note:
         over_note = f"bundle is {final_total} bytes, over the {total_budget}-byte total budget"
 
-    stamp_paths = sorted(
-        str(p.relative_to(out)) for p in bundle_file_paths(out) if p.name != ".hermes-bundle-artifacts.json"
-    )
+    stamp_paths = sorted(str(p.relative_to(out)) for p in bundle_artifacts())
     stamp_path.write_text(json.dumps(stamp_paths, indent=2) + "\n")
 
-    evidence_paths = bundle_file_paths(out)
+    evidence_paths = bundle_artifacts() + [out / "MANIFEST.md"]
     claim = (
         f"Review {repo} PR #{pr} at head {sha}: report defects only; "
         "rule on every entry under 'Changed assertions in tests this PR did not create'"
