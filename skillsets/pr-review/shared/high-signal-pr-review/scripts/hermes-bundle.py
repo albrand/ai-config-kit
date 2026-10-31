@@ -16,6 +16,7 @@ import hashlib
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -622,6 +623,11 @@ def build(
         )
     out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
     out.mkdir(parents=True, exist_ok=True)
+    for stale in out.iterdir():
+        if stale.is_dir():
+            shutil.rmtree(stale)
+        else:
+            stale.unlink()
     written: list[Path] = []
 
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
