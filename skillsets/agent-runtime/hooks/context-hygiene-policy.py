@@ -90,6 +90,13 @@ BB_LIFECYCLE = [
     re.compile(r'\bkillall\s+(?:-\S+\s+)*[\\"]*bb[\\"]*(?:\s|$|[\\";])'),
     re.compile(r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'),
 ]
+PGREP_INVOCATION = re.compile(
+    r'(?:^|[;&|(`\n"\'])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pgrep\b')
+PGREP_FULL_FLAG = re.compile(r'(?:^|\s)(?:-f(?:\s|$|=)|--full(?:\s|$|=))')
+PGREP_F_DENY = (
+    "[no-pgrep-f] Hard prohibition: never use pgrep -f or pgrep --full. "
+    "Use pgrep -x NAME or ps -o pid,command -p PID instead."
+)
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
@@ -106,6 +113,13 @@ ELECTRON_CACHE = [
 NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view", "readfile", "grep", "glob"}
 
 KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
+
+def pgrep_full_match(text):
+    for m in PGREP_INVOCATION.finditer(text):
+        segment = re.match(r"[^\n;&|]*", text[m.end() :])
+        if segment and PGREP_FULL_FLAG.search(segment.group(0)):
+            return True
+    return False
 
 def kills_bb_pid(text):
     import subprocess
@@ -164,6 +178,8 @@ def bb_lifecycle_guard(raw):
                 text = head
     except Exception:
         pass
+    if pgrep_full_match(text):
+        verdict(True, PGREP_F_DENY)
     if any(rx.search(text) for rx in ELECTRON_CACHE):
         verdict(True,
             "[electron-cache] ~/Library/Caches/electron and electron-builder hold the Electron "

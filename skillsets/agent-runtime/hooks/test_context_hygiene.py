@@ -46,6 +46,29 @@ class ContextHygiene(unittest.TestCase):
         self.assertIn("Not a safety rule", v["reason"])
         self.assertFalse(verdict({"tool_name": "Read", "tool_input": {"file_path": str(f), "limit": 50}})["block"])
 
+    def test_pgrep_full_match_is_blocked_plain_pgrep_is_allowed(self):
+        blocked = (
+            "pgrep -f bb",
+            "sudo pgrep -f bb",
+            "env FOO=1 pgrep --full bb",
+            "true && pgrep -f bb",
+            "pgrep -l -f node",
+            "bash -c 'pgrep -f bb'",
+            "echo $(pgrep -f bb)",
+            "/usr/bin/pgrep --full=bb.app",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+                self.assertIn("pgrep -x NAME", v["reason"])
+        allowed = ("pgrep bb", "pgrep -x bb", "pgrep -l node", "pkill -f bb")
+        for cmd in allowed[:-1]:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd))["block"], cmd)
+        self.assertTrue(verdict(bash(allowed[-1]))["block"])
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"
