@@ -397,6 +397,24 @@ class BundleCase(unittest.TestCase):
         self.assertIn("rule on every entry under", r.stdout)
         self.assertIn("Changed assertions in tests this PR did not create", r.stdout)
 
+    def test_removed_existing_test_file_lists_assertions(self):
+        path = "tests/old.test.ts"
+        diff = (
+            "diff --git a/tests/old.test.ts b/tests/old.test.ts\n"
+            "deleted file mode 100644\n"
+            "--- a/tests/old.test.ts\n"
+            "+++ /dev/null\n"
+            "@@ -1,3 +0,0 @@\n"
+            "-expect(1).toBe(1);\n"
+            "-it('kept', () => {});\n"
+        )
+        self.serve([path], diff, statuses={path: "removed"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("toBe(1)", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
+
     def test_changed_rule_strings_in_existing_test(self):
         path = "scripts/test_review_skill_source.py"
         diff = (

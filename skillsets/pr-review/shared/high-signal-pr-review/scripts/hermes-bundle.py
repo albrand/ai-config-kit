@@ -332,7 +332,7 @@ def build_changed_assertions_section(
         if not m:
             continue
         path = m.group(2)
-        if path in sensitive or status_by_path.get(path) in ("", "added", "removed"):
+        if path in sensitive or status_by_path.get(path) in ("", "added"):
             continue
         if not is_test_path(path):
             continue
