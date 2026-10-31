@@ -1064,7 +1064,7 @@ def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
         we = _pgrep_skip_one_word(text, i, cmd_end)
         if _pgrep_word_is_dash_c_flag(text[ws:we]):
             i = _pgrep_skip_space(text, we)
-            if i < cmd_end and text[i] == "'":
+            if i < cmd_end and text[i] in "'\"":
                 out.add(i)
             return
         i = we
@@ -1076,7 +1076,7 @@ def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
         i = _pgrep_skip_space(text, i)
         if i >= cmd_end:
             return
-        if text[i] == "'":
+        if text[i] in "'\"":
             if saw_word:
                 out.add(i)
             return
@@ -1102,13 +1102,13 @@ def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
             if wl == "watch":
                 wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
                 wi = _pgrep_skip_space(text, wi)
-                if wi < cmd_end and text[wi] == "'":
+                if wi < cmd_end and text[wi] in "'\"":
                     out.add(wi)
                 return
             if wl == "xargs":
                 wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
                 wi = _pgrep_skip_space(text, wi)
-                if wi < cmd_end and text[wi] == "'":
+                if wi < cmd_end and text[wi] in "'\"":
                     out.add(wi)
                 return
             if wl == "runuser":
@@ -1128,7 +1128,7 @@ def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
         _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
     elif base == "eval":
         i = _pgrep_skip_space(text, we)
-        if i < cmd_end and text[i] == "'":
+        if i < cmd_end and text[i] in "'\"":
             out.add(i)
     elif base == "ssh":
         _pgrep_mark_ssh_exec_quote(text, we, cmd_end, out)
@@ -1154,13 +1154,13 @@ def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
                 continue
             if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
                 inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-                if "'" in inner:
+                if "'" in inner or '"' in inner:
                     pending.append((origin + i + 2, inner))
                 i = j
                 continue
             if chunk[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-                if inner is not None and "'" in inner:
+                if inner is not None and ("'" in inner or '"' in inner):
                     pending.append((origin + i + 1, inner))
                 i = j
                 continue
@@ -1172,13 +1172,13 @@ def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
             continue
         if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
             inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-            if "'" in inner:
+            if "'" in inner or '"' in inner:
                 pending.append((origin + i + 2, inner))
             i = j
             continue
         if chunk[i] == "`":
             inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-            if inner is not None and "'" in inner:
+            if inner is not None and ("'" in inner or '"' in inner):
                 pending.append((origin + i + 1, inner))
             i = j
             continue
@@ -1189,7 +1189,7 @@ def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
 
 
 def _pgrep_executable_single_quote_starts(text):
-    if "'" not in text:
+    if "'" not in text and '"' not in text:
         return set()
     out = set()
     pending = [(0, text)]
@@ -1250,7 +1250,7 @@ def _pgrep_quote_is_assignment_value(text, start):
 
 
 def _pgrep_iter_quoted_spans_meta(text):
-    if "'" not in text:
+    if "'" not in text and '"' not in text:
         for start, end in _pgrep_iter_quoted_spans(text):
             yield start, end, False
         return
@@ -1529,15 +1529,26 @@ def _pgrep_build_binding_snapshot_arrays(text, cmd_spans):
     return positions, binaries, scripts, flags
 
 
+def _pgrep_word_span_is_pgrep_command_word(text, s, e):
+    w = text[s:e]
+    if len(w) >= 2 and w[0] == w[-1] and w[0] in "'\"":
+        inner = w[1:-1].lstrip()
+        if not inner:
+            return False
+        iw = _pgrep_skip_one_word(inner, 0, len(inner))
+        return bool(re.search(r"(?:^|(?:\S+/)*)(?:pgrep)\b", pgrep_obfuscation_fold(inner[:iw]), re.I))
+    return bool(re.search(r"(?:\S+/)*pgrep\b", pgrep_obfuscation_fold(w), re.I))
+
+
 def _pgrep_build_invocation_word_spans(scan, cmd_spans):
     spans = []
     for cmd_start, cmd_end in cmd_spans:
         fw = _pgrep_first_word_span(scan, cmd_start, cmd_end)
-        if fw and PGREP_WORD.search(pgrep_obfuscation_fold(scan[fw[0] : fw[1]])):
+        if fw and _pgrep_word_span_is_pgrep_command_word(scan, fw[0], fw[1]):
             spans.append(fw)
         for ls, le in _pgrep_iter_launched_command_regions(scan, cmd_start, cmd_end):
             fw = _pgrep_first_word_span(scan, ls, le)
-            if fw and PGREP_WORD.search(pgrep_obfuscation_fold(scan[fw[0] : fw[1]])):
+            if fw and _pgrep_word_span_is_pgrep_command_word(scan, fw[0], fw[1]):
                 spans.append(fw)
     return spans
 
