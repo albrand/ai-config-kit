@@ -27,6 +27,16 @@ PR_BODY_CAP = 8 * 1024
 CHANGED_ASSERTIONS_CAP = 16 * 1024
 NEW_TESTS_CAP = 4 * 1024
 SENSITIVE_GLOBS = (".env*", "*.pem", "*secret*", "*credential*")
+PROVENANCE_SECRET = re.compile(
+    rb"(?i)(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
+)
+
+
+def refuse_secret_provenance(data: bytes, label: str) -> None:
+    if PROVENANCE_SECRET.search(data):
+        raise BundleError(f"refusing provenance with secret-like content: {label}")
+
+
 TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "__mocks__", "testing"}
 EVIDENCE_DIRS = {"__fixtures__", "fixtures", "__snapshots__", "snapshots", "testdata", "recordings", "golden"}
 EVIDENCE_EXTENSIONS = {".snap", ".golden", ".ndjson", ".jsonl"}
@@ -688,8 +698,10 @@ def build(
             raise BundleError(f"refusing sensitive provenance filename: {src.name}")
         if not src.is_file():
             raise BundleError(f"provenance file not found: {src}")
+        data = src.read_bytes()
+        refuse_secret_provenance(data, src.name)
         dest = out / "provenance" / src.name
-        write(dest, src.read_bytes())
+        write(dest, data)
         written.append(dest)
 
     lines = [

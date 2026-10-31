@@ -248,6 +248,14 @@ class BundleCase(unittest.TestCase):
         self.assertFalse((self.out / "tests/src/x.json").exists())
         self.assertIn("fixtures changed; no provenance supplied", manifest)
 
+    def test_provenance_refuses_secret_content(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        source = self.tmp / "regen.log"
+        source.write_bytes(b"export API_KEY=supersecret\n")
+        r = self.run_script("--provenance", str(source))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("secret-like content", r.stderr)
+
     def test_provenance_is_copied_and_listed(self):
         self.serve(["src/__fixtures__/a.ndjson"], diff_block("src/__fixtures__/a.ndjson"),
                    tests={"src/__fixtures__/a.ndjson": b"record\n"})
