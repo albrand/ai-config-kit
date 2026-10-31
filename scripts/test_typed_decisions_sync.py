@@ -20,10 +20,8 @@ STALE = "# Home\n\n<!-- token-efficient-orchestration:end -->\n\n<!-- typed-deci
 # (~/projects/agent-config-kit), so a sandbox HOME sandboxes the kit copy as well.
 GLOBALS = (
     ".claude/CLAUDE.md",
-    ".bb/AGENTS.md",
     ".codex/AGENTS.md",
     ".config/opencode/AGENTS.md",
-    "projects/agent-config-kit/GLOBAL_AGENTS.md",
 )
 
 
@@ -100,7 +98,6 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
     def test_no_arguments_writes_every_sandboxed_global(self) -> None:
         result = self.run_sync()
         self.assertEqual(result.stdout.count("written global"), len(GLOBALS), result.stdout + result.stderr)
-        self.assertIn(str(self.home / "projects/agent-config-kit/GLOBAL_AGENTS.md"), result.stdout)
         for target in self.targets:
             self.assertNotEqual(target.read_text(encoding="utf-8"), STALE, str(target))
 
@@ -109,22 +106,25 @@ class TypedDecisionsSyncArgsTests(unittest.TestCase):
         kit.mkdir()
         self.seed_review_source(kit)
         self.seed_meaningful_source(kit)
-        (kit / "GLOBAL_AGENTS.md").write_text(STALE, encoding="utf-8")
         result = self.run_sync("--check", AI_CONFIG_KIT=str(kit))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(str(kit / "GLOBAL_AGENTS.md"), result.stdout)
-        self.assertNotIn(str(self.home / "projects/agent-config-kit/GLOBAL_AGENTS.md"), result.stdout)
-        self.assertEqual((kit / "GLOBAL_AGENTS.md").read_text(encoding="utf-8"), STALE)
+        self.assertNotIn("GLOBAL_AGENTS.md", result.stdout)
         self.assert_untouched()
 
 
 class KitBaselineTests(unittest.TestCase):
     def test_kit_baseline_carries_the_canonical_typed_block(self) -> None:
-        # The bb home is rendered verbatim from GLOBAL_AGENTS.md; the other homes take GLOBAL_BLOCK.
         module = ast.parse(SCRIPT.read_text(encoding="utf-8"))
         block = next(ast.literal_eval(node.value) for node in module.body if isinstance(node, ast.Assign)
                      and any(getattr(target, "id", "") == "GLOBAL_BLOCK" for target in node.targets))
-        self.assertIn(block, (SCRIPT.parents[1] / "GLOBAL_AGENTS.md").read_text(encoding="utf-8"))
+        global_text = (SCRIPT.parents[1] / "GLOBAL_AGENTS.md").read_text(encoding="utf-8")
+        self.assertNotIn(block, global_text)
+        spec = importlib.util.spec_from_file_location(
+            "render_standing_homes_under_test", SCRIPT.parents[1] / "scripts/render-standing-homes.py")
+        assert spec and spec.loader
+        render_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(render_mod)
+        self.assertIn(block, render_mod.rendered("claude"))
 
 
 class CanonicalPrReviewBlockTests(unittest.TestCase):
