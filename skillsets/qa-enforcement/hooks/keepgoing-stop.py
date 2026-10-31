@@ -43,6 +43,14 @@ NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|owner|hold)\b",
 # "because I haven't run them" names no outside blocker.
 SELF_CAUSED = re.compile(r"\bbecause\s+(?:i|we)\b", re.IGNORECASE)
 STATED_ASK = re.compile(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", re.IGNORECASE)
+OWNER_ONLY_INPUT = re.compile(
+    r"\b(?:log\s*in|sign\s*in|password|token|secret|approv\w*|authoriz\w*|force[- ]push|"
+    r"delete|send\s+email|protected\s+branch|otp|2fa|verification\s+code|one[- ]time\s+code|"
+    r"\d+[- ]digit\s+code|the\s+code\s+(?:sent|texted|emailed)|"
+    r"install\s+(?:approval|approve)|approve\s+[^\n]{0,80}\binstall\b|"
+    r"(?:install|swap)\s+of\s+bb\b|bb\s+(?:install|swap))\b",
+    re.IGNORECASE,
+)
 QUOTED = re.compile(r"\"[^\"\n]{1,300}\"|“[^”\n]{1,300}”")
 IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
@@ -59,7 +67,13 @@ NUDGE = (
     "[keep-going] Your last paragraph leaves runnable work open: a promise, a permission question about something "
     "you could just do, or a blocker with no owner-only input.\n"
     "Do the promised or runnable work now with tool calls instead of describing it.\n"
-    "Stop only with a line `NEEDS-OWNER: <the login, code or approval only the owner can give>`."
+    "Stop when the work is done, or when it waits on an outside event you name and are watching (a run, a review, "
+    "a child, a merge). Use `NEEDS-OWNER:` only for a login or code the owner must enter, or one specific approval "
+    "a hard prohibition requires; a blocker you can investigate, route around or run yourself is yours."
+)
+OWNER_ASK_NUDGE = (
+    "[keep-going] This NEEDS-OWNER: ask is work you can do. Investigate it, route around it, or run it yourself; "
+    "otherwise stop on a named outside event you are watching."
 )
 MENU = re.compile(
     r"(?:^|\s)\(?[a-d]\)\s|\boption\s+[a-d1-4]\b|\b(?:choose|pick|decide)\b|\bwhich\s+(?:do\s+you|one|option|route|path)\b",
@@ -143,6 +157,9 @@ def clean_owner_stop(tail):
         return None
     if not any(STATED_ASK.match(line) for line in asks):
         return None
+    stated_asks = [line for line in asks if STATED_ASK.match(line)]
+    if not any(OWNER_ONLY_INPUT.search(line) for line in stated_asks):
+        return None
     return "\n".join(line for line in tail.splitlines() if not OWNER_LINE.match(line))
 
 
@@ -194,6 +211,8 @@ def main():
             text = transcript_text(payload.get("transcript_path") or payload.get("transcriptPath"))
         if text and owner_menu(text):
             print(json.dumps({"decision": "block", "reason": MENU_NUDGE}))
+        elif text and re.search(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", last_paragraph(text), re.IGNORECASE | re.MULTILINE) and clean_owner_stop(last_paragraph(text)) is None:
+            print(json.dumps({"decision": "block", "reason": OWNER_ASK_NUDGE}))
         elif text and runnable_open(text):
             print(json.dumps({"decision": "block", "reason": NUDGE}))
     except Exception:

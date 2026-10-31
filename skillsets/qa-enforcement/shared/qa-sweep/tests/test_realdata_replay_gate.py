@@ -17,6 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "scripts/realdata-replay-gate.py"
 
 
+def _qa_ship_gate_hook_path() -> Path:
+    override = os.environ.get("QA_SHIP_GATE_HOOK")
+    if override:
+        return Path(override)
+    kit_hook = ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh"
+    if kit_hook.is_file():
+        return kit_hook
+    return Path.home() / ".agent-hooks/qa-ship-gate-hook.sh"
+
+
 def _load_gate():
     from importlib.util import module_from_spec, spec_from_file_location
     spec = spec_from_file_location("realdata_gate_module", GATE)
@@ -1995,7 +2005,7 @@ sys.exit(2)
         # Through qa-ship-gate-hook.sh, as installed: it passes its own reading of the command (the awk view), which
         # decides whatever ship-gate.py is beside the gate, so a merge is never read as its body (Hermes r18, r19):
         # missing, failing to load, or loading with a ship_view that returns the raw command or nothing at all.
-        hook = ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh"
+        hook = _qa_ship_gate_hook_path()
         rows = (("ls", 0), ("gh pr merge 1701 --admin --squash", 0), ("gh pr ready 1701", 0),
                 ("gh pr merge 1701 --body 'notes on gh release create'", 0),
                 ('gh pr merge 1701 --subject "bb fleet validate; gh pr create" --squash', 0),
@@ -2070,7 +2080,7 @@ sys.exit(2)
     def test_installed_hook_with_an_empty_view_still_denies_gated_commands(self) -> None:
         # The real hook, its view forced empty (as a scanner fault would give): gated commands are denied from their
         # raw text, and a merge, whose empty view is its true reading, stays allowed.
-        source = (ROOT.parents[1] / "hooks/qa-ship-gate-hook.sh").read_text(encoding="utf-8")
+        source = _qa_ship_gate_hook_path().read_text(encoding="utf-8")
         forced = 'realdata_view=$(SHIP_SCAN_VIEW=1 ship_scan) || realdata_view="FLAT "'
         self.assertEqual(source.count(forced), 1)
         hook = Path(self.temp.name) / "empty-view-hook.sh"
