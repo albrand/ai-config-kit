@@ -379,6 +379,25 @@ class BundleCase(unittest.TestCase):
         self.assertIn("rule on every entry under", r.stdout)
         self.assertIn("Changed assertions in tests this PR did not create", r.stdout)
 
+    def test_changed_rule_strings_in_existing_test(self):
+        path = "scripts/test_review_skill_source.py"
+        diff = (
+            f"diff --git a/{path} b/{path}\n"
+            f"--- a/{path}\n+++ b/{path}\n"
+            "@@ -320,7 +320,7 @@\n"
+            '         for rule in (\n'
+            '             "Hermes reviews every one of our PRs before merge",\n'
+            '+            "Hermes reviews every one of our PRs. Start its round when the PR opens, alongside CI, not after CI is green",\n'
+            "-            \"Hermes reviews every one of our PRs before merge\",\n"
+            "         ):\n"
+        )
+        self.serve([path], diff, tests={path: b"def test_x(): pass\n"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("before merge", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
+
     def test_added_test_file_not_listed_in_changed_assertions(self):
         path = "tests/new.test.ts"
         diff = diff_block(path, "expect(x).toBe(1);")

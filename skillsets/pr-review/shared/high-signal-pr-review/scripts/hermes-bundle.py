@@ -210,6 +210,16 @@ def _test_decl_summary(line: str) -> str:
         return f"{m.group(1)}{m.group(3)}{m.group(2)})"
     return s[:120]
 
+def _removed_expectation_string(raw: bytes) -> bool:
+    """Removed quoted lines in test diffs (assertIn/assertEqual operands, rule tuples)."""
+    if not raw.startswith(b"-") or raw.startswith(b"---"):
+        return False
+    payload = raw[1:].strip()
+    if not payload or payload[:1] not in b"\"'":
+        return False
+    return len(payload) >= 10
+
+
 def _removed_test_or_assertion(raw: bytes) -> bool:
     if not raw.startswith(b"-") or raw.startswith(b"---"):
         return False
@@ -339,7 +349,7 @@ def build_changed_assertions_section(
             while i < len(lines) and not lines[i].startswith("@@"):
                 raw = lines[i].encode("utf-8")
                 if raw.startswith(b"-") and not raw.startswith(b"---"):
-                    if _removed_test_or_assertion(raw):
+                    if _removed_test_or_assertion(raw) or _removed_expectation_string(raw):
                         has_removed = True
                         hunk_entries.append(f"L{old_ln}: {lines[i]}")
                     old_ln += 1
