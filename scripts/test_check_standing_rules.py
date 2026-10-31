@@ -19,6 +19,29 @@ SPEC = importlib.util.spec_from_file_location("check_standing_rules", SCRIPT)
 CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
+
+
+def remove_bullet_from_hard_section(text: str, bullet: str) -> str:
+    lines = text.splitlines()
+    out: list[str] = []
+    in_hard = False
+    removed = False
+    for line in lines:
+        if line.startswith("## Hard prohibitions"):
+            in_hard = True
+            out.append(line)
+            continue
+        if in_hard and line.startswith("## "):
+            in_hard = False
+        if in_hard and not removed and line == bullet:
+            removed = True
+            continue
+        out.append(line)
+    result = "\n".join(out)
+    return result if result.endswith("\n") else result + "\n"
+
+HARD_RULES_BASELINE = SCRIPT.parent.parent / "proposals/card21/hard-rules.md"
+
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
 Never quit the running bb app. Never kill the running bb app. Never replace the running bb app. Never move `/Applications/bb.app`. Never delete `/Applications/bb.app`. Never overwrite `/Applications/bb.app`. Never use pkill or pgrep -f.
@@ -48,8 +71,9 @@ Never bypass an active fleet route hold with “Send now”; wait for verified h
 
 class StandingRuleCheckerTest(unittest.TestCase):
     def test_kit_global_rules_are_retained_with_deletion_coverage(self):
-        baseline = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
-        candidate = baseline
+        baseline_path = HARD_RULES_BASELINE
+        baseline = baseline_path.read_text(encoding="utf-8")
+        candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
         self.assertEqual(missing, [])
         self.assertGreater(count, 0)
@@ -96,10 +120,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
 
     def test_baseline_entrypoint_returns_success_for_intact_source(self):
         kit_text = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
-        with tempfile.TemporaryDirectory(prefix="card21-kit-baseline-") as tmp:
-            baseline_path = Path(tmp) / "GLOBAL_AGENTS.md"
-            baseline_path.write_text(kit_text, encoding="utf-8")
-            self.assertEqual(0, self.run_main_with_baseline(kit_text, baseline_path))
+        self.assertEqual(0, self.run_main_with_baseline(kit_text, HARD_RULES_BASELINE))
 
     def test_baseline_entrypoint_fails_for_missing_baseline(self):
         self.assertNotEqual(0, self.run_main_with_baseline(CHECKER.KIT_SOURCE.read_text(), None))
@@ -182,6 +203,52 @@ class StandingRuleCheckerTest(unittest.TestCase):
             }),
         )
 
+
+    def test_rendered_homes_require_jev_safeguard_deletion_fails(self):
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        clause = (
+            "Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) "
+            "in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook "
+            "or with secrets/personal data, or alone for irreversible/security calls."
+        )
+        homes = {
+            "CLAUDE.md": "typed-decisions-jev-system-one",
+            "codex-AGENTS.md": "typed-decisions-jev-system-one",
+            "opencode-AGENTS.md": "typed-decisions-jev-system-one",
+        }
+        for name, rule in homes.items():
+            source = (rendered / name).read_text(encoding="utf-8")
+            self.assertIn(clause, source)
+            with self.subTest(home=name):
+                with tempfile.TemporaryDirectory(prefix="card21-jev-del-") as temp_dir:
+                    candidate = Path(temp_dir) / "rendered-homes" / name
+                    candidate.parent.mkdir(parents=True)
+                    candidate.write_text(source.replace(clause, "", 1), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                output = result.stdout + result.stderr
+                self.assertNotEqual(0, result.returncode, output)
+                self.assertIn(str(candidate), output)
+                self.assertIn(rule, output)
+
+    def test_each_hard_rules_bullet_deletion_from_global_fails(self):
+        kit_text = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        baseline = HARD_RULES_BASELINE.read_text(encoding="utf-8")
+        bullets = CHECKER.hard_rules_bullet_lines(baseline)
+        self.assertGreater(len(bullets), 0)
+        for line in bullets:
+            if line not in kit_text:
+                continue
+            with self.subTest(bullet=line[:72]):
+                damaged = remove_bullet_from_hard_section(kit_text, line)
+                self.assertNotEqual(damaged, kit_text)
+                result = self.run_main_with_baseline(damaged, HARD_RULES_BASELINE)
+                self.assertNotEqual(0, result)
+
     def test_jev_system_one_obligations_are_mandatory(self):
         clause = (
             "Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) "
@@ -198,10 +265,7 @@ class StandingRuleCheckerTest(unittest.TestCase):
         for rule, weakened in mutations.items():
             with self.subTest(rule=rule):
                 damaged = INTACT.replace(clause, weakened)
-                self.assertIn(
-                    rule,
-                    CHECKER.missing_rules(damaged, required_optional={rule}),
-                )
+                self.assertIn(rule, CHECKER.missing_rules(damaged, required_optional=set(mutations)))
 
     def test_codex_board_gate_and_inventory_mutations_fail(self):
         overlay = SCRIPT.parent.parent / "proposals/card21/overlays/codex.md"

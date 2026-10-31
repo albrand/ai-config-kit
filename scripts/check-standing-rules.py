@@ -554,18 +554,25 @@ OPTIONAL_WHEN_ABSENT = {
     "delegate-output-evidence-and-capability-gap",
     "protected-push-covers-any-protected-branch",
 }
-# Enforced wherever the narrowing appears, never required where it does not.
-WHEN_PRESENT_ONLY = {
-    "protected-push-covers-any-protected-branch",
-    "public-exposure-current-conversation-service",
-    "public-share-close-task-end",
-    "public-share-closeout-audit",
+
+TYPED_DECISIONS_HOME_RULES = {
     "typed-decisions-jev-system-one",
     "typed-decisions-jev-never-sole-control",
     "typed-decisions-jev-no-hooks-or-secrets",
     "typed-decisions-out-of-space-fails",
     "typed-decisions-resolve-origin",
     "typed-decisions-confidence-keeps-release-checks",
+}
+KIT_HARD_RULES_BASELINE = (
+    Path(__file__).resolve().parents[1] / "proposals/card21/hard-rules.md"
+)
+
+# Enforced wherever the narrowing appears, never required where it does not.
+WHEN_PRESENT_ONLY = {
+    "protected-push-covers-any-protected-branch",
+    "public-exposure-current-conversation-service",
+    "public-share-close-task-end",
+    "public-share-closeout-audit",
 }
 
 HOME_FILES = (
@@ -617,6 +624,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-jev-system-one",
+        "typed-decisions-jev-never-sole-control",
+        "typed-decisions-jev-no-hooks-or-secrets",
         "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
@@ -639,6 +649,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-jev-system-one",
+        "typed-decisions-jev-never-sole-control",
+        "typed-decisions-jev-no-hooks-or-secrets",
         "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
@@ -717,7 +730,7 @@ PROFILE_RULES = {
     "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES - BOARD_RULES - WHEN_PRESENT_ONLY,
     "proposal-codex": OPTIONAL_WHEN_ABSENT - WHEN_PRESENT_ONLY,
     "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
-    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
+    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY - TYPED_DECISIONS_HOME_RULES,
 }
 
 # Pre-compression live snapshots are no longer installed anywhere and are not recognized (Hermes 2026-10-07,
@@ -1111,6 +1124,48 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
     return not failures, failures
 
 
+
+
+
+
+def hard_prohibitions_section(text: str) -> str:
+    """Text between `## Hard prohibitions` and the next `## ` heading."""
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.startswith("## Hard prohibitions"):
+            start = index + 1
+            continue
+        if start is not None and line.startswith("## "):
+            return "\n".join(lines[start:index])
+    if start is not None:
+        return "\n".join(lines[start:])
+    return ""
+
+def hard_rules_bullet_lines(baseline: str) -> list[str]:
+    """Return `- ` lines under the first `## Hard prohibitions` section only."""
+    bullets: list[str] = []
+    in_hard = False
+    for line in baseline.splitlines():
+        if line.startswith("## Hard prohibitions"):
+            in_hard = True
+            continue
+        if in_hard and line.startswith("## "):
+            break
+        if in_hard and line.startswith("- "):
+            bullets.append(line)
+    return bullets
+
+
+def missing_hard_rules_lines(baseline: str, candidate: str) -> list[str]:
+    """Require each hard-prohibition bullet from the baseline file in the kit hard section."""
+    section = hard_prohibitions_section(candidate)
+    missing: list[str] = []
+    for line in hard_rules_bullet_lines(baseline):
+        if line not in section:
+            missing.append(line.strip())
+    return missing
+
 def check_baseline_preservation(baseline: str, candidate: str) -> tuple[int, list[str]]:
     """Require every standing-rule regex found in a baseline to remain in a candidate."""
     baseline_rules = {
@@ -1144,12 +1199,21 @@ def main() -> int:
             baseline = args.preserve_baseline.read_text(encoding="utf-8")
             candidate = KIT_SOURCE.read_text(encoding="utf-8")
             count, missing = check_baseline_preservation(baseline, candidate)
+            line_missing = missing_hard_rules_lines(baseline, candidate)
             if missing:
                 failures.append(
                     f"{KIT_SOURCE}: lost baseline rules {', '.join(missing)}"
                 )
-            else:
-                print(f"PASS {KIT_SOURCE}: retained all {count} rules matched in {args.preserve_baseline}")
+            if line_missing:
+                failures.append(
+                    f"{KIT_SOURCE}: lost hard-rules lines: {', '.join(line_missing)}"
+                )
+            if not missing and not line_missing:
+                print(
+                    f"PASS {KIT_SOURCE}: retained all {count} rules and "
+                    f"{len(hard_rules_bullet_lines(baseline))} hard-rules lines "
+                    f"matched in {args.preserve_baseline}"
+                )
     for failure in failures:
         print(f"FAIL {failure}", file=sys.stderr)
     ok = not failures
