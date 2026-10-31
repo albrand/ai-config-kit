@@ -153,6 +153,26 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_heredoc_bodies_are_data_unless_shell_stdin(self):
+        allowed = (
+            "cat <<'EOF' > f.md\nNever use pgrep -f\nEOF",
+            "cat > AGENTS.md <<EOF\n- Never use pkill or pgrep -f; a safety-hook block is final.\nEOF",
+            "tee x <<-EOF\n\tpgrep -f y\n\tEOF",
+        )
+        blocked = (
+            "bash <<'EOF'\npgrep -f bb\nEOF",
+            "ssh h <<EOF\npgrep -f bb\nEOF",
+            "cat <<EOF\nx\nEOF\npgrep -f bb",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"

@@ -209,12 +209,165 @@ def _pgrep_read_backtick(text, i, sq):
         j += 1
     return None, n
 
+
+def _pgrep_parse_heredoc_delim(text, i):
+    n = len(text)
+    if i + 2 > n or text[i : i + 2] != "<<":
+        return None
+    j = i + 2
+    strip_tabs = False
+    if j < n and text[j] == "-":
+        strip_tabs = True
+        j += 1
+    if j >= n:
+        return ("", strip_tabs, j)
+    if text[j] in "'\"":
+        q = text[j]
+        k = j + 1
+        while k < n and text[k] != q:
+            k += 1
+        if k >= n:
+            return ("", strip_tabs, n)
+        return (text[j + 1 : k], strip_tabs, k + 1)
+    m = re.match(r"[A-Za-z0-9_]+", text[j:])
+    if not m:
+        return None
+    return (m.group(0), strip_tabs, j + m.end())
+
+
+def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
+    span = _pgrep_first_word_span(text, cmd_start, op_start)
+    if not span:
+        return False
+    word = text[span[0] : span[1]].strip().strip("\"'")
+    base = word.rsplit("/", 1)[-1].lower()
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        return True
+    segment = text[cmd_start:op_start]
+    if re.search(r"\beval\b", segment, re.I):
+        return True
+    if re.search(r"\bxargs\b", segment, re.I):
+        return True
+    if re.search(
+        r"(?:^|[;&|(\s])(?:sudo|env|command|exec|nohup|time|nice)\s+(?:\S+\s+)*?(?:\S+/)*(?:bash|sh|zsh|dash|ksh)\b",
+        segment,
+        re.I,
+    ):
+        return True
+    if re.search(r"\bssh\b", segment, re.I):
+        after = text[span[1] : op_start]
+        cleaned = re.sub(r"-\S+", " ", after)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if len(cleaned.split()) <= 1:
+            return True
+    return False
+
+
+def _pgrep_iter_heredoc_bodies(text):
+    n = len(text)
+    i = 0
+    sq = dq = False
+    cmd_start = 0
+    while i < n:
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] in ";\n|&":
+            i += 1
+            cmd_start = _pgrep_skip_space(text, i)
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            i += 2
+            cmd_start = _pgrep_skip_space(text, i)
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if not parsed:
+                i += 2
+                continue
+            delim, strip_tabs, j = parsed
+            executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
+            line_end = text.find("\n", j)
+            if line_end == -1:
+                body_start = n
+                body_end = n
+                if executable and body_start < body_end:
+                    yield body_start, body_end, executable
+                break
+            body_start = line_end + 1
+            k = body_start
+            while k < n:
+                line_term = text.find("\n", k)
+                if line_term == -1:
+                    line_term = n
+                line = text[k:line_term]
+                if line.endswith("\r"):
+                    line = line[:-1]
+                cmp_line = line.lstrip("\t") if strip_tabs else line
+                if cmp_line == delim:
+                    body_end = k
+                    if executable and body_start < body_end:
+                        yield body_start, body_end, executable
+                    i = line_term + 1 if line_term < n else n
+                    break
+                k = line_term + 1 if line_term < n else n
+            else:
+                if executable and body_start < n:
+                    yield body_start, n, executable
+                break
+            continue
+        i += 1
+
+
 def _pgrep_iter_simple_command_spans(text):
     n = len(text)
     start = 0
     i = 0
     sq = dq = False
+    hd = None
     while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                hd = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    yield start, i
+                    i += 1
+                    start = _pgrep_skip_space(text, i)
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
         c = text[i]
         if sq:
             if c == "'":
@@ -241,20 +394,24 @@ def _pgrep_iter_simple_command_spans(text):
             yield start, i
             i += 2
             start = _pgrep_skip_space(text, i)
-            i = start
             continue
         if c in ";\n|":
             yield start, i
             i += 1
             start = _pgrep_skip_space(text, i)
-            i = start
             continue
         if c == "&":
             yield start, i
             i += 1
             start = _pgrep_skip_space(text, i)
-            i = start
             continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                delim, strip_tabs, j = parsed
+                hd = (delim, strip_tabs, "op")
+                i = j
+                continue
         i += 1
     yield start, n
 
@@ -505,6 +662,9 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None):
             return True
     for inner in _pgrep_each_backtick(text):
         if _pgrep_pgrep_match_in_fragment(inner):
+            return True
+    for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
+        if executable and _pgrep_pgrep_match_in_fragment(text[body_start:body_end]):
             return True
     return False
 
