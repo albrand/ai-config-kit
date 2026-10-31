@@ -28,7 +28,7 @@ CHANGED_ASSERTIONS_CAP = 16 * 1024
 NEW_TESTS_CAP = 4 * 1024
 SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_ecdsa*", "*secret*", "*credential*")
 PROVENANCE_SECRET = re.compile(
-    rb"(?i)(?:\bapi[_-]?key|\bsecret|\bpassword|\btoken|\bcredential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
+    rb"(?i)(?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]+_)*(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
 )
 
 
