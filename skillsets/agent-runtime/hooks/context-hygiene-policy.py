@@ -91,7 +91,7 @@ BB_LIFECYCLE = [
     re.compile(r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'),
 ]
 PGREP_INVOCATION = re.compile(
-    r'(?:^|[;&|(`\n"\'])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pgrep\b')
+    r'(?:^|[;&|(`\n"\'])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:(?:-\S+\s+)+(?:\S+\s+)?|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pgrep\b')
 PGREP_FULL_FLAG = re.compile(
     r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
 PGREP_F_DENY = (

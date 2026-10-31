@@ -50,6 +50,8 @@ class ContextHygiene(unittest.TestCase):
         blocked = (
             "pgrep -f bb",
             "sudo pgrep -f bb",
+            "sudo -u alice pgrep -f bb",
+            "env -u FOO pgrep -f bb",
             "env FOO=1 pgrep --full bb",
             "true && pgrep -f bb",
             "pgrep -l -f node",
