@@ -83,6 +83,17 @@ class ContextHygiene(unittest.TestCase):
                 self.assertFalse(verdict(bash(cmd))["block"], cmd)
         self.assertTrue(verdict(bash(allowed[-1]))["block"])
 
+    def test_pgrep_f_mentions_in_quoted_data_are_allowed(self):
+        allowed = (
+            "printf '%s\n' 'The pgrep -f option is prohibited here'",
+            'echo "never use pgrep -f"',
+            'git commit -m "block pgrep -f in hooks"',
+            "grep -n 'pgrep -f' file.py",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
         # The fixture is only fed to the policy as data; nothing here runs it.
         quit_bb = "osascript -e 'tell application " + '"bb"' + " to quit'"

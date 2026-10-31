@@ -125,6 +125,97 @@ def pgrep_obfuscation_fold(text):
     text = re.sub(r"\bp(?:\\?g)(?:\\?r)(?:\\?e)(?:\\?p)\b", "pgrep", text, flags=re.I)
     return text
 
+
+def _pgrep_quote_opener_is_executable(text, start):
+    before = text[:start].rstrip()
+    if re.search(
+        r"(?:^|[;&|(\s])(?:(?:sudo|env)\s+\S+\s+)*?(?:\S+/)*(?:bash|sh|zsh|dash|ksh)\b(?:\s+\S+)*\s-(?:[a-zA-Z]*c|c)\s*$",
+        before,
+    ):
+        return True
+    if re.search(r"\beval\s*$", before):
+        return True
+    if re.search(r"\bssh\b(?:\s+(?:-\S+|\S+))*\s+\S+\s*$", before):
+        return True
+    if re.search(r"\bxargs\b(?:\s+\S+)*\s+$", before):
+        return True
+    return False
+
+def _pgrep_iter_quoted_spans(text):
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c not in "'\"":
+            i += 1
+            continue
+        q = c
+        j = i + 1
+        while j < n:
+            if q == '"' and text[j] == '\\':
+                j += 2
+                continue
+            if text[j] == q:
+                yield i, j + 1
+                i = j + 1
+                break
+            j += 1
+        else:
+            return
+
+def _pgrep_blank_data_quotes(text):
+    chars = list(text)
+    for start, end in _pgrep_iter_quoted_spans(text):
+        if _pgrep_quote_opener_is_executable(text, start):
+            continue
+        inner = text[start + 1 : end - 1]
+        if not PGREP_WORD.search(pgrep_obfuscation_fold(inner)):
+            continue
+        for k in range(start + 1, end - 1):
+            chars[k] = " "
+    return "".join(chars)
+
+def _pgrep_process_command_substitutions(text, inner_fn):
+    parts, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            j, depth = i + 2, 1
+            while j < n and depth:
+                if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
+                    depth += 1
+                    j += 2
+                elif text[j] == ")":
+                    depth -= 1
+                    j += 1
+                else:
+                    j += 1
+            inner = text[i + 2 : j - 1]
+            parts.append("$(" + inner_fn(inner) + ")")
+            i = j
+        elif text[i] == "`":
+            j = i + 1
+            while j < n and text[j] != "`":
+                if text[j] == '\\':
+                    j += 2
+                else:
+                    j += 1
+            if j >= n:
+                parts.append(text[i:])
+                break
+            inner = text[i + 1 : j]
+            parts.append("`" + inner_fn(inner) + "`")
+            i = j + 1
+        else:
+            parts.append(text[i])
+            i += 1
+    return "".join(parts)
+
+def _pgrep_prepare_scan_text(text):
+    def normalize(chunk):
+        chunk = pgrep_obfuscation_fold(chunk)
+        chunk = _pgrep_process_command_substitutions(chunk, normalize)
+        return _pgrep_blank_data_quotes(chunk)
+    return normalize(text)
+
 def pgrep_segment_has_full_flag(segment):
     segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
     if PGREP_FULL_FLAG.search(segment):
@@ -140,7 +231,7 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text):
-    text = pgrep_obfuscation_fold(text)
+    text = _pgrep_prepare_scan_text(text)
     flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(text)}
     for m in PGREP_WORD.finditer(text):
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
