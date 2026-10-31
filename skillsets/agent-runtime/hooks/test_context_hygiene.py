@@ -56,6 +56,7 @@ class ContextHygiene(unittest.TestCase):
             "true && pgrep -f bb",
             "if pgrep -f bb; then echo hi; fi",
             "pgrep \\\n-f bb",
+            'P=pgrep; "$P" -f bb',
             "pgrep -l -f node",
             "pgrep -af node",
             "bash -c 'pgrep -f bb'",

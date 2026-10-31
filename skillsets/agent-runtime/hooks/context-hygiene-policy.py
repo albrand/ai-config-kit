@@ -97,6 +97,8 @@ PGREP_F_DENY = (
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
+PGREP_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?pgrep["\']?\b')
+PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
@@ -117,6 +119,14 @@ KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
 def pgrep_full_match(text):
     text = re.sub(r"\\\n\s*", "", text)
     for m in PGREP_WORD.finditer(text):
+        segment = re.match(r"[^\n;&|]*", text[m.end() :])
+        if segment and PGREP_FULL_FLAG.search(segment.group(0)):
+            return True
+    aliases = {m.group(1) for m in PGREP_VAR.finditer(text)}
+    for m in PGREP_VAR_INVOKE.finditer(text):
+        var = m.group(1) or m.group(2)
+        if var not in aliases:
+            continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if segment and PGREP_FULL_FLAG.search(segment.group(0)):
             return True
