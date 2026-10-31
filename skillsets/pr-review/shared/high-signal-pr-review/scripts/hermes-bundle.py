@@ -28,8 +28,33 @@ CHANGED_ASSERTIONS_CAP = 16 * 1024
 NEW_TESTS_CAP = 4 * 1024
 SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_ecdsa*", "*secret*", "*credential*")
 PROVENANCE_SECRET = re.compile(
-    rb"(?i)(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
+    rb"(?i)(?:\bapi[_-]?key|\bsecret|\bpassword|\btoken|\bcredential)\s*[:=]|BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"
 )
+
+
+def redact_secret_bytes(data: bytes) -> bytes:
+    out: list[bytes] = []
+    for line in data.splitlines(keepends=True):
+        if PROVENANCE_SECRET.search(line):
+            out.append(b"[redacted: secret-like content]\n")
+        else:
+            out.append(line)
+    return b"".join(out)
+
+
+def redact_secret_diff_text(diff_text: str) -> str:
+    out: list[str] = []
+    for line in diff_text.splitlines(keepends=True):
+        raw = line.encode("utf-8")
+        if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-"):
+            out.append(line)
+            continue
+        prefix, payload = raw[:1], raw[1:]
+        if PROVENANCE_SECRET.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+        else:
+            out.append(line)
+    return "".join(out)
 
 
 def refuse_secret_content(data: bytes, label: str) -> None:
@@ -273,7 +298,7 @@ def write_pr_body(out: Path, body: str, written: list[Path]) -> None:
             cut = cut[: nl + 1]
         note = f"\n\n[truncated: PR body was {len(raw)} bytes, capped at {PR_BODY_CAP}]\n".encode()
         raw = cut
-    refuse_secret_content(raw + note, "pr-body.md")
+    raw = redact_secret_bytes(raw + note)
     dest = out / "pr-body.md"
     write(dest, raw + note)
     written.append(dest)
@@ -673,7 +698,7 @@ def plan_source_modes(
 
 
 def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written: list[Path]) -> None:
-    refuse_secret_content(plan.body, plan.repo_path)
+    plan.body = redact_secret_bytes(plan.body)
     root = "fixtures" if plan.is_fixture else "tests"
     base = out / root / plan.repo_path
     if plan.mode == "omitted":
@@ -764,7 +789,7 @@ def build(
         return sorted(set(written), key=lambda path: str(path))
 
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
-    refuse_secret_content(diff_text.encode("utf-8"), "pr diff")
+    diff_text = redact_secret_diff_text(diff_text)
     diff = diff_text.encode("utf-8")
     split_note = ""
     if len(diff) > cap:
