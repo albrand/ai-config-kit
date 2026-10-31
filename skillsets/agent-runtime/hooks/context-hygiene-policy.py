@@ -1008,25 +1008,18 @@ _PGREP_EXECUTABLE_QUOTE_OPENERS = frozenset(
 )
 
 
-def _pgrep_fragment_start_before(text, pos):
-    start = 0
-    for i in range(pos - 1, -1, -1):
-        if text[i] in ";\n|&":
-            start = i + 1
-            break
-    return start
+_PGREP_EXEC_QUOTE_LOOKBACK = 512
+_PGREP_EXEC_OPENER_NEAR = re.compile(
+    r"\b(?:bash|sh|zsh|dash|ksh|eval|ssh|xargs|watch|su|runuser|script)\b",
+    re.I,
+)
 
 
-def _pgrep_quote_opener_is_executable_slice(text, frag_start, quote_start):
-    before = text[frag_start:quote_start].rstrip()
-    if not before:
+def _pgrep_quote_opener_is_executable(text, start):
+    tail_start = max(0, start - _PGREP_EXEC_QUOTE_LOOKBACK)
+    if not _PGREP_EXEC_OPENER_NEAR.search(text[tail_start:start]):
         return False
-    i = _pgrep_skip_space(text, frag_start)
-    if i >= quote_start:
-        return False
-    wm = re.match(r"(?:\S+/)*(\w+)\b", text[i:quote_start])
-    if not wm or wm.group(1).lower() not in _PGREP_EXECUTABLE_QUOTE_OPENERS:
-        return False
+    before = text[:start].rstrip()
     if re.search(
         r"(?:^|[;&|(\s])(?:(?:sudo|env)\s+\S+\s+)*?(?:\S+/)*(?:bash|sh|zsh|dash|ksh)\b(?:\s+\S+)*\s-(?:[a-zA-Z]*c|c)\s*$",
         before,
@@ -1043,11 +1036,6 @@ def _pgrep_quote_opener_is_executable_slice(text, frag_start, quote_start):
     if re.search(r"\b(?:su|runuser|script)\b(?:\s+\S+)*\s+-c\s*$", before):
         return True
     return False
-
-
-def _pgrep_quote_opener_is_executable(text, start):
-    frag = _pgrep_fragment_start_before(text, start)
-    return _pgrep_quote_opener_is_executable_slice(text, frag, start)
 
 
 def _pgrep_iter_quoted_spans(text):
@@ -1093,33 +1081,9 @@ def _pgrep_quote_is_assignment_value(text, start):
     return True
 
 
-def _pgrep_fragment_first_word_lower(text, frag_start, limit):
-    i = _pgrep_skip_space(text, frag_start)
-    if i >= limit:
-        return ""
-    we = _pgrep_skip_one_word(text, i, limit)
-    return _pgrep_bare_word(text[i:we]).rsplit("/", 1)[-1].lower()
-
-
 def _pgrep_iter_quoted_spans_meta(text):
-    frag_start = 0
-    prev_end = 0
-    cached_frag = -1
-    cached_exec = False
     for start, end in _pgrep_iter_quoted_spans(text):
-        mid = text[prev_end:start]
-        sep = max(mid.rfind(";"), mid.rfind("|"), mid.rfind("&"), mid.rfind("\n"))
-        if sep >= 0:
-            frag_start = prev_end + sep + 1
-        if frag_start != cached_frag:
-            cached_frag = frag_start
-            first = _pgrep_fragment_first_word_lower(text, frag_start, start)
-            if first not in _PGREP_EXECUTABLE_QUOTE_OPENERS:
-                cached_exec = False
-            else:
-                cached_exec = _pgrep_quote_opener_is_executable_slice(text, frag_start, start)
-        yield start, end, cached_exec
-        prev_end = end
+        yield start, end, _pgrep_quote_opener_is_executable(text, start)
 
 
 

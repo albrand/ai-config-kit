@@ -242,6 +242,22 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
 
+    def test_pgrep_ssh_quoted_remote_shell_blocks_in_any_command_position(self):
+        blocked = (
+            "for i in 1; do ssh h 'pgrep -f x' || break; done",
+            "timeout 30 ssh vps 'uptime; pgrep -a -f bb | head'",
+            "out=$(ssh h 'cat f; pgrep -fa x >/dev/null && echo R')",
+            "while true; do ssh h 'pgrep -f x' >/dev/null || break; done",
+            "if ssh h 'pgrep -f x'; then :; fi",
+            "true && sudo ssh h 'pgrep -f x'",
+            "x=`ssh h 'pgrep -f x'`",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_dense_inputs_finish_within_deadline(self):
         import time
 
