@@ -359,12 +359,8 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?:signature|watermark)"
     ),
     "hermes-defects-block": re.compile(
-        r"(?is)(?:Hermes reviews every PR, started when the PR opens|"
-        r"Hermes names a defect in a PR: fix it; defects block merge|"
-        r"any named defect blocks merge until fixed and cleared on the same topic|"
-        r"a named defect blocks: fix it and rerun the same topic until it is no longer named|"
-        r"a PR never merges while Hermes names a defect in it:\s*fix\s+it, then re-run on the same `--topic`"
-        r" until that defect is no longer named)"
+        r"(?is)a\s+regression,\s+correctness,\s+security\s+or\s+data-loss\s+defect\s+it\s+names\s+"
+        r"blocks\s+merge\s+until\s+fixed\s+and\s+cleared\s+on\s+the\s+same\s+topic"
     ),
     "testing-claim": re.compile(
         r"(?is)persona.{0,180}target.{0,220}(?:goals|user outcomes).{0,200}"

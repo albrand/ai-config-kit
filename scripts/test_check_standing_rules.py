@@ -41,6 +41,13 @@ def remove_bullet_from_hard_section(text: str, bullet: str) -> str:
     return result if result.endswith("\n") else result + "\n"
 
 HARD_RULES_BASELINE = SCRIPT.parent.parent / "proposals/card21/hard-rules.md"
+# 34 hard-prohibition bullets under ## Hard prohibitions in proposals/card21/hard-rules.md.
+HARD_RULES_HARD_PROHIBITION_BULLET_COUNT = 34
+HERMES_DEFECT_BLOCKING_CRITERIA = (
+    "A regression, correctness, security or data-loss defect it names blocks merge until "
+    "fixed and cleared on the same topic"
+)
+
 
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
@@ -54,7 +61,7 @@ Use only bb's isolated browser for interactive work; never use a personal browse
 No feature flags or new off-by-default gates without an explicit ask; preserve auth, authorization, entitlements, environment configuration, and existing flags. A requested flag needs a removal ticket and default-on date.
 Remove only clean worktrees you created; never remove your own live bb environment, another agent's/user's worktree, a dirty tree, a .keep-worktree tree, or an unreferenced detached commit. A detached review worktree must end with its command. Use git worktree remove without --force.
 Do not add AI attribution, signatures, or watermarks.
-Hermes names a defect in a PR: fix it; defects block merge.
+Hermes reviews every PR, started when the PR opens. A regression, correctness, security or data-loss defect it names blocks merge until fixed and cleared on the same topic.
 Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN. PASS requires the persona to complete the full workflow; otherwise FAIL.
 Security-first defaults apply to auth, access control, secrets, crypto, external input, outbound requests, dependencies, and build/config. Load `SECURITY_AND_PENTEST.md` and apply the `QUALITY_GATES.md` Security Gate; prioritize supply-chain/build-config compromise and rate residual exposure after mitigations, not scanner labels. Active testing requires authorization and must stay defensive; never build offensive, self-propagating, evasive, or mass-targeting tools. For high-stakes review, one pass is not sign-off: use `adversarial-security-sweep` and keep exploit validation, severity, and fix design on the strongest reasoning path.
 Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls.
@@ -74,9 +81,11 @@ class StandingRuleCheckerTest(unittest.TestCase):
         baseline_path = HARD_RULES_BASELINE
         baseline = baseline_path.read_text(encoding="utf-8")
         candidate = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
-        count, missing = CHECKER.check_baseline_preservation(baseline, candidate)
+        _, missing = CHECKER.check_baseline_preservation(baseline, candidate)
         self.assertEqual(missing, [])
-        self.assertGreater(count, 0)
+        # N from proposals/card21/hard-rules.md hard-prohibition bullets (parity 34).
+        count = len(CHECKER.hard_rules_bullet_lines(baseline))
+        self.assertEqual(count, HARD_RULES_HARD_PROHIBITION_BULLET_COUNT)
 
         baseline_rules = [
             name for name, pattern in CHECKER.RULES.items()
@@ -203,6 +212,48 @@ class StandingRuleCheckerTest(unittest.TestCase):
             }),
         )
 
+
+
+    def test_hermes_defect_blocking_criteria_deletion_fails(self):
+        criteria = HERMES_DEFECT_BLOCKING_CRITERIA
+        removal = " " + criteria
+        kit = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(criteria, kit)
+        damaged_kit = kit.replace(removal, "", 1)
+        with tempfile.TemporaryDirectory(prefix="card21-hermes-block-") as tmp:
+            kit_path = Path(tmp) / "GLOBAL_AGENTS.md"
+            kit_path.write_text(damaged_kit, encoding="utf-8")
+            with (
+                patch.object(CHECKER, "KIT_SOURCE", kit_path),
+                patch.object(CHECKER, "HOME_FILES", []),
+                patch.object(sys, "argv", [str(SCRIPT)]),
+                contextlib.redirect_stdout(io.StringIO()) as out,
+                contextlib.redirect_stderr(io.StringIO()) as err,
+            ):
+                exit_code = CHECKER.main()
+            output = out.getvalue() + err.getvalue()
+            self.assertNotEqual(0, exit_code, output)
+            self.assertIn("hermes-defects-block", output)
+
+        rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
+        for name in ("CLAUDE.md", "codex-AGENTS.md", "opencode-AGENTS.md", "bb-AGENTS.md"):
+            source = (rendered / name).read_text(encoding="utf-8")
+            self.assertIn(criteria, source, msg=name)
+            with self.subTest(home=name):
+                with tempfile.TemporaryDirectory(prefix="card21-hermes-block-") as temp_dir:
+                    candidate = Path(temp_dir) / "rendered-homes" / name
+                    candidate.parent.mkdir(parents=True)
+                    candidate.write_text(source.replace(removal, "", 1), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--files", str(candidate)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                output = result.stdout + result.stderr
+                self.assertNotEqual(0, result.returncode, output)
+                self.assertIn(str(candidate), output)
+                self.assertIn("hermes-defects-block", output)
 
     def test_rendered_homes_require_jev_safeguard_deletion_fails(self):
         rendered = SCRIPT.parents[1] / "proposals/card21/rendered-homes"
@@ -841,8 +892,8 @@ class StandingRuleCheckerTest(unittest.TestCase):
                 "Add AI signatures by default.",
             ),
             "hermes-defects-block": (
-                "Hermes names a defect in a PR: fix it; defects block merge.",
-                "Hermes findings are advisory and do not block merge.",
+                HERMES_DEFECT_BLOCKING_CRITERIA,
+                "Coverage gaps in heuristics never block merge.",
             ),
             "testing-claim": (
                 "Do not claim tested without persona, target, user-outcome goals, and verdict per goal; otherwise NOT RUN.",
