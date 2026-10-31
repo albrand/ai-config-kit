@@ -258,6 +258,21 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_executable_quote_scan_stays_linear_and_keeps_long_ssh_blocks(self):
+        import time
+
+        loop_cmd = "for i in 1; do ssh h 'echo'; done; " * 2400
+        t0 = time.monotonic()
+        v = verdict(bash(loop_cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0)
+        self.assertFalse(v["block"], loop_cmd[:48])
+
+        long_ssh = "ssh h " + "-o A=b " * 200 + "'pgrep -f x'"
+        v = verdict(bash(long_ssh), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v["block"], long_ssh[:48])
+        self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_dense_inputs_finish_within_deadline(self):
         import time
 

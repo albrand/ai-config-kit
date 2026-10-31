@@ -1003,39 +1003,154 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None):
             return True
     return False
 
-_PGREP_EXECUTABLE_QUOTE_OPENERS = frozenset(
-    ("bash", "sh", "zsh", "dash", "ksh", "eval", "ssh", "xargs", "watch", "su", "runuser", "script")
-)
+_PGREP_SHELL_WORDS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+_PGREP_DASH_C_OPENERS = frozenset(("su", "runuser", "script"))
 
 
-_PGREP_EXEC_QUOTE_LOOKBACK = 512
-_PGREP_EXEC_OPENER_NEAR = re.compile(
-    r"\b(?:bash|sh|zsh|dash|ksh|eval|ssh|xargs|watch|su|runuser|script)\b",
-    re.I,
-)
+def _pgrep_word_is_dash_c_flag(word):
+    return bool(re.match(r"^-[a-zA-Z]*c$", _pgrep_bare_word(word)))
 
 
-def _pgrep_quote_opener_is_executable(text, start):
-    tail_start = max(0, start - _PGREP_EXEC_QUOTE_LOOKBACK)
-    if not _PGREP_EXEC_OPENER_NEAR.search(text[tail_start:start]):
-        return False
-    before = text[:start].rstrip()
-    if re.search(
-        r"(?:^|[;&|(\s])(?:(?:sudo|env)\s+\S+\s+)*?(?:\S+/)*(?:bash|sh|zsh|dash|ksh)\b(?:\s+\S+)*\s-(?:[a-zA-Z]*c|c)\s*$",
-        before,
-    ):
-        return True
-    if re.search(r"\beval\s*$", before):
-        return True
-    if re.search(r"\bssh\b(?:\s+(?:-\S+|\S+))*\s+\S+\s*$", before):
-        return True
-    if re.search(r"\bxargs\b(?:\s+\S+)*\s+$", before):
-        return True
-    if re.search(r"\bwatch\b(?:\s+\S+)*$", before):
-        return True
-    if re.search(r"\b(?:su|runuser|script)\b(?:\s+\S+)*\s+-c\s*$", before):
-        return True
-    return False
+def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if _pgrep_word_is_dash_c_flag(text[ws:we]):
+            i = _pgrep_skip_space(text, we)
+            if i < cmd_end and text[i] == "'":
+                out.add(i)
+            return
+        i = we
+
+
+def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
+    saw_word = False
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        if text[i] == "'":
+            if saw_word:
+                out.add(i)
+            return
+        i = _pgrep_skip_one_word(text, i, cmd_end)
+        saw_word = True
+
+
+def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        asn = _pgrep_assignment_at(text, i, cmd_end)
+        if asn:
+            i = asn[2]
+            continue
+        wm = _PGREP_WRAPPER_RE.match(text[i:cmd_end])
+        if wm:
+            w = wm.group(0)
+            wl = w.lower()
+            wi = i + len(w)
+            if wl == "watch":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                wi = _pgrep_skip_space(text, wi)
+                if wi < cmd_end and text[wi] == "'":
+                    out.add(wi)
+                return
+            if wl == "xargs":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                wi = _pgrep_skip_space(text, wi)
+                if wi < cmd_end and text[wi] == "'":
+                    out.add(wi)
+                return
+            if wl == "runuser":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                _pgrep_mark_dash_c_exec_quote(text, wi, cmd_end, out)
+                return
+            wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+            i = wi
+            continue
+        break
+    ws = i
+    we = _pgrep_skip_one_word(text, i, cmd_end)
+    if we <= ws:
+        return
+    base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+    if base in _PGREP_SHELL_WORDS:
+        _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+    elif base == "eval":
+        i = _pgrep_skip_space(text, we)
+        if i < cmd_end and text[i] == "'":
+            out.add(i)
+    elif base == "ssh":
+        _pgrep_mark_ssh_exec_quote(text, we, cmd_end, out)
+    elif base in _PGREP_DASH_C_OPENERS:
+        _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+
+
+def _pgrep_executable_single_quote_starts(text):
+    out = set()
+
+    def walk(chunk, origin):
+        for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(chunk):
+            local = set()
+            _pgrep_mark_exec_quotes_in_command(chunk, cmd_start, cmd_end, local)
+            for pos in local:
+                out.add(origin + pos)
+        sq = _pgrep_single_quote_spans(chunk)
+        i, n, dq, sq_idx = 0, len(chunk), False, 0
+        while i < n:
+            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+            if skip is not None:
+                i = skip
+                continue
+            if dq:
+                if chunk[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if chunk[i] == '"':
+                    dq = False
+                    i += 1
+                    continue
+                if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+                    inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+                    walk(inner, origin + i + 2)
+                    i = j
+                    continue
+                if chunk[i] == "`":
+                    inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+                    if inner is not None:
+                        walk(inner, origin + i + 1)
+                    i = j
+                    continue
+                i += 1
+                continue
+            if chunk[i] == '"':
+                dq = True
+                i += 1
+                continue
+            if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+                walk(inner, origin + i + 2)
+                i = j
+                continue
+            if chunk[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+                if inner is not None:
+                    walk(inner, origin + i + 1)
+                i = j
+                continue
+            if chunk[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            i += 1
+
+    walk(text, 0)
+    return out
 
 
 def _pgrep_iter_quoted_spans(text):
@@ -1082,8 +1197,9 @@ def _pgrep_quote_is_assignment_value(text, start):
 
 
 def _pgrep_iter_quoted_spans_meta(text):
+    exec_starts = _pgrep_executable_single_quote_starts(text)
     for start, end in _pgrep_iter_quoted_spans(text):
-        yield start, end, _pgrep_quote_opener_is_executable(text, start)
+        yield start, end, start in exec_starts
 
 
 
