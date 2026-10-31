@@ -35,7 +35,7 @@ scope_flat() { printf '%s' "$input" | tr -d '\\"'"'"; }
 # command that picks another repository first (cd/pushd, git -C, env
 # -C/--chdir, --git-dir, GIT_DIR; a work tree alone does not pick one).
 ship_scan() {
-  printf '%s' "$input" | LC_ALL=C awk -v sq="'" -v show="${SHIP_SCAN_VIEW:-}" '
+  printf '%s' "$input" | LC_ALL=C awk -v sq="'" -v show="${SHIP_SCAN_VIEW:-}" -v rdel="${SHIP_SCAN_RDEL:-}" '
   function decode(s,   i, n, c, e, out) {
     if (!match(s, /"command"[ \t]*:[ \t]*"/)) return "\001"
     n = length(s); out = ""
@@ -78,7 +78,64 @@ ship_scan() {
     }
     return (c && j <= nw) ? j : 0
   }
+  function flatrdel(s) {
+    # A remote ref deletion read as text, for a command that is not read word by word (unreadable quotes or
+    # heredoc, a payload that is not one command string, a shell nested deeper than the reader goes).
+    return s ~ /(^|[^A-Za-z0-9_-])git( [^ ;&|]+)* push( [^ ;&|]+)* (-[A-Za-z]*d[A-Za-z]*|--(del|dele|delet|delete|pru|prun|prune|m|mi|mir|mirr|mirro|mirror)|\+?:[^ :;&|]+)([] ;,}]|$)/ ||
+      s ~ /gh api[^;&|]*(-X|--method)[ =]?[Dd][Ee][Ll][Ee][Tt][Ee][^;&|]*(git\/refs|\/branches\/)/ ||
+      s ~ /gh api[^;&|]*(git\/refs|\/branches\/)[^;&|]*(-X|--method)[ =]?[Dd][Ee][Ll][Ee][Tt][Ee]/ ||
+      s ~ /gh api[^;&|]*deleteRef/
+  }
+  function rdelwords(d, nw,   k, h, j, m, w, u, del, ref, s) {
+    # Sets RDEL when the segment at depth d deletes a remote ref: git push with a delete/prune/mirror option or a
+    # :ref refspec, gh api with a DELETE method on a git/refs or branches path (or a deleteRef mutation). Only the
+    # command position counts, so an echo or a commit message that names one does not.
+    k = 1
+    while (k <= nw) {
+      h = bare(W[d, k])
+      if (W[d, k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || h ~ /^(then|do|else|elif|if|while|until|time|!|\{)$/) { k++; continue }
+      if (h == "env" || h == "command" || h == "nohup" || h == "exec" || h == "sudo" || h == "nice" || h == "xargs") {
+        k++
+        while (k <= nw && W[d, k] ~ /^-/) { if (W[d, k] ~ /^(-C|-u|-n|--chdir|--unset|-I|-L|-P|-d|-E|-s)$/) k++; k++ }
+        continue
+      }
+      break
+    }
+    if (k > nw) return
+    h = bare(W[d, k])
+    if (h == "git") {
+      j = k + 1
+      while (j <= nw) {
+        w = W[d, j]
+        if (w ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix|--config-env)$/) j += 2
+        else if (w ~ /^-/) j++
+        else break
+      }
+      if (j > nw || W[d, j] != "push") return
+      for (m = j + 1; m <= nw; m++) {
+        w = W[d, m]
+        if (w ~ /^-[A-Za-z]*d[A-Za-z]*$/ || w ~ /^--(de(l(e(t(e)?)?)?)?|pru(n(e)?)?|m(i(r(r(o(r)?)?)?)?)?)$/ || w ~ /^\+?:[^:]/) RDEL = 1
+      }
+    } else if (h == "gh") {
+      j = k + 1
+      while (j <= nw && W[d, j] ~ /^-/) j++
+      if (j > nw || W[d, j] != "api") return
+      del = 0; ref = 0
+      for (m = j + 1; m <= nw; m++) {
+        w = W[d, m]; u = toupper(w)
+        if (u ~ /^(-X|--METHOD)=?DELETE$/ || (w ~ /^(-X|--method)$/ && m < nw && toupper(W[d, m + 1]) == "DELETE")) del = 1
+        if (w ~ /git\/refs/ || w ~ /\/branches\//) ref = 1
+        if (w ~ /deleteRef/) RDEL = 1
+      }
+      if (del && ref) RDEL = 1
+    } else if (d >= 3 && h ~ /^(sh|bash|zsh|dash|eval)$/) {
+      s = ""
+      for (m = k + 1; m <= nw; m++) s = s " " W[d, m]
+      if (flatrdel(s)) RDEL = 1
+    }
+  }
   function emit(d, nw, seg, subs,   k, h, script, j) {
+    if (rdel) rdelwords(d, nw)
     k = 1
     while (k <= nw) {
       h = bare(W[d, k])
@@ -213,7 +270,7 @@ ship_scan() {
     if (np >= hp) { SFAIL = 1; return "" }
     return out
   }
-  function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body, ls, hd) {
+  function view(cmd, d,   out, seg, subs, nw, cur, has, q, i, n, c, nx, j, dep, body, ls, hd, sf) {
     cmd = strip(cmd); if (SFAIL) { FAIL = 1; return "" }
     out = ""; seg = ""; subs = ""; nw = 0; cur = ""; has = 0; q = ""; n = length(cmd)
     ls = 1; hd = 0
@@ -240,6 +297,7 @@ ship_scan() {
           body = substr(cmd, i + 2, j - i - 2)
         }
         subs = subs " ; " body; seg = seg substr(cmd, i, j - i + 1); cur = cur "$()"; has = 1; i = j
+        if (rdel) { if (d < 3) { sf = FAIL; view(body, d + 1); if (FAIL) RFLAT = 1; FAIL = sf } else if (flatrdel(body)) RDEL = 1 }
         continue
       }
       if (q == "\"") { seg = seg c; if (c == "\"") q = ""; else cur = cur c; continue }
@@ -264,9 +322,11 @@ ship_scan() {
   { s = s (NR > 1 ? " " : "") $0 }
   END {
     FAIL = 0; cmd = decode(s); flat = 0
+    if (rdel && cmd == "\001" && s !~ /"(command|cmd)"[ \t]*:/) { print 0; exit }
     if (cmd != "\001") { v = view(cmd, 0); if (FAIL) flat = 1 } else flat = 1
     if (flat) { v = s; gsub(/\\\\\\n/, "", v); gsub(/\\[ntr]/, " ", v) }
     gsub(/[\t\r\n]/, " ", v); gsub(/[\\"]/, "", v); gsub(sq, "", v); gsub(/  +/, " ", v)
+    if (rdel) { print ((RDEL || ((flat || RFLAT) && flatrdel(v))) ? 1 : 0); exit }
     if (show) { print (flat ? "FLAT " : "") v; exit }
     ship = v ~ /git( [^ ;&|]+)* push|gh (release (create|edit)|workflow run)|vercel[^;&|]*(--prod|--target[= ]production|promote|redeploy|alias|rolling-release)|netlify[^;&|]*deploy[^;&|]*--prod|fly(ctl)? deploy|\/v[0-9]+\/deployments|\/v[0-9]+\/projects\/[^ ]*\/promote\/|repos\/[^ ]*\/(merges|releases|git\/refs|dispatches|contents\/|deployments)|createCommitOnBranch|updateRef/
     moves = v ~ /(^|[^A-Za-z0-9_.\/-])(cd|pushd) |git( [^ ;&|]+)* -C |env( [^ ;&|]+)* (-C |--chdir)|--git-dir|GIT_DIR=/
