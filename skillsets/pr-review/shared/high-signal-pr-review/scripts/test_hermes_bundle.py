@@ -296,6 +296,12 @@ class BundleCase(unittest.TestCase):
         pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
         self.assertNotIn(b"BEGIN OPENSSH", pr_diff)
 
+    def test_secret_in_ordinary_path_refused(self):
+        self.serve(["src/config.ts"], diff_block("src/config.ts", 'api_key: "leak"'))
+        r = self.run_script()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("secret-like", r.stderr)
+
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py") + diff_block("web/a.test.ts"),

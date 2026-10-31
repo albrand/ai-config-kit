@@ -32,9 +32,13 @@ PROVENANCE_SECRET = re.compile(
 )
 
 
-def refuse_secret_provenance(data: bytes, label: str) -> None:
+def refuse_secret_content(data: bytes, label: str) -> None:
     if PROVENANCE_SECRET.search(data):
-        raise BundleError(f"refusing provenance with secret-like content: {label}")
+        raise BundleError(f"refusing bundle with secret-like content: {label}")
+
+
+def refuse_secret_provenance(data: bytes, label: str) -> None:
+    refuse_secret_content(data, label)
 
 
 TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "__mocks__", "testing"}
@@ -269,6 +273,7 @@ def write_pr_body(out: Path, body: str, written: list[Path]) -> None:
             cut = cut[: nl + 1]
         note = f"\n\n[truncated: PR body was {len(raw)} bytes, capped at {PR_BODY_CAP}]\n".encode()
         raw = cut
+    refuse_secret_content(raw + note, "pr-body.md")
     dest = out / "pr-body.md"
     write(dest, raw + note)
     written.append(dest)
@@ -668,6 +673,7 @@ def plan_source_modes(
 
 
 def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written: list[Path]) -> None:
+    refuse_secret_content(plan.body, plan.repo_path)
     root = "fixtures" if plan.is_fixture else "tests"
     base = out / root / plan.repo_path
     if plan.mode == "omitted":
@@ -758,6 +764,7 @@ def build(
         return sorted(set(written), key=lambda path: str(path))
 
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
+    refuse_secret_content(diff_text.encode("utf-8"), "pr diff")
     diff = diff_text.encode("utf-8")
     split_note = ""
     if len(diff) > cap:
