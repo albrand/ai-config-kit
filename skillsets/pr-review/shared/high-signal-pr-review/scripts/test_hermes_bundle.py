@@ -310,6 +310,15 @@ class BundleCase(unittest.TestCase):
         self.assertNotIn(b"leak", blob)
         self.assertIn(b"[redacted: secret-like content]", blob)
 
+    def test_ec_private_key_redacted(self):
+        body = "-----BEGIN EC PRIVATE KEY-----\nMIIB\n"
+        self.serve(["src/config.ts"], diff_block("src/config.ts", body.strip()))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blob = b"".join(p.read_bytes() for p in self.out.rglob("*") if p.is_file())
+        self.assertNotIn(b"BEGIN EC PRIVATE KEY", blob)
+        self.assertIn(b"[redacted: secret-like content]", blob)
+
     def test_prefixed_env_secret_names_redacted(self):
         for body in (
             "OPENAI_API_KEY=sk-live\n",
