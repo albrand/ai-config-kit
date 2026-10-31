@@ -249,6 +249,7 @@ class ContextHygiene(unittest.TestCase):
             (False, "echo " + " ".join(["pgrep"] * 1800)),
             (True, "; ".join(["pgrep -f x"] * 600)),
             (False, "echo " + " ".join(["'pgrep -f'"] * 1500)),
+            (False, "echo " + " ".join(["'pgrep -f'"] * 6000)),
         )
         for want_block, cmd in cases:
             with self.subTest(cmd=cmd[:48]):

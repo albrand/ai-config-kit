@@ -167,23 +167,31 @@ def _pgrep_single_quote_spans(text):
         i += 1
     return spans
 
+def _pgrep_sq_skip_past(spans, pos, idx):
+    n = len(spans)
+    while idx < n and pos >= spans[idx][1]:
+        idx += 1
+    if idx < n and spans[idx][0] <= pos < spans[idx][1]:
+        return spans[idx][1], idx
+    return None, idx
+
+
 def _pgrep_in_single_quote(spans, pos):
-    for start, end in spans:
-        if start <= pos < end:
-            return True
-    return False
+    end, _ = _pgrep_sq_skip_past(spans, pos, 0)
+    return end is not None
+
 
 def _pgrep_single_quote_end(spans, pos):
-    for start, end in spans:
-        if start <= pos < end:
-            return end
-    return pos + 1
+    end, _ = _pgrep_sq_skip_past(spans, pos, 0)
+    return end if end is not None else pos + 1
 
-def _pgrep_read_dollar_paren(text, i, sq):
+
+def _pgrep_read_dollar_paren(text, i, sq, sq_idx=0):
     j, depth, n = i + 2, 1, len(text)
     while j < n and depth:
-        if _pgrep_in_single_quote(sq, j):
-            j = _pgrep_single_quote_end(sq, j)
+        skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
+        if skip is not None:
+            j = skip
             continue
         if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
             depth += 1
@@ -194,21 +202,23 @@ def _pgrep_read_dollar_paren(text, i, sq):
             j += 1
             continue
         j += 1
-    return text[i + 2 : j - 1], j
+    return text[i + 2 : j - 1], j, sq_idx
 
-def _pgrep_read_backtick(text, i, sq):
+
+def _pgrep_read_backtick(text, i, sq, sq_idx=0):
     j, n = i + 1, len(text)
     while j < n:
-        if _pgrep_in_single_quote(sq, j):
-            j = _pgrep_single_quote_end(sq, j)
+        skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
+        if skip is not None:
+            j = skip
             continue
         if text[j] == "`":
-            return text[i + 1 : j], j + 1
+            return text[i + 1 : j], j + 1, sq_idx
         if text[j] == "\\" and j + 1 < n:
             j += 2
             continue
         j += 1
-    return None, n
+    return None, n, sq_idx
 
 
 def _pgrep_parse_heredoc_delim(text, i):
@@ -888,10 +898,11 @@ def _pgrep_position_is_invocation(text, pos):
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
-    i, n, dq = 0, len(text), False
+    i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
-        if _pgrep_in_single_quote(sq, i):
-            i = _pgrep_single_quote_end(sq, i)
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -902,7 +913,7 @@ def _pgrep_each_dollar_paren(text):
                 i += 1
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                inner, i = _pgrep_read_dollar_paren(text, i, sq)
+                inner, i, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
                 yield inner
                 continue
             i += 1
@@ -912,7 +923,7 @@ def _pgrep_each_dollar_paren(text):
             i += 1
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            inner, i = _pgrep_read_dollar_paren(text, i, sq)
+            inner, i, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
             yield inner
             continue
         if text[i] == "\\" and i + 1 < n:
@@ -923,10 +934,11 @@ def _pgrep_each_dollar_paren(text):
 
 def _pgrep_each_backtick(text):
     sq = _pgrep_single_quote_spans(text)
-    i, n, dq = 0, len(text), False
+    i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
-        if _pgrep_in_single_quote(sq, i):
-            i = _pgrep_single_quote_end(sq, i)
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -937,7 +949,7 @@ def _pgrep_each_backtick(text):
                 i += 1
                 continue
             if text[i] == "`":
-                inner, i = _pgrep_read_backtick(text, i, sq)
+                inner, i, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
                 if inner is not None:
                     yield inner
                 continue
@@ -948,7 +960,7 @@ def _pgrep_each_backtick(text):
             i += 1
             continue
         if text[i] == "`":
-            inner, i = _pgrep_read_backtick(text, i, sq)
+            inner, i, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
             if inner is not None:
                 yield inner
             continue
@@ -975,8 +987,8 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None):
         seg = segment.group(0)
         if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flags_here):
             return True
-    for start, end in _pgrep_iter_quoted_spans(text):
-        if _pgrep_quote_opener_is_executable(text, start):
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if is_exec:
             inner = text[start + 1 : end - 1]
             if _pgrep_pgrep_match_in_fragment(inner):
                 return True
@@ -1069,9 +1081,27 @@ def _pgrep_iter_quoted_spans(text):
             continue
         i += 1
 
+def _pgrep_quote_is_assignment_value(text, start):
+    i = start - 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i < 0 or text[i] != "=":
+        return False
+    j = i - 1
+    while j >= 0 and (text[j].isalnum() or text[j] == "_"):
+        j -= 1
+    return True
 
-def _pgrep_blank_data_quotes(text):
-    chars = list(text)
+
+def _pgrep_fragment_first_word_lower(text, frag_start, limit):
+    i = _pgrep_skip_space(text, frag_start)
+    if i >= limit:
+        return ""
+    we = _pgrep_skip_one_word(text, i, limit)
+    return _pgrep_bare_word(text[i:we]).rsplit("/", 1)[-1].lower()
+
+
+def _pgrep_iter_quoted_spans_meta(text):
     frag_start = 0
     prev_end = 0
     cached_frag = -1
@@ -1083,36 +1113,41 @@ def _pgrep_blank_data_quotes(text):
             frag_start = prev_end + sep + 1
         if frag_start != cached_frag:
             cached_frag = frag_start
-            cached_exec = _pgrep_quote_opener_is_executable_slice(text, frag_start, start)
-        if cached_exec:
-            prev_end = end
-            continue
-        if re.search(r"\w+=\s*$", text[frag_start:start].rstrip()):
-            prev_end = end
+            first = _pgrep_fragment_first_word_lower(text, frag_start, start)
+            if first not in _PGREP_EXECUTABLE_QUOTE_OPENERS:
+                cached_exec = False
+            else:
+                cached_exec = _pgrep_quote_opener_is_executable_slice(text, frag_start, start)
+        yield start, end, cached_exec
+        prev_end = end
+
+
+
+
+def _pgrep_blank_data_quotes(text):
+    chars = list(text)
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if is_exec or _pgrep_quote_is_assignment_value(text, start):
             continue
         inner = text[start + 1 : end - 1]
         if "$(" in inner or "`" in inner:
-            prev_end = end
             continue
         if "pgrep" not in inner.lower():
-            prev_end = end
             continue
         if not PGREP_WORD.search(pgrep_obfuscation_fold(inner)):
-            prev_end = end
             continue
         for k in range(start + 1, end - 1):
             chars[k] = " "
-        prev_end = end
     return "".join(chars)
 
 def _pgrep_process_command_substitutions(text, inner_fn):
     sq = _pgrep_single_quote_spans(text)
-    parts, i, n, dq = [], 0, len(text), False
+    parts, i, n, dq, sq_idx = [], 0, len(text), False, 0
     while i < n:
-        if _pgrep_in_single_quote(sq, i):
-            end = _pgrep_single_quote_end(sq, i)
-            parts.append(text[i:end])
-            i = end
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            parts.append(text[i:skip])
+            i = skip
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -1125,12 +1160,12 @@ def _pgrep_process_command_substitutions(text, inner_fn):
                 i += 1
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                inner, j = _pgrep_read_dollar_paren(text, i, sq)
+                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
                 parts.append("$(" + inner_fn(inner) + ")")
                 i = j
                 continue
             if text[i] == "`":
-                inner, j = _pgrep_read_backtick(text, i, sq)
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
                 if inner is None:
                     parts.append(text[i:])
                     break
@@ -1146,12 +1181,12 @@ def _pgrep_process_command_substitutions(text, inner_fn):
             i += 1
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            inner, j = _pgrep_read_dollar_paren(text, i, sq)
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
             parts.append("$(" + inner_fn(inner) + ")")
             i = j
             continue
         if text[i] == "`":
-            inner, j = _pgrep_read_backtick(text, i, sq)
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
             if inner is None:
                 parts.append(text[i:])
                 break
