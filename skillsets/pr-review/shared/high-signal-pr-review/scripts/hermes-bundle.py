@@ -166,7 +166,7 @@ def split_diff(data: bytes, cap: int) -> list[bytes]:
 
 TEST_DECL = re.compile(rb"^\s*(?:(?:describe|it|test)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test\w*|class\s+Test\w*)")
 ASSERT_LINE = re.compile(
-    rb"(?i)(?:\bexpect\s*\(|\bassert\b|\bassertEqual\b|\bassert_\w+|\.\s*toBe\s*\(|\.\s*toEqual\s*\(|\.toThrow|\.rejects|\.resolves|toHaveBeenCalled|pytest\.raises|\bshould\b)"
+    rb"(?i)(?:\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\b|\bassert_\w+|\.\s*toBe\s*\(|\.\s*toEqual\s*\(|\.toThrow|\.rejects|\.resolves|toHaveBeenCalled|pytest\.raises|\bshould\b)"
 )
 CHANGED_ASSERTIONS_INSTRUCTION = (
     "For each entry, state whether it encodes a deliberate product change that the PR body names and justifies. "

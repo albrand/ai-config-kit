@@ -411,6 +411,26 @@ class BundleCase(unittest.TestCase):
         self.assertIn("rule on every entry under", r.stdout)
         self.assertIn("Changed assertions in tests this PR did not create", r.stdout)
 
+    def test_unittest_assert_in_not_in_in_changed_assertions(self):
+        path = "scripts/test_hermes_bundle.py"
+        diff = (
+            f"diff --git a/{path} b/{path}\n"
+            f"--- a/{path}\n+++ b/{path}\n"
+            "@@ -120,6 +120,6 @@\n"
+            "         for path, body in ((keeper, \"TOPSECRET=1\\n\"),):\n"
+            "             self.assertTrue(path.exists(), path)\n"
+            "             self.assertEqual(path.read_text(), body)\n"
+            '-        self.assertIn("stale.env", r.stdout)\n'
+            '+        self.assertNotIn("stale.env", r.stdout)\n'
+        )
+        self.serve([path], diff, tests={path: b"class T(unittest.TestCase): pass\n"})
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        man = (self.out / "MANIFEST.md").read_text()
+        self.assertIn("assertIn", man)
+        self.assertIn("assertNotIn", man)
+        self.assertNotIn("No assertions changed in pre-existing tests.", man)
+
     def test_removed_existing_test_file_lists_assertions(self):
         path = "tests/old.test.ts"
         diff = (
