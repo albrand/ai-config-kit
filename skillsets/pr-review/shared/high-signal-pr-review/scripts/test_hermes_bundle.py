@@ -135,6 +135,50 @@ class BundleCase(unittest.TestCase):
         self.assertNotIn("stale.env", r.stdout)
         self.assertNotIn("keep.py", r.stdout)
 
+
+    def test_stamp_cleanup_never_removes_out_root(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        keeper = self.out / "user-data.txt"
+        keeper.write_text("keep\n")
+        stamp = self.out / ".hermes-bundle-artifacts.json"
+        for payload in ('["."]', '[""]', '["./"]', '["sub/.."]'):
+            with self.subTest(stamp=payload):
+                keeper.write_text("keep\n")
+                stamp.write_text(payload + "\n")
+                r = self.run_script()
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(self.out.is_dir(), self.out)
+                self.assertTrue(keeper.is_file(), keeper)
+                self.assertEqual(keeper.read_text(), "keep\n")
+
+    def test_stamp_cleanup_symlink_to_outside_unlink_only_link(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        outside = self.tmp / "outside-secret.txt"
+        outside.write_text("secret\n")
+        link = self.out / "escape-link"
+        link.symlink_to(outside)
+        (self.out / ".hermes-bundle-artifacts.json").write_text('["escape-link"]\n')
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(outside.is_file())
+        self.assertEqual(outside.read_text(), "secret\n")
+        self.assertFalse(link.exists())
+
+    def test_stamp_cleanup_directory_leaves_unlisted_files(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        sub = self.out / "artifact-dir"
+        sub.mkdir()
+        (sub / "old-only.txt").write_text("old\n")
+        (sub / "user-keep.txt").write_text("stay\n")
+        (self.out / ".hermes-bundle-artifacts.json").write_text('["artifact-dir"]\n')
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(sub.is_dir())
+        self.assertTrue((sub / "user-keep.txt").is_file())
+        self.assertEqual((sub / "user-keep.txt").read_text(), "stay\n")
     def test_four_parts_present(self):
         self.serve(["src/a.py", "tests/test_a.py"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py"),

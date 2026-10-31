@@ -16,7 +16,6 @@ import hashlib
 import json
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -793,6 +792,48 @@ def remove_source_artifacts(out: Path, repo_path: str, is_fixture: bool) -> None
                 extra.unlink()
 
 
+
+
+def _remove_prior_stamp_artifacts(out: Path, prior: list) -> None:
+    root = out.resolve()
+    parents_for_rmdir: set[Path] = set()
+    for rel in prior:
+        if rel is None:
+            continue
+        rel_str = str(rel)
+        if not rel_str or PurePosixPath(rel_str).is_absolute() or ".." in PurePosixPath(rel_str).parts:
+            continue
+        candidate = out / rel_str
+        try:
+            candidate.relative_to(out)
+        except ValueError:
+            continue
+        if candidate.is_symlink():
+            candidate.unlink()
+            parents_for_rmdir.add(candidate.parent)
+            continue
+        resolved = candidate.resolve()
+        if resolved == root:
+            continue
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            resolved.unlink()
+            parents_for_rmdir.add(resolved.parent)
+    for parent in sorted(parents_for_rmdir, key=lambda p: len(p.parts), reverse=True):
+        try:
+            parent.relative_to(out)
+        except ValueError:
+            continue
+        if not parent.is_dir():
+            continue
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+
 def build(
     repo: str,
     pr: int,
@@ -820,19 +861,8 @@ def build(
             prior = json.loads(stamp_path.read_text())
         except json.JSONDecodeError:
             prior = []
-        root = out.resolve()
-        for rel in prior:
-            if not rel or PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
-                continue
-            path = (out / rel).resolve()
-            try:
-                path.relative_to(root)
-            except ValueError:
-                continue
-            if path.is_file():
-                path.unlink()
-            elif path.is_dir():
-                shutil.rmtree(path)
+        if isinstance(prior, list):
+            _remove_prior_stamp_artifacts(out, prior)
     written: list[Path] = []
 
     def bundle_artifacts() -> list[Path]:
