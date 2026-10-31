@@ -63,6 +63,7 @@ class ContextHygiene(unittest.TestCase):
             'pgrep "--full" bb',
             r"pgrep \-f node",
             r"p\grep -f bb",
+            'P=/usr/bin/pgrep; "$P" -f bb',
             "pgrep -l -f node",
             "pgrep -af node",
             "bash -c 'pgrep -f bb'",

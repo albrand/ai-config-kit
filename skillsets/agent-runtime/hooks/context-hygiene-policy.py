@@ -97,7 +97,7 @@ PGREP_F_DENY = (
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
-PGREP_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?pgrep["\']?\b')
+PGREP_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?(?:\S*/)?pgrep["\']?\b')
 PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
