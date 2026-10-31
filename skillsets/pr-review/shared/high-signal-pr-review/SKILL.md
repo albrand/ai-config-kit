@@ -24,7 +24,8 @@ For every pull-request review, attempt the Hermes advisor pass (see "Hermes advi
 pass" below). It is mandatory to attempt, best-effort to obtain, and never a
 publish blocker: if the advisor is unavailable, publish the independently
 evidenced verdict unchanged and record the unadvised gap only in the operator
-close-out. On our own PRs, a defect Hermes names blocks merge until it is fixed.
+close-out. On our own PRs, a defect Hermes names blocks merge until it is fixed;
+nothing else Hermes returns, and no wait for it, holds a merge.
 Keep Hermes, model, AI, agent, and provenance details out of every team- or
 author-facing PR surface.
 
@@ -51,7 +52,7 @@ Don't add fixes, files or refactors to the PR that weren't asked for.
 
 Every PR review attempts one. The local reviewer stays responsible for evidence, falsification, the final verdict, freshness and posting; Hermes advice never substitutes for code, ticket, board, runtime or hosted-check evidence, so verify each load-bearing claim against the exact head.
 
-**Route.** `bb fleet validate "<claim>" --topic <name> --scope "<what was asked>" --evidence <file1> --evidence <file2>` stages the evidence on Hermes's machine, runs the review, and removes the evidence after the verdict. Give each file its own `--evidence` flag: a second path after one flag is not staged. `scripts/hermes-bundle.py` builds the command that way. The result's first line reads "N artifact(s) staged"; when N is smaller than the number of files you meant to send, the round reviewed less than you think, so fix the command and rerun before reading its verdict. Send bounded evidence only:
+**Route.** `bb fleet validate "<claim>" --topic <name> --scope "<what was asked>" --evidence <file1> --evidence <file2>` stages the evidence on Hermes's machine, runs the review, and removes the evidence after the verdict. Give each file its own `--evidence` flag: a second path after one flag is not staged. `scripts/hermes-bundle.py` builds the command that way. Its repeatable `--provenance FILE` option includes regeneration commands and logs in the bundle. The result's first line reads "N artifact(s) staged"; when N is smaller than the number of files you meant to send, the round reviewed less than you think, so fix the command and rerun before reading its verdict. Send bounded evidence only:
 - the claim, written as what the change does and why;
 - the commits and diffstat;
 - the diff, in chunks of at most about 28 KB split at file boundaries;
@@ -70,10 +71,13 @@ Ask Hermes to challenge business-rule coverage, changed-path correctness, auth, 
   - Acknowledge queued automation work normally once the review is confirmed posted. Hermes being down is not a reason to leave an item unacknowledged; only failing to post is.
   - Skipping the attempt while Hermes is reachable leaves the review incomplete.
   - An earlier rule that made the advisor's answer a condition for posting suppressed real findings: a reviewer held back two located defects because two advisor calls timed out.
-- **Merging our own PR:** Hermes reviews every one of our PRs before merge.
+- **Merging our own PR:** Hermes reviews every one of our PRs. Start its round when the PR opens, alongside CI, not after CI is green.
+  - Send the complete bundle in the first round: the diff (`gh pr diff`), the PR body (`pr-body.md`), the changed test files at head, the exact head SHA, and the live check states. Measured 2026-10-28: 15 of 29 sampled revise verdicts asked only for one of these. Build it with `scripts/hermes-bundle.py --repo … --pr …`. The bundler keeps the staged bundle within a 128 KB total budget (room for validate logs); oversize test files become `.omitted.md` summaries (changed lines from the diff plus test declarations) instead of `.partN` slices that might not survive staging. Its MANIFEST lists **Changed assertions in tests this PR did not create** (only hunks with removed test or assertion lines), **New tests added to existing files** (added declarations only, not subject to the changed-assertion rule), and **Safety-state durability** when the PR touches quarantine, incident, guard, or settlement code (rule on durable unknown-outcome and in-flight state across await, restart, reload, or new session). It also tells Hermes not to treat `pr-body.md` wording or repository-required markers such as `> AGENT GENERATED` as defects.
   - A defect it names blocks the merge until it is fixed and Hermes, on the same topic, no longer names it.
   - An objection about evidence or method that names no defect does not block.
-  - When Hermes cannot be reached, fix the transport and resend rather than merging unreviewed.
+  - A clean review with green CI merges without waiting for Hermes. A defect Hermes names after the merge is fixed in a follow-up before the next release or install.
+  - When Hermes cannot be reached, fix the transport and resend; the merge does not wait for it.
+  - Do not send Hermes skip or process decisions (for example "skip this duplicate review"); they are not PR reviews. 6 of the 29 sampled revise verdicts were that.
 
 **Fresh head.** Hermes advice is about the head it reviewed. Re-fetch the live head and review state just before you post, acknowledge, or merge. If the head changed after that review, discard the advice as stale and run a fresh same-topic review of the delta first. Never let advice about an older head support a post or a merge.
 

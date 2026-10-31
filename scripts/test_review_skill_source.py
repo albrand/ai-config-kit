@@ -33,7 +33,7 @@ HERMES_AS_GATE = re.compile(
     r"|(?:review|verdict)[^.]{0,30}?(?:unposted|unpublished|on hold)[^.]{0,60}?(?:until|before|while|unless)[^.]{0,60}?hermes"
     r"|(?:retry|re-?send|re-?run|try) hermes[^.]{0,60}?before (?:posting|publishing|approving|merging))"
 )
-HERMES_SECTION_SHA256 = "0f845c4bbe0f02ebc29d9f4da47f2a9265706e77378991bc1316477b1c3758f9"
+HERMES_SECTION_SHA256 = "d6f7cd96ada8e1d5b606f3ba32748afad6100f6d37ccc83437f1140b4037088b"
 # The whole other-PR block, verbatim (whitespace collapsed): an added instruction that keeps every asserted phrase,
 # such as holding the post after a Hermes timeout, still changes this text (Hermes 2026-10-07, kit-review-skill-merge r4).
 OTHER_PR_BLOCK = " - ".join((
@@ -199,7 +199,7 @@ class ReviewSkillSourceTests(unittest.TestCase):
             "Record Hermes gate: BLOCKED in the operator-facing close-out only.",
             "Keep the review on its own evidence when Hermes does not answer.",
             "If Hermes times out, post the review anyway.",
-            "When Hermes cannot be reached, fix the transport and resend rather than merging unreviewed.",
+            "When Hermes cannot be reached, fix the transport and resend; the merge does not wait for it.",
         ]
         for sentence in flagged:
             self.assertEqual(gate_sentences(sentence), [sentence], sentence)
@@ -238,7 +238,7 @@ class ReviewSkillSourceTests(unittest.TestCase):
         allowed = [
             "Never place or retain project source on Hermes; pass only bounded context through the approved broker.",
             "- Hermes terminal bridge: `scripts/orca-hermes-terminal.py`\n- Post a status line after each run.",
-            "Hermes reviews every one of our PRs before merge.",
+            "Hermes reviews every one of our PRs. Start its round when the PR opens, alongside CI, not after CI is green.",
         ]
         for text in flagged:
             self.assertEqual(len(hermes_posting_sentences(text)), 1, text)
@@ -317,10 +317,10 @@ class ReviewSkillSourceTests(unittest.TestCase):
             with self.subTest(act="someone else's PR", rule=rule):
                 self.assertIn(rule, others)
         for rule in (
-            "Hermes reviews every one of our PRs before merge",
+            "Hermes reviews every one of our PRs. Start its round when the PR opens, alongside CI, not after CI is green",
             "A defect it names blocks the merge until it is fixed and Hermes, on the same topic, no longer names it",
             "An objection about evidence or method that names no defect does not block",
-            "fix the transport and resend rather than merging unreviewed",
+            "fix the transport and resend; the merge does not wait for it",
         ):
             with self.subTest(act="our own PR", rule=rule):
                 self.assertIn(rule, own)

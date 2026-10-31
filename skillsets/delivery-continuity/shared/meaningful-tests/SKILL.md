@@ -67,6 +67,22 @@ same data: at least three cold and three warm each, reported as ranges. Re-run
 the control. If it moved, the stored baseline is void. A single reading is never
 published as a result.
 
+## Make the check able to fail
+
+- The oracle must be independent of the assumption under test: a repo test, a
+  golden file, a named external source, or a second method. A check that reads
+  the answer from the code it judges proves nothing.
+- Each goal gets at least one probe that tries to break it: a boundary, a wrong
+  input, the unhappy path. A goal checked only on its happy path is NOT RUN for
+  its failure modes.
+- An ambiguous result is FAIL. Do not round it up to PASS or park it as an
+  observation.
+- Run the same normalized check once per window of unchanged code. A repeat on
+  identical code adds cost, not evidence.
+- A verdict names the SHA it ran on. An edit to what the check covered makes the
+  verdict NOT RUN until the check is repeated; unrelated edits, such as docs or
+  another module, do not.
+
 ## Exercise the complete requested workflow
 
 Walk from the persona's entry point through its final outcome, including setup,
