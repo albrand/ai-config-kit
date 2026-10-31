@@ -110,7 +110,30 @@ def parse_diff_git_header(line: str) -> tuple[str, str] | None:
     return None
 
 
+def parse_diff_name_line(prefix: str, line: str) -> str | None:
+    if not line.startswith(prefix):
+        return None
+    raw = line[len(prefix) :].strip()
+    if raw == "/dev/null":
+        return None
+    if raw.startswith('"'):
+        return decode_git_diff_path(raw)
+    if raw.startswith("a/") or raw.startswith("b/"):
+        return raw[2:]
+    return None
+
+
 def diff_block_repo_path(block: str) -> str | None:
+    for line in block.splitlines():
+        if line.startswith("+++ "):
+            path = parse_diff_name_line("+++ ", line)
+            if path:
+                return path
+    for line in block.splitlines():
+        if line.startswith("--- "):
+            path = parse_diff_name_line("--- ", line)
+            if path:
+                return path
     first = block.split("\n", 1)[0]
     parsed = parse_diff_git_header(first)
     return parsed[1] if parsed else None
@@ -173,14 +196,26 @@ def changed_files(repo: str, pr: int) -> list[dict]:
     return [{"path": f["filename"], "status": f.get("status", "")} for f in files]
 
 
+def _block_touches_sensitive_path(block: str, sensitive: set[str]) -> bool:
+    path = diff_block_repo_path(block)
+    if path and path in sensitive:
+        return True
+    for name in sensitive:
+        if f"--- a/{name}\n" in block or f"+++ b/{name}\n" in block:
+            return True
+        esc = name.replace('"', '\\"')
+        if f'--- "a/{esc}"\n' in block or f'+++ "b/{esc}"\n' in block:
+            return True
+    return False
+
+
 def redact_diff(diff: str, sensitive: set[str]) -> str:
     if not sensitive:
         return diff
     kept = []
     for b in re.split(r"(?m)^(?=diff --git )", diff):
         first = b.split("\n", 1)[0]
-        parsed = parse_diff_git_header(first)
-        if parsed and (parsed[0] in sensitive or parsed[1] in sensitive):
+        if _block_touches_sensitive_path(b, sensitive):
             kept.append(first + "\n[content omitted: sensitive file name]\n")
         else:
             kept.append(b)
