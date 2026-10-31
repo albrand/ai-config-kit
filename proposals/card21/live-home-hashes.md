@@ -249,6 +249,19 @@ This PR's second render was the current profile at 6f15150, so the history test 
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `30ead9a6116b61b61564a985c5b9132afc85fdee2a3f37e3429676f500c5018f` |
 
+### Accepted live profile: canonical hard prohibitions in the kit baseline at b2a763b8 (never installed)
+
+This PR's snapshot refresh was the current profile at b2a763b8, so the history test keeps it here. PR #116
+changed the Hermes review bullet in `GLOBAL_AGENTS.md` without re-rendering; the bb home still matched this
+profile until this fix regenerates the committed snapshot.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
+| Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
+| OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
+| bb | `f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250` |
+
 ### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 3bcf947
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
@@ -263,7 +276,7 @@ OpenCode render as before.
 | Claude | `f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919` |
 | Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
-| bb | `f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250` |
+| bb | `b72137f23aaba31ac6fef1843458227968d6829e0d4e09341e6fa55b81bddc5b` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
