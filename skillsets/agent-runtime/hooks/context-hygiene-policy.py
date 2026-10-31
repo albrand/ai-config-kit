@@ -124,6 +124,7 @@ def pgrep_obfuscation_fold(text):
     return text
 
 def pgrep_segment_has_full_flag(segment):
+    segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
     if PGREP_FULL_FLAG.search(segment):
         return True
     unquoted = re.sub(r"(?:^|\s)'(-f|--full)'(?=\s|$)", r" \1", segment)
