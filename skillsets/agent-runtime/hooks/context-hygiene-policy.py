@@ -426,14 +426,54 @@ def _pgrep_iter_simple_command_spans(text):
         i += 1
     yield start, n
 
+def _pgrep_skip_case_header(text, i):
+    n = len(text)
+    while i < n:
+        i = _pgrep_skip_space(text, i)
+        if re.match(r"in\b", text[i:], re.I):
+            return _pgrep_skip_space(text, i + 2)
+        i = _pgrep_skip_one_word(text, i, n)
+    return i
+
+
 def _pgrep_after_command_leaders(text, i):
+    n = len(text)
     i = _pgrep_skip_space(text, i)
-    if i < len(text) and text[i] == "(":
-        i = _pgrep_skip_space(text, i + 1)
-    for kw in ("if", "while", "until", "then", "do", "else", "!"):
-        m = re.match(rf"{kw}\b", text[i:], re.I)
+    while i < n:
+        start = i
+        if text[i] == "(":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        if text[i] == "{":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        if text[i] == "!":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        for kw in ("if", "while", "until", "then", "do", "else", "function", "case"):
+            m = re.match(rf"{kw}\b", text[i:], re.I)
+            if m:
+                kwl = m.group(0).lower()
+                i = _pgrep_skip_space(text, i + m.end())
+                if kwl == "function":
+                    wm = re.match(r"(\w+)\b", text[i:])
+                    if wm:
+                        i = _pgrep_skip_space(text, i + wm.end())
+                    if i < n and text[i] == "{":
+                        i = _pgrep_skip_space(text, i + 1)
+                elif kwl == "case":
+                    i = _pgrep_skip_case_header(text, i)
+                    pm = re.match(r"[^)]*\)", text[i:])
+                    if pm:
+                        i = _pgrep_skip_space(text, i + pm.end())
+                continue
+        m = re.match(r"(\w+)\s*\(\s*\)", text[i:])
         if m:
             i = _pgrep_skip_space(text, i + m.end())
+            if i < n and text[i] == "{":
+                i = _pgrep_skip_space(text, i + 1)
+            continue
+        if i == start:
             break
     return i
 
@@ -993,9 +1033,13 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None):
             if _pgrep_pgrep_match_in_fragment(inner):
                 return True
     for inner in _pgrep_each_dollar_paren(text):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
         if _pgrep_pgrep_match_in_fragment(inner):
             return True
     for inner in _pgrep_each_backtick(text):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
         if _pgrep_pgrep_match_in_fragment(inner):
             return True
     for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
@@ -1092,64 +1136,73 @@ def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
         _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
 
 
-def _pgrep_executable_single_quote_starts(text):
-    out = set()
+def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
+    sq = _pgrep_single_quote_spans(chunk)
+    i, n, dq, sq_idx = 0, len(chunk), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
+            continue
+        if dq:
+            if chunk[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if chunk[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+                if "'" in inner:
+                    pending.append((origin + i + 2, inner))
+                i = j
+                continue
+            if chunk[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+                if inner is not None and "'" in inner:
+                    pending.append((origin + i + 1, inner))
+                i = j
+                continue
+            i += 1
+            continue
+        if chunk[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+            if "'" in inner:
+                pending.append((origin + i + 2, inner))
+            i = j
+            continue
+        if chunk[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+            if inner is not None and "'" in inner:
+                pending.append((origin + i + 1, inner))
+            i = j
+            continue
+        if chunk[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
 
-    def walk(chunk, origin):
+
+def _pgrep_executable_single_quote_starts(text):
+    if "'" not in text:
+        return set()
+    out = set()
+    pending = [(0, text)]
+    idx = 0
+    while idx < len(pending):
+        origin, chunk = pending[idx]
+        idx += 1
         for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(chunk):
             local = set()
             _pgrep_mark_exec_quotes_in_command(chunk, cmd_start, cmd_end, local)
             for pos in local:
                 out.add(origin + pos)
-        sq = _pgrep_single_quote_spans(chunk)
-        i, n, dq, sq_idx = 0, len(chunk), False, 0
-        while i < n:
-            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-            if skip is not None:
-                i = skip
-                continue
-            if dq:
-                if chunk[i] == "\\" and i + 1 < n:
-                    i += 2
-                    continue
-                if chunk[i] == '"':
-                    dq = False
-                    i += 1
-                    continue
-                if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
-                    inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-                    walk(inner, origin + i + 2)
-                    i = j
-                    continue
-                if chunk[i] == "`":
-                    inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-                    if inner is not None:
-                        walk(inner, origin + i + 1)
-                    i = j
-                    continue
-                i += 1
-                continue
-            if chunk[i] == '"':
-                dq = True
-                i += 1
-                continue
-            if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
-                inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-                walk(inner, origin + i + 2)
-                i = j
-                continue
-            if chunk[i] == "`":
-                inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-                if inner is not None:
-                    walk(inner, origin + i + 1)
-                i = j
-                continue
-            if chunk[i] == "\\" and i + 1 < n:
-                i += 2
-                continue
-            i += 1
-
-    walk(text, 0)
+        _pgrep_enqueue_substitution_chunks(chunk, origin, pending)
     return out
 
 
@@ -1197,6 +1250,10 @@ def _pgrep_quote_is_assignment_value(text, start):
 
 
 def _pgrep_iter_quoted_spans_meta(text):
+    if "'" not in text:
+        for start, end in _pgrep_iter_quoted_spans(text):
+            yield start, end, False
+        return
     exec_starts = _pgrep_executable_single_quote_starts(text)
     for start, end in _pgrep_iter_quoted_spans(text):
         yield start, end, start in exec_starts

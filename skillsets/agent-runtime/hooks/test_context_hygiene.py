@@ -258,6 +258,35 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_ssh_script_quotes_block_inside_shell_grouping(self):
+        blocked = (
+            "f() { ssh h 'pgrep -f x'; }",
+            "procs(){ ssh h 'for p in $(pgrep -f \"a b\"); do echo $p; done'; }; procs",
+            "function f { ssh h 'pgrep -f x'; }",
+            "{ ssh h 'pgrep -f x'; }",
+            "! ssh h 'pgrep -f x'",
+            "case a in a) ssh h 'pgrep -f x';; esac",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd[:48]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+    def test_pgrep_nested_dollar_paren_depth_400_still_blocks_tail_kill(self):
+        import time
+
+        tail = "; p" + "kill node"
+        cmd = "echo " + "$(" * 400 + "x" + ")" * 400 + tail
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0)
+        self.assertTrue(v["block"])
+        self.assertTrue(
+            v["reason"].startswith("[no-pgrep-f]") or v["reason"].startswith("[bb-lifecycle]")
+        )
+
     def test_pgrep_executable_quote_scan_stays_linear_and_keeps_long_ssh_blocks(self):
         import time
 
