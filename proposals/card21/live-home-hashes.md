@@ -3,7 +3,7 @@
 The installer is compare-and-swap: it accepts a live set only when all four
 files match one complete profile below. It never combines hashes from different
 profiles. Accepted live profiles include the #47 and #49 renders and
-the #50, #51 and #60 renders; the #62 and #63 renders are accepted too. The live homes match the current rendered profile. The current rendered profile is the
+the #50, #51 and #60 renders; the #62 and #63 renders are accepted too. The live homes edited on 2026-10-28 match the current rendered profile after this backport. The current rendered profile is the
 output of this source revision; keeping it here means that after this revision
 is merged and installed, the next installer recognizes that complete set
 without weakening the live-edit guard.
@@ -262,14 +262,23 @@ profile until this fix regenerates the committed snapshot.
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250` |
 
-### Current rendered profile: canonical hard prohibitions in the kit baseline, based on 3bcf947
+### Accepted live profile: owner live edit 2026-10-28 19:05 (installed)
 
-Generated with `python3 scripts/render-standing-homes.py`; digests below are the
-output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
-The kit baseline's `## Hard prohibitions` section is now the canonical set the
-live homes carry, with the Hermes and bb-app lines the standing-rule checker
-requires kept in a separate section; the bb-only lines of the live bb home sit inside the hard prohibitions. Only the bb home changes; Claude, Codex and
-OpenCode render as before.
+Verified on 2026-10-31: all four live homes match byte-for-byte; digests below
+are the output of `shasum -a 256` on those live files after
+`python3 scripts/render-standing-homes.py --check` reported MATCH.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `c3f18c447ed62af7b2695491bfa22740795381fb974a54eeb8ce8a58ca18a376` |
+| Codex | `26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48` |
+| OpenCode | `846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651` |
+| bb | `1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5` |
+
+### Accepted live profile: canonical hard prohibitions in the kit baseline at 127d59eb (never matched live after 2026-10-28 edit)
+
+This was the current rendered profile on kit main before the live backport; the
+owner edited all four live homes on 2026-10-28 without re-rendering the kit.
 
 | Home | SHA-256 |
 |---|---|
@@ -277,6 +286,19 @@ OpenCode render as before.
 | Codex | `92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2` |
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `b72137f23aaba31ac6fef1843458227968d6829e0d4e09341e6fa55b81bddc5b` |
+
+### Current rendered profile: live backport 2026-10-31 (RULES-BACKPORT)
+
+Generated with `python3 scripts/render-standing-homes.py`; digests below are the
+output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
+They match the owner live homes edited on 2026-10-28.
+
+| Home | SHA-256 |
+|---|---|
+| Claude | `c3f18c447ed62af7b2695491bfa22740795381fb974a54eeb8ce8a58ca18a376` |
+| Codex | `26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48` |
+| OpenCode | `846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651` |
+| bb | `1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 

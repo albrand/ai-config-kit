@@ -142,8 +142,8 @@ Declare the answer space first; ask one atomic question at a time against identi
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.
-GLOBALS = ["~/.claude/CLAUDE.md", "~/.bb/AGENTS.md", "~/.codex/AGENTS.md",
-           "~/.config/opencode/AGENTS.md", f"{KIT}/GLOBAL_AGENTS.md"]
+GLOBALS = ["~/.claude/CLAUDE.md", "~/.codex/AGENTS.md",
+           "~/.config/opencode/AGENTS.md"]
 
 PAT = re.compile(r"<!-- typed-decisions:begin -->.*?<!-- typed-decisions:end -->", re.S)
 ANCHOR = "<!-- token-efficient-orchestration:end -->"

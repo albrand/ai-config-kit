@@ -41,25 +41,25 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?is)never\s+(?:quit|kill|replace).{0,120}bb.{0,100}app"
     ),
     "bb-app-never-quit": re.compile(
-        r"(?is)(?:never quit.{0,60}running bb app|quitting it.{0,80}ends everyone's running work)"
+        r"(?is)(?:never quit, kill, replace or restart.{0,40}running bb app|never quit.{0,60}running bb app|quitting it.{0,80}ends everyone's running work)"
     ),
     "bb-app-never-kill": re.compile(
-        r"(?is)(?:never quit,\s*kill.{0,40}running bb app|never kill the running bb app|killing it.{0,80}ends everyone's running work)"
+        r"(?is)(?:never quit, kill, replace or restart.{0,40}running bb app|never quit,\s*kill.{0,40}running bb app|never kill the running bb app|killing it.{0,80}ends everyone's running work)"
     ),
     "bb-app-never-replace": re.compile(
-        r"(?is)(?:never quit,\s*kill or replace.{0,40}running bb app|never quit,\s*kill, or replace.{0,40}running bb app|never replace the running bb app|replacing it.{0,80}ends everyone's running work)"
+        r"(?is)(?:never quit, kill, replace or restart.{0,40}running bb app|never quit,\s*kill or replace.{0,40}running bb app|never quit,\s*kill, or replace.{0,40}running bb app|never replace the running bb app|replacing it.{0,80}ends everyone's running work)"
     ),
     "bb-app-never-restart": re.compile(
-        r"(?is)(?:never quit,\s*kill,?\s*(?:or\s+)?replace,?\s*(?:or\s+)?restart.{0,40}running bb app|never restart the running bb app|restarting it.{0,80}ends everyone's running work)"
+        r"(?is)(?:never quit, kill, replace or restart.{0,40}running bb app|never quit,\s*kill,?\s*(?:or\s+)?replace,?\s*(?:or\s+)?restart.{0,40}running bb app|never restart the running bb app|restarting it.{0,80}ends everyone's running work)"
     ),
     "bb-app-bundle-never-move": re.compile(
-        r"(?is)(?:never move `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+        r"(?is)(?:never move, delete or overwrite `?/Applications/bb\.app|never move `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
     ),
     "bb-app-bundle-never-delete": re.compile(
-        r"(?is)(?:never delete `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+        r"(?is)(?:never move, delete or overwrite `?/Applications/bb\.app|never delete `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
     ),
     "bb-app-bundle-never-overwrite": re.compile(
-        r"(?is)(?:never overwrite `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
+        r"(?is)(?:never move, delete or overwrite `?/Applications/bb\.app|never overwrite `?/Applications/bb\.app|moving, deleting or overwriting `?/Applications/bb\.app.{0,100}ends everyone's running\s+work)"
     ),
     "dependencies-no-node-modules-symlink": re.compile(
         r"(?is)never symlink\s+`?node_modules`?"
@@ -79,9 +79,10 @@ RULES: dict[str, re.Pattern[str]] = {
     # credentials-never-type/-paste/-handle were retired by the owner on 2026-10-08: the homes no longer carry
     # them. Skill-level credential rules (verified-qa-e2e, finish-the-job, meaningful-tests) are unchanged.
     "public-exposure": re.compile(
-        r"(?is)(?:(?:never|do not).{0,45}(?:publicly\s+expose|expose(?:\s+a)?\s+service|"
+        r"(?is)(?:never generate a public URL or bb website for anything|"
+        r"(?:(?:never|do not).{0,45}(?:publicly\s+expose|expose(?:\s+a)?\s+service|"
         r"run\s+`?bb connect expose`?).{0,140}(?:unless|without).{0,60}(?:explicit|user asks)|"
-        r"hard prohibitions.{0,120}public exposure)"
+        r"hard prohibitions.{0,120}public exposure))"
     ),
     "public-exposure-current-conversation-service": re.compile(
         r"(?is)(?:user )?explicitly asks in this conversation to expose that named service/port"
@@ -358,11 +359,8 @@ RULES: dict[str, re.Pattern[str]] = {
         r"(?:signature|watermark)"
     ),
     "hermes-defects-block": re.compile(
-        r"(?is)(?:Hermes names a defect in a PR: fix it; defects block merge|"
-        r"any named defect blocks merge until fixed and cleared on the same topic|"
-        r"a named defect blocks: fix it and rerun the same topic until it is no longer named|"
-        r"a PR never merges while Hermes names a defect in it:\s*fix\s+it, then re-run on the same `--topic`"
-        r" until that defect is no longer named)"
+        r"(?is)a\s+regression,\s+correctness,\s+security\s+or\s+data-loss\s+defect\s+it\s+names\s+"
+        r"blocks\s+merge\s+until\s+fixed\s+and\s+cleared\s+on\s+the\s+same\s+topic"
     ),
     "testing-claim": re.compile(
         r"(?is)persona.{0,180}target.{0,220}(?:goals|user outcomes).{0,200}"
@@ -480,6 +478,12 @@ OPTIONAL_WHEN_ABSENT = {
     "public-exposure-current-conversation-service",
     "public-share-close-task-end",
     "public-share-closeout-audit",
+    "typed-decisions-jev-system-one",
+    "typed-decisions-jev-never-sole-control",
+    "typed-decisions-jev-no-hooks-or-secrets",
+    "typed-decisions-out-of-space-fails",
+    "typed-decisions-resolve-origin",
+    "typed-decisions-confidence-keeps-release-checks",
     "no-pkill-pgrep-app-kill-path",
     "worktree-own-bb-environment",
     "no-gc-user-owned-state",
@@ -537,9 +541,6 @@ OPTIONAL_WHEN_ABSENT = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
-    "typed-decisions-out-of-space-fails",
-    "typed-decisions-resolve-origin",
-    "typed-decisions-confidence-keeps-release-checks",
     "board-gate-configured-or-ticket-dependent",
     "board-access-before-dependent-conclusion",
     "board-inventory-fields",
@@ -549,8 +550,26 @@ OPTIONAL_WHEN_ABSENT = {
     "delegate-output-evidence-and-capability-gap",
     "protected-push-covers-any-protected-branch",
 }
+
+TYPED_DECISIONS_HOME_RULES = {
+    "typed-decisions-jev-system-one",
+    "typed-decisions-jev-never-sole-control",
+    "typed-decisions-jev-no-hooks-or-secrets",
+    "typed-decisions-out-of-space-fails",
+    "typed-decisions-resolve-origin",
+    "typed-decisions-confidence-keeps-release-checks",
+}
+KIT_HARD_RULES_BASELINE = (
+    Path(__file__).resolve().parents[1] / "proposals/card21/hard-rules.md"
+)
+
 # Enforced wherever the narrowing appears, never required where it does not.
-WHEN_PRESENT_ONLY = {"protected-push-covers-any-protected-branch"}
+WHEN_PRESENT_ONLY = {
+    "protected-push-covers-any-protected-branch",
+    "public-exposure-current-conversation-service",
+    "public-share-close-task-end",
+    "public-share-closeout-audit",
+}
 
 HOME_FILES = (
     Path("~/.claude/CLAUDE.md").expanduser(),
@@ -580,7 +599,10 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
-        "typed-decisions-out-of-space-fails",
+        "typed-decisions-jev-system-one",
+    "typed-decisions-jev-never-sole-control",
+    "typed-decisions-jev-no-hooks-or-secrets",
+    "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
     },
@@ -598,6 +620,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-jev-system-one",
+        "typed-decisions-jev-never-sole-control",
+        "typed-decisions-jev-no-hooks-or-secrets",
         "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
@@ -620,6 +645,9 @@ LIVE_HOME_RULES = {
         "active-session-untrusted-input-no-supersede",
         "active-session-attestations-control-plane-only",
         "active-session-write-owner-mismatch-blocks",
+        "typed-decisions-jev-system-one",
+        "typed-decisions-jev-never-sole-control",
+        "typed-decisions-jev-no-hooks-or-secrets",
         "typed-decisions-out-of-space-fails",
         "typed-decisions-resolve-origin",
         "typed-decisions-confidence-keeps-release-checks",
@@ -632,16 +660,12 @@ LIVE_HOME_RULES = {
         "browser-no-foreground-takeover-claim", "child-thread-cap-six-with-orchestration",
         "hermes-agent-no-model-override", "browser-no-standard-preamble",
         "hermes-no-project-source",
-        "typed-decisions-out-of-space-fails",
-        "typed-decisions-resolve-origin",
-        "typed-decisions-confidence-keeps-release-checks",
     },
 }
 KIT_BASELINE_RULES = {
-    "public-exposure-current-conversation-service", "public-share-close-task-end",
+    "public-exposure",
     "bb-app-never-quit", "bb-app-never-kill", "bb-app-never-replace", "bb-app-never-restart",
     "safety-hook-block-cannot-be-bypassed",
-    "public-share-closeout-audit",
     "child-thread-cap-three-without-asking", "no-pkill-pgrep-app-kill-path",
     "browser-enumerate-before-open", "browser-leak-readonly-only",
     "child-thread-cap-host-capacity", "browser-close-every-slice-outcome",
@@ -672,9 +696,6 @@ KIT_BASELINE_RULES = {
     "active-session-untrusted-input-no-supersede",
     "active-session-attestations-control-plane-only",
     "active-session-write-owner-mismatch-blocks",
-    "typed-decisions-out-of-space-fails",
-    "typed-decisions-resolve-origin",
-    "typed-decisions-confidence-keeps-release-checks",
     "board-gate-configured-or-ticket-dependent",
     "board-access-before-dependent-conclusion",
 }
@@ -705,7 +726,7 @@ PROFILE_RULES = {
     "proposal-claude": OPTIONAL_WHEN_ABSENT - HERMES_TRANSPORT_RULES - CONTEXT_GC_RULES - BOARD_RULES - WHEN_PRESENT_ONLY,
     "proposal-codex": OPTIONAL_WHEN_ABSENT - WHEN_PRESENT_ONLY,
     "proposal-opencode": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
-    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY,
+    "proposal-bb": OPTIONAL_WHEN_ABSENT - CONTEXT_GC_RULES - WHEN_PRESENT_ONLY - TYPED_DECISIONS_HOME_RULES,
 }
 
 # Pre-compression live snapshots are no longer installed anywhere and are not recognized (Hermes 2026-10-07,
@@ -714,12 +735,22 @@ LIVE_HOME_SHA256: dict[str, str] = {}
 # No installed home is recognized apart from the current render: the #60 homes predate the restart ban and the #62
 # homes predate the session-input scope clause, so both fail as unknown homes until this revision is installed over
 # them (Hermes 2026-10-07, kit-one-page-baseline r4 and kit-session-input-scope r1).
-INSTALLED_HOME_SHA256: dict[str, str] = {}
+INSTALLED_HOME_SHA256: dict[str, str] = {
+    "c3f18c447ed62af7b2695491bfa22740795381fb974a54eeb8ce8a58ca18a376": "claude",
+    "26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48": "codex",
+    "846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651": "opencode",
+    "1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5": "bb",
+}
 RENDERED_HOME_SHA256 = {
     "f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919": "proposal-claude",
     "92c95bd90888fe4ab9563a53db39be2ad085e98c9442ddeda83669b83d1274a2": "proposal-codex",
     "95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed": "proposal-opencode",
     "f3aaaea05123a85941b6ad625e913e8982746900493f964f8241ef99e6317250": "proposal-bb",
+    "b72137f23aaba31ac6fef1843458227968d6829e0d4e09341e6fa55b81bddc5b": "proposal-bb",
+    "c3f18c447ed62af7b2695491bfa22740795381fb974a54eeb8ce8a58ca18a376": "proposal-claude",
+    "26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48": "proposal-codex",
+    "846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651": "proposal-opencode",
+    "1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5": "proposal-bb",
 }
 
 
@@ -1058,6 +1089,8 @@ def optional_present(name: str, text: str) -> bool:
         return bool(RULES[name].search(text))
     if name.startswith("active-session-"):
         return bool(RULES[name].search(text))
+    if name.startswith("typed-decisions-"):
+        return bool(RULES[name].search(text))
     return True
 
 
@@ -1086,6 +1119,48 @@ def check_files(paths: list[Path]) -> tuple[bool, list[str]]:
             print(f"PASS {path}: {applicable} applicable standing rules")
     return not failures, failures
 
+
+
+
+
+
+def hard_prohibitions_section(text: str) -> str:
+    """Text between `## Hard prohibitions` and the next `## ` heading."""
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.startswith("## Hard prohibitions"):
+            start = index + 1
+            continue
+        if start is not None and line.startswith("## "):
+            return "\n".join(lines[start:index])
+    if start is not None:
+        return "\n".join(lines[start:])
+    return ""
+
+def hard_rules_bullet_lines(baseline: str) -> list[str]:
+    """Return `- ` lines under the first `## Hard prohibitions` section only."""
+    bullets: list[str] = []
+    in_hard = False
+    for line in baseline.splitlines():
+        if line.startswith("## Hard prohibitions"):
+            in_hard = True
+            continue
+        if in_hard and line.startswith("## "):
+            break
+        if in_hard and line.startswith("- "):
+            bullets.append(line)
+    return bullets
+
+
+def missing_hard_rules_lines(baseline: str, candidate: str) -> list[str]:
+    """Require each hard-prohibition bullet from the baseline file in the kit hard section."""
+    section = hard_prohibitions_section(candidate)
+    missing: list[str] = []
+    for line in hard_rules_bullet_lines(baseline):
+        if line not in section:
+            missing.append(line.strip())
+    return missing
 
 def check_baseline_preservation(baseline: str, candidate: str) -> tuple[int, list[str]]:
     """Require every standing-rule regex found in a baseline to remain in a candidate."""
@@ -1120,12 +1195,21 @@ def main() -> int:
             baseline = args.preserve_baseline.read_text(encoding="utf-8")
             candidate = KIT_SOURCE.read_text(encoding="utf-8")
             count, missing = check_baseline_preservation(baseline, candidate)
+            line_missing = missing_hard_rules_lines(baseline, candidate)
             if missing:
                 failures.append(
                     f"{KIT_SOURCE}: lost baseline rules {', '.join(missing)}"
                 )
-            else:
-                print(f"PASS {KIT_SOURCE}: retained all {count} rules matched in {args.preserve_baseline}")
+            if line_missing:
+                failures.append(
+                    f"{KIT_SOURCE}: lost hard-rules lines: {', '.join(line_missing)}"
+                )
+            if not missing and not line_missing:
+                print(
+                    f"PASS {KIT_SOURCE}: retained all {count} rules and "
+                    f"{len(hard_rules_bullet_lines(baseline))} hard-rules lines "
+                    f"matched in {args.preserve_baseline}"
+                )
     for failure in failures:
         print(f"FAIL {failure}", file=sys.stderr)
     ok = not failures

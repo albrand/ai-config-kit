@@ -20,6 +20,6 @@ done
 for f in $(git ls-files '*.mjs' '*.js' '*.cjs'); do
   node --check "$f" 2>"$tmp/err" || { echo "FAIL node syntax: $f"; cat "$tmp/err"; fail=1; }
 done
-python3 -I scripts/check-standing-rules.py --files GLOBAL_AGENTS.md proposals/card21/rendered-homes/*.md || fail=1
+python3 -I scripts/check-standing-rules.py --files GLOBAL_AGENTS.md proposals/card21/rendered-homes/*.md --preserve-baseline proposals/card21/hard-rules.md || fail=1
 [ "$fail" = 0 ] && echo "static: ok"
 exit $fail
