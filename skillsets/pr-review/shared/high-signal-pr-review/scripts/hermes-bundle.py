@@ -25,7 +25,79 @@ TOTAL_BUDGET = 128 * 1024
 PR_BODY_CAP = 8 * 1024
 CHANGED_ASSERTIONS_CAP = 16 * 1024
 NEW_TESTS_CAP = 4 * 1024
-SENSITIVE_GLOBS = (".env*", "*.pem", "*secret*", "*credential*")
+SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_ecdsa*", "*secret*", "*credential*")
+PROVENANCE_SECRET = re.compile(
+    rb"(?i)(?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]+_)*(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY"
+)
+PEM_BEGIN = re.compile(rb"^\s*-----BEGIN (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+PEM_END = re.compile(rb"^\s*-----END (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+REDACT_LINE = b"[redacted: secret-like content]\n"
+
+
+def _pem_stays_open(payload: bytes, in_block: bool) -> bool:
+    if in_block:
+        return not PEM_END.search(payload)
+    if PEM_BEGIN.search(payload):
+        return not PEM_END.search(payload)
+    return False
+
+
+def redact_secret_bytes(data: bytes) -> bytes:
+    out: list[bytes] = []
+    in_block = False
+    for line in data.splitlines(keepends=True):
+        if in_block:
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, True)
+            continue
+        if PEM_BEGIN.search(line):
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, False)
+            continue
+        if PROVENANCE_SECRET.search(line):
+            out.append(REDACT_LINE)
+        else:
+            out.append(line)
+    return b"".join(out)
+
+
+def redact_secret_diff_text(diff_text: str) -> str:
+    out: list[str] = []
+    in_block = False
+    for line in diff_text.splitlines(keepends=True):
+        raw = line.encode("utf-8")
+        if raw.startswith(b"@@"):
+            in_block = False
+            out.append(line)
+            continue
+        if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-", b" "):
+            out.append(line)
+            continue
+        prefix, payload = raw[:1], raw[1:]
+        if in_block:
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, True)
+            continue
+        if PEM_BEGIN.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, False)
+            continue
+        if PROVENANCE_SECRET.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def refuse_secret_content(data: bytes, label: str) -> None:
+    if PROVENANCE_SECRET.search(data):
+        raise BundleError(f"refusing bundle with secret-like content: {label}")
+
+
+def refuse_secret_provenance(data: bytes, label: str) -> None:
+    refuse_secret_content(data, label)
+
+
 TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "__mocks__", "testing"}
 EVIDENCE_DIRS = {"__fixtures__", "fixtures", "__snapshots__", "snapshots", "testdata", "recordings", "golden"}
 EVIDENCE_EXTENSIONS = {".snap", ".golden", ".ndjson", ".jsonl"}
@@ -52,9 +124,93 @@ def gh(*args: str, binary: bool = False) -> bytes | str:
     return proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
 
 
+def collect_sensitive_paths(files: list[dict]) -> list[str]:
+    names: set[str] = set()
+    for entry in files:
+        path = entry["path"]
+        if is_sensitive(path):
+            names.add(path)
+        prev = entry.get("previous_filename") or ""
+        if prev and is_sensitive(prev):
+            names.add(path)
+            names.add(prev)
+    return sorted(names)
+
+
 def is_sensitive(path: str) -> bool:
     name = PurePosixPath(path).name.lower()
     return any(fnmatch.fnmatch(name, g) for g in SENSITIVE_GLOBS)
+
+
+def decode_git_diff_path(raw: str) -> str:
+    if raw.startswith('"') and raw.endswith('"'):
+        inner = raw[1:-1]
+        out = bytearray()
+        i = 0
+        while i < len(inner):
+            if inner[i] == "\\":
+                if i + 1 < len(inner) and "0" <= inner[i + 1] <= "7":
+                    j = i + 1
+                    while j < len(inner) and j < i + 4 and "0" <= inner[j] <= "7":
+                        j += 1
+                    out.append(int(inner[i + 1 : j], 8))
+                    i = j
+                elif i + 1 < len(inner):
+                    out.extend(inner[i + 1].encode("utf-8"))
+                    i += 2
+                else:
+                    i += 1
+            else:
+                out.extend(inner[i].encode("utf-8"))
+                i += 1
+        raw = out.decode("utf-8")
+    if raw.startswith("a/") or raw.startswith("b/"):
+        raw = raw[2:]
+    return raw
+
+
+def parse_diff_git_header(line: str) -> tuple[str, str] | None:
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[len("diff --git ") :].strip()
+    quoted = re.match(r'"((?:\\.|[^"\\])*)" "((?:\\.|[^"\\])*)"$', rest)
+    if quoted:
+        a = decode_git_diff_path('"' + quoted.group(1) + '"')
+        b = decode_git_diff_path('"' + quoted.group(2) + '"')
+        return a, b
+    plain = re.match(r"a/(.+?) b/(.+)$", rest)
+    if plain:
+        return plain.group(1), plain.group(2)
+    return None
+
+
+def parse_diff_name_line(prefix: str, line: str) -> str | None:
+    if not line.startswith(prefix):
+        return None
+    raw = line[len(prefix) :].strip()
+    if raw == "/dev/null":
+        return None
+    if raw.startswith('"'):
+        return decode_git_diff_path(raw)
+    if raw.startswith("a/") or raw.startswith("b/"):
+        return raw[2:]
+    return None
+
+
+def diff_block_repo_path(block: str) -> str | None:
+    for line in block.splitlines():
+        if line.startswith("+++ "):
+            path = parse_diff_name_line("+++ ", line)
+            if path:
+                return path
+    for line in block.splitlines():
+        if line.startswith("--- "):
+            path = parse_diff_name_line("--- ", line)
+            if path:
+                return path
+    first = block.split("\n", 1)[0]
+    parsed = parse_diff_git_header(first)
+    return parsed[1] if parsed else None
 
 
 def is_test_path(path: str) -> bool:
@@ -111,7 +267,20 @@ def changed_files(repo: str, pr: int) -> list[dict]:
             break
         page, i = dec.raw_decode(out, i)
         files.extend(page)
-    return [{"path": f["filename"], "status": f.get("status", "")} for f in files]
+    return [{"path": f["filename"], "status": f.get("status", ""), "previous_filename": f.get("previous_filename") or ""} for f in files]
+
+
+def _block_touches_sensitive_path(block: str, sensitive: set[str]) -> bool:
+    path = diff_block_repo_path(block)
+    if path and path in sensitive:
+        return True
+    for name in sensitive:
+        if f"--- a/{name}\n" in block or f"+++ b/{name}\n" in block:
+            return True
+        esc = name.replace('"', '\\"')
+        if f'--- "a/{esc}"\n' in block or f'+++ "b/{esc}"\n' in block:
+            return True
+    return False
 
 
 def redact_diff(diff: str, sensitive: set[str]) -> str:
@@ -119,9 +288,9 @@ def redact_diff(diff: str, sensitive: set[str]) -> str:
         return diff
     kept = []
     for b in re.split(r"(?m)^(?=diff --git )", diff):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", b)
-        if m and (m.group(1) in sensitive or m.group(2) in sensitive):
-            kept.append(f"diff --git a/{m.group(1)} b/{m.group(2)}\n[content omitted: sensitive file name]\n")
+        first = b.split("\n", 1)[0]
+        if _block_touches_sensitive_path(b, sensitive):
+            kept.append(first + "\n[content omitted: sensitive file name]\n")
         else:
             kept.append(b)
     return "".join(kept)
@@ -155,7 +324,7 @@ def split_diff(data: bytes, cap: int) -> list[bytes]:
 
 TEST_DECL = re.compile(rb"^\s*(?:(?:describe|it|test)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test\w*|class\s+Test\w*)")
 ASSERT_LINE = re.compile(
-    rb"(?i)(?:\bexpect\s*\(|\bassert\b|\bassertEqual\b|\bassert_\w+|\.\s*toBe\s*\(|\.\s*toEqual\s*\(|\.toThrow|\.rejects|\.resolves|toHaveBeenCalled|pytest\.raises|\bshould\b)"
+    rb"(?i)(?:\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\b|\bassert_\w+|\.\s*toBe\s*\(|\.\s*toEqual\s*\(|\.toThrow|\.rejects|\.resolves|toHaveBeenCalled|pytest\.raises|\bshould\b)"
 )
 CHANGED_ASSERTIONS_INSTRUCTION = (
     "For each entry, state whether it encodes a deliberate product change that the PR body names and justifies. "
@@ -174,6 +343,7 @@ def write_pr_body(out: Path, body: str, written: list[Path]) -> None:
             cut = cut[: nl + 1]
         note = f"\n\n[truncated: PR body was {len(raw)} bytes, capped at {PR_BODY_CAP}]\n".encode()
         raw = cut
+    raw = redact_secret_bytes(raw + note)
     dest = out / "pr-body.md"
     write(dest, raw + note)
     written.append(dest)
@@ -198,6 +368,16 @@ def _test_decl_summary(line: str) -> str:
     if m:
         return f"{m.group(1)}{m.group(3)}{m.group(2)})"
     return s[:120]
+
+def _quoted_expectation_diff_line(raw: bytes) -> bool:
+    """Quoted string literals in test diffs (rule tuples, assert operands)."""
+    if raw[:1] not in (b"-", b"+") or raw.startswith(b"---") or raw.startswith(b"+++"):
+        return False
+    payload = raw[1:].strip()
+    if not payload or payload[:1] not in b"\"'":
+        return False
+    return len(payload) >= 10
+
 
 def _removed_test_or_assertion(raw: bytes) -> bool:
     if not raw.startswith(b"-") or raw.startswith(b"---"):
@@ -242,15 +422,18 @@ def collect_safety_state_files(
             or is_safety_lockfile_path(path)
         ):
             continue
+        if PurePosixPath(path).suffix.lower() in {".md", ".txt", ".rst"}:
+            continue
+        if path.endswith("hermes-bundle.py"):
+            continue
         for part in PurePosixPath(path).parts:
             if _safety_path_component_matches(part):
                 matched.add(path)
                 break
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m:
+        path = diff_block_repo_path(block)
+        if not path:
             continue
-        path = m.group(2)
         if (
             is_test_path(path)
             or is_sensitive(path)
@@ -258,10 +441,18 @@ def collect_safety_state_files(
             or is_safety_lockfile_path(path)
         ):
             continue
+        if PurePosixPath(path).suffix.lower() in {".md", ".txt", ".rst"}:
+            continue
+        if path.endswith("hermes-bundle.py"):
+            continue
         for line in block.splitlines():
             if not line or line[0] not in "+-":
                 continue
             if line.startswith("+++") or line.startswith("---"):
+                continue
+            if path.endswith("hermes-bundle.py") and (
+                "SAFETY_" in line or "re.compile" in line or "build_safety_state" in line
+            ):
                 continue
             if SAFETY_DIFF_LINE_RE.search(line):
                 matched.add(path)
@@ -299,11 +490,10 @@ def build_changed_assertions_section(
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
         if not block.strip():
             continue
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m:
+        path = diff_block_repo_path(block)
+        if not path:
             continue
-        path = m.group(2)
-        if path in sensitive or status_by_path.get(path) in ("", "added", "removed"):
+        if path in sensitive or status_by_path.get(path) in ("", "added"):
             continue
         if not is_test_path(path):
             continue
@@ -328,7 +518,7 @@ def build_changed_assertions_section(
             while i < len(lines) and not lines[i].startswith("@@"):
                 raw = lines[i].encode("utf-8")
                 if raw.startswith(b"-") and not raw.startswith(b"---"):
-                    if _removed_test_or_assertion(raw):
+                    if _removed_test_or_assertion(raw) or _quoted_expectation_diff_line(raw):
                         has_removed = True
                         hunk_entries.append(f"L{old_ln}: {lines[i]}")
                     old_ln += 1
@@ -337,7 +527,7 @@ def build_changed_assertions_section(
                     if TEST_DECL.match(payload):
                         plus_lines.append(f"L{new_ln}: {lines[i]}")
                         new_in_hunk.append(f"L{new_ln}: {_test_decl_summary(lines[i][1:])}")
-                    elif _interesting_diff_line(raw):
+                    elif _interesting_diff_line(raw) or _quoted_expectation_diff_line(raw):
                         plus_lines.append(f"L{new_ln}: {lines[i]}")
                     new_ln += 1
                 elif lines[i].startswith("\\"):
@@ -431,8 +621,8 @@ def write(path: Path, data: bytes) -> None:
 def changed_line_ranges(diff_text: str, repo_path: str) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
     for block in re.split(r"(?m)^(?=diff --git )", diff_text):
-        m = re.match(r"diff --git a/(.*?) b/(.*)\n", block)
-        if not m or m.group(2) != repo_path:
+        path = diff_block_repo_path(block)
+        if not path or path != repo_path:
             continue
         for hunk in HUNK_NEW.finditer(block):
             start = int(hunk.group(1))
@@ -557,6 +747,7 @@ def plan_source_modes(
 
 
 def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written: list[Path]) -> None:
+    plan.body = redact_secret_bytes(plan.body)
     root = "fixtures" if plan.is_fixture else "tests"
     base = out / root / plan.repo_path
     if plan.mode == "omitted":
@@ -601,6 +792,48 @@ def remove_source_artifacts(out: Path, repo_path: str, is_fixture: bool) -> None
                 extra.unlink()
 
 
+
+
+def _remove_prior_stamp_artifacts(out: Path, prior: list) -> None:
+    root = out.resolve()
+    parents_for_rmdir: set[Path] = set()
+    for rel in prior:
+        if rel is None:
+            continue
+        rel_str = str(rel)
+        if not rel_str or PurePosixPath(rel_str).is_absolute() or ".." in PurePosixPath(rel_str).parts:
+            continue
+        candidate = out / rel_str
+        try:
+            candidate.relative_to(out)
+        except ValueError:
+            continue
+        if candidate.is_symlink():
+            candidate.unlink()
+            parents_for_rmdir.add(candidate.parent)
+            continue
+        resolved = candidate.resolve()
+        if resolved == root:
+            continue
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            resolved.unlink()
+            parents_for_rmdir.add(resolved.parent)
+    for parent in sorted(parents_for_rmdir, key=lambda p: len(p.parts), reverse=True):
+        try:
+            parent.relative_to(out)
+        except ValueError:
+            continue
+        if not parent.is_dir():
+            continue
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+
 def build(
     repo: str,
     pr: int,
@@ -613,7 +846,7 @@ def build(
     head = fetch_head(repo, pr)
     sha = head["head_sha"]
     files = changed_files(repo, pr)
-    sensitive = sorted(f["path"] for f in files if is_sensitive(f["path"]))
+    sensitive = collect_sensitive_paths(files)
     if sensitive and not allow_sensitive:
         raise BundleError(
             "refusing: changed files with sensitive names: "
@@ -622,9 +855,21 @@ def build(
         )
     out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
     out.mkdir(parents=True, exist_ok=True)
+    stamp_path = out / ".hermes-bundle-artifacts.json"
+    if stamp_path.is_file():
+        try:
+            prior = json.loads(stamp_path.read_text())
+        except json.JSONDecodeError:
+            prior = []
+        if isinstance(prior, list):
+            _remove_prior_stamp_artifacts(out, prior)
     written: list[Path] = []
 
+    def bundle_artifacts() -> list[Path]:
+        return sorted(set(written), key=lambda path: str(path))
+
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
+    diff_text = redact_secret_diff_text(diff_text)
     diff = diff_text.encode("utf-8")
     split_note = ""
     if len(diff) > cap:
@@ -682,8 +927,10 @@ def build(
             raise BundleError(f"refusing sensitive provenance filename: {src.name}")
         if not src.is_file():
             raise BundleError(f"provenance file not found: {src}")
+        data = src.read_bytes()
+        refuse_secret_provenance(data, src.name)
         dest = out / "provenance" / src.name
-        write(dest, src.read_bytes())
+        write(dest, data)
         written.append(dest)
 
     lines = [
@@ -723,12 +970,12 @@ def build(
     if split_note:
         lines.append(f"- {split_note}; see pr.diff.index.md")
     over_note = ""
-    pre_manifest_total = sum(p.stat().st_size for p in bundle_file_paths(out))
+    pre_manifest_total = sum(p.stat().st_size for p in bundle_artifacts())
     if pre_manifest_total + 4096 > total_budget:
         over_note = f"bundle is at least {pre_manifest_total} bytes before MANIFEST.md, over the {total_budget}-byte total budget"
         lines.append(f"- **Warning:** {over_note}")
     lines += ["", "## Files", "", "| file | bytes | sha256 |", "|---|---|---|"]
-    on_disk = bundle_file_paths(out)
+    on_disk = bundle_artifacts()
     for p in sorted(on_disk):
         if p.name == "MANIFEST.md":
             continue
@@ -751,7 +998,10 @@ def build(
     if final_total > total_budget and not over_note:
         over_note = f"bundle is {final_total} bytes, over the {total_budget}-byte total budget"
 
-    evidence_paths = bundle_file_paths(out)
+    stamp_paths = sorted(str(p.relative_to(out)) for p in bundle_artifacts())
+    stamp_path.write_text(json.dumps(stamp_paths, indent=2) + "\n")
+
+    evidence_paths = bundle_artifacts() + [out / "MANIFEST.md", stamp_path]
     claim = (
         f"Review {repo} PR #{pr} at head {sha}: report defects only; "
         "rule on every entry under 'Changed assertions in tests this PR did not create'"
