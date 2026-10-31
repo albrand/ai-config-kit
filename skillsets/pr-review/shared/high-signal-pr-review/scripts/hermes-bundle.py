@@ -250,9 +250,9 @@ def _test_decl_summary(line: str) -> str:
         return f"{m.group(1)}{m.group(3)}{m.group(2)})"
     return s[:120]
 
-def _removed_expectation_string(raw: bytes) -> bool:
-    """Removed quoted lines in test diffs (assertIn/assertEqual operands, rule tuples)."""
-    if not raw.startswith(b"-") or raw.startswith(b"---"):
+def _quoted_expectation_diff_line(raw: bytes) -> bool:
+    """Quoted string literals in test diffs (rule tuples, assert operands)."""
+    if raw[:1] not in (b"-", b"+") or raw.startswith(b"---") or raw.startswith(b"+++"):
         return False
     payload = raw[1:].strip()
     if not payload or payload[:1] not in b"\"'":
@@ -395,7 +395,7 @@ def build_changed_assertions_section(
             while i < len(lines) and not lines[i].startswith("@@"):
                 raw = lines[i].encode("utf-8")
                 if raw.startswith(b"-") and not raw.startswith(b"---"):
-                    if _removed_test_or_assertion(raw) or _removed_expectation_string(raw):
+                    if _removed_test_or_assertion(raw) or _quoted_expectation_diff_line(raw):
                         has_removed = True
                         hunk_entries.append(f"L{old_ln}: {lines[i]}")
                     old_ln += 1
@@ -404,7 +404,7 @@ def build_changed_assertions_section(
                     if TEST_DECL.match(payload):
                         plus_lines.append(f"L{new_ln}: {lines[i]}")
                         new_in_hunk.append(f"L{new_ln}: {_test_decl_summary(lines[i][1:])}")
-                    elif _interesting_diff_line(raw):
+                    elif _interesting_diff_line(raw) or _quoted_expectation_diff_line(raw):
                         plus_lines.append(f"L{new_ln}: {lines[i]}")
                     new_ln += 1
                 elif lines[i].startswith("\\"):
