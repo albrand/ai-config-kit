@@ -96,6 +96,19 @@ handoff_required = (
     'Preserve the requested outcome: an unattempted output is BLOCKED/NOT RUN, and an attempted failed output is FAIL; never report reduced output as success',
     'Continue only independently authorized work',
 )
+owner_pause_required = (
+    'architecture, data model, access-widening security',
+    'destructive or hard-to-reverse action',
+    'validation that contradicts the plan',
+)
+missing_owner_pause = [clause for clause in owner_pause_required if clause not in delegation]
+if missing_owner_pause:
+    print('Missing delegate NEEDS-OWNER owner-decision contract: ' + '; '.join(missing_owner_pause), file=sys.stderr)
+    raise SystemExit(1)
+narrow_needs_owner = 'NEEDS-OWNER: <one question: a login, code or hard-prohibition approval not yet given>'
+if narrow_needs_owner in delegation:
+    print('Delegate NEEDS-OWNER contract is too narrow.', file=sys.stderr)
+    raise SystemExit(1)
 missing_handoff = [clause for clause in handoff_required if clause not in delegation]
 if missing_boundary or missing_handoff:
     missing = [f'lesson: {clause}' for clause in missing_boundary]

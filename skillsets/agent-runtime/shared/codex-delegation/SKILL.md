@@ -44,7 +44,7 @@ live route change in Hermes's own config.
    glance: `STATUS: done|needs-owner`, `SHA:` or `PR:`, `DECISIONS:` (every
    value the brief left open, and what the worker chose), `Verified:` (the
    commands that decided it, with exit codes), `Not covered:` (only checks that
-   could not run, and why), and `NEEDS-OWNER: <one question: a login, code or hard-prohibition approval not yet given>; your recommendation; what you kept
+   could not run, and why), and `NEEDS-OWNER: <one question the user has not answered and only they can (login, code, hard-prohibition approval, or an owner decision from global AGENTS: architecture, data model, access-widening security, destructive or hard-to-reverse action, scope expansion, validation that contradicts the plan)>; your recommendation; what you kept
    doing` when needed. A choice of routes is never needs-owner: a step the requested outcome needs is yours to pick and do. Anything short of done or needs-owner is not a stopping
    point: diagnose, try another route, keep going. A report that says done is a
    claim, not a result.
