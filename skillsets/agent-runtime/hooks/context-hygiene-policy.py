@@ -98,6 +98,7 @@ PGREP_F_DENY = (
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
 PGREP_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?(?:\S*/)?pgrep["\']?\b')
+PGREP_FLAG_VAR = re.compile(r'\b(\w+)\s*=\s*["\']?(-f|--full)["\']?\b')
 PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
@@ -132,11 +133,21 @@ def pgrep_segment_has_full_flag(segment):
     unquoted = re.sub(r'(?:^|\s)"(-f|--full)"(?=\s|$)', r" \1", unquoted)
     return bool(PGREP_FULL_FLAG.search(unquoted))
 
+def pgrep_segment_uses_flag_var(segment, flag_vars):
+    for var in flag_vars:
+        if re.search(rf'["\']?\${{{var}}}|["\']?\${var}\b', segment):
+            return True
+    return False
+
 def pgrep_full_match(text):
     text = pgrep_obfuscation_fold(text)
+    flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(text)}
     for m in PGREP_WORD.finditer(text):
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
-        if segment and pgrep_segment_has_full_flag(segment.group(0)):
+        if not segment:
+            continue
+        seg = segment.group(0)
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
             return True
     aliases = {m.group(1) for m in PGREP_VAR.finditer(text)}
     for m in PGREP_VAR_INVOKE.finditer(text):
@@ -144,7 +155,10 @@ def pgrep_full_match(text):
         if var not in aliases:
             continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
-        if segment and pgrep_segment_has_full_flag(segment.group(0)):
+        if not segment:
+            continue
+        seg = segment.group(0)
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
             return True
     return False
 
