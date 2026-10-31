@@ -134,6 +134,83 @@ def _pgrep_skip_space(text, i):
         i += 1
     return i
 
+
+def _pgrep_single_quote_spans(text):
+    """One pass: single-quoted regions (shell: no escapes inside '...')."""
+    spans = []
+    i, n = 0, len(text)
+    dq = False
+    while i < n:
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            start = i
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            spans.append((start, i))
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+    return spans
+
+def _pgrep_in_single_quote(spans, pos):
+    for start, end in spans:
+        if start <= pos < end:
+            return True
+    return False
+
+def _pgrep_single_quote_end(spans, pos):
+    for start, end in spans:
+        if start <= pos < end:
+            return end
+    return pos + 1
+
+def _pgrep_read_dollar_paren(text, i, sq):
+    j, depth, n = i + 2, 1, len(text)
+    while j < n and depth:
+        if _pgrep_in_single_quote(sq, j):
+            j = _pgrep_single_quote_end(sq, j)
+            continue
+        if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
+            depth += 1
+            j += 2
+            continue
+        if text[j] == ")":
+            depth -= 1
+            j += 1
+            continue
+        j += 1
+    return text[i + 2 : j - 1], j
+
+def _pgrep_read_backtick(text, i, sq):
+    j, n = i + 1, len(text)
+    while j < n:
+        if _pgrep_in_single_quote(sq, j):
+            j = _pgrep_single_quote_end(sq, j)
+            continue
+        if text[j] == "`":
+            return text[i + 1 : j], j + 1
+        if text[j] == "\\" and j + 1 < n:
+            j += 2
+            continue
+        j += 1
+    return None, n
+
 def _pgrep_iter_simple_command_spans(text):
     n = len(text)
     start = 0
@@ -293,40 +370,76 @@ def _pgrep_position_is_invocation(text, pos):
     return False
 
 def _pgrep_each_dollar_paren(text):
-    i, n = 0, len(text)
+    sq = _pgrep_single_quote_spans(text)
+    i, n, dq = 0, len(text), False
     while i < n:
-        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            j, depth = i + 2, 1
-            while j < n and depth:
-                if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
-                    depth += 1
-                    j += 2
-                elif text[j] == ")":
-                    depth -= 1
-                    j += 1
-                else:
-                    j += 1
-            yield text[i + 2 : j - 1]
-            i = j
-        else:
-            i += 1
-
-def _pgrep_each_backtick(text):
-    i, n = 0, len(text)
-    while i < n:
-        if text[i] != "`":
+        if _pgrep_in_single_quote(sq, i):
+            i = _pgrep_single_quote_end(sq, i)
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, i = _pgrep_read_dollar_paren(text, i, sq)
+                yield inner
+                continue
             i += 1
             continue
-        j = i + 1
-        while j < n and text[j] != "`":
-            if text[j] == "\\":
-                j += 2
-            else:
-                j += 1
-        if j >= n:
-            return
-        yield text[i + 1 : j]
-        i = j + 1
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, i = _pgrep_read_dollar_paren(text, i, sq)
+            yield inner
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
+
+def _pgrep_each_backtick(text):
+    sq = _pgrep_single_quote_spans(text)
+    i, n, dq = 0, len(text), False
+    while i < n:
+        if _pgrep_in_single_quote(sq, i):
+            i = _pgrep_single_quote_end(sq, i)
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if text[i] == "`":
+                inner, i = _pgrep_read_backtick(text, i, sq)
+                if inner is not None:
+                    yield inner
+                continue
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "`":
+            inner, i = _pgrep_read_backtick(text, i, sq)
+            if inner is not None:
+                yield inner
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
 
 def _pgrep_pgrep_match_in_fragment(text, flag_vars):
     for m in PGREP_WORD.finditer(text):
@@ -366,25 +479,36 @@ def _pgrep_quote_opener_is_executable(text, start):
     return False
 
 def _pgrep_iter_quoted_spans(text):
-    i, n = 0, len(text)
+    i, n, dq, dq_start = 0, len(text), False, 0
     while i < n:
-        c = text[i]
-        if c not in "'\"":
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                yield dq_start, i + 1
+                dq = False
             i += 1
             continue
-        q = c
-        j = i + 1
-        while j < n:
-            if q == '"' and text[j] == '\\':
-                j += 2
-                continue
-            if text[j] == q:
-                yield i, j + 1
-                i = j + 1
-                break
-            j += 1
-        else:
-            return
+        if text[i] == "'":
+            start = i
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            yield start, i
+            continue
+        if text[i] == '"':
+            dq = True
+            dq_start = i
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
 
 def _pgrep_blank_data_quotes(text):
     chars = list(text)
@@ -401,39 +525,66 @@ def _pgrep_blank_data_quotes(text):
     return "".join(chars)
 
 def _pgrep_process_command_substitutions(text, inner_fn):
-    parts, i, n = [], 0, len(text)
+    sq = _pgrep_single_quote_spans(text)
+    parts, i, n, dq = [], 0, len(text), False
     while i < n:
-        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            j, depth = i + 2, 1
-            while j < n and depth:
-                if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
-                    depth += 1
-                    j += 2
-                elif text[j] == ")":
-                    depth -= 1
-                    j += 1
-                else:
-                    j += 1
-            inner = text[i + 2 : j - 1]
-            parts.append("$(" + inner_fn(inner) + ")")
-            i = j
-        elif text[i] == "`":
-            j = i + 1
-            while j < n and text[j] != "`":
-                if text[j] == '\\':
-                    j += 2
-                else:
-                    j += 1
-            if j >= n:
-                parts.append(text[i:])
-                break
-            inner = text[i + 1 : j]
-            parts.append("`" + inner_fn(inner) + "`")
-            i = j + 1
-        else:
+        if _pgrep_in_single_quote(sq, i):
+            end = _pgrep_single_quote_end(sq, i)
+            parts.append(text[i:end])
+            i = end
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                parts.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == '"':
+                parts.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, j = _pgrep_read_dollar_paren(text, i, sq)
+                parts.append("$(" + inner_fn(inner) + ")")
+                i = j
+                continue
+            if text[i] == "`":
+                inner, j = _pgrep_read_backtick(text, i, sq)
+                if inner is None:
+                    parts.append(text[i:])
+                    break
+                parts.append("`" + inner_fn(inner) + "`")
+                i = j
+                continue
             parts.append(text[i])
             i += 1
+            continue
+        if text[i] == '"':
+            parts.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j = _pgrep_read_dollar_paren(text, i, sq)
+            parts.append("$(" + inner_fn(inner) + ")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j = _pgrep_read_backtick(text, i, sq)
+            if inner is None:
+                parts.append(text[i:])
+                break
+            parts.append("`" + inner_fn(inner) + "`")
+            i = j
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            parts.append(text[i : i + 2])
+            i += 2
+            continue
+        parts.append(text[i])
+        i += 1
     return "".join(parts)
+
 
 def _pgrep_prepare_scan_text(text):
     def normalize(chunk):

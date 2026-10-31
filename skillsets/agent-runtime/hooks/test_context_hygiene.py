@@ -73,6 +73,8 @@ class ContextHygiene(unittest.TestCase):
             "bash -c 'pgrep -f bb'",
             "echo $(pgrep -f bb)",
             'echo "$(pgrep -f bb)"',
+            'echo "`pgrep -f bb`"',
+            "x=$(pgrep -f bb)",
             "/usr/bin/pgrep --full=bb.app",
             "xargs pgrep -f < f",
         )
@@ -99,6 +101,9 @@ class ContextHygiene(unittest.TestCase):
             "echo a b pgrep --full c",
             "grep -rn pgrep -f .",
             "grep pgrep -f file.txt",
+            "printf '%s' '$(pgrep -f)'",
+            "echo 'x `pgrep -f y` z'",
+            "echo '$(pgrep --full a)'",
         )
         for cmd in allowed:
             with self.subTest(cmd=cmd):
