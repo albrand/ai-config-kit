@@ -74,9 +74,18 @@ def decode_git_diff_path(raw: str) -> str:
         out: list[str] = []
         i = 0
         while i < len(inner):
-            if inner[i] == "\\" and i + 1 < len(inner):
-                out.append(inner[i + 1])
-                i += 2
+            if inner[i] == "\\":
+                if i + 1 < len(inner) and "0" <= inner[i + 1] <= "7":
+                    j = i + 1
+                    while j < len(inner) and j < i + 4 and "0" <= inner[j] <= "7":
+                        j += 1
+                    out.append(chr(int(inner[i + 1 : j], 8)))
+                    i = j
+                elif i + 1 < len(inner):
+                    out.append(inner[i + 1])
+                    i += 2
+                else:
+                    i += 1
             else:
                 out.append(inner[i])
                 i += 1

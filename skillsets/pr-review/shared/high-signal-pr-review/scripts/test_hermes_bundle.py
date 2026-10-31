@@ -256,6 +256,22 @@ class BundleCase(unittest.TestCase):
         self.assertIn(name, man)
         self.assertIn("content withheld", man)
 
+    def test_sensitive_git_octal_quoted_space_redacted(self):
+        name = "keys/private key.pem"
+        header = 'diff --git "a/keys/private\\040key.pem" "b/keys/private\\040key.pem"\n'
+        diff = (
+            header
+            + '--- "a/keys/private\\040key.pem"\n'
+            + '+++ "b/keys/private\\040key.pem"\n'
+            + "@@ -0,0 +1 @@\n"
+            + "+SECRET\n"
+        )
+        self.serve([name, "src/a.py"], diff + diff_block("src/a.py"), tests={name: b"SECRET\n"})
+        r = self.run_script("--allow-sensitive-names")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pr_diff = b"".join(p.read_bytes() for p in self.out.rglob("pr.diff*") if p.is_file())
+        self.assertNotIn(b"SECRET", pr_diff)
+
     def test_manifest_digests_match_files(self):
         self.serve(["src/a.py", "tests/test_a.py", "web/a.test.ts"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py") + diff_block("web/a.test.ts"),
