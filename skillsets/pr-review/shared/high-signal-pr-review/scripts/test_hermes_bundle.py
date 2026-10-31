@@ -97,6 +97,18 @@ class BundleCase(unittest.TestCase):
             capture_output=True, text=True, env=env)
 
     # --- the four parts -------------------------------------------------
+    def test_stamp_cleanup_rejects_traversal(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        outside = self.tmp / "outside.txt"
+        outside.write_text("keep\n")
+        stamp = self.out / ".hermes-bundle-artifacts.json"
+        stamp.write_text('["../outside.txt"]\n')
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(outside.exists())
+        self.assertEqual(outside.read_text(), "keep\n")
+
     def test_reused_out_preserves_unrelated_files(self):
         self.serve(["src/a.py"], diff_block("src/a.py"))
         self.out.mkdir(parents=True, exist_ok=True)

@@ -657,8 +657,15 @@ def build(
             prior = json.loads(stamp_path.read_text())
         except json.JSONDecodeError:
             prior = []
+        root = out.resolve()
         for rel in prior:
-            path = out / rel
+            if not rel or PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
+                continue
+            path = (out / rel).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
             if path.is_file():
                 path.unlink()
             elif path.is_dir():
