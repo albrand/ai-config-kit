@@ -14,6 +14,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -345,7 +346,7 @@ def write_pr_body(out: Path, body: str, written: list[Path]) -> None:
         raw = cut
     raw = redact_secret_bytes(raw + note)
     dest = out / "pr-body.md"
-    write(dest, raw + note)
+    write(dest, raw + note, out)
     written.append(dest)
 
 
@@ -613,9 +614,44 @@ def split_lines(data: bytes, cap: int) -> list[tuple[bytes, int, int]]:
     return parts
 
 
-def write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+def write(path: Path, data: bytes, out: Path) -> None:
+    try:
+        rel_parts = path.relative_to(out).parts
+    except ValueError as exc:
+        raise BundleError(f"refusing write outside bundle output dir: {path}") from exc
+    if not rel_parts:
+        raise BundleError(f"refusing write outside bundle output dir: {path}")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
+    out_fd = os.open(out, dir_flags)
+    dir_fd = out_fd
+    try:
+        for part in rel_parts[:-1]:
+            try:
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except FileNotFoundError:
+                os.mkdir(part, mode=0o755, dir_fd=dir_fd)
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except OSError as exc:
+                raise BundleError(f"refusing write to {path}: {exc}") from exc
+            if dir_fd != out_fd:
+                os.close(dir_fd)
+            dir_fd = next_fd
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
+        try:
+            file_fd = os.open(rel_parts[-1], file_flags, dir_fd=dir_fd, mode=0o644)
+        except OSError as exc:
+            raise BundleError(f"refusing write to {path}: {exc}") from exc
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(file_fd, view) :]
+        finally:
+            os.close(file_fd)
+    finally:
+        if dir_fd != out_fd:
+            os.close(dir_fd)
+        os.close(out_fd)
 
 
 def changed_line_ranges(diff_text: str, repo_path: str) -> list[tuple[int, int]]:
@@ -752,11 +788,11 @@ def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written:
     base = out / root / plan.repo_path
     if plan.mode == "omitted":
         dest = base.with_name(base.name + ".omitted.md")
-        write(dest, build_omitted_md(plan.repo_path, plan.body, diff_text))
+        write(dest, build_omitted_md(plan.repo_path, plan.body, diff_text), out)
         written.append(dest)
         return
     if plan.mode == "full":
-        write(base, plan.body)
+        write(base, plan.body, out)
         written.append(base)
         return
     index = [
@@ -766,13 +802,13 @@ def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written:
     ]
     for n, (part, lo, hi) in enumerate(split_lines(plan.body, cap), 1):
         name = base.with_name(f"{base.name}.part{n}")
-        write(name, part)
+        write(name, part, out)
         written.append(name)
         index.append(f"| {name.name} | {lo}-{hi} | {len(part)} |")
     index += ["", "## Test declarations", ""]
     index += test_decl_lines(plan.body)
     idx_path = base.with_name(base.name + ".index.md")
-    write(idx_path, ("\n".join(index) + "\n").encode())
+    write(idx_path, ("\n".join(index) + "\n").encode(), out)
     written.append(idx_path)
 
 
@@ -854,7 +890,11 @@ def build(
             + " (rerun with --allow-sensitive-names to list them without content)"
         )
     out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
+    if out.exists() and out.is_symlink():
+        raise BundleError(f"refusing bundle output symlink: {out}")
     out.mkdir(parents=True, exist_ok=True)
+    if not out.is_dir():
+        raise BundleError(f"refusing bundle output path: {out}")
     stamp_path = out / ".hermes-bundle-artifacts.json"
     if stamp_path.is_file():
         try:
@@ -877,14 +917,14 @@ def build(
         index = [f"# pr.diff index\n\nDiff is {len(diff)} bytes, over the {cap}-byte cap; read parts in order.\n"]
         for n, part in enumerate(parts, 1):
             name = f"pr.diff.part{n}"
-            write(out / name, part)
+            write(out / name, part, out)
             written.append(out / name)
             index.append(f"- {name}: {len(part)} bytes, sha256 {sha256(part)}")
-        write(out / "pr.diff.index.md", ("\n".join(index) + "\n").encode())
+        write(out / "pr.diff.index.md", ("\n".join(index) + "\n").encode(), out)
         written.append(out / "pr.diff.index.md")
         split_note = f"pr.diff split into {len(parts)} parts"
     else:
-        write(out / "pr.diff", diff)
+        write(out / "pr.diff", diff, out)
         written.append(out / "pr.diff")
 
     write_pr_body(out, head.get("body", ""), written)
@@ -919,7 +959,7 @@ def build(
     if fetch_head(repo, pr)["head_sha"] != sha:
         raise BundleError("PR head moved while the bundle was built; rerun")
 
-    write(out / "head.json", json.dumps(head, indent=2, sort_keys=True).encode() + b"\n")
+    write(out / "head.json", json.dumps(head, indent=2, sort_keys=True).encode() + b"\n", out)
     written.append(out / "head.json")
 
     for src in provenance or []:
@@ -930,7 +970,7 @@ def build(
         data = src.read_bytes()
         refuse_secret_provenance(data, src.name)
         dest = out / "provenance" / src.name
-        write(dest, data)
+        write(dest, data, out)
         written.append(dest)
 
     lines = [
@@ -992,14 +1032,14 @@ def build(
     if fixtures and not provenance:
         lines += ["", "fixtures changed; no provenance supplied"]
     lines += ["", f"Reminder: this bundle is bound to head {sha}; rebuild it if the PR head changes.", ""]
-    write(out / "MANIFEST.md", "\n".join(lines).encode())
+    write(out / "MANIFEST.md", "\n".join(lines).encode(), out)
 
     final_total = bundle_byte_total(out, manifest_size_hint=0)
     if final_total > total_budget and not over_note:
         over_note = f"bundle is {final_total} bytes, over the {total_budget}-byte total budget"
 
     stamp_paths = sorted(str(p.relative_to(out)) for p in bundle_artifacts())
-    stamp_path.write_text(json.dumps(stamp_paths, indent=2) + "\n")
+    write(stamp_path, (json.dumps(stamp_paths, indent=2) + "\n").encode(), out)
 
     evidence_paths = bundle_artifacts() + [out / "MANIFEST.md", stamp_path]
     claim = (

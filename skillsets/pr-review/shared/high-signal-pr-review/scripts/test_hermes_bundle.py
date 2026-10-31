@@ -166,6 +166,52 @@ class BundleCase(unittest.TestCase):
         self.assertEqual(outside.read_text(), "secret\n")
         self.assertFalse(link.exists())
 
+    def _assert_victim_unchanged(self, victim, before_mtime, before_body):
+        self.assertEqual(victim.read_text(), before_body)
+        self.assertEqual(victim.stat().st_mtime, before_mtime)
+
+    def test_write_refuses_symlink_at_artifact_path(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        victim = self.tmp / "victim-artifact.txt"
+        victim.write_text("unchanged\n")
+        before_mtime = victim.stat().st_mtime
+        (self.out / "pr.diff").symlink_to(victim)
+        r = self.run_script()
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr.lower())
+        self._assert_victim_unchanged(victim, before_mtime, "unchanged\n")
+
+    def test_write_refuses_symlink_at_stamp_path(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        victim = self.tmp / "victim-stamp.json"
+        victim.write_text('["prior"]\n')
+        before_mtime = victim.stat().st_mtime
+        (self.out / ".hermes-bundle-artifacts.json").symlink_to(victim)
+        r = self.run_script()
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr.lower())
+        self._assert_victim_unchanged(victim, before_mtime, '["prior"]\n')
+
+    def test_write_refuses_symlink_parent_directory(self):
+        self.serve(
+            ["src/a.py", "tests/test_a.py"],
+            diff_block("src/a.py") + diff_block("tests/test_a.py"),
+            tests={"tests/test_a.py": b"def test_a(): pass\n"},
+        )
+        self.out.mkdir(parents=True, exist_ok=True)
+        outside = self.tmp / "outside-tests"
+        outside.mkdir()
+        victim = outside / "never.txt"
+        victim.write_text("stay\n")
+        before_mtime = victim.stat().st_mtime
+        (self.out / "tests").symlink_to(outside)
+        r = self.run_script()
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr.lower())
+        self._assert_victim_unchanged(victim, before_mtime, "stay\n")
+
     def test_stamp_cleanup_directory_leaves_unlisted_files(self):
         self.serve(["src/a.py"], diff_block("src/a.py"))
         self.out.mkdir(parents=True, exist_ok=True)
