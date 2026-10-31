@@ -120,6 +120,61 @@ HERMES_DEFECT_BLOCKING_CRITERIA = (
 )
 
 
+def _archive_baseline_checker():
+    """Standing-rule patterns from origin/main for the frozen archived kit baseline."""
+    cached = getattr(_archive_baseline_checker, "_module", None)
+    if cached is not None:
+        return cached
+    main_src = subprocess.check_output(
+        ["git", "show", "origin/main:scripts/check-standing-rules.py"],
+        cwd=SCRIPT.parent.parent,
+        text=True,
+    )
+    spec = importlib.util.spec_from_file_location(
+        "check_standing_rules_archive_baseline", SCRIPT.with_name("_archive_baseline_checker.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    exec(compile(main_src, "origin/main/scripts/check-standing-rules.py", "exec"), module.__dict__)
+    _archive_baseline_checker._module = module
+    return module
+
+
+def archive_baseline_matched_rule_ids(archived_text: str) -> tuple[str, ...]:
+    """Rule ids origin/main's checker matches in the archived baseline file."""
+    archive_checker = _archive_baseline_checker()
+    return tuple(
+        sorted(
+            name
+            for name, pattern in archive_checker.RULES.items()
+            if pattern.search(archived_text)
+        )
+    )
+
+
+def assert_archive_baseline_rule_ids(archived_text: str) -> tuple[str, ...]:
+    derived = archive_baseline_matched_rule_ids(archived_text)
+    archive_checker = _archive_baseline_checker()
+    count, _missing = archive_checker.check_baseline_preservation(
+        archived_text, archived_text
+    )
+    if len(derived) != OLD_BASELINE_RULE_COUNT:
+        missing = set(OLD_BASELINE_RULE_IDS) - set(derived)
+        extra = set(derived) - set(OLD_BASELINE_RULE_IDS)
+        raise AssertionError(
+            f"archive baseline rule count {len(derived)} != {OLD_BASELINE_RULE_COUNT}; "
+            f"missing {sorted(missing)!r} extra {sorted(extra)!r}"
+        )
+    if derived != OLD_BASELINE_RULE_IDS:
+        missing = set(OLD_BASELINE_RULE_IDS) - set(derived)
+        extra = set(derived) - set(OLD_BASELINE_RULE_IDS)
+        raise AssertionError(
+            f"archive baseline rule ids disagree with OLD_BASELINE_RULE_IDS; "
+            f"missing {sorted(missing)!r} extra {sorted(extra)!r}"
+        )
+    return derived
+
+
+
 INTACT = """
 Never add or fill a recipient, open/edit a compose surface, or send email by any route without approval for that exact message in this conversation. General task approval or approval for another message is not approval for this one. Test only by inspecting the constructed path or using a user-designated disposable account, never the user's live client; disclose and leave any open compose surface untouched.
 Never quit the running bb app. Never kill the running bb app. Never replace the running bb app. Never move `/Applications/bb.app`. Never delete `/Applications/bb.app`. Never overwrite `/Applications/bb.app`. Never use pkill or pgrep -f.
@@ -153,14 +208,14 @@ class StandingRuleCheckerTest(unittest.TestCase):
         archived = ARCHIVED_OLD_BASELINE_PATH.read_text(encoding="utf-8")
         self.assertIn("# Global Agent Instructions", archived)
         self.assertGreater(len(archived), 1000)
+        derived = assert_archive_baseline_rule_ids(archived)
         kit = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         rendered_claude = (
             SCRIPT.parent.parent / "proposals/card21/rendered-homes/CLAUDE.md"
         ).read_text(encoding="utf-8")
-        self.assertEqual(len(OLD_BASELINE_RULE_IDS), OLD_BASELINE_RULE_COUNT)
         matched: list[str] = []
         replaced: list[str] = []
-        for rule in OLD_BASELINE_RULE_IDS:
+        for rule in derived:
             if CHECKER.RULES[rule].search(kit):
                 matched.append(rule)
                 self.assertNotIn(
@@ -183,13 +238,26 @@ class StandingRuleCheckerTest(unittest.TestCase):
                     )
             else:
                 self.fail(f"old baseline rule {rule} neither matches kit nor is replaced")
-        self.assertEqual(len(matched) + len(replaced), OLD_BASELINE_RULE_COUNT)
+        self.assertEqual(len(matched) + len(replaced), len(derived))
         self.assertEqual(len(replaced), len(REPLACED_OLD_RULES))
+
+    def test_old_baseline_archive_rule_deletion_breaks_derived_ids(self):
+        archived = ARCHIVED_OLD_BASELINE_PATH.read_text(encoding="utf-8")
+        assert_archive_baseline_rule_ids(archived)
+        rule = "worktree-one-writer"
+        self.assertIn(rule, archive_baseline_matched_rule_ids(archived))
+        damaged = CHECKER.RULES[rule].sub("", archived)
+        self.assertNotIn(rule, archive_baseline_matched_rule_ids(damaged))
+        with self.assertRaises(AssertionError) as ctx:
+            assert_archive_baseline_rule_ids(damaged)
+        message = str(ctx.exception)
+        self.assertIn(rule, message)
 
     def test_old_45_baseline_still_matched_rule_deletion_fails(self):
         kit = CHECKER.KIT_SOURCE.read_text(encoding="utf-8")
         rule = "worktree-one-writer"
-        self.assertIn(rule, OLD_BASELINE_RULE_IDS)
+        archived = ARCHIVED_OLD_BASELINE_PATH.read_text(encoding="utf-8")
+        self.assertIn(rule, archive_baseline_matched_rule_ids(archived))
         self.assertIsNotNone(CHECKER.RULES[rule].search(kit))
         damaged = CHECKER.RULES[rule].sub("", kit)
         self.assertIsNone(CHECKER.RULES[rule].search(damaged))
