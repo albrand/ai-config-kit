@@ -127,23 +127,228 @@ def pgrep_obfuscation_fold(text):
 
 
 
-def _pgrep_token_is_command(text, pos):
-    before = text[:pos].rstrip()
-    if not before:
-        return True
-    if re.search(r"(?:&&|\|\|)\s*$", before):
-        return True
-    if re.search(r"[;&|]\s*$", before):
-        return True
-    last = re.search(r"([\w.-]+)\s*$", before)
-    if last:
-        cmd = last.group(1).split("/")[-1].lower()
-        if cmd in {
-            "echo", "printf", "grep", "rg", "git", "sed", "awk", "cat", "head", "tail",
-            "wc", "sort", "less", "more", "find", "xargs",
-        }:
-            return False
-    return True
+
+def _pgrep_skip_space(text, i):
+    n = len(text)
+    while i < n and text[i].isspace():
+        i += 1
+    return i
+
+def _pgrep_iter_simple_command_spans(text):
+    n = len(text)
+    start = 0
+    i = 0
+    sq = dq = False
+    while i < n:
+        c = text[i]
+        if sq:
+            if c == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if c == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                dq = False
+            i += 1
+            continue
+        if c == "'":
+            sq = True
+            i += 1
+            continue
+        if c == '"':
+            dq = True
+            i += 1
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            yield start, i
+            i += 2
+            start = _pgrep_skip_space(text, i)
+            i = start
+            continue
+        if c in ";\n|":
+            yield start, i
+            i += 1
+            start = _pgrep_skip_space(text, i)
+            i = start
+            continue
+        if c == "&":
+            yield start, i
+            i += 1
+            start = _pgrep_skip_space(text, i)
+            i = start
+            continue
+        i += 1
+    yield start, n
+
+def _pgrep_after_command_leaders(text, i):
+    i = _pgrep_skip_space(text, i)
+    if i < len(text) and text[i] == "(":
+        i = _pgrep_skip_space(text, i + 1)
+    for kw in ("if", "while", "until", "then", "do", "else", "!"):
+        m = re.match(rf"{kw}\b", text[i:], re.I)
+        if m:
+            i = _pgrep_skip_space(text, i + m.end())
+            break
+    return i
+
+def _pgrep_skip_env_token(text, i):
+    i = _pgrep_skip_space(text, i)
+    if i >= len(text):
+        return i
+    if text[i] == "-":
+        m = re.match(r"-(\w+)(?:\s+(\S+))?", text[i:])
+        return i + m.end() if m else i + 1
+    m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:])
+    if m:
+        return i + m.end()
+    m = re.match(r"\S+", text[i:])
+    return i + m.end() if m else i + 1
+
+def _pgrep_skip_sudo_prefix(text, i):
+    while True:
+        i = _pgrep_skip_space(text, i)
+        if i >= len(text) or text[i] != "-":
+            break
+        m = re.match(r"-(\w+)(?:\s+(\S+))?", text[i:])
+        if not m:
+            break
+        i += m.end()
+    return i
+
+def _pgrep_skip_xargs_options(text, i):
+    while True:
+        i = _pgrep_skip_space(text, i)
+        if i >= len(text) or text[i] != "-":
+            break
+        m = re.match(r"-\S+", text[i:])
+        if not m:
+            break
+        i += m.end()
+    return i
+
+def _pgrep_skip_assignments_and_wrappers(text, i, limit):
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit:
+            return i
+        m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:limit])
+        if m:
+            i += m.end()
+            continue
+        wm = re.match(r"(sudo|env|command|exec|nohup|time|nice|xargs)\b", text[i:limit], re.I)
+        if not wm:
+            break
+        w = wm.group(1).lower()
+        i += wm.end()
+        if w == "sudo":
+            i = _pgrep_skip_sudo_prefix(text, i)
+        elif w == "env":
+            while True:
+                i = _pgrep_skip_space(text, i)
+                if i >= limit:
+                    break
+                if text[i] == "-":
+                    nxt = _pgrep_skip_env_token(text, i)
+                    if nxt == i or nxt > limit:
+                        break
+                    i = nxt
+                    continue
+                m = re.match(
+                    r"(\w+)=(?:[^\s\"'';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')",
+                    text[i:limit],
+                )
+                if m:
+                    i += m.end()
+                    continue
+                break
+        elif w == "xargs":
+            i = _pgrep_skip_xargs_options(text, i)
+    return i
+
+def _pgrep_first_word_span(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
+    if i >= cmd_end:
+        return None
+    m = re.match(r"((?:[^\s\"';|&]+/)*pgrep)\b", text[i:cmd_end], re.I)
+    if m:
+        return i, i + m.end()
+    m = re.match(r"(\S+)", text[i:cmd_end])
+    if m:
+        return i, i + m.end()
+    return None
+
+def _pgrep_position_is_invocation(text, pos):
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start or pos >= cmd_end:
+            continue
+        span = _pgrep_first_word_span(text, cmd_start, cmd_end)
+        if span and span[0] <= pos < span[1]:
+            word = text[span[0]:span[1]]
+            return bool(re.search(r"pgrep$", word, re.I))
+        return False
+    return False
+
+def _pgrep_each_dollar_paren(text):
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            j, depth = i + 2, 1
+            while j < n and depth:
+                if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
+                    depth += 1
+                    j += 2
+                elif text[j] == ")":
+                    depth -= 1
+                    j += 1
+                else:
+                    j += 1
+            yield text[i + 2 : j - 1]
+            i = j
+        else:
+            i += 1
+
+def _pgrep_each_backtick(text):
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "`":
+            i += 1
+            continue
+        j = i + 1
+        while j < n and text[j] != "`":
+            if text[j] == "\\":
+                j += 2
+            else:
+                j += 1
+        if j >= n:
+            return
+        yield text[i + 1 : j]
+        i = j + 1
+
+def _pgrep_pgrep_match_in_fragment(text, flag_vars):
+    for m in PGREP_WORD.finditer(text):
+        if not _pgrep_position_is_invocation(text, m.start()):
+            continue
+        segment = re.match(r"[^\n;&|]*", text[m.end() :])
+        if not segment:
+            continue
+        seg = segment.group(0)
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
+            return True
+    for start, end in _pgrep_iter_quoted_spans(text):
+        if _pgrep_quote_opener_is_executable(text, start):
+            if _pgrep_pgrep_match_in_fragment(text[start + 1 : end - 1], flag_vars):
+                return True
+    for inner in _pgrep_each_dollar_paren(text):
+        if _pgrep_pgrep_match_in_fragment(inner, flag_vars):
+            return True
+    for inner in _pgrep_each_backtick(text):
+        if _pgrep_pgrep_match_in_fragment(inner, flag_vars):
+            return True
+    return False
 
 def _pgrep_quote_opener_is_executable(text, start):
     before = text[:start].rstrip()
@@ -269,15 +474,8 @@ def pgrep_full_match(text):
     flag_vars = {m.group(1) for m in PGREP_FLAG_VAR.finditer(raw)}
     binary_aliases, script_aliases = _pgrep_var_alias_sets(raw, flag_vars)
     text = _pgrep_prepare_scan_text(text)
-    for m in PGREP_WORD.finditer(text):
-        if not _pgrep_token_is_command(text, m.start()):
-            continue
-        segment = re.match(r"[^\n;&|]*", text[m.end() :])
-        if not segment:
-            continue
-        seg = segment.group(0)
-        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
-            return True
+    if _pgrep_pgrep_match_in_fragment(text, flag_vars):
+        return True
     for m in PGREP_VAR_INVOKE.finditer(text):
         var = m.group(1) or m.group(2)
         if var in script_aliases:

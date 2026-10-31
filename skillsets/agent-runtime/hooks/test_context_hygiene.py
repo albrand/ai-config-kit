@@ -54,7 +54,9 @@ class ContextHygiene(unittest.TestCase):
             "env -u FOO pgrep -f bb",
             "env FOO=1 pgrep --full bb",
             "true && pgrep -f bb",
+            "true && sudo -u bob pgrep -f x",
             "if pgrep -f bb; then echo hi; fi",
+            "if pgrep -f x; then :; fi",
             "pgrep \\\n-f bb",
             'P=pgrep; "$P" -f bb',
             "p''grep -f bb",
@@ -72,6 +74,7 @@ class ContextHygiene(unittest.TestCase):
             "echo $(pgrep -f bb)",
             'echo "$(pgrep -f bb)"',
             "/usr/bin/pgrep --full=bb.app",
+            "xargs pgrep -f < f",
         )
         for cmd in blocked:
             with self.subTest(cmd=cmd):
@@ -91,8 +94,11 @@ class ContextHygiene(unittest.TestCase):
             'echo "never use pgrep -f"',
             'git commit -m "block pgrep -f in hooks"',
             "grep -n 'pgrep -f' file.py",
+            "echo harmless pgrep -f bb",
+            "printf '%s %s\n' x 'pgrep -f'",
+            "echo a b pgrep --full c",
+            "grep -rn pgrep -f .",
             "grep pgrep -f file.txt",
-            "echo pgrep -f bb",
         )
         for cmd in allowed:
             with self.subTest(cmd=cmd):
