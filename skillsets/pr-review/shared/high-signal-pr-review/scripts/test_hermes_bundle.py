@@ -19,6 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = Path(os.environ.get("HERMES_BUNDLE_SCRIPT", HERE / "hermes-bundle.py"))
+FIXTURE = HERE / "fixtures" / "no-fire-manifest.md"
 HEAD = "a" * 40
 BASE = "b" * 40
 
@@ -507,27 +508,9 @@ class BundleCase(unittest.TestCase):
     def test_safety_state_durability_no_fire_manifest_unchanged(self):
         diff = diff_block("src/a.py")
         self.serve(["src/a.py"], diff)
-        bak = HERE / "hermes-bundle.py.bak-20261030-durability"
-        out_old = self.tmp / "out_old"
-        out_new = self.tmp / "out_new"
-        env_base = {"PATH": f"{self.bin}:/usr/bin:/bin", "FAKE_GH_DIR": str(self.fake),
-                    "HOME": str(self.tmp)}
-
-        def run_to(out_dir, script):
-            env = {**env_base, "HERMES_BUNDLE_SCRIPT": str(script)}
-            return subprocess.run(
-                [sys.executable, "-I", str(script), "--repo", "o/r", "--pr", "7",
-                 "--out", str(out_dir)],
-                capture_output=True, text=True, env=env)
-
-        r_old = run_to(out_old, bak)
-        self.assertEqual(r_old.returncode, 0, r_old.stderr)
-        r_new = run_to(out_new, SCRIPT)
-        self.assertEqual(r_new.returncode, 0, r_new.stderr)
-        self.assertEqual(
-            (out_old / "MANIFEST.md").read_text(),
-            (out_new / "MANIFEST.md").read_text(),
-        )
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.out / "MANIFEST.md").read_text(), FIXTURE.read_text())
 
 
 
