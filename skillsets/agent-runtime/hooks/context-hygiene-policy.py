@@ -115,6 +115,7 @@ NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view",
 KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
 
 def pgrep_full_match(text):
+    text = re.sub(r"\\\n\s*", "", text)
     for m in PGREP_WORD.finditer(text):
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if segment and PGREP_FULL_FLAG.search(segment.group(0)):
