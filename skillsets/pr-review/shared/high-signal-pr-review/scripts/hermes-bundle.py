@@ -651,11 +651,21 @@ def build(
         )
     out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
     out.mkdir(parents=True, exist_ok=True)
-    for stale in out.iterdir():
-        if stale.is_dir():
-            shutil.rmtree(stale)
-        else:
-            stale.unlink()
+
+    def clear_prior_bundle(root: Path) -> None:
+        for name in ("MANIFEST.md", "head.json", "pr-body.md", "pr.diff"):
+            path = root / name
+            if path.is_file():
+                path.unlink()
+        for path in root.glob("pr.diff.*"):
+            if path.is_file():
+                path.unlink()
+        for sub in ("tests", "fixtures", "provenance"):
+            path = root / sub
+            if path.is_dir():
+                shutil.rmtree(path)
+
+    clear_prior_bundle(out)
     written: list[Path] = []
 
     diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))

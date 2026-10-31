@@ -97,6 +97,16 @@ class BundleCase(unittest.TestCase):
             capture_output=True, text=True, env=env)
 
     # --- the four parts -------------------------------------------------
+    def test_reused_out_preserves_unrelated_files(self):
+        self.serve(["src/a.py"], diff_block("src/a.py"))
+        self.out.mkdir(parents=True, exist_ok=True)
+        keeper = self.out / "stale.env"
+        keeper.write_text("TOPSECRET=1\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(keeper.exists())
+        self.assertEqual(keeper.read_text(), "TOPSECRET=1\n")
+
     def test_four_parts_present(self):
         self.serve(["src/a.py", "tests/test_a.py"],
                    diff_block("src/a.py") + diff_block("tests/test_a.py"),
