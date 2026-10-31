@@ -126,6 +126,19 @@ def pgrep_obfuscation_fold(text):
     return text
 
 
+
+def _pgrep_token_is_command(text, pos):
+    before = text[:pos].rstrip()
+    if not before:
+        return True
+    if re.search(r"\b(?:grep|rg)\s*$", before, re.I):
+        return False
+    if re.search(r"(?:&&|\|\|)\s*$", before):
+        return True
+    if re.search(r"(?:^|[;&|()]\s*(?:(?:sudo|env)\s+\S+\s+)*?(?:\S+/)*$)", before):
+        return True
+    return False
+
 def _pgrep_quote_opener_is_executable(text, start):
     before = text[:start].rstrip()
     if re.search(
@@ -251,6 +264,8 @@ def pgrep_full_match(text):
     binary_aliases, script_aliases = _pgrep_var_alias_sets(raw, flag_vars)
     text = _pgrep_prepare_scan_text(text)
     for m in PGREP_WORD.finditer(text):
+        if not _pgrep_token_is_command(text, m.start()):
+            continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:
             continue
