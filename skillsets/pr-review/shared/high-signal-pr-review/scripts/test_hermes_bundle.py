@@ -126,6 +126,8 @@ class BundleCase(unittest.TestCase):
         for path, body in ((keeper, "TOPSECRET=1\n"), (keep_test, "# stay\n"), (keep_fix, "stay\n"), (keep_prov, "stay\n")):
             self.assertTrue(path.exists(), path)
             self.assertEqual(path.read_text(), body)
+        self.assertNotIn("stale.env", r.stdout)
+        self.assertNotIn("keep.py", r.stdout)
 
     def test_four_parts_present(self):
         self.serve(["src/a.py", "tests/test_a.py"],
