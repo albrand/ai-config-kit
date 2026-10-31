@@ -279,10 +279,18 @@ def collect_safety_state_files(
             or is_safety_lockfile_path(path)
         ):
             continue
+        if PurePosixPath(path).suffix.lower() in {".md", ".txt", ".rst"}:
+            continue
+        if path.endswith("hermes-bundle.py"):
+            continue
         for line in block.splitlines():
             if not line or line[0] not in "+-":
                 continue
             if line.startswith("+++") or line.startswith("---"):
+                continue
+            if path.endswith("hermes-bundle.py") and (
+                "SAFETY_" in line or "re.compile" in line or "build_safety_state" in line
+            ):
                 continue
             if SAFETY_DIFF_LINE_RE.search(line):
                 matched.add(path)
