@@ -461,6 +461,206 @@ def _pgrep_skip_xargs_options(text, i):
         i += m.end()
     return i
 
+
+def _pgrep_skip_one_word(text, i, limit):
+    i = _pgrep_skip_space(text, i)
+    if i >= limit:
+        return i
+    if text[i] == '"':
+        j = i + 1
+        while j < limit:
+            if text[j] == "\\" and j + 1 < limit:
+                j += 2
+                continue
+            if text[j] == '"':
+                return j + 1
+            j += 1
+        return limit
+    if text[i] == "'":
+        j = i + 1
+        while j < limit and text[j] != "'":
+            j += 1
+        return j + 1 if j < limit else limit
+    m = re.match(r"[^\s\"';|&]+", text[i:limit])
+    return i + m.end() if m else i + 1
+
+
+def _pgrep_skip_dash_options(text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags):
+    short_with_arg = set(short_with_arg)
+    short_flags = set(short_flags)
+    long_with_arg = set(long_with_arg)
+    long_flags = set(long_flags)
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit or text[i] != "-":
+            break
+        if text.startswith("--", i):
+            m = re.match(r"--([\w-]+)", text[i:limit])
+            if not m:
+                break
+            opt = m.group(1)
+            i += m.end()
+            if opt in long_with_arg:
+                i = _pgrep_skip_one_word(text, i, limit)
+            continue
+        if i + 1 < limit and text[i + 1].isdigit():
+            i = _pgrep_skip_one_word(text, i, limit)
+            continue
+        j = i + 1
+        while j < limit and text[j].isalpha():
+            ch = text[j]
+            j += 1
+            if ch in short_with_arg:
+                i = j
+                i = _pgrep_skip_one_word(text, i, limit)
+                j = i
+                break
+        else:
+            i = j
+    return i
+
+
+def _pgrep_skip_wrapper_consumer(name, text, i, limit):
+    n = name.lower()
+    if n == "sudo":
+        return _pgrep_skip_sudo_prefix(text, i)
+    if n == "env":
+        while True:
+            i = _pgrep_skip_space(text, i)
+            if i >= limit:
+                break
+            if text[i] == "-":
+                nxt = _pgrep_skip_env_token(text, i)
+                if nxt == i or nxt > limit:
+                    break
+                i = nxt
+                continue
+            m = re.match(
+                r"(\w+)=(?:[^\s\"'';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')",
+                text[i:limit],
+            )
+            if m:
+                i += m.end()
+                continue
+            break
+        return i
+    if n == "xargs":
+        return _pgrep_skip_xargs_options(text, i)
+    if n == "timeout":
+        i = _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="sk",
+            short_flags="fv",
+            long_with_arg=("kill-after", "signal"),
+            long_flags=("foreground", "preserve-status", "verbose"),
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "nice":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="n", short_flags="", long_with_arg=(), long_flags=()
+        )
+        return i
+    if n == "ionice":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="cn", short_flags="t", long_with_arg=(), long_flags=()
+        )
+    if n == "stdbuf":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="ioe", short_flags="", long_with_arg=("input", "output", "error"), long_flags=()
+        )
+    if n == "chrt":
+        i = _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="bf",
+            short_flags="",
+            long_with_arg=("pid", "ppid", "clock", "deadline", "sched", "policy"),
+            long_flags=(),
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "taskset":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="cp", short_flags="a", long_with_arg=(), long_flags=()
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "flock":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="n", short_flags="ux", long_with_arg=(), long_flags=()
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "setsid":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="w", short_flags="fc", long_with_arg=(), long_flags=()
+        )
+    if n == "time":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="", short_flags="pv", long_with_arg=(), long_flags=("format", "output", "verbose")
+        )
+    if n == "caffeinate":
+        return _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="dimsutw",
+            short_flags="",
+            long_with_arg=("timeout", "expire", "sleep", "wake", "start", "end"),
+            long_flags=("fail", "assert", "lock", "disable", "enable"),
+        )
+    if n == "doas":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="unL", short_flags="", long_with_arg=(), long_flags=()
+        )
+    if n == "runuser":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="u", short_flags="", long_with_arg=(), long_flags=()
+        )
+        i = _pgrep_skip_space(text, i)
+        if i + 1 < limit and text[i : i + 2] == "--":
+            i += 2
+        return i
+    if n == "watch":
+        return _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="ntd",
+            short_flags="bg",
+            long_with_arg=("interval", "differences", "errexit", "color", "exec"),
+            long_flags=("beep", "color", "exact", "no-title", "precise", "show", "differences"),
+        )
+    return i
+
+
+_PGREP_WRAPPER_WORDS = (
+    "sudo",
+    "env",
+    "command",
+    "exec",
+    "nohup",
+    "time",
+    "nice",
+    "xargs",
+    "timeout",
+    "ionice",
+    "stdbuf",
+    "chrt",
+    "taskset",
+    "flock",
+    "setsid",
+    "caffeinate",
+    "doas",
+    "runuser",
+    "watch",
+)
+_PGREP_WRAPPER_RE = re.compile(
+    r"(?:%s)\b" % "|".join(re.escape(w) for w in _PGREP_WRAPPER_WORDS),
+    re.I,
+)
+
+
 def _pgrep_skip_assignments_and_wrappers(text, i, limit):
     while i < limit:
         i = _pgrep_skip_space(text, i)
@@ -470,34 +670,12 @@ def _pgrep_skip_assignments_and_wrappers(text, i, limit):
         if m:
             i += m.end()
             continue
-        wm = re.match(r"(sudo|env|command|exec|nohup|time|nice|xargs)\b", text[i:limit], re.I)
+        wm = _PGREP_WRAPPER_RE.match(text[i:limit])
         if not wm:
             break
-        w = wm.group(1).lower()
+        w = wm.group(0)
         i += wm.end()
-        if w == "sudo":
-            i = _pgrep_skip_sudo_prefix(text, i)
-        elif w == "env":
-            while True:
-                i = _pgrep_skip_space(text, i)
-                if i >= limit:
-                    break
-                if text[i] == "-":
-                    nxt = _pgrep_skip_env_token(text, i)
-                    if nxt == i or nxt > limit:
-                        break
-                    i = nxt
-                    continue
-                m = re.match(
-                    r"(\w+)=(?:[^\s\"'';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')",
-                    text[i:limit],
-                )
-                if m:
-                    i += m.end()
-                    continue
-                break
-        elif w == "xargs":
-            i = _pgrep_skip_xargs_options(text, i)
+        i = _pgrep_skip_wrapper_consumer(w, text, i, limit)
     return i
 
 def _pgrep_first_word_span(text, cmd_start, cmd_end):
@@ -680,6 +858,8 @@ def _pgrep_quote_opener_is_executable(text, start):
     if re.search(r"\bssh\b(?:\s+(?:-\S+|\S+))*\s+\S+\s*$", before):
         return True
     if re.search(r"\bxargs\b(?:\s+\S+)*\s+$", before):
+        return True
+    if re.search(r"\bwatch\b(?:\s+\S+)*$", before):
         return True
     return False
 
