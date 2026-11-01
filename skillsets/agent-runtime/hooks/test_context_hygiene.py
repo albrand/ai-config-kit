@@ -173,6 +173,17 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_data_heredoc_backslash_lines_stay_fast_at_depth_20000(self):
+        import time
+
+        n = 20000
+        cmd = "cat <<'EOF'\n" + "x \\n" * n + "EOF\n"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 8.0)
+        self.assertFalse(v["block"], cmd[:48])
+
     def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
         data_hd = "cat > f.md <<'EOF'\nline \\\nno pgrep -f here\nEOF"
         allowed = (

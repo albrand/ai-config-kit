@@ -274,15 +274,28 @@ def _pgrep_data_heredoc_body_spans(text):
     return [(a, b) for a, b in spans if (a, b) not in executable_spans]
 
 
-def _pgrep_pos_in_data_heredoc_body(text, pos):
-    for body_start, body_end in _pgrep_data_heredoc_body_spans(text):
-        if body_start <= pos < body_end:
-            return True
-    return False
+def _pgrep_pos_in_sorted_spans(pos, spans, hint=0):
+    n = len(spans)
+    while hint < n and spans[hint][1] <= pos:
+        hint += 1
+    if hint < n and spans[hint][0] <= pos < spans[hint][1]:
+        return True, hint
+    return False, hint
+
+
+def _pgrep_pos_in_data_heredoc_body(text, pos, data_spans=None):
+    spans = data_spans if data_spans is not None else _pgrep_data_heredoc_body_spans(text)
+    in_span, _ = _pgrep_pos_in_sorted_spans(pos, spans, 0)
+    return in_span
+
 
 def pgrep_obfuscation_fold(text):
+    data_spans = _pgrep_data_heredoc_body_spans(text)
+    hint = [0]
+
     def _fold_backslash_nl(m):
-        if _pgrep_pos_in_data_heredoc_body(text, m.start()):
+        in_span, hint[0] = _pgrep_pos_in_sorted_spans(m.start(), data_spans, hint[0])
+        if in_span:
             return m.group(0)
         return ""
 
@@ -789,9 +802,12 @@ def _pgrep_earliest_shell_fault(text):
         i += 1
     if hd is not None:
         fault[0] = min(fault[0], hd_start)
+    data_spans = _pgrep_data_heredoc_body_spans(text)
+    span_hint = 0
     for m in re.finditer(r"\\(?:\r?\n|$)", text):
         pos = m.start()
-        if _pgrep_pos_in_data_heredoc_body(text, pos):
+        in_span, span_hint = _pgrep_pos_in_sorted_spans(pos, data_spans, span_hint)
+        if in_span:
             continue
         fault[0] = min(fault[0], pos)
     return fault[0] if fault[0] < n else None
