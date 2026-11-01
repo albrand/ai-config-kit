@@ -287,6 +287,25 @@ class ContextHygiene(unittest.TestCase):
             v["reason"].startswith("[no-pgrep-f]") or v["reason"].startswith("[bb-lifecycle]")
         )
 
+    def test_pgrep_deep_dollar_paren_and_bash_c_nesting_still_blocks_pkill(self):
+        import time
+
+        tail = "; p" + "kill node"
+        for cmd in (
+            "echo " + "$(" * 1000 + "x" + ")" * 1000 + tail,
+            'bash -c "' + "$(" * 1000 + "x" + ")" * 1000 + tail + '"',
+        ):
+            with self.subTest(cmd=cmd[:40]):
+                t0 = time.monotonic()
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                elapsed = time.monotonic() - t0
+                self.assertLess(elapsed, 2.0)
+                self.assertTrue(v["block"])
+                self.assertTrue(
+                    v["reason"].startswith("[no-pgrep-f]")
+                    or v["reason"].startswith("[bb-lifecycle]")
+                )
+
     def test_pgrep_executable_quote_scan_stays_linear_and_keeps_long_ssh_blocks(self):
         import time
 

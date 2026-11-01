@@ -1010,7 +1010,12 @@ def _pgrep_each_backtick(text):
         i += 1
 
 
-def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None):
+_PGREP_FRAGMENT_MAX_DEPTH = 64
+
+
+def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _depth=0):
+    if _depth > _PGREP_FRAGMENT_MAX_DEPTH:
+        return False
     if _ctx is None:
         raw = text if raw_for_bindings is None else raw_for_bindings
         _ctx = _PgrepScanContext(raw)
@@ -1030,22 +1035,23 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None):
     for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
         if is_exec:
             inner = text[start + 1 : end - 1]
-            if _pgrep_pgrep_match_in_fragment(inner):
+            if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
                 return True
     for inner in _pgrep_each_dollar_paren(text):
         if not re.search(r"pgrep", inner, re.I):
             continue
-        if _pgrep_pgrep_match_in_fragment(inner):
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for inner in _pgrep_each_backtick(text):
         if not re.search(r"pgrep", inner, re.I):
             continue
-        if _pgrep_pgrep_match_in_fragment(inner):
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
-        if executable and _pgrep_pgrep_match_in_fragment(text[body_start:body_end]):
+        if executable and _pgrep_pgrep_match_in_fragment(text[body_start:body_end], _depth=_depth + 1):
             return True
     return False
+
 
 _PGREP_SHELL_WORDS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
 _PGREP_DASH_C_OPENERS = frozenset(("su", "runuser", "script"))
@@ -1339,12 +1345,17 @@ def _pgrep_process_command_substitutions(text, inner_fn):
     return "".join(parts)
 
 
+_PGREP_SUBST_EXPAND_MAX = 64
+
+
 def _pgrep_prepare_scan_text(text):
-    def normalize(chunk):
-        chunk = pgrep_obfuscation_fold(chunk)
-        chunk = _pgrep_process_command_substitutions(chunk, normalize)
-        return _pgrep_blank_data_quotes(chunk)
-    return normalize(text)
+    chunk = pgrep_obfuscation_fold(text)
+    for _ in range(_PGREP_SUBST_EXPAND_MAX):
+        nxt = _pgrep_process_command_substitutions(chunk, pgrep_obfuscation_fold)
+        if nxt == chunk:
+            break
+        chunk = nxt
+    return _pgrep_blank_data_quotes(chunk)
 
 
 _PGREP_ASSIGNMENT = re.compile(
@@ -1568,6 +1579,8 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text):
+    if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
+        return False
     ctx = _PgrepScanContext(text)
     if _pgrep_pgrep_match_in_fragment(ctx.scan, _ctx=ctx):
         return True
@@ -1648,8 +1661,11 @@ def bb_lifecycle_guard(raw):
                 text = head
     except Exception:
         pass
-    if pgrep_full_match(text):
-        verdict(True, PGREP_F_DENY)
+    try:
+        if pgrep_full_match(text):
+            verdict(True, PGREP_F_DENY)
+    except Exception:
+        pass
     if any(rx.search(text) for rx in ELECTRON_CACHE):
         verdict(True,
             "[electron-cache] ~/Library/Caches/electron and electron-builder hold the Electron "
