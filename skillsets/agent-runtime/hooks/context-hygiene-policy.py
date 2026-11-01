@@ -362,57 +362,79 @@ def _pgrep_read_backtick(text, i, sq, sq_idx=0):
     return None, n, sq_idx
 
 
-def _pgrep_hash_starts_comment(text, i):
-    if i >= len(text) or text[i] != "#":
-        return False
-    if i > 0 and text[i - 1] == "\\":
-        return False
-    if i > 0 and text[i - 1] == "$":
-        return False
-    if i >= 2 and text[i - 1] == "{" and text[i - 2] == "$":
-        return False
-    if i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_"):
-        return False
-    if i == 0:
-        return True
-    return text[i - 1] in " \t\n;&|()"
-
-
-def _pgrep_mask_shell_comments(text):
-    if "#" not in text:
-        return text
-    sq = _pgrep_single_quote_spans(text)
-    out = []
-    i, n, dq, sq_idx = 0, len(text), False, 0
+def _pgrep_heredoc_body_spans(text):
+    spans = []
+    n = len(text)
+    i = 0
+    sq = dq = False
     hd = None
-    cmd_start = 0
+    body_start = None
     while i < n:
         if hd is not None:
             delim, strip_tabs, phase = hd
             if phase == "op":
-                out.append(text[i])
                 if text[i] == "\n":
                     hd = (delim, strip_tabs, "body")
+                    body_start = i + 1
                 i += 1
                 continue
             line_term = text.find("\n", i)
             if line_term == -1:
                 line_term = n
-            out.append(text[i:line_term])
             line = text[i:line_term]
             if line.endswith("\r"):
                 line = line[:-1]
             cmp_line = line.lstrip("\t") if strip_tabs else line
             if cmp_line == delim:
+                if body_start is not None and body_start < i:
+                    spans.append((body_start, i))
                 hd = None
+                body_start = None
                 i = line_term
                 if i < n and text[i] == "\n":
-                    out.append(text[i])
                     i += 1
-                    cmd_start = i
                 continue
             i = line_term + 1 if line_term < n else n
             continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                _, strip_tabs, j = parsed
+                hd = (parsed[0], strip_tabs, "op")
+                i = j
+                continue
+        i += 1
+    return spans
+
+
+def _pgrep_mask_shell_comments_outside_heredoc(text):
+    if "#" not in text:
+        return text
+    sq = _pgrep_single_quote_spans(text)
+    out = []
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             out.append(text[i:skip])
@@ -464,17 +486,83 @@ def _pgrep_mask_shell_comments(text):
             out.append("`")
             i = j
             continue
-        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
-            parsed = _pgrep_parse_heredoc_delim(text, i)
-            if parsed:
-                delim, strip_tabs, j = parsed
-                out.append(text[i:j])
-                hd = (delim, strip_tabs, "op")
-                i = j
-                continue
         out.append(text[i])
         i += 1
     return "".join(out)
+
+
+def _pgrep_hash_starts_comment(text, i):
+    if i >= len(text) or text[i] != "#":
+        return False
+    if i > 0 and text[i - 1] == "\\":
+        return False
+    if i > 0 and text[i - 1] == "$":
+        return False
+    if i >= 2 and text[i - 1] == "{" and text[i - 2] == "$":
+        return False
+    if i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_"):
+        return False
+    if i == 0:
+        return True
+    return text[i - 1] in " \t\n;&|()"
+
+
+def _pgrep_mask_shell_comments(text):
+    if "#" not in text:
+        return text
+    spans = _pgrep_heredoc_body_spans(text)
+    if not spans:
+        return _pgrep_mask_shell_comments_outside_heredoc(text)
+    out = []
+    i, n, si = 0, len(text), 0
+    while i < n:
+        while si < len(spans) and i >= spans[si][1]:
+            si += 1
+        if si < len(spans) and spans[si][0] <= i < spans[si][1]:
+            end = spans[si][1]
+            out.append(text[i:end])
+            i = end
+            continue
+        j = spans[si][0] if si < len(spans) and i < spans[si][0] else n
+        chunk = text[i:j]
+        if chunk:
+            out.append(_pgrep_mask_shell_comments_outside_heredoc(chunk))
+        i = j
+    return "".join(out)
+
+
+def _pgrep_tail_after_first_heredoc(text):
+    i = text.find("<<")
+    if i == -1:
+        return ""
+    if i > 0 and text[i - 1] not in " \t\n;&|(":
+        return ""
+    parsed = _pgrep_parse_heredoc_delim(text, i)
+    if not parsed:
+        return ""
+    delim, strip_tabs, j = parsed
+    n = len(text)
+    k = j
+    while k < n and text[k] != "\n":
+        k += 1
+    if k >= n:
+        return ""
+    k += 1
+    while k < n:
+        line_term = text.find("\n", k)
+        if line_term == -1:
+            line_term = n
+        line = text[k:line_term]
+        if line.endswith("\r"):
+            line = line[:-1]
+        cmp_line = line.lstrip("\t") if strip_tabs else line
+        if cmp_line == delim:
+            k = line_term
+            if k < n and text[k] == "\n":
+                k += 1
+            return text[k:]
+        k = line_term + 1 if line_term < n else n
+    return ""
 
 
 def _pgrep_parse_heredoc_delim(text, i):
@@ -1985,7 +2073,8 @@ def bb_lifecycle_guard(raw):
         if isinstance(cmd, str) and "<<" in cmd:
             head = cmd.split("<<", 1)[0]
             if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
-                text = head
+                tail = _pgrep_tail_after_first_heredoc(cmd)
+                text = head + ("\n" + tail if tail else "")
     except Exception:
         pass
     try:
