@@ -662,10 +662,11 @@ class ContextHygiene(unittest.TestCase):
         blocked_interp = (
             f"printf 'a {sq}b{sq}\n'; pgrep -f x",
             "echo ''\"\"\"; pgrep -f x",
-            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
         )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
+            "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
             "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",

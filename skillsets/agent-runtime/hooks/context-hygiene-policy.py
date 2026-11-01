@@ -2035,8 +2035,6 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
             return True
     for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(raw):
         masked_body = _pgrep_mask_shell_comments(text[body_start:body_end])
-        if stdin_prog and _pgrep_pgrep_match_interpreter_stdin_shell_out(masked_body):
-            return True
         if executable:
             if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
                 return True
@@ -2405,19 +2403,6 @@ def _pgrep_blank_nonexecutable_heredoc_bodies(text):
     return "".join(chars)
 
 
-
-
-def _pgrep_pgrep_match_interpreter_stdin_shell_out(text):
-    if not re.search(r"\bos\.system\s*\(", text):
-        return False
-    folded = pgrep_obfuscation_fold(text)
-    for m in PGREP_WORD.finditer(folded):
-        seg = re.match(r"[^\n;&|]*", folded[m.end() :])
-        if not seg:
-            continue
-        if pgrep_segment_has_full_flag(seg.group(0)):
-            return True
-    return False
 
 
 def _pgrep_pgrep_match_shell_script_lines(text):
