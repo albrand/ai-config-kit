@@ -293,6 +293,47 @@ def _pgrep_backtick_data_heredoc_body_spans(text):
         if not executable
     ]
 
+
+
+def _pgrep_interpreter_stdin_heredoc_body_spans(text):
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
+        if stdin_prog and not executable
+    ]
+
+
+def _pgrep_outer_scan_skip_heredoc_body_spans(text):
+    data = _pgrep_nonexecutable_heredoc_body_spans(text)
+    interp = _pgrep_interpreter_stdin_heredoc_body_spans(text)
+    if not data:
+        return interp
+    if not interp:
+        return data
+    merged = data + interp
+    merged.sort()
+    return merged
+
+
+def _pgrep_pgrep_match_interpreter_stdin_body(body):
+    masked = _pgrep_mask_shell_comments(body)
+    if not PGREP_WORD.search(pgrep_obfuscation_fold(masked)):
+        return False
+    chunk = _pgrep_prepare_scan_text(masked)
+    for inner in _pgrep_each_dollar_paren(chunk):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+    for inner in _pgrep_each_backtick(chunk):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+    return False
+
 def _pgrep_pos_in_nonexecutable_heredoc_body(text, pos, spans=None, hint=0):
     if spans is None:
         spans = _pgrep_nonexecutable_heredoc_body_spans(text)
@@ -1957,16 +1998,16 @@ def _pgrep_position_is_invocation(text, pos):
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
-    ne_hd = _pgrep_nonexecutable_heredoc_body_spans(text)
-    ne_hint = [0]
+    skip_hd = _pgrep_outer_scan_skip_heredoc_body_spans(text)
+    skip_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             i = skip
             continue
-        in_ne_hd, ne_hint[0] = _pgrep_pos_in_sorted_spans(i, ne_hd, ne_hint[0])
-        if in_ne_hd:
+        in_skip, skip_hint[0] = _pgrep_pos_in_sorted_spans(i, skip_hd, skip_hint[0])
+        if in_skip:
             i += 1
             continue
         if dq:
@@ -2087,11 +2128,15 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(raw):
-        masked_body = _pgrep_mask_shell_comments(raw[body_start:body_end])
+        body = raw[body_start:body_end]
         if executable:
+            masked_body = _pgrep_mask_shell_comments(body)
             if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
                 return True
             if _pgrep_pgrep_match_shell_script_lines(masked_body):
+                return True
+        elif stdin_prog:
+            if _pgrep_pgrep_match_interpreter_stdin_body(body):
                 return True
     return False
 

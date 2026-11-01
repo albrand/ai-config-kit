@@ -675,6 +675,17 @@ pgrep -f bb',
         self.assertTrue(v["block"], cmd)
         self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_interpreter_stdin_heredoc_comment_and_lone_quote_allowed(self):
+        allowed = (
+            "python <<''\n#$(pgrep-f \n",
+            "python <<''\n'$(pgrep-f \n",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd[:40]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_pgrep_r10_backslash_fold_and_data_heredoc(self):
         allowed_a = (
             'echo a \\\nno pgrep -f',
