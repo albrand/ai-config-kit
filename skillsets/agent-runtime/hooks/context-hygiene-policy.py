@@ -274,6 +274,21 @@ def _pgrep_data_heredoc_body_spans(text):
     return [(a, b) for a, b in spans if (a, b) not in executable_spans]
 
 
+def _pgrep_nonexecutable_heredoc_body_spans(text):
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, _stdin_prog in _pgrep_iter_heredoc_bodies(text)
+        if not executable
+    ]
+
+
+def _pgrep_pos_in_nonexecutable_heredoc_body(text, pos, spans=None, hint=0):
+    if spans is None:
+        spans = _pgrep_nonexecutable_heredoc_body_spans(text)
+    in_span, _ = _pgrep_pos_in_sorted_spans(pos, spans, hint)
+    return in_span
+
+
 def _pgrep_pos_in_sorted_spans(pos, spans, hint=0):
     n = len(spans)
     while hint < n and spans[hint][1] <= pos:
@@ -854,35 +869,8 @@ def _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
         return True
     if _pgrep_heredoc_interpreter_stdin_executable(shell, cmd_start, fault):
         return True
-    if parsed and parsed[0]:
-        delim, strip_tabs, _ = parsed
-        span = _pgrep_first_word_span(shell, cmd_start, fault)
-        if span:
-            base = (
-                shell[span[0] : span[1]]
-                .strip()
-                .strip(chr(34))
-                .strip(chr(39))
-                .rsplit("/", 1)[-1]
-                .lower()
-            )
-            if base in ("cat", "tee"):
-                body_start = line_end + 1 if line_end < len(shell) else len(shell)
-                k = body_start
-                while k < len(shell):
-                    line_term = shell.find("\n", k)
-                    if line_term == -1:
-                        line_term = len(shell)
-                    line = shell[k:line_term]
-                    if line.endswith("\r"):
-                        line = line[:-1]
-                    cmp_line = line.lstrip("\t") if strip_tabs else line
-                    if cmp_line == delim:
-                        break
-                    if cmp_line.startswith(delim) and cmp_line != delim:
-                        return True
-                    k = line_term + 1 if line_term < len(shell) else len(shell)
-    return False
+    return True
+
 
 
 
@@ -920,14 +908,7 @@ def _pgrep_fail_closed_after_shell_fault(text, cmd=None):
     if bash_err is True:
         tail = shell
     elif bash_err is False:
-        fault = _pgrep_earliest_shell_fault(shell, quote_fault=False)
-        if fault is None:
-            return False
-        if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
-            return False
-        if _pgrep_pos_in_data_heredoc_body(shell, fault):
-            return False
-        tail = shell[fault:]
+        return False
     else:
         fault = _pgrep_earliest_shell_fault(shell, quote_fault=True)
         if fault is None:
@@ -1965,11 +1946,17 @@ def _pgrep_position_is_invocation(text, pos):
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
+    ne_hd = _pgrep_nonexecutable_heredoc_body_spans(text)
+    ne_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             i = skip
+            continue
+        in_ne_hd, ne_hint[0] = _pgrep_pos_in_sorted_spans(i, ne_hd, ne_hint[0])
+        if in_ne_hd:
+            i += 1
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -2001,11 +1988,17 @@ def _pgrep_each_dollar_paren(text):
 
 def _pgrep_each_backtick(text):
     sq = _pgrep_single_quote_spans(text)
+    ne_hd = _pgrep_nonexecutable_heredoc_body_spans(text)
+    ne_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             i = skip
+            continue
+        in_ne_hd, ne_hint[0] = _pgrep_pos_in_sorted_spans(i, ne_hd, ne_hint[0])
+        if in_ne_hd:
+            i += 1
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -2083,7 +2076,7 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(raw):
-        masked_body = _pgrep_mask_shell_comments(text[body_start:body_end])
+        masked_body = _pgrep_mask_shell_comments(raw[body_start:body_end])
         if executable:
             if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
                 return True

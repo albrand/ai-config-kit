@@ -185,14 +185,16 @@ class ContextHygiene(unittest.TestCase):
         self.assertFalse(v["block"], cmd[:48])
 
     def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
-        data_hd = "cat > f.md <<'EOF'\nline \\\nno pgrep -f here\nEOF"
+        # echo x + backslash-newline + pgrep: joined echo args (main parity).
+        data_hd = "cat > f.md <<'EOF'\nline \\\\\nno pgrep -f here\nEOF"
         allowed = (
             data_hd,
             data_hd + "\necho ok",
+            'echo x \
+pgrep -f bb',
         )
         blocked = (
-            "bash <<'EOF'\nline \\\npgrep -f x\nEOF",
-            "echo x \\\npgrep -f bb",
+            "bash <<'EOF'\nline \\\\\npgrep -f x\nEOF",
         )
         for cmd in allowed:
             with self.subTest(cmd=cmd):
@@ -627,10 +629,10 @@ class ContextHygiene(unittest.TestCase):
             "echo 'unterminated\npgrep -f bb",
             "echo 'pgrep -f bb\npgrep -f bb",
             'echo "pgrep -f bb\npgrep -f bb',
-            "cat <<EOF\nline\npgrep -f bb",
-            "echo \\\npgrep -f bb",
         )
         allowed = (
+            "cat <<EOF\nline\npgrep -f bb",
+            "echo \\\npgrep -f bb",
             f"ssh host echo {pk} node",
             "ssh host grep -n 'pgrep -f' f",
             f'echo "$(true # note; {pk} node\n)"',
@@ -662,6 +664,34 @@ class ContextHygiene(unittest.TestCase):
         self.assertFalse(
             verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
         )
+
+    def test_pgrep_r10_backslash_fold_and_data_heredoc(self):
+        allowed_a = (
+            'echo a \\\nno pgrep -f',
+            "git commit -m x \\\n  --trailer 'note: no pgrep -f'",
+            "printf '%s\\n' \\\n  'do not use pgrep -f'",
+            "echo ok \\\n  && echo 'never pgrep -f'",
+            'ls \\\npgrep -f x',
+        )
+        allowed_b = (
+            "cat <<'E'\npgrep -f",
+            "<<'E'\npgrep -f",
+            'cat <<E\npgrep -f bb',
+        )
+        blocked = (
+            'sudo \\\n pgrep -f x',
+            'echo a\n\\\npgrep -f x',
+        )
+        for cmd in allowed_a + allowed_b:
+            with self.subTest(allowed=cmd[:55]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:55]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
     def test_pgrep_fail_closed_skips_apostrophe_in_shell_comments(self):
         allowed = (
