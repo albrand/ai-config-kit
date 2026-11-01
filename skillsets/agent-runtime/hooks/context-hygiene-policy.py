@@ -481,6 +481,8 @@ def _pgrep_heredoc_body_spans(text):
                 i = j
                 continue
         i += 1
+    if hd is not None and body_start is not None and body_start < n:
+        spans.append((body_start, n))
     return spans
 
 
@@ -709,6 +711,10 @@ def _pgrep_quote_fault_in_segment(text, base, fault):
                 sq = False
             i += 1
             continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            nl = text.find("\n", i)
+            i = n if nl == -1 else nl + 1
+            continue
         if text[i] == "'":
             sq = True
             sq_start = base + i
@@ -729,20 +735,21 @@ def _pgrep_quote_fault_in_segment(text, base, fault):
         fault[0] = min(fault[0], sq_start)
 
 
-def _pgrep_earliest_shell_fault(text):
+def _pgrep_earliest_shell_fault(text, quote_fault=True):
     n = len(text)
     fault = [n]
     spans = _pgrep_heredoc_body_spans(text)
-    if not spans:
-        _pgrep_quote_fault_in_segment(text, 0, fault)
-    else:
-        pos = 0
-        for body_start, body_end in spans:
-            if pos < body_start:
-                _pgrep_quote_fault_in_segment(text[pos:body_start], pos, fault)
-            pos = body_end
-        if pos < n:
-            _pgrep_quote_fault_in_segment(text[pos:], pos, fault)
+    if quote_fault:
+        if not spans:
+            _pgrep_quote_fault_in_segment(text, 0, fault)
+        else:
+            pos = 0
+            for body_start, body_end in spans:
+                if pos < body_start:
+                    _pgrep_quote_fault_in_segment(text[pos:body_start], pos, fault)
+                pos = body_end
+            if pos < n:
+                _pgrep_quote_fault_in_segment(text[pos:], pos, fault)
     hd = None
     hd_start = 0
     i = 0
@@ -769,6 +776,10 @@ def _pgrep_earliest_shell_fault(text):
                     i += 1
                 continue
             i = line_term + 1 if line_term < n else n
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            nl = text.find("\n", i)
+            i = n if nl == -1 else nl + 1
             continue
         if sq:
             if text[i] == "'":
@@ -809,6 +820,10 @@ def _pgrep_earliest_shell_fault(text):
         in_span, span_hint = _pgrep_pos_in_sorted_spans(pos, data_spans, span_hint)
         if in_span:
             continue
+        line_start = text.rfind("\n", 0, pos) + 1
+        hash_at = text.find("#", line_start, pos)
+        if hash_at != -1 and _pgrep_hash_starts_comment(text, hash_at):
+            continue
         fault[0] = min(fault[0], pos)
     return fault[0] if fault[0] < n else None
 
@@ -839,12 +854,23 @@ def _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
         return True
     if _pgrep_heredoc_interpreter_stdin_executable(shell, cmd_start, fault):
         return True
+    span = _pgrep_first_word_span(shell, cmd_start, fault)
+    if span:
+        word = shell[span[0] : span[1]].strip().strip(chr(34)).strip(chr(39))
+        if word.rsplit("/", 1)[-1].lower() in ("cat", "tee"):
+            return True
     return False
 
 
 def _pgrep_bash_n_syntax_error(cmd):
     import subprocess
 
+    cache = getattr(_pgrep_bash_n_syntax_error, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_bash_n_syntax_error._cache = cache
+    if cmd in cache:
+        return cache[cmd]
     try:
         r = subprocess.run(
             ["bash", "-n"],
@@ -853,41 +879,40 @@ def _pgrep_bash_n_syntax_error(cmd):
             text=True,
             timeout=1,
         )
-        return r.returncode != 0
+        out = r.returncode != 0
     except UnicodeEncodeError:
-        return True
+        out = True
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
+        out = None
+    cache[cmd] = out
+    return out
 
 
 def _pgrep_fail_closed_after_shell_fault(text, cmd=None):
-    tail = None
     shell = cmd if isinstance(cmd, str) and cmd.strip() else text
-    if isinstance(cmd, str) and cmd.strip():
-        bash_err = _pgrep_bash_n_syntax_error(cmd)
-        if bash_err is True:
-            tail = cmd
-        elif bash_err is False:
-            fault = _pgrep_earliest_shell_fault(shell)
-            if fault is None:
-                return False
-            if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
-                return False
-            tail = shell[fault:]
-        else:
-            fault = _pgrep_earliest_shell_fault(text)
-            if fault is None:
-                return False
-            if _pgrep_fail_closed_skip_unterminated_data_heredoc(text, fault):
-                return False
-            tail = text[fault:]
-    else:
-        fault = _pgrep_earliest_shell_fault(text)
+    if not isinstance(shell, str) or not shell.strip():
+        return False
+    bash_err = _pgrep_bash_n_syntax_error(shell)
+    if bash_err is True:
+        tail = shell
+    elif bash_err is False:
+        fault = _pgrep_earliest_shell_fault(shell, quote_fault=False)
         if fault is None:
             return False
-        if _pgrep_fail_closed_skip_unterminated_data_heredoc(text, fault):
+        if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
             return False
-        tail = text[fault:]
+        if _pgrep_pos_in_data_heredoc_body(shell, fault):
+            return False
+        tail = shell[fault:]
+    else:
+        fault = _pgrep_earliest_shell_fault(shell, quote_fault=True)
+        if fault is None:
+            return False
+        if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
+            return False
+        if _pgrep_pos_in_data_heredoc_body(shell, fault):
+            return False
+        tail = shell[fault:]
     if _pgrep_lifecycle_pkill_match(tail):
         return False
     try:

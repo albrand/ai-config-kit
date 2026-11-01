@@ -627,7 +627,6 @@ class ContextHygiene(unittest.TestCase):
             "echo 'unterminated\npgrep -f bb",
             "echo 'pgrep -f bb\npgrep -f bb",
             'echo "pgrep -f bb\npgrep -f bb',
-            "cat <<EOF\nline\npgrep -f bb",
             "echo \\\npgrep -f bb",
         )
         allowed = (
@@ -636,6 +635,7 @@ class ContextHygiene(unittest.TestCase):
             f'echo "$(true # note; {pk} node\n)"',
             f"x=$(true # c; {pk} node\n)",
             "cat > /tmp/r.md <<'EOF'\nIt's done; never use pgrep -f here.\nEOF\necho ok",
+            "cat <<EOF\nline\npgrep -f bb",
             f"bb thread tell t --message-file - <<'EOF'\nDon't run {pk} node.\nEOF",
             "printf '%s\\n' \"note: don't use pgrep -f (it's banned)\"",
             "sed -e 's/a/b/' -e 's/single-quote cases/x/' f; echo \"avoid pgrep -f\"",
@@ -656,6 +656,31 @@ class ContextHygiene(unittest.TestCase):
 
 
 
+
+    def test_pgrep_unterminated_data_heredoc_delimiter_suffix_allows_body(self):
+        cmd = "cat <<EOF\nline \\nno pgrep -f\nEOF; echo ok"
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_pgrep_fail_closed_skips_apostrophe_in_shell_comments(self):
+        allowed = (
+            "echo ok # it's a note about pgrep -f",
+            "x=1 # can't stop; pgrep -f y",
+        )
+        blocked = (
+            "echo ok # it's a note\npgrep -f x",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
     def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
         sq = '\'"\'"\''
