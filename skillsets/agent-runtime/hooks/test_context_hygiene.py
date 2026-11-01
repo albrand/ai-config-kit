@@ -665,6 +665,16 @@ pgrep -f bb',
             verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
         )
 
+    def test_pgrep_interpreter_stdin_heredoc_scans_dollar_paren(self):
+        cmd = (
+            "python3 -I - <<'EOF'\n"
+            '"w=$(ssh h \'cat f; pgrep -fa x >w && w R\')",\n'
+            "EOF"
+        )
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v["block"], cmd)
+        self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_r10_backslash_fold_and_data_heredoc(self):
         allowed_a = (
             'echo a \\\nno pgrep -f',

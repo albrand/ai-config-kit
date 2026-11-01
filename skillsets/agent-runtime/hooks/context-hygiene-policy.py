@@ -275,12 +275,23 @@ def _pgrep_data_heredoc_body_spans(text):
 
 
 def _pgrep_nonexecutable_heredoc_body_spans(text):
+    # Data-only heredoc bodies (cat/tee/…): not shell stdin and not interpreter stdin.
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
+        if not executable and not stdin_prog
+    ]
+
+
+
+
+def _pgrep_backtick_data_heredoc_body_spans(text):
+    # Non-shell heredoc bodies: skip backticks in cat/python/node stdin text, not bash << scripts.
     return [
         (body_start, body_end)
         for body_start, body_end, executable, _stdin_prog in _pgrep_iter_heredoc_bodies(text)
         if not executable
     ]
-
 
 def _pgrep_pos_in_nonexecutable_heredoc_body(text, pos, spans=None, hint=0):
     if spans is None:
@@ -1988,7 +1999,7 @@ def _pgrep_each_dollar_paren(text):
 
 def _pgrep_each_backtick(text):
     sq = _pgrep_single_quote_spans(text)
-    ne_hd = _pgrep_nonexecutable_heredoc_body_spans(text)
+    ne_hd = _pgrep_backtick_data_heredoc_body_spans(text)
     ne_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
