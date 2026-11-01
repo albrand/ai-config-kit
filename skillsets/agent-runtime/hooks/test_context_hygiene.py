@@ -628,15 +628,15 @@ class ContextHygiene(unittest.TestCase):
     def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
         sq = '\'"\'"\''
         blocked_interp = (
-            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
-            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
-            "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             f"printf 'a {sq}b{sq}\n'; pgrep -f x",
             "echo ''\"\"\"; pgrep -f x",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
         )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             "echo ''\"\"'\\n'\"\"' -f`pgrep'",
             f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
             f"x='it{sq}s -f `pgrep`'; echo \"$x\"",
@@ -661,7 +661,7 @@ class ContextHygiene(unittest.TestCase):
             f"cat > r.md <<'EOF'\nIt didn't work; don't use {pk}.\nEOF",
             "cat <<EOF\nwe can't use pgrep -f here\nEOF",
             f"printf 'a {sq}%s{sq} b: `pgrep -f x` is banned\\n' y",
-            "echo 'it'\''s fine, never pgrep -f'",
+            "echo 'it'\\''s fine, never pgrep -f'",
             'echo "a"\'b\'"c pgrep -f"',
             f"x='don{sq}t'; echo \"$x pgrep -f\"",
         )
