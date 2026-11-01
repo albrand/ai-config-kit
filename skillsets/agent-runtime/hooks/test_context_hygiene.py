@@ -675,6 +675,34 @@ pgrep -f bb',
         self.assertTrue(v["block"], cmd)
         self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_r12_expandable_data_heredoc_substitutions(self):
+        pg = "p" + "grep"
+        pk = "p" + "kill"
+        blocked = (
+            f"cat <<EOF\n$({pg} -f x)\nEOF",
+            f"cat <<EOF\n`{pg} -f x`\nEOF",
+            f"cat > f <<EOF\nnote $({pk} node)\nEOF",
+            f"tee f <<EOF\n`{pk} node`\nEOF",
+            f"cat <<EOF\n$(echo a; {pg} -f x)\nEOF",
+        )
+        allowed = (
+            f"cat <<'EOF'\n$({pg} -f x)\nEOF",
+            f'cat <<"EOF"\n`{pg} -f x`\nEOF',
+            f"cat <<\\EOF\n$({pg} -f x)\nEOF",
+            "cat <<EOF\nnever use pgrep -f here\nEOF",
+            f"cat <<EOF\n\\$({pg} -f x) is escaped\nEOF",
+            f"python3 - <<'EOF'\nprint('$({pg} -f x)')\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_pgrep_interpreter_stdin_heredoc_comment_and_lone_quote_allowed(self):
         allowed = (
             "python <<''\n#$(pgrep-f \n",

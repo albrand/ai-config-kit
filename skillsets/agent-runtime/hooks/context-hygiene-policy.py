@@ -263,34 +263,30 @@ KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
 
 
 def _pgrep_data_heredoc_body_spans(text):
-    spans = _pgrep_heredoc_body_spans(text)
-    if not spans:
-        return []
-    executable_spans = {
+    return [
         (body_start, body_end)
-        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
-        if executable or stdin_prog
-    }
-    return [(a, b) for a, b in spans if (a, b) not in executable_spans]
+        for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and not stdin_prog and literal
+    ]
 
 
 def _pgrep_nonexecutable_heredoc_body_spans(text):
-    # Data-only heredoc bodies (cat/tee/…): not shell stdin and not interpreter stdin.
+    # Literal data heredoc bodies: delimiter quoted; body is not expanded.
     return [
         (body_start, body_end)
-        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
-        if not executable and not stdin_prog
+        for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and not stdin_prog and literal
     ]
 
 
 
 
 def _pgrep_backtick_data_heredoc_body_spans(text):
-    # Non-shell heredoc bodies: skip backticks in cat/python/node stdin text, not bash << scripts.
+    # Literal non-shell heredoc bodies: backticks are data, not command substitutions.
     return [
         (body_start, body_end)
-        for body_start, body_end, executable, _stdin_prog in _pgrep_iter_heredoc_bodies(text)
-        if not executable
+        for body_start, body_end, executable, _stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and literal
     ]
 
 
@@ -298,7 +294,7 @@ def _pgrep_backtick_data_heredoc_body_spans(text):
 def _pgrep_interpreter_stdin_heredoc_body_spans(text):
     return [
         (body_start, body_end)
-        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
+        for body_start, body_end, executable, stdin_prog, _literal in _pgrep_iter_heredoc_bodies(text)
         if stdin_prog and not executable
     ]
 
@@ -319,7 +315,7 @@ def _pgrep_pgrep_match_interpreter_stdin_body(body):
     masked = _pgrep_mask_shell_comments(body)
     if not PGREP_WORD.search(pgrep_obfuscation_fold(masked)):
         return False
-    chunk = _pgrep_prepare_scan_text(masked)
+    chunk = _pgrep_prepare_scan_text(pgrep_obfuscation_fold(masked))
     for inner in _pgrep_each_dollar_paren(chunk):
         if not re.search(r"pgrep", inner, re.I):
             continue
@@ -331,6 +327,33 @@ def _pgrep_pgrep_match_interpreter_stdin_body(body):
             continue
         inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+    return False
+
+
+def _pgrep_match_expandable_data_heredoc_substitutions(text):
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
+        if executable or stdin_prog or literal:
+            continue
+        body = text[body_start:body_end]
+        if _pgrep_pgrep_match_heredoc_body_substitutions(body):
+            return True
+    return False
+
+def _pgrep_pgrep_match_heredoc_body_substitutions(body):
+    masked = _pgrep_mask_shell_comments(body)
+    chunk = _pgrep_prepare_scan_text(pgrep_obfuscation_fold(masked))
+    for inner in _pgrep_each_dollar_paren(chunk):
+        inner = _pgrep_mask_shell_comments(inner)
+        if re.search(r"pgrep", inner, re.I) and _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+        if _pgrep_lifecycle_pkill_match(inner):
+            return True
+    for inner in _pgrep_each_backtick(chunk):
+        inner = _pgrep_mask_shell_comments(inner)
+        if re.search(r"pgrep", inner, re.I) and _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+        if _pgrep_lifecycle_pkill_match(inner):
             return True
     return False
 
@@ -1062,7 +1085,7 @@ def _pgrep_tail_after_first_heredoc(text):
     return ""
 
 
-def _pgrep_parse_heredoc_delim(text, i):
+def _pgrep_parse_heredoc_delim_ex(text, i):
     n = len(text)
     if i + 2 > n or text[i : i + 2] != "<<":
         return None
@@ -1072,19 +1095,30 @@ def _pgrep_parse_heredoc_delim(text, i):
         strip_tabs = True
         j += 1
     if j >= n:
-        return ("", strip_tabs, j)
+        return ("", strip_tabs, j, True)
     if text[j] in "'\"":
         q = text[j]
         k = j + 1
         while k < n and text[k] != q:
             k += 1
         if k >= n:
-            return ("", strip_tabs, n)
-        return (text[j + 1 : k], strip_tabs, k + 1)
+            return ("", strip_tabs, n, True)
+        return (text[j + 1 : k], strip_tabs, k + 1, True)
+    if text[j] == "\\" and j + 1 < n:
+        m = re.match(r"[A-Za-z0-9_]+", text[j + 1 :])
+        if m:
+            return (m.group(0), strip_tabs, j + 1 + m.end(), True)
     m = re.match(r"[A-Za-z0-9_]+", text[j:])
     if not m:
         return None
-    return (m.group(0), strip_tabs, j + m.end())
+    return (m.group(0), strip_tabs, j + m.end(), False)
+
+
+def _pgrep_parse_heredoc_delim(text, i):
+    parsed = _pgrep_parse_heredoc_delim_ex(text, i)
+    if parsed is None:
+        return None
+    return parsed[0], parsed[1], parsed[2]
 
 
 
@@ -1334,11 +1368,11 @@ def _pgrep_iter_heredoc_bodies(text):
             cmd_start = _pgrep_skip_space(text, i)
             continue
         if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
-            parsed = _pgrep_parse_heredoc_delim(text, i)
+            parsed = _pgrep_parse_heredoc_delim_ex(text, i)
             if not parsed:
                 i += 2
                 continue
-            delim, strip_tabs, j = parsed
+            delim, strip_tabs, j, literal = parsed
             line_end = text.find("\n", j)
             op_line_end = line_end if line_end != -1 else n
             stdin_prog = _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, i)
@@ -1349,8 +1383,8 @@ def _pgrep_iter_heredoc_bodies(text):
             if line_end == -1:
                 body_start = n
                 body_end = n
-                if (executable or stdin_prog) and body_start < body_end:
-                    yield body_start, body_end, executable, stdin_prog
+                if body_start < body_end:
+                    yield body_start, body_end, executable, stdin_prog, literal
                 break
             body_start = line_end + 1
             k = body_start
@@ -1364,14 +1398,14 @@ def _pgrep_iter_heredoc_bodies(text):
                 cmp_line = line.lstrip("\t") if strip_tabs else line
                 if cmp_line == delim:
                     body_end = k
-                    if (executable or stdin_prog) and body_start < body_end:
-                        yield body_start, body_end, executable, stdin_prog
+                    if body_start < body_end:
+                        yield body_start, body_end, executable, stdin_prog, literal
                     i = line_term + 1 if line_term < n else n
                     break
                 k = line_term + 1 if line_term < n else n
             else:
-                if (executable or stdin_prog) and body_start < n:
-                    yield body_start, n, executable, stdin_prog
+                if body_start < n:
+                    yield body_start, n, executable, stdin_prog, literal
                 break
             continue
         i += 1
@@ -2127,7 +2161,7 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
-    for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(raw):
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(raw):
         body = raw[body_start:body_end]
         if executable:
             masked_body = _pgrep_mask_shell_comments(body)
@@ -2137,6 +2171,9 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
                 return True
         elif stdin_prog:
             if _pgrep_pgrep_match_interpreter_stdin_body(body):
+                return True
+        elif not literal:
+            if _pgrep_pgrep_match_heredoc_body_substitutions(body):
                 return True
     return False
 
@@ -2483,17 +2520,9 @@ _PGREP_SUBST_EXPAND_MAX = 64
 
 
 def _pgrep_blank_nonexecutable_heredoc_bodies(text):
-    spans = _pgrep_heredoc_body_spans(text)
-    if not spans:
-        return text
-    executable_spans = {
-        (body_start, body_end)
-        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
-        if executable or stdin_prog
-    }
     chars = list(text)
-    for body_start, body_end in spans:
-        if (body_start, body_end) in executable_spans:
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
+        if executable or not literal:
             continue
         for k in range(body_start, body_end):
             if chars[k] != "\n":
@@ -2783,6 +2812,9 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
 
 def pgrep_full_match(text, cmd=None):
     if _pgrep_fail_closed_after_shell_fault(text, cmd=cmd):
+        return True
+    shell = cmd if isinstance(cmd, str) and cmd.strip() else text
+    if _pgrep_match_expandable_data_heredoc_substitutions(shell):
         return True
     if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
         return False
