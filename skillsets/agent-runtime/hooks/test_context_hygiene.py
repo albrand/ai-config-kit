@@ -397,6 +397,11 @@ class ContextHygiene(unittest.TestCase):
             "pgrep -lf node",
             "pgrep -u 1 -f x",
             "pgrep --list-full -f node",
+            "pgrep -d , -f worker",
+            "pgrep -d -f -f worker",
+            "pgrep -f worker",
+            "P=pgrep; $P -d , -f w",
+            "ssh h 'pgrep -d , -f w'",
         )
         allowed = (
             "pgrep --list-full node",
@@ -411,6 +416,21 @@ class ContextHygiene(unittest.TestCase):
             "pgrep --cgroup a node",
             "pgrep -A node",
             "pgrep --ignore-ancestors node",
+            "pgrep -d -f worker",
+            "pgrep --delimiter -f worker",
+            "pgrep -u -f x",
+            "pgrep -g -f x",
+            "pgrep -G -f x",
+            "pgrep -P -f x",
+            "pgrep -s -f x",
+            "pgrep -t -f x",
+            "pgrep -U -f x",
+            "pgrep -F -f x",
+            "pgrep --signal -f x",
+            'pgrep -d "-f" w',
+            "P=pgrep; $P -d -f w",
+            "ssh h 'pgrep -d -f w'",
+            "pgrep -d, worker",
         )
         for cmd in blocked:
             with self.subTest(cmd=cmd):

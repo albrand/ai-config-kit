@@ -93,11 +93,8 @@ BB_LIFECYCLE = [
 ]
 PGREP_FULL_FLAG = re.compile(
     r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
-_PGREP_SHORT_TAKES_ARG = frozenset("dFUGPgstu")
-_PGREP_SEGMENT_FULL_FALLBACK = re.compile(
-    r'(?:^|\s)(?:-f(?:\s|$|=)|--full(?:\s|$|=))'
-)
-_PGREP_LONG_TAKES_ARG = frozenset(
+_PGREP_OPT_SHORT_TAKES_ARG = frozenset("dFUGPgstu")
+_PGREP_OPT_LONG_TAKES_ARG = frozenset(
     {
         "pidfile",
         "signal",
@@ -112,6 +109,7 @@ _PGREP_LONG_TAKES_ARG = frozenset(
         "group",
         "pgroup",
         "delim",
+        "delimiter",
     }
 )
 
@@ -171,7 +169,7 @@ def _pgrep_short_option_token_has_full(bare):
         c = body[i]
         if c == "f":
             return True
-        if c in _PGREP_SHORT_TAKES_ARG:
+        if c in _PGREP_OPT_SHORT_TAKES_ARG:
             return False
         i += 1
     return False
@@ -193,9 +191,16 @@ def _pgrep_segment_option_prefix(segment):
     return segment[: m.start()] if m else segment
 
 
-def _pgrep_segment_argv_has_full_flag(segment):
-    segment = _pgrep_segment_option_prefix(segment)
+def _pgrep_segment_tokenize(segment):
     tokens = list(_pgrep_iter_pgrep_segment_tokens(segment))
+    for tok in tokens:
+        if tok and tok[0] in "'\"":
+            if len(tok) < 2 or tok[0] != tok[-1]:
+                return tokens, False
+    return tokens, True
+
+
+def _pgrep_argv_tokens_has_full_flag(tokens):
     idx = 0
     while idx < len(tokens):
         bare = _pgrep_bare_option_token(tokens[idx])
@@ -205,7 +210,7 @@ def _pgrep_segment_argv_has_full_flag(segment):
             if _pgrep_long_option_token_has_full(bare):
                 return True
             opt = bare[2:].split("=", 1)[0]
-            if opt in _PGREP_LONG_TAKES_ARG and "=" not in bare[2:] and idx + 1 < len(tokens):
+            if opt in _PGREP_OPT_LONG_TAKES_ARG and "=" not in bare[2:] and idx + 1 < len(tokens):
                 idx += 1
             idx += 1
             continue
@@ -213,13 +218,22 @@ def _pgrep_segment_argv_has_full_flag(segment):
             if _pgrep_short_option_token_has_full(bare):
                 return True
             body = bare[1:]
-            if body and body[0] in _PGREP_SHORT_TAKES_ARG and len(body) == 1:
+            if body and body[0] in _PGREP_OPT_SHORT_TAKES_ARG and len(body) == 1:
                 if idx + 1 < len(tokens):
                     idx += 1
             idx += 1
             continue
         idx += 1
     return False
+
+
+def _pgrep_segment_argv_has_full_flag(segment):
+    segment = _pgrep_segment_option_prefix(segment)
+    tokens, ok = _pgrep_segment_tokenize(segment)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
+    rough = re.findall(r"\S+", segment)
+    return _pgrep_argv_tokens_has_full_flag(rough)
 PGREP_F_DENY = (
     "[no-pgrep-f] Hard prohibition: never use pgrep -f or pgrep --full. "
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
@@ -1753,16 +1767,17 @@ def _pgrep_word_span_is_pgrep_command_word(text, s, e):
 def pgrep_segment_has_full_flag(segment):
     segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
     opts = _pgrep_segment_option_prefix(segment)
-    if _pgrep_segment_argv_has_full_flag(opts):
-        return True
-    if _PGREP_SEGMENT_FULL_FALLBACK.search(opts):
-        return True
+    tokens, ok = _pgrep_segment_tokenize(opts)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
     unquoted = re.sub(r"(?:^|\s)'(-f|--full)'(?=\s|$)", r" \1", segment)
     unquoted = re.sub(r'(?:^|\s)"(-f|--full)"(?=\s|$)', r" \1", unquoted)
     uopts = _pgrep_segment_option_prefix(unquoted)
-    if _pgrep_segment_argv_has_full_flag(uopts):
-        return True
-    return bool(_PGREP_SEGMENT_FULL_FALLBACK.search(uopts))
+    tokens, ok = _pgrep_segment_tokenize(uopts)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
+    rough = re.findall(r"\S+", uopts)
+    return _pgrep_argv_tokens_has_full_flag(rough)
 
 def pgrep_segment_uses_flag_var(segment, flag_vars):
     for var in flag_vars:
