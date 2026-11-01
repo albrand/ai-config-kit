@@ -164,6 +164,35 @@ class KeepGoingTests(unittest.TestCase):
             self.assertNudged(self.stop(build("Checked it.\n\nSTATUS: needs-owner"), "keepgoing-stop.py"))
             self.assertNudged(self.stop(build("Checked it.\n\nNEEDS-OWNER:"), "keepgoing-stop.py"))
 
+    def test_non_owner_only_needs_owner_asks_are_nudged(self):
+        asks = (
+            "NEEDS-OWNER: please check the org Actions policy and billing, and restore it",
+            "NEEDS-OWNER: look into why the build fails",
+            "NEEDS-OWNER: review the code",
+            "NEEDS-OWNER: install the package",
+        )
+        for build in (self.claude, self.codex):
+            for ask in asks:
+                result = self.stop(build("Waiting on GitHub.\n\n" + ask), "keepgoing-stop.py")
+                self.assertEqual(result.get("decision"), "block", result)
+                self.assertIn("This NEEDS-OWNER: ask is work you can do", result["reason"])
+
+    def test_owner_only_needs_owner_asks_remain_allowed(self):
+        asks = (
+            "NEEDS-OWNER: approve the force-push to main",
+            "NEEDS-OWNER: sign in to GitHub in the Chrome window I opened",
+            "NEEDS-OWNER: the 6-digit code sent to your phone",
+            "NEEDS-OWNER: approve the bb install (swap) for i38",
+        )
+        for build in (self.claude, self.codex):
+            for ask in asks:
+                self.assertAllowed(self.stop(build("Waiting.\n\n" + ask), "keepgoing-stop.py"))
+
+    def test_named_watched_wait_without_needs_owner_is_allowed(self):
+        text = "Both PRs wait on CI; the watcher reports when it lands."
+        for build in (self.claude, self.codex):
+            self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_needs_owner_menu_is_nudged_once(self):
         menus = (
             "Stopped before building.\n\nNEEDS-OWNER: Alexandre to choose how the backend reaches staging:\n"
@@ -234,9 +263,21 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(stdin, "keepgoing-stop.py"))
             self.assertAllowed(self.stop(stdin))
 
+    def _subprocess_wall(self, argv, stdin=None):
+        started = time.monotonic()
+        proc = subprocess.run(argv, input=stdin, text=True, capture_output=True, env=self.env, cwd=self.tmp.name)
+        elapsed = time.monotonic() - started
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return elapsed
+
     def test_run_is_fast(self):
-        self.stop(self.claude("Done.\n\nI'll run the tests next."), "keepgoing-stop.py")
-        self.assertLess(self.elapsed, 0.2, self.elapsed)
+        stdin = self.claude("Done.\n\nI'll run the tests next.")
+        baseline = self._subprocess_wall(["python3", "-c", "pass"])
+        hook = self._subprocess_wall(
+            ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
+        overhead = hook - baseline
+        # Load can stretch wall time for both runs; extra hook work shows up in the delta (e.g. sleep(0.5)).
+        self.assertLess(overhead, 0.15, f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={overhead:.3f}s")
 
 
 if __name__ == "__main__":
