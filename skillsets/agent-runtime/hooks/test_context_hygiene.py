@@ -510,6 +510,17 @@ class ContextHygiene(unittest.TestCase):
         self.assertTrue(v2["block"])
         self.assertTrue(v2["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_deep_dollar_paren_comment_mask_stays_fast_at_depth_5000(self):
+        import time
+
+        pk = "p" + "kill"
+        cmd = "$(" * 5000 + "echo '#'" + ")" * 5000 + "; " + pk + " node"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 8.0)
+        self.assertTrue(v["block"])
+
     def test_pgrep_heredoc_pipe_env_shell(self):
         cmd = "cat <<E | env sh\npgrep -f x\nE"
         v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})

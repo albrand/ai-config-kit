@@ -431,10 +431,11 @@ def _pgrep_heredoc_body_spans(text):
     return spans
 
 
-_PGREP_MASK_SUBST_PEEL_MAX = 100000
+_PGREP_MASK_SUBST_STACK_MAX = 500000
+_PGREP_EXEC_QUOTE_PENDING_MAX = 128
 
 
-def _pgrep_mask_comments_level_opaque_subst(text):
+def _pgrep_mask_shell_comments_linear_scan(text):
     if "#" not in text:
         return text
     sq = _pgrep_single_quote_spans(text)
@@ -489,65 +490,9 @@ def _pgrep_mask_comments_level_opaque_subst(text):
     return "".join(out)
 
 
-def _pgrep_innermost_subst_mask_once(text):
-    if "$(" not in text and "`" not in text:
-        return text, False
-    sq = _pgrep_single_quote_spans(text)
-    i, n, dq, sq_idx = 0, len(text), False, 0
-    while i < n:
-        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-        if skip is not None:
-            i = skip
-            continue
-        if dq:
-            if text[i] == "\\" and i + 1 < n:
-                i += 2
-                continue
-            if text[i] == '"':
-                dq = False
-                i += 1
-                continue
-            if text[i] == "`":
-                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-                if inner is not None and "$(" not in inner and "`" not in inner:
-                    masked = _pgrep_mask_comments_level_opaque_subst(inner)
-                    return text[: i + 1] + masked + text[j - 1 :], True
-                i = j
-                continue
-            i += 1
-            continue
-        if text[i] == '"':
-            dq = True
-            i += 1
-            continue
-        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
-            if "$(" not in inner and "`" not in inner:
-                masked = _pgrep_mask_comments_level_opaque_subst(inner)
-                return text[: i + 2] + masked + text[j - 1 :], True
-            i = j
-            continue
-        if text[i] == "`":
-            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-            if inner is not None and "$(" not in inner and "`" not in inner:
-                masked = _pgrep_mask_comments_level_opaque_subst(inner)
-                return text[: i + 1] + masked + text[j - 1 :], True
-            i = j
-            continue
-        i += 1
-    return text, False
-
 
 def _pgrep_mask_shell_comments_outside_heredoc(text):
-    if "#" not in text and "$(" not in text and "`" not in text:
-        return text
-    cur = text
-    for _ in range(_PGREP_MASK_SUBST_PEEL_MAX):
-        nxt, changed = _pgrep_innermost_subst_mask_once(cur)
-        if not changed:
-            break
-        cur = nxt
-    return _pgrep_mask_comments_level_opaque_subst(cur)
+    return _pgrep_mask_shell_comments_linear_scan(text)
 
 
 def _pgrep_mask_shell_comments_for_lifecycle(text):
@@ -555,6 +500,15 @@ def _pgrep_mask_shell_comments_for_lifecycle(text):
         return _pgrep_mask_shell_comments(text)
     except Exception:
         return text
+
+
+def _pgrep_mask_shell_comments_safe(text):
+    try:
+        return _pgrep_mask_shell_comments(text)
+    except Exception:
+        return text
+
+
 
 
 
@@ -1730,6 +1684,14 @@ def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
 
 
 def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
+    def _maybe_enqueue(inner, off):
+        if len(pending) >= _PGREP_EXEC_QUOTE_PENDING_MAX:
+            return
+        if ("'" in inner or '"' in inner) and (
+            "pgrep" in inner.lower() or "$(" not in inner
+        ):
+            pending.append((origin + off, inner))
+
     sq = _pgrep_single_quote_spans(chunk)
     i, n, dq, sq_idx = 0, len(chunk), False, 0
     while i < n:
@@ -1747,14 +1709,13 @@ def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
                 continue
             if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
                 inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-                if "'" in inner or '"' in inner:
-                    pending.append((origin + i + 2, inner))
+                _maybe_enqueue(inner, i + 2)
                 i = j
                 continue
             if chunk[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-                if inner is not None and ("'" in inner or '"' in inner):
-                    pending.append((origin + i + 1, inner))
+                if inner is not None:
+                    _maybe_enqueue(inner, i + 1)
                 i = j
                 continue
             i += 1
@@ -1765,14 +1726,13 @@ def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
             continue
         if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
             inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
-            if "'" in inner or '"' in inner:
-                pending.append((origin + i + 2, inner))
+            _maybe_enqueue(inner, i + 2)
             i = j
             continue
         if chunk[i] == "`":
             inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
-            if inner is not None and ("'" in inner or '"' in inner):
-                pending.append((origin + i + 1, inner))
+            if inner is not None:
+                _maybe_enqueue(inner, i + 1)
             i = j
             continue
         if chunk[i] == "\\" and i + 1 < n:
@@ -1787,7 +1747,7 @@ def _pgrep_executable_single_quote_starts(text):
     out = set()
     pending = [(0, text)]
     idx = 0
-    while idx < len(pending):
+    while idx < len(pending) and idx < _PGREP_EXEC_QUOTE_PENDING_MAX:
         origin, chunk = pending[idx]
         idx += 1
         for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(chunk):
@@ -1942,7 +1902,7 @@ _PGREP_SUBST_EXPAND_MAX = 64
 
 def _pgrep_prepare_scan_text(text):
     chunk = pgrep_obfuscation_fold(text)
-    chunk = _pgrep_mask_shell_comments(chunk)
+    chunk = _pgrep_mask_shell_comments_safe(chunk)
     for _ in range(_PGREP_SUBST_EXPAND_MAX):
         nxt = _pgrep_process_command_substitutions(chunk, pgrep_obfuscation_fold)
         if nxt == chunk:
@@ -2160,6 +2120,10 @@ def _pgrep_build_binding_snapshot_arrays(text, cmd_spans):
 
 def _pgrep_word_span_is_pgrep_command_word(text, s, e):
     w = text[s:e]
+    if len(w) > 128:
+        head = w.lstrip()[:48].lower()
+        if head != "pgrep" and not head.endswith("/pgrep") and "/pgrep" not in head:
+            return False
     if w and w[0] not in "'\"":
         wl = w.lower()
         if wl == "pgrep" or wl.endswith("/pgrep"):
