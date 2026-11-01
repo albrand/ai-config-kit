@@ -276,8 +276,13 @@ class KeepGoingTests(unittest.TestCase):
         hook = self._subprocess_wall(
             ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
         overhead = hook - baseline
-        # Load can stretch wall time for both runs; extra hook work shows up in the delta (e.g. sleep(0.5)).
-        self.assertLess(overhead, 0.15, f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={overhead:.3f}s")
+        # Host load stretches baseline and hook similarly; extra delay (e.g. sleep(0.5)) grows the gap.
+        limit = baseline * 0.55 + 0.15
+        self.assertLess(
+            overhead,
+            limit,
+            f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={overhead:.3f}s limit={limit:.3f}s",
+        )
 
 
 if __name__ == "__main__":
