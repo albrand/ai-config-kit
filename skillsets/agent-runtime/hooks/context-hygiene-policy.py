@@ -362,6 +362,121 @@ def _pgrep_read_backtick(text, i, sq, sq_idx=0):
     return None, n, sq_idx
 
 
+def _pgrep_hash_starts_comment(text, i):
+    if i >= len(text) or text[i] != "#":
+        return False
+    if i > 0 and text[i - 1] == "\\":
+        return False
+    if i > 0 and text[i - 1] == "$":
+        return False
+    if i >= 2 and text[i - 1] == "{" and text[i - 2] == "$":
+        return False
+    if i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_"):
+        return False
+    if i == 0:
+        return True
+    return text[i - 1] in " \t\n;&|()"
+
+
+def _pgrep_mask_shell_comments(text):
+    if "#" not in text:
+        return text
+    sq = _pgrep_single_quote_spans(text)
+    out = []
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    hd = None
+    cmd_start = 0
+    while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                out.append(text[i])
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            out.append(text[i:line_term])
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                hd = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    out.append(text[i])
+                    i += 1
+                    cmd_start = i
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            out.append(text[i:skip])
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == '"':
+                out.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                out.append("`")
+                if inner is not None:
+                    out.append(_pgrep_mask_shell_comments(inner))
+                out.append("`")
+                i = j
+                continue
+            out.append(text[i])
+            i += 1
+            continue
+        if text[i] == '"':
+            out.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            out.append("$(")
+            out.append(_pgrep_mask_shell_comments(inner))
+            out.append(")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            out.append("`")
+            if inner is not None:
+                out.append(_pgrep_mask_shell_comments(inner))
+            out.append("`")
+            i = j
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                delim, strip_tabs, j = parsed
+                out.append(text[i:j])
+                hd = (delim, strip_tabs, "op")
+                i = j
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
 def _pgrep_parse_heredoc_delim(text, i):
     n = len(text)
     if i + 2 > n or text[i : i + 2] != "<<":
@@ -1207,21 +1322,25 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
             return True
     for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
         if is_exec:
-            inner = text[start + 1 : end - 1]
+            inner = _pgrep_mask_shell_comments(text[start + 1 : end - 1])
             if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
                 return True
     for inner in _pgrep_each_dollar_paren(text):
         if not re.search(r"pgrep", inner, re.I):
             continue
+        inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for inner in _pgrep_each_backtick(text):
         if not re.search(r"pgrep", inner, re.I):
             continue
+        inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
-        if executable and _pgrep_pgrep_match_in_fragment(text[body_start:body_end], _depth=_depth + 1):
+        if executable and _pgrep_pgrep_match_in_fragment(
+            _pgrep_mask_shell_comments(text[body_start:body_end]), _depth=_depth + 1
+        ):
             return True
     return False
 
@@ -1533,6 +1652,7 @@ _PGREP_SUBST_EXPAND_MAX = 64
 
 def _pgrep_prepare_scan_text(text):
     chunk = pgrep_obfuscation_fold(text)
+    chunk = _pgrep_mask_shell_comments(chunk)
     for _ in range(_PGREP_SUBST_EXPAND_MAX):
         nxt = _pgrep_process_command_substitutions(chunk, pgrep_obfuscation_fold)
         if nxt == chunk:

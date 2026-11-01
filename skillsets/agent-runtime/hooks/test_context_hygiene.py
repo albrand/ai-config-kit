@@ -441,6 +441,34 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
 
+    def test_pgrep_scanner_respects_shell_comments(self):
+        allowed = (
+            "true # note; pgrep -f worker",
+            "ls # pgrep -f",
+            "x=1 # c; pgrep -f x",
+            "bash -c 'true # c; pgrep -f x'",
+            "ssh h 'true # c; pgrep -f x'",
+        )
+        blocked = (
+            "echo '#'; pgrep -f x",
+            'echo "#"; pgrep -f x',
+            "echo a#b; pgrep -f x",
+            "echo ${#x}; pgrep -f x",
+            "echo $#; pgrep -f x",
+            "echo \\#; pgrep -f x",
+            "x=1 # c\npgrep -f x",
+            "true #c\npgrep -f x",
+            "ssh h 'true # c\npgrep -f x'",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
 
 if __name__ == "__main__":
     unittest.main()
