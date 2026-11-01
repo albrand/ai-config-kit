@@ -627,6 +627,7 @@ class ContextHygiene(unittest.TestCase):
             "echo 'unterminated\npgrep -f bb",
             "echo 'pgrep -f bb\npgrep -f bb",
             'echo "pgrep -f bb\npgrep -f bb',
+            "cat <<EOF\nline\npgrep -f bb",
             "echo \\\npgrep -f bb",
         )
         allowed = (
@@ -635,7 +636,6 @@ class ContextHygiene(unittest.TestCase):
             f'echo "$(true # note; {pk} node\n)"',
             f"x=$(true # c; {pk} node\n)",
             "cat > /tmp/r.md <<'EOF'\nIt's done; never use pgrep -f here.\nEOF\necho ok",
-            "cat <<EOF\nline\npgrep -f bb",
             f"bb thread tell t --message-file - <<'EOF'\nDon't run {pk} node.\nEOF",
             "printf '%s\\n' \"note: don't use pgrep -f (it's banned)\"",
             "sed -e 's/a/b/' -e 's/single-quote cases/x/' f; echo \"avoid pgrep -f\"",

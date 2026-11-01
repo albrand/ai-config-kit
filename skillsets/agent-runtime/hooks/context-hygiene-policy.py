@@ -854,12 +854,36 @@ def _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
         return True
     if _pgrep_heredoc_interpreter_stdin_executable(shell, cmd_start, fault):
         return True
-    span = _pgrep_first_word_span(shell, cmd_start, fault)
-    if span:
-        word = shell[span[0] : span[1]].strip().strip(chr(34)).strip(chr(39))
-        if word.rsplit("/", 1)[-1].lower() in ("cat", "tee"):
-            return True
+    if parsed and parsed[0]:
+        delim, strip_tabs, _ = parsed
+        span = _pgrep_first_word_span(shell, cmd_start, fault)
+        if span:
+            base = (
+                shell[span[0] : span[1]]
+                .strip()
+                .strip(chr(34))
+                .strip(chr(39))
+                .rsplit("/", 1)[-1]
+                .lower()
+            )
+            if base in ("cat", "tee"):
+                body_start = line_end + 1 if line_end < len(shell) else len(shell)
+                k = body_start
+                while k < len(shell):
+                    line_term = shell.find("\n", k)
+                    if line_term == -1:
+                        line_term = len(shell)
+                    line = shell[k:line_term]
+                    if line.endswith("\r"):
+                        line = line[:-1]
+                    cmp_line = line.lstrip("\t") if strip_tabs else line
+                    if cmp_line == delim:
+                        break
+                    if cmp_line.startswith(delim) and cmp_line != delim:
+                        return True
+                    k = line_term + 1 if line_term < len(shell) else len(shell)
     return False
+
 
 
 def _pgrep_bash_n_syntax_error(cmd):
