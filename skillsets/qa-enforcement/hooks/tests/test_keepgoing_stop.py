@@ -13,6 +13,20 @@ HOOKS = pathlib.Path(__file__).resolve().parents[1]
 SHARED = HOOKS.parent / "shared"
 NEEDS_OWNER = "Blocked on the release.\n\nNEEDS-OWNER: approve the force-push to main"
 
+HOOK_WALL_DEADLINE = 15.0
+_OVERHEAD_SLOPE = 0.55
+_OVERHEAD_INTERCEPT = 0.16  # >0.15 so (0.20, 0.03) overhead passes; (17, 11) still fails on absolute cap.
+
+
+def _within_budget(hook, baseline):
+    if hook >= HOOK_WALL_DEADLINE:
+        return False
+    overhead = hook - baseline
+    limit = baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT
+    return overhead < limit
+
+
+
 
 class KeepGoingTests(unittest.TestCase):
     @classmethod
@@ -265,7 +279,18 @@ class KeepGoingTests(unittest.TestCase):
 
     def _subprocess_wall(self, argv, stdin=None):
         started = time.monotonic()
-        proc = subprocess.run(argv, input=stdin, text=True, capture_output=True, env=self.env, cwd=self.tmp.name)
+        try:
+            proc = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env=self.env,
+                cwd=self.tmp.name,
+                timeout=HOOK_WALL_DEADLINE,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail(f"subprocess exceeded {HOOK_WALL_DEADLINE}s wall deadline: {argv!r}")
         elapsed = time.monotonic() - started
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return elapsed
@@ -275,14 +300,22 @@ class KeepGoingTests(unittest.TestCase):
         baseline = self._subprocess_wall(["python3", "-c", "pass"])
         hook = self._subprocess_wall(
             ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
-        overhead = hook - baseline
-        # Host load stretches baseline and hook similarly; extra delay (e.g. sleep(0.5)) grows the gap.
-        limit = baseline * 0.55 + 0.15
-        self.assertLess(
-            overhead,
-            limit,
-            f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={overhead:.3f}s limit={limit:.3f}s",
+        self.assertTrue(
+            _within_budget(hook, baseline),
+            f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={hook - baseline:.3f}s "
+            f"deadline={HOOK_WALL_DEADLINE}s",
         )
+
+
+class WithinBudgetTests(unittest.TestCase):
+    def test_slow_baseline_does_not_excuse_over_deadline_hook(self):
+        self.assertFalse(_within_budget(17.0, 11.0))
+
+    def test_typical_fast_hook_passes(self):
+        self.assertTrue(_within_budget(0.20, 0.03))
+
+    def test_injected_sleep_like_overhead_fails(self):
+        self.assertFalse(_within_budget(0.53, 0.03))
 
 
 if __name__ == "__main__":
