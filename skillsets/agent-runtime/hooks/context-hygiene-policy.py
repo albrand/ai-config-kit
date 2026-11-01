@@ -696,6 +696,8 @@ def _pgrep_heredoc_opener_line_pipes_to_shell(text, after_delim, line_end):
             dq = True
             i += 1
             continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            return False
         if text[i] == "|":
             j = _pgrep_skip_space(text, i + 1)
             if j >= line_end:

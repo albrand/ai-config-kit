@@ -490,6 +490,27 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
 
+    def test_pgrep_heredoc_opener_line_pipe_respects_comments(self):
+        allowed = (
+            'cat <<E # note | sh\npgrep -f x\nE',
+            'cat <<E # | bash\npgrep -f x\nE',
+            "cat <<E '|' sh\npgrep -f x\nE",
+        )
+        blocked = (
+            'cat <<E | sh # c\npgrep -f x\nE',
+            "cat <<'E' | sh\npgrep -f x\nE",
+            'cat <<E | sh\npgrep -f x\nE',
+            'cat <<E | sh\necho a#b\npgrep -f x\nE',
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_scanner_respects_shell_comments(self):
         allowed = (
             "true # note; pgrep -f worker",
