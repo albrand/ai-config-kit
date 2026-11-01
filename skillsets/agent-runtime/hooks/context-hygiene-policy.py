@@ -18,6 +18,7 @@ Disable entirely with CONTEXT_HYGIENE=off.
 """
 import bisect
 import sys, json, os, re
+import tokenize
 
 HEREDOC_LINES, HEREDOC_BYTES = 10, 1000
 READ_BYTES = 15000
@@ -327,7 +328,6 @@ def _pgrep_python_is_pgrep_executable(argv0):
 
 
 def _pgrep_python_collect_sequence_elements(tokens, start):
-    import tokenize
     if start >= len(tokens) or tokens[start].type != tokenize.OP:
         return None, start
     open_ch = tokens[start].string
@@ -352,6 +352,28 @@ def _pgrep_python_collect_sequence_elements(tokens, start):
     return elements, idx
 
 
+def _pgrep_python_skip_value(tokens, idx):
+    if idx >= len(tokens):
+        return idx
+    tok = tokens[idx]
+    if tok.type in (tokenize.STRING, tokenize.NAME, tokenize.NUMBER):
+        return idx + 1
+    if tok.type == tokenize.OP and tok.string in ("[", "(", "{"):
+        open_ch = tok.string
+        close = {"[": "]", "(": ")", "{": "}"}[open_ch]
+        depth = 1
+        idx += 1
+        while idx < len(tokens) and depth:
+            t = tokens[idx]
+            if t.type == tokenize.OP and t.string == open_ch:
+                depth += 1
+            elif t.type == tokenize.OP and t.string == close:
+                depth -= 1
+            idx += 1
+        return idx
+    return idx + 1
+
+
 def _pgrep_python_list_argv_blocks(elements):
     if not elements:
         return False
@@ -374,22 +396,7 @@ def _pgrep_python_shell_string_blocks(snippet):
     return bool(_pgrep_lifecycle_pkill_match(snippet))
 
 
-def _pgrep_python_scan_value_token(tokens, idx):
-    if idx >= len(tokens):
-        return False
-    tok = tokens[idx]
-    if tok.type == tokenize.STRING:
-        return _pgrep_python_shell_string_blocks(
-            _pgrep_python_decode_string_token(tok.string)
-        )
-    if tok.type == tokenize.OP and tok.string in ("[", "("):
-        elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
-        return bool(elements and _pgrep_python_list_argv_blocks(elements))
-    return False
-
-
-def _pgrep_python_call_args_block(tokens, open_paren_idx):
-    import tokenize
+def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
     idx = open_paren_idx + 1
     paren_depth = 1
     while idx < len(tokens) and paren_depth:
@@ -400,32 +407,85 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx):
             paren_depth -= 1
             if paren_depth == 0:
                 break
+        elif (
+            paren_depth == 1
+            and tok.type == tokenize.NAME
+            and tok.string == "shell"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tokens[idx + 2].type == tokenize.NAME
+            and tokens[idx + 2].string == "True"
+        ):
+            return True
+        idx += 1
+    return False
+
+
+def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true):
+    if idx >= len(tokens):
+        return False
+    tok = tokens[idx]
+    if tok.type == tokenize.OP and tok.string in ("[", "("):
+        elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
+        return bool(elements and _pgrep_python_list_argv_blocks(elements))
+    if tok.type == tokenize.STRING and shell_true:
+        return _pgrep_python_shell_string_blocks(
+            _pgrep_python_decode_string_token(tok.string)
+        )
+    return False
+
+
+def _pgrep_python_call_args_block(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    saw_positional = False
+    shell_true = _pgrep_python_call_has_shell_true(tokens, open_paren_idx)
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
         elif paren_depth == 1:
-            if tok.type == tokenize.STRING:
-                if _pgrep_python_shell_string_blocks(
-                    _pgrep_python_decode_string_token(tok.string)
-                ):
-                    return True
-            elif tok.type == tokenize.OP and tok.string in ("[", "("):
-                elements, idx = _pgrep_python_collect_sequence_elements(tokens, idx)
-                if elements and _pgrep_python_list_argv_blocks(elements):
-                    return True
-                continue
-            elif (
+            if (
                 tok.type == tokenize.NAME
                 and idx + 2 < len(tokens)
                 and tokens[idx + 1].type == tokenize.OP
                 and tokens[idx + 1].string == "="
             ):
-                if _pgrep_python_scan_value_token(tokens, idx + 2):
+                kw = tok.string
+                val_idx = idx + 2
+                if kw == "args" and _pgrep_python_scan_args_keyword_value(
+                    tokens, val_idx, shell_true
+                ):
                     return True
-                idx += 2
+                idx = _pgrep_python_skip_value(tokens, val_idx) - 1
+            elif tok.type == tokenize.STRING:
+                if not saw_positional:
+                    saw_positional = True
+                    if _pgrep_python_shell_string_blocks(
+                        _pgrep_python_decode_string_token(tok.string)
+                    ):
+                        return True
+            elif tok.type == tokenize.OP and tok.string in ("[", "("):
+                if not saw_positional:
+                    saw_positional = True
+                    elements, idx = _pgrep_python_collect_sequence_elements(
+                        tokens, idx
+                    )
+                    if elements and _pgrep_python_list_argv_blocks(elements):
+                        return True
+                    continue
+            elif tok.type == tokenize.NAME:
+                saw_positional = True
         idx += 1
     return False
 
 
 def _pgrep_python_stdin_shell_invoke(body):
-    import tokenize
     from io import BytesIO
 
     try:

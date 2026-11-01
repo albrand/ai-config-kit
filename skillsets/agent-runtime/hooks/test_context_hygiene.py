@@ -883,6 +883,8 @@ pgrep -f bb',
         blocked = (
             "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"])\nEOF",
             "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(\"pgrep -f x\", shell=True, input=\"y\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(args=[\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(cwd=\"/\", args=[\"pgrep\", \"-f\", \"x\"])\nEOF",
         )
         for cmd in allowed:
             with self.subTest(allowed=cmd[:70]):
