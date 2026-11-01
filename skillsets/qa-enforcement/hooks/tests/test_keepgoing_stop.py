@@ -10,7 +10,7 @@ import unittest
 
 
 HOOKS = pathlib.Path(__file__).resolve().parents[1]
-REAL_HOME = pathlib.Path.home()
+SHARED = HOOKS.parent / "shared"
 NEEDS_OWNER = "Blocked on the release.\n\nNEEDS-OWNER: approve the force-push to main"
 
 
@@ -22,7 +22,8 @@ class KeepGoingTests(unittest.TestCase):
         (cls.home / ".agent-hooks").mkdir()
         for name in ("qa-stop-hook.sh", "keepgoing-stop.py"):
             shutil.copy(HOOKS / name, cls.home / ".agent-hooks" / name)
-        os.symlink(REAL_HOME / ".agents", cls.home / ".agents")
+        for skill in ("qa-sweep", "scope-ledger"):
+            shutil.copytree(SHARED / skill, cls.home / ".agents" / "skills" / skill)
         cls.env = dict(os.environ, HOME=str(cls.home))
 
     @classmethod
