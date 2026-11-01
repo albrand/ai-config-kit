@@ -15,14 +15,16 @@ NEEDS_OWNER = "Blocked on the release.\n\nNEEDS-OWNER: approve the force-push to
 
 HOOK_WALL_DEADLINE = 15.0
 _OVERHEAD_SLOPE = 0.55
-_OVERHEAD_INTERCEPT = 0.16  # >0.15 so (0.20, 0.03) overhead passes; (17, 11) still fails on absolute cap.
+_OVERHEAD_INTERCEPT = 0.16
+_OVERHEAD_CAP = 0.35
+_TIMING_SAMPLES = 3
 
 
 def _within_budget(hook, baseline):
     if hook >= HOOK_WALL_DEADLINE:
         return False
     overhead = hook - baseline
-    limit = baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT
+    limit = min(baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT, _OVERHEAD_CAP)
     return overhead < limit
 
 
@@ -295,27 +297,32 @@ class KeepGoingTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return elapsed
 
+    def _min_wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
+        times = [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
+        return min(times)
+
     def test_run_is_fast(self):
         stdin = self.claude("Done.\n\nI'll run the tests next.")
-        baseline = self._subprocess_wall(["python3", "-c", "pass"])
-        hook = self._subprocess_wall(
+        baseline = self._min_wall_samples(["python3", "-c", "pass"])
+        hook = self._min_wall_samples(
             ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
         self.assertTrue(
             _within_budget(hook, baseline),
             f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={hook - baseline:.3f}s "
-            f"deadline={HOOK_WALL_DEADLINE}s",
+            f"deadline={HOOK_WALL_DEADLINE}s cap={_OVERHEAD_CAP}s",
         )
 
 
 class WithinBudgetTests(unittest.TestCase):
-    def test_slow_baseline_does_not_excuse_over_deadline_hook(self):
-        self.assertFalse(_within_budget(17.0, 11.0))
+    def test_must_fail_cases(self):
+        for hook, baseline in ((1.5, 1.0), (14.9, 9.8), (17.0, 11.0), (0.53, 0.03)):
+            with self.subTest(hook=hook, baseline=baseline):
+                self.assertFalse(_within_budget(hook, baseline))
 
-    def test_typical_fast_hook_passes(self):
-        self.assertTrue(_within_budget(0.20, 0.03))
-
-    def test_injected_sleep_like_overhead_fails(self):
-        self.assertFalse(_within_budget(0.53, 0.03))
+    def test_must_pass_cases(self):
+        for hook, baseline in ((0.20, 0.03), (1.30, 1.0)):
+            with self.subTest(hook=hook, baseline=baseline):
+                self.assertTrue(_within_budget(hook, baseline))
 
 
 if __name__ == "__main__":
