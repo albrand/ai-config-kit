@@ -85,11 +85,14 @@ def verdict(block, reason=""):
 # `kill <pid>` is resolved at hook time: each pid is looked up with ps and
 # blocked if it is a bb.app process (the incident's final step was
 # `kill -TERM 78123`, the desktop main process).
+BB_LIFECYCLE_PKILL = re.compile(
+    r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'
+)
 BB_LIFECYCLE = [
     re.compile(r'tell\s+application\s+(?:id\s+)?[\\"]*(?:dev\.bb\.desktop|bb)[\\"]*\s+to\s+quit', re.I),
     re.compile(r'\b(?:mv|rm|ditto|rsync)\b[^\n;&|]*?/Applications/bb\.app(?![\w./-]*/Contents/)'),
     re.compile(r'\bkillall\s+(?:-\S+\s+)*[\\"]*bb[\\"]*(?:\s|$|[\\";])'),
-    re.compile(r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'),
+    BB_LIFECYCLE_PKILL,
 ]
 PGREP_FULL_FLAG = re.compile(
     r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
@@ -618,6 +621,74 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     return False
 
 
+def _pgrep_skip_ssh_prefix_after_command(text, i, limit):
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit or text[i] != "-":
+            break
+        ws = i
+        we = _pgrep_skip_one_word(text, i, limit)
+        if _pgrep_bare_word(text[ws:we]) == "-o":
+            i = _pgrep_skip_space(text, we)
+            if i < limit:
+                i = _pgrep_skip_one_word(text, i, limit)
+            else:
+                i = we
+        else:
+            i = we
+    i = _pgrep_skip_space(text, i)
+    if i >= limit:
+        return None
+    i = _pgrep_skip_one_word(text, i, limit)
+    i = _pgrep_skip_space(text, i)
+    if i >= limit:
+        return limit
+    return i
+
+
+def _pgrep_heredoc_opener_line_pipes_to_shell(text, after_delim, line_end):
+    i = after_delim
+    sq = dq = False
+    shell_words = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+    while i < line_end:
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < line_end:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "|":
+            j = _pgrep_skip_space(text, i + 1)
+            if j >= line_end:
+                return False
+            ws = j
+            we = _pgrep_skip_one_word(text, j, line_end)
+            base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+            if base in shell_words:
+                return True
+            if base == "ssh":
+                rem = _pgrep_skip_ssh_prefix_after_command(text, we, line_end)
+                return rem is not None and rem >= line_end
+            return False
+        i += 1
+    return False
+
+
 def _pgrep_iter_heredoc_bodies(text):
     n = len(text)
     i = 0
@@ -659,7 +730,11 @@ def _pgrep_iter_heredoc_bodies(text):
                 i += 2
                 continue
             delim, strip_tabs, j = parsed
+            line_end = text.find("\n", j)
+            op_line_end = line_end if line_end != -1 else n
             executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
+            if not executable:
+                executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
             line_end = text.find("\n", j)
             if line_end == -1:
                 body_start = n
@@ -1179,6 +1254,11 @@ def _pgrep_prefix_launch_region(text, cmd_start, cmd_end):
             if _pgrep_bare_word(w) == "--args" and idx + 1 < len(words):
                 return words[idx + 1][0], cmd_end
         return None
+    if base == "ssh":
+        rem = _pgrep_skip_ssh_prefix_after_command(text, e, cmd_end)
+        if rem is None or rem >= cmd_end:
+            return None
+        return rem, cmd_end
     return None
 
 
@@ -2088,7 +2168,12 @@ def bb_lifecycle_guard(raw):
             "runtime that fork-stage.sh installs bb from, offline and checksum-verified. Without "
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
-    if any(rx.search(text) for rx in BB_LIFECYCLE) or kills_bb_pid(text):
+    lifecycle_block = kills_bb_pid(text)
+    if not lifecycle_block:
+        lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
+    if not lifecycle_block:
+        lifecycle_block = bool(BB_LIFECYCLE_PKILL.search(_pgrep_mask_shell_comments(text)))
+    if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
             "running agent thread on this machine. Use ~/projects/bb-fork-tools/fork-swap.sh "

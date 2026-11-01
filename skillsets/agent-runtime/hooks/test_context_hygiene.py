@@ -462,6 +462,29 @@ class ContextHygiene(unittest.TestCase):
                 if "pgrep" in cmd:
                     self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_hook_gaps_followup_unquoted_ssh_heredoc_pkill_comment(self):
+        blocked = (
+            "ssh host pgrep -f worker",
+            "ssh -o A=b host pgrep -f w",
+            "cat <<E | sh\npgrep -f x\nE",
+            "cat <<E | bash -s\npgrep -f x\nE",
+            "cat <<E | ssh h\npgrep -f x\nE",
+            "true # c\npkill node",
+            "echo '#'; pkill node",
+        )
+        allowed = (
+            "ssh host echo pgrep -f w",
+            "cat <<E | grep x\npgrep -f x\nE",
+            "true # note; pkill node",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
     def test_pgrep_scanner_respects_shell_comments(self):
         allowed = (
             "true # note; pgrep -f worker",
