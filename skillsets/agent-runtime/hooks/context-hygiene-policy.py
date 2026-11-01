@@ -431,7 +431,10 @@ def _pgrep_heredoc_body_spans(text):
     return spans
 
 
-def _pgrep_mask_shell_comments_outside_heredoc(text):
+_PGREP_MASK_SUBST_PEEL_MAX = 100000
+
+
+def _pgrep_mask_comments_level_opaque_subst(text):
     if "#" not in text:
         return text
     sq = _pgrep_single_quote_spans(text)
@@ -455,10 +458,7 @@ def _pgrep_mask_shell_comments_outside_heredoc(text):
                 continue
             if text[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-                out.append("`")
-                if inner is not None:
-                    out.append(_pgrep_mask_shell_comments(inner))
-                out.append("`")
+                out.append(text[i:j])
                 i = j
                 continue
             out.append(text[i])
@@ -476,22 +476,87 @@ def _pgrep_mask_shell_comments_outside_heredoc(text):
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
             inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
-            out.append("$(")
-            out.append(_pgrep_mask_shell_comments(inner))
-            out.append(")")
+            out.append(text[i:j])
             i = j
             continue
         if text[i] == "`":
             inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-            out.append("`")
-            if inner is not None:
-                out.append(_pgrep_mask_shell_comments(inner))
-            out.append("`")
+            out.append(text[i:j])
             i = j
             continue
         out.append(text[i])
         i += 1
     return "".join(out)
+
+
+def _pgrep_innermost_subst_mask_once(text):
+    if "$(" not in text and "`" not in text:
+        return text, False
+    sq = _pgrep_single_quote_spans(text)
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is not None and "$(" not in inner and "`" not in inner:
+                    masked = _pgrep_mask_comments_level_opaque_subst(inner)
+                    return text[: i + 1] + masked + text[j - 1 :], True
+                i = j
+                continue
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            if "$(" not in inner and "`" not in inner:
+                masked = _pgrep_mask_comments_level_opaque_subst(inner)
+                return text[: i + 2] + masked + text[j - 1 :], True
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is not None and "$(" not in inner and "`" not in inner:
+                masked = _pgrep_mask_comments_level_opaque_subst(inner)
+                return text[: i + 1] + masked + text[j - 1 :], True
+            i = j
+            continue
+        i += 1
+    return text, False
+
+
+def _pgrep_mask_shell_comments_outside_heredoc(text):
+    if "#" not in text and "$(" not in text and "`" not in text:
+        return text
+    cur = text
+    for _ in range(_PGREP_MASK_SUBST_PEEL_MAX):
+        nxt, changed = _pgrep_innermost_subst_mask_once(cur)
+        if not changed:
+            break
+        cur = nxt
+    return _pgrep_mask_comments_level_opaque_subst(cur)
+
+
+def _pgrep_mask_shell_comments_for_lifecycle(text):
+    try:
+        return _pgrep_mask_shell_comments(text)
+    except Exception:
+        return text
+
+
 
 
 def _pgrep_hash_starts_comment(text, i):
@@ -670,6 +735,34 @@ def _pgrep_skip_ssh_prefix_after_command(text, i, limit):
     return i
 
 
+
+
+def _pgrep_skip_heredoc_pipe_env_prefix(text, i, limit):
+    assign = re.compile(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')")
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit:
+            return i
+        ws = i
+        we = _pgrep_skip_one_word(text, i, limit)
+        if _pgrep_bare_word(text[ws:we]).lower() != "env":
+            return i
+        i = we
+        while i < limit:
+            i = _pgrep_skip_space(text, i)
+            if i >= limit:
+                break
+            if text[i] == "-":
+                i = _pgrep_skip_one_word(text, i, limit)
+                continue
+            m = assign.match(text[i:limit])
+            if m:
+                i += m.end()
+                continue
+            break
+    return i
+
+
 def _pgrep_heredoc_opener_line_pipes_to_shell(text, after_delim, line_end):
     i = after_delim
     sq = dq = False
@@ -700,6 +793,9 @@ def _pgrep_heredoc_opener_line_pipes_to_shell(text, after_delim, line_end):
             return False
         if text[i] == "|":
             j = _pgrep_skip_space(text, i + 1)
+            if j >= line_end:
+                return False
+            j = _pgrep_skip_heredoc_pipe_env_prefix(text, j, line_end)
             if j >= line_end:
                 return False
             ws = j
@@ -2198,7 +2294,7 @@ def bb_lifecycle_guard(raw):
     if not lifecycle_block:
         lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_block = bool(BB_LIFECYCLE_PKILL.search(_pgrep_mask_shell_comments(text)))
+        lifecycle_block = bool(BB_LIFECYCLE_PKILL.search(_pgrep_mask_shell_comments_for_lifecycle(text)))
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
