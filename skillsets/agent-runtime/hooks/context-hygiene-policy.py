@@ -436,9 +436,30 @@ def _pgrep_skip_case_header(text, i):
     return i
 
 
+_PGREP_LEADER_KWS = frozenset(
+    ("if", "while", "until", "then", "do", "else", "function", "case")
+)
+_PGREP_LEADER_DELTA = {}
+
+
 def _pgrep_after_command_leaders(text, i):
     n = len(text)
     i = _pgrep_skip_space(text, i)
+    base = i
+    semi = text.find(";", base)
+    probe_ok = semi != -1 and semi - base <= 120
+    if probe_ok:
+        delta = _PGREP_LEADER_DELTA.get(text[base:semi])
+        if delta is not None:
+            return base + delta
+    if i < n and text[i] not in "({!":
+        wend = _pgrep_skip_one_word(text, i, n)
+        if text[i:wend].lower() not in _PGREP_LEADER_KWS and not re.match(
+            r"\w+\s*\(\s*\)", text[i:]
+        ):
+            if probe_ok:
+                _PGREP_LEADER_DELTA[text[base:semi]] = i - base
+            return i
     while i < n:
         start = i
         if text[i] == "(":
@@ -475,6 +496,8 @@ def _pgrep_after_command_leaders(text, i):
             continue
         if i == start:
             break
+    if probe_ok:
+        _PGREP_LEADER_DELTA[text[base:semi]] = i - base
     return i
 
 def _pgrep_skip_env_token(text, i):
@@ -816,6 +839,9 @@ def _pgrep_prefix_launch_region(text, cmd_start, cmd_end):
 
 
 def _pgrep_embedded_launch_regions(text, cmd_start, cmd_end):
+    chunk = text[cmd_start:cmd_end]
+    if "-exec" not in chunk and "-ok" not in chunk and ":::" not in chunk:
+        return
     words = _pgrep_command_words(text, cmd_start, cmd_end)
     if not words:
         return
@@ -868,8 +894,8 @@ def _pgrep_position_is_launched_pgrep(text, pos):
         return False
     return False
 
-def _pgrep_first_word_span(text, cmd_start, cmd_end):
-    i = _pgrep_after_command_leaders(text, cmd_start)
+def _pgrep_first_word_span(text, cmd_start, cmd_end, *, _leader=None):
+    i = _leader if _leader is not None else _pgrep_after_command_leaders(text, cmd_start)
     i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
     if i >= cmd_end:
         return None
@@ -1026,6 +1052,12 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         if not _ctx.pgrep_word_is_invocation(m.start()):
             continue
         _, _, flags_here = _ctx.bindings_at(m.start())
+        if not flags_here:
+            tail = text[m.end() : m.end() + 96].lstrip()
+            if tail and not pgrep_segment_has_full_flag(
+                tail[:32]
+            ) and not pgrep_segment_uses_flag_var(tail[:32], flags_here):
+                continue
         segment = re.match(r"[^\n;&|]*", text[m.end() :])
         if not segment:
             continue
@@ -1091,6 +1123,11 @@ def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
 
 
 def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
+    i0 = _pgrep_skip_space(text, cmd_start)
+    if i0 < cmd_end:
+        wend = _pgrep_skip_one_word(text, i0, cmd_end)
+        if text[i0:wend].lower() in ("for", "while", "until"):
+            return
     i = _pgrep_after_command_leaders(text, cmd_start)
     while i < cmd_end:
         i = _pgrep_skip_space(text, i)
@@ -1204,6 +1241,11 @@ def _pgrep_executable_single_quote_starts(text):
         origin, chunk = pending[idx]
         idx += 1
         for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(chunk):
+            i0 = _pgrep_skip_space(chunk, cmd_start)
+            if i0 < cmd_end:
+                wend = _pgrep_skip_one_word(chunk, i0, cmd_end)
+                if chunk[i0:wend].lower() in ("for", "while", "until"):
+                    continue
             local = set()
             _pgrep_mark_exec_quotes_in_command(chunk, cmd_start, cmd_end, local)
             for pos in local:
@@ -1469,18 +1511,19 @@ class _PgrepScanContext:
         "_bind_f",
         "_inv_starts",
         "_inv_ends",
+        "_cmd_starts",
     )
 
     def __init__(self, raw):
         self.raw = raw
         self.scan = _pgrep_prepare_scan_text(raw)
         self.cmd_spans = tuple(_pgrep_iter_simple_command_spans(self.scan))
-        pos, b, s, f = _pgrep_build_binding_snapshot_arrays(self.scan, self.cmd_spans)
+        pos, b, s, f, inv = _pgrep_build_binding_snapshot_arrays(self.scan, self.cmd_spans)
         self._bind_pos = pos
         self._bind_b = b
         self._bind_s = s
         self._bind_f = f
-        inv = _pgrep_build_invocation_word_spans(self.scan, self.cmd_spans)
+        self._cmd_starts = [c[0] for c in self.cmd_spans]
         self._inv_starts = [p[0] for p in inv]
         self._inv_ends = [p[1] for p in inv]
 
@@ -1491,34 +1534,56 @@ class _PgrepScanContext:
         return self._bind_b[idx], self._bind_s[idx], self._bind_f[idx]
 
     def pgrep_word_is_invocation(self, pos):
-        for s, e in zip(self._inv_starts, self._inv_ends):
-            if s <= pos < e:
-                return True
-        return False
+        idx = bisect.bisect_right(self._inv_starts, pos) - 1
+        if idx < 0:
+            return False
+        return pos < self._inv_ends[idx]
 
     def var_is_command_word(self, pos, var):
-        for cmd_start, cmd_end in self.cmd_spans:
-            if pos < cmd_start or pos >= cmd_end:
-                continue
-            span = _pgrep_first_word_span(self.scan, cmd_start, cmd_end)
-            if span and span[0] <= pos < span[1]:
-                return _pgrep_word_is_var_command(self.scan[span[0] : span[1]], var)
+        idx = bisect.bisect_right(self._cmd_starts, pos) - 1
+        if idx < 0:
             return False
+        cmd_start, cmd_end = self.cmd_spans[idx]
+        if pos >= cmd_end:
+            return False
+        span = _pgrep_first_word_span(self.scan, cmd_start, cmd_end)
+        if span and span[0] <= pos < span[1]:
+            return _pgrep_word_is_var_command(self.scan[span[0] : span[1]], var)
         return False
+
+
+_PGREP_EMPTY_BIND = frozenset()
+
+
+_PGREP_LAUNCH_HINT = re.compile(
+    r"(?:^|[\s;|&(])(?:ssh|bash|sh|eval|sudo|docker|kubectl|find|parallel|chroot|strace|gdb|nsenter|valgrind|ltrace|unshare|runuser|xargs|watch)\b",
+    re.I,
+)
 
 
 def _pgrep_build_binding_snapshot_arrays(text, cmd_spans):
     positions = [0]
-    binaries = [set()]
-    scripts = [set()]
-    flags = [set()]
+    binaries = [_PGREP_EMPTY_BIND]
+    scripts = [_PGREP_EMPTY_BIND]
+    flags = [_PGREP_EMPTY_BIND]
+    inv = []
     binary, script, flag_vars = set(), set(), set()
     for cmd_start, cmd_end in cmd_spans:
         leader = _pgrep_after_command_leaders(text, cmd_start)
         positions.append(leader)
-        binaries.append(set(binary))
-        scripts.append(set(script))
-        flags.append(set(flag_vars))
+        binaries.append(frozenset(binary) if binary else _PGREP_EMPTY_BIND)
+        scripts.append(frozenset(script) if script else _PGREP_EMPTY_BIND)
+        flags.append(frozenset(flag_vars) if flag_vars else _PGREP_EMPTY_BIND)
+        fw = _pgrep_first_word_span(text, cmd_start, cmd_end, _leader=leader)
+        if fw and _pgrep_word_span_is_pgrep_command_word(text, fw[0], fw[1]):
+            inv.append(fw)
+        else:
+            chunk = text[cmd_start:cmd_end]
+            if PGREP_WORD.search(chunk) and _PGREP_LAUNCH_HINT.search(chunk):
+                for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+                    lfw = _pgrep_first_word_span(text, ls, le)
+                    if lfw and _pgrep_word_span_is_pgrep_command_word(text, lfw[0], lfw[1]):
+                        inv.append(lfw)
         eb, es, ef = set(binary), set(script), set(flag_vars)
         i = leader
         while i < cmd_end:
@@ -1531,17 +1596,23 @@ def _pgrep_build_binding_snapshot_arrays(text, cmd_spans):
             name, val, nxt = asn
             _pgrep_apply_var_binding(name, val, eb, es, ef)
             positions.append(nxt)
-            binaries.append(set(eb))
-            scripts.append(set(es))
-            flags.append(set(ef))
+            binaries.append(frozenset(eb))
+            scripts.append(frozenset(es))
+            flags.append(frozenset(ef))
             i = nxt
-        if _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+        if "=" in text[cmd_start:cmd_end] and _pgrep_simple_command_is_assignments_only(
+            text, cmd_start, cmd_end
+        ):
             binary, script, flag_vars = eb, es, ef
-    return positions, binaries, scripts, flags
+    return positions, binaries, scripts, flags, inv
 
 
 def _pgrep_word_span_is_pgrep_command_word(text, s, e):
     w = text[s:e]
+    if w and w[0] not in "'\"":
+        wl = w.lower()
+        if wl == "pgrep" or wl.endswith("/pgrep"):
+            return True
     if len(w) >= 2 and w[0] == w[-1] and w[0] in "'\"":
         inner = w[1:-1].lstrip()
         if not inner:
@@ -1550,18 +1621,6 @@ def _pgrep_word_span_is_pgrep_command_word(text, s, e):
         return bool(re.search(r"(?:^|(?:\S+/)*)(?:pgrep)\b", pgrep_obfuscation_fold(inner[:iw]), re.I))
     return bool(re.search(r"(?:\S+/)*pgrep\b", pgrep_obfuscation_fold(w), re.I))
 
-
-def _pgrep_build_invocation_word_spans(scan, cmd_spans):
-    spans = []
-    for cmd_start, cmd_end in cmd_spans:
-        fw = _pgrep_first_word_span(scan, cmd_start, cmd_end)
-        if fw and _pgrep_word_span_is_pgrep_command_word(scan, fw[0], fw[1]):
-            spans.append(fw)
-        for ls, le in _pgrep_iter_launched_command_regions(scan, cmd_start, cmd_end):
-            fw = _pgrep_first_word_span(scan, ls, le)
-            if fw and _pgrep_word_span_is_pgrep_command_word(scan, fw[0], fw[1]):
-                spans.append(fw)
-    return spans
 
 
 def pgrep_segment_has_full_flag(segment):
