@@ -462,6 +462,92 @@ class ContextHygiene(unittest.TestCase):
                 if "pgrep" in cmd:
                     self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_hook_gaps_followup_unquoted_ssh_heredoc_pkill_comment(self):
+        blocked = (
+            "ssh host pgrep -f worker",
+            "ssh -o A=b host pgrep -f w",
+            "ssh -p 22 host pgrep -f w",
+            "ssh -i k host pgrep -f w",
+            "ssh -l u host pgrep -f w",
+            "ssh -J j host pgrep -f w",
+            "ssh -p 22 -i k u@h pgrep -f w",
+            "cat <<E | sh\npgrep -f x\nE",
+            "cat <<E | bash -s\npgrep -f x\nE",
+            "cat <<E | ssh h\npgrep -f x\nE",
+            "true # c\npkill node",
+            "echo '#'; pkill node",
+        )
+        allowed = (
+            "ssh host echo pgrep -f w",
+            "cat <<E | grep x\npgrep -f x\nE",
+            "true # note; pkill node",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
+    def test_pgrep_mask_deep_dollar_paren(self):
+        pk = "p" + "kill"
+
+        def deep_cmd(depth, body, tail):
+            return "$(" * depth + body + ")" * depth + "; " + tail
+
+        for body in ("echo '#'", 'echo "#"', "true # c"):
+            cmd = deep_cmd(500, body, pk + " node")
+            with self.subTest(depth=500, body=body):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd[:80])
+                self.assertTrue(v["reason"].startswith("[bb-lifecycle]"), v["reason"][:40])
+        cmd1k = deep_cmd(1000, "echo '#'", pk + " node")
+        v = verdict(bash(cmd1k), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v["block"])
+        pgrep_cmd = deep_cmd(1000, "echo '#'", "pgrep -f x")
+        v2 = verdict(bash(pgrep_cmd), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v2["block"])
+        self.assertTrue(v2["reason"].startswith("[no-pgrep-f]"))
+
+    def test_pgrep_deep_dollar_paren_comment_mask_stays_fast_at_depth_5000(self):
+        import time
+
+        pk = "p" + "kill"
+        cmd = "$(" * 5000 + "echo '#'" + ")" * 5000 + "; " + pk + " node"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 8.0)
+        self.assertTrue(v["block"])
+
+    def test_pgrep_heredoc_pipe_env_shell(self):
+        cmd = "cat <<E | env sh\npgrep -f x\nE"
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v["block"], cmd)
+        self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+    def test_pgrep_heredoc_opener_line_pipe_respects_comments(self):
+        allowed = (
+            'cat <<E # note | sh\npgrep -f x\nE',
+            'cat <<E # | bash\npgrep -f x\nE',
+            "cat <<E '|' sh\npgrep -f x\nE",
+        )
+        blocked = (
+            'cat <<E | sh # c\npgrep -f x\nE',
+            "cat <<'E' | sh\npgrep -f x\nE",
+            'cat <<E | sh\npgrep -f x\nE',
+            'cat <<E | sh\necho a#b\npgrep -f x\nE',
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_scanner_respects_shell_comments(self):
         allowed = (
             "true # note; pgrep -f worker",
