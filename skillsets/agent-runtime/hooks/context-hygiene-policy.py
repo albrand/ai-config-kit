@@ -770,6 +770,34 @@ def _pgrep_earliest_shell_fault(text):
 
 
 
+
+def _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
+    if fault is None or fault + 2 > len(shell) or not shell.startswith("<<", fault):
+        return False
+    cmd_start = 0
+    for m in re.finditer(r"[;&|\n]|&&|\|\|", shell[:fault]):
+        cmd_start = m.end()
+    cmd_start = _pgrep_skip_space(shell, cmd_start)
+    if _pgrep_heredoc_owner_executable(shell, cmd_start, fault):
+        return False
+    line_end = shell.find("\n", fault)
+    if line_end == -1:
+        line_end = len(shell)
+    parsed = _pgrep_parse_heredoc_delim(shell, fault)
+    if parsed:
+        if parsed[0] == "":
+            return True
+        if _pgrep_heredoc_opener_line_pipes_to_shell(shell, parsed[2], line_end):
+            return False
+    head = shell.split("<<", 1)[0]
+    last = re.split(r"&&|\|\||;", head)[-1]
+    if any(rx.search(last) for rx in HEREDOC_EXEMPT):
+        return True
+    if _pgrep_heredoc_interpreter_stdin_executable(shell, cmd_start, fault):
+        return True
+    return False
+
+
 def _pgrep_bash_n_syntax_error(cmd):
     import subprocess
 
@@ -799,19 +827,25 @@ def _pgrep_fail_closed_after_shell_fault(text, cmd=None):
             fault = _pgrep_earliest_shell_fault(shell)
             if fault is None:
                 return False
+            if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
+                return False
             tail = shell[fault:]
         else:
             fault = _pgrep_earliest_shell_fault(text)
             if fault is None:
+                return False
+            if _pgrep_fail_closed_skip_unterminated_data_heredoc(text, fault):
                 return False
             tail = text[fault:]
     else:
         fault = _pgrep_earliest_shell_fault(text)
         if fault is None:
             return False
+        if _pgrep_fail_closed_skip_unterminated_data_heredoc(text, fault):
+            return False
         tail = text[fault:]
     if _pgrep_lifecycle_pkill_match(tail):
-        return True
+        return False
     try:
         scan = _pgrep_prepare_scan_text(tail)
         if _pgrep_pgrep_match_in_fragment(scan):
