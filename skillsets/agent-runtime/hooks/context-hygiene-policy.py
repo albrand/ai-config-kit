@@ -809,9 +809,13 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     subst_depth = 0
     sub_dq = sub_sq = False
 
-    def _mask_hash_run():
+    def _mask_hash_run(end_at_subst_close=False, close_depth=0):
         nonlocal i
-        while i < n and text[i] != "\n":
+        while i < n:
+            if text[i] == "\n":
+                return
+            if end_at_subst_close and text[i] == ")" and subst_depth == close_depth:
+                return
             out.append(" ")
             i += 1
 
@@ -859,7 +863,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-                _mask_hash_run()
+                _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
                 continue
             if text[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
