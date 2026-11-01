@@ -14,13 +14,18 @@ SHARED = HOOKS.parent / "shared"
 NEEDS_OWNER = "Blocked on the release.\n\nNEEDS-OWNER: approve the force-push to main"
 
 HOOK_WALL_DEADLINE = 15.0
+_SPIKE_CEILING = 5.0
 _OVERHEAD_SLOPE = 0.55
 _OVERHEAD_INTERCEPT = 0.16
 _OVERHEAD_CAP = 0.35
 _TIMING_SAMPLES = 3
 
 
-def _within_budget(hook, baseline):
+def _within_budget(hook_samples, baseline_samples):
+    if any(hook >= _SPIKE_CEILING for hook in hook_samples):
+        return False
+    hook = min(hook_samples)
+    baseline = min(baseline_samples)
     if hook >= HOOK_WALL_DEADLINE:
         return False
     overhead = hook - baseline
@@ -297,32 +302,42 @@ class KeepGoingTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return elapsed
 
-    def _min_wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
-        times = [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
-        return min(times)
+    def _wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
+        return [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
 
     def test_run_is_fast(self):
         stdin = self.claude("Done.\n\nI'll run the tests next.")
-        baseline = self._min_wall_samples(["python3", "-c", "pass"])
-        hook = self._min_wall_samples(
+        baseline_samples = self._wall_samples(["python3", "-c", "pass"])
+        hook_samples = self._wall_samples(
             ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
         self.assertTrue(
-            _within_budget(hook, baseline),
-            f"hook={hook:.3f}s baseline={baseline:.3f}s overhead={hook - baseline:.3f}s "
-            f"deadline={HOOK_WALL_DEADLINE}s cap={_OVERHEAD_CAP}s",
+            _within_budget(hook_samples, baseline_samples),
+            f"hooks={hook_samples} baselines={baseline_samples} "
+            f"deadline={HOOK_WALL_DEADLINE}s spike={_SPIKE_CEILING}s cap={_OVERHEAD_CAP}s",
         )
 
 
 class WithinBudgetTests(unittest.TestCase):
     def test_must_fail_cases(self):
-        for hook, baseline in ((1.5, 1.0), (14.9, 9.8), (17.0, 11.0), (0.53, 0.03)):
-            with self.subTest(hook=hook, baseline=baseline):
-                self.assertFalse(_within_budget(hook, baseline))
+        cases = (
+            ([0.10, 14.90, 0.10], [0.03, 0.03, 0.03]),
+            ([0.10, 5.2, 0.10], [0.03, 0.03, 0.03]),
+            ([1.5, 1.5, 1.5], [1.0, 1.0, 1.0]),
+            ([0.53, 0.53, 0.53], [0.03, 0.03, 0.03]),
+            ([17.0, 17.0, 17.0], [11.0, 11.0, 11.0]),
+        )
+        for hook_samples, baseline_samples in cases:
+            with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
+                self.assertFalse(_within_budget(hook_samples, baseline_samples))
 
     def test_must_pass_cases(self):
-        for hook, baseline in ((0.20, 0.03), (1.30, 1.0)):
-            with self.subTest(hook=hook, baseline=baseline):
-                self.assertTrue(_within_budget(hook, baseline))
+        cases = (
+            ([0.20, 0.60, 0.21], [0.03, 0.05, 0.03]),
+            ([1.30, 1.30, 1.30], [1.0, 1.0, 1.0]),
+        )
+        for hook_samples, baseline_samples in cases:
+            with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
+                self.assertTrue(_within_budget(hook_samples, baseline_samples))
 
 
 if __name__ == "__main__":
