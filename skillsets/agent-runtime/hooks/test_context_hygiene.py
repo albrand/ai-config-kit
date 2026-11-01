@@ -761,18 +761,41 @@ pgrep -f bb',
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_heredoc_exec_gaps_table_rows(self):
+        pk = "p" + "kill"
+        blocked = (
+            "ssh -p 22 host bash <<'EOF'\nI can't\npgrep -f x\nEOF",
+            'eval "$(cat <<EOF\npgrep -f x\nEOF\n)"',
+            "bash -c \"$(cat <<'EOF'\npgrep -f x\nEOF\n)\"",
+            'echo "$(printf %s \"x\n# note\"; ' + pk + ' node)"',
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+        )
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
         sq = '\'"\'"\''
         blocked_interp = (
             f"printf 'a {sq}b{sq}\n'; pgrep -f x",
             "echo ''\"\"\"; pgrep -f x",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
         )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
-            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
-            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             "echo ''\"\"'\\n'\"\"' -f`pgrep'",
             f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
