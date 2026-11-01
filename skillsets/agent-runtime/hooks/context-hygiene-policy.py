@@ -510,6 +510,253 @@ def _pgrep_mask_shell_comments_safe(text):
 
 
 
+def _pgrep_mask_line_hash_comments(text):
+    if "#" not in text:
+        return text
+    lines = text.split("\n")
+    out = []
+    for line in lines:
+        i = 0
+        n = len(line)
+        buf = []
+        while i < n:
+            if line[i] == "#" and _pgrep_hash_starts_comment(line, i):
+                buf.append(" " * (n - i))
+                break
+            buf.append(line[i])
+            i += 1
+        out.append("".join(buf))
+    return "\n".join(out)
+
+
+def _pgrep_mask_lifecycle_comments_linear(text):
+    if "#" not in text and "$(" not in text and "`" not in text:
+        return text
+    sq = _pgrep_single_quote_spans(text)
+    out = []
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            out.append(text[i:skip])
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == "\"":
+                out.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("$(" + (inner if inner is not None else "") + ")")
+                i = j
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("`" + (inner if inner is not None else "") + "`")
+                i = j
+                continue
+            out.append(text[i])
+            i += 1
+            continue
+        if text[i] == "\"":
+            out.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("$(" + (inner if inner is not None else "") + ")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("`" + (inner if inner is not None else "") + "`")
+            i = j
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+
+def _pgrep_mask_lifecycle_comments(text):
+    try:
+        if "#" not in text and "$(" not in text:
+            return text
+        spans = _pgrep_heredoc_body_spans(text)
+        if not spans:
+            return _pgrep_mask_lifecycle_comments_linear(text)
+        out = []
+        i, n, si = 0, len(text), 0
+        while i < n:
+            while si < len(spans) and i >= spans[si][1]:
+                si += 1
+            if si < len(spans) and spans[si][0] <= i < spans[si][1]:
+                end = spans[si][1]
+                out.append(text[i:end])
+                i = end
+                continue
+            j = spans[si][0] if si < len(spans) and i < spans[si][0] else n
+            chunk = text[i:j]
+            if chunk:
+                out.append(_pgrep_mask_lifecycle_comments_linear(chunk))
+            i = j
+        return "".join(out)
+    except Exception:
+        return text
+
+
+def _pgrep_lifecycle_pkill_match(text):
+    masked = _pgrep_mask_lifecycle_comments(text)
+    if BB_LIFECYCLE_PKILL.search(masked):
+        return True
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+            chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
+            if BB_LIFECYCLE_PKILL.search(chunk):
+                return True
+    return False
+
+
+def _pgrep_earliest_shell_fault(text):
+    n = len(text)
+    fault = n
+    dq = False
+    dq_start = 0
+    i = 0
+    while i < n:
+        if text[i] == "'":
+            start = i
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i >= n:
+                fault = min(fault, start)
+                break
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            dq_start = i
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+    if dq:
+        fault = min(fault, dq_start)
+    hd = None
+    hd_start = 0
+    i = 0
+    sq = dq2 = False
+    while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                hd = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    i += 1
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq2:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq2 = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq2 = True
+            i += 1
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                hd_start = i
+                _, strip_tabs, j = parsed
+                hd = (parsed[0], strip_tabs, "op")
+                i = j
+                continue
+        i += 1
+    if hd is not None:
+        fault = min(fault, hd_start)
+    for m in re.finditer(r"\\(?:\r?\n|$)", text):
+        fault = min(fault, m.start())
+    return fault if fault < n else None
+
+
+def _pgrep_fail_closed_after_shell_fault(text):
+    fault = _pgrep_earliest_shell_fault(text)
+    if fault is None:
+        return False
+    tail = text[fault:]
+    if _pgrep_lifecycle_pkill_match(tail):
+        return True
+    try:
+        scan = _pgrep_prepare_scan_text(tail)
+        if _pgrep_pgrep_match_in_fragment(scan):
+            return True
+    except Exception:
+        pass
+    folded = pgrep_obfuscation_fold(tail)
+    if PGREP_WORD.search(folded) and PGREP_FULL_FLAG.search(folded):
+        return True
+    return False
+
+
+
 
 
 
@@ -683,6 +930,11 @@ def _pgrep_skip_ssh_prefix_after_command(text, i, limit):
     if i >= limit:
         return None
     i = _pgrep_skip_one_word(text, i, limit)
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit or text[i] != "-":
+            break
+        i = _pgrep_skip_ssh_option_token(text, i, limit)
     i = _pgrep_skip_space(text, i)
     if i >= limit:
         return limit
@@ -1613,17 +1865,12 @@ def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
 
 
 def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
-    saw_word = False
-    while i < cmd_end:
-        i = _pgrep_skip_space(text, i)
-        if i >= cmd_end:
-            return
-        if text[i] in "'\"":
-            if saw_word:
-                out.add(i)
-            return
-        i = _pgrep_skip_one_word(text, i, cmd_end)
-        saw_word = True
+    rem = _pgrep_skip_ssh_prefix_after_command(text, i, cmd_end)
+    if rem is None or rem >= cmd_end:
+        return
+    rem = _pgrep_skip_space(text, rem)
+    if rem < cmd_end and text[rem] in "'\"":
+        out.add(rem)
 
 
 def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
@@ -2160,6 +2407,8 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text):
+    if _pgrep_fail_closed_after_shell_fault(text):
+        return True
     if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
         return False
     ctx = _PgrepScanContext(text)
@@ -2258,7 +2507,7 @@ def bb_lifecycle_guard(raw):
     if not lifecycle_block:
         lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_block = bool(BB_LIFECYCLE_PKILL.search(_pgrep_mask_shell_comments_for_lifecycle(text)))
+        lifecycle_block = _pgrep_lifecycle_pkill_match(text)
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
@@ -2334,7 +2583,8 @@ def main():
                     % (os.path.basename(fp), sz / 1024.0, sz / 4))
     verdict(False)
 
-try:
-    main()
-except Exception:
-    verdict(False)   # fail open, always
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        verdict(False)   # fail open, always

@@ -577,5 +577,38 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
 
+    def test_guard_followups_2_ssh_pkill_quoted_grep_subst_fault(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"ssh host {pk} node",
+            f"ssh -p 22 host {pk} -f x",
+            "ssh host 'pgrep -f x'",
+            'ssh host "pgrep -f x"',
+            f"$(true # c\n); {pk} node",
+            f'echo "$(true; {pk} node)"',
+            f"`true; {pk} node`",
+            "echo 'pgrep -f bb\npgrep -f bb",
+            'echo "pgrep -f bb\npgrep -f bb',
+            "cat <<EOF\nline\npgrep -f bb",
+            "echo \\\npgrep -f bb",
+        )
+        allowed = (
+            f"ssh host echo {pk} node",
+            "ssh host grep -n 'pgrep -f' f",
+            f'echo "$(true # note; {pk} node\n)"',
+            f"x=$(true # c; {pk} node\n)",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()
