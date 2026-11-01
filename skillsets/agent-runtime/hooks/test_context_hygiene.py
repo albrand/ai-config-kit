@@ -851,5 +851,27 @@ pgrep -f bb',
 
 
 
+    def test_r16_python_subprocess_pgrep_executable(self):
+        allowed = (
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\", \"pgrep\", \"-f\"])\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"printf\", \"%s\", \"pgrep\", \"-f\"])\nEOF",
+        )
+        blocked = (
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.check_call([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"/usr/bin/pgrep\", \"-f\", \"x\"])\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

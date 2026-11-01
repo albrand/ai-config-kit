@@ -311,6 +311,119 @@ def _pgrep_outer_scan_skip_heredoc_body_spans(text):
     return merged
 
 
+def _pgrep_python_decode_string_token(tok_string):
+    import ast
+
+    try:
+        return ast.literal_eval(tok_string)
+    except Exception:
+        return tok_string.strip(chr(34) + chr(39))
+
+
+def _pgrep_python_is_pgrep_executable(argv0):
+    if not isinstance(argv0, str):
+        return False
+    return argv0.rsplit("/", 1)[-1].lower() == "pgrep"
+
+
+def _pgrep_python_collect_sequence_elements(tokens, start):
+    import tokenize
+    if start >= len(tokens) or tokens[start].type != tokenize.OP:
+        return None, start
+    open_ch = tokens[start].string
+    if open_ch not in ("[", "("):
+        return None, start
+    close_ch = "]" if open_ch == "[" else ")"
+    idx = start + 1
+    depth = 1
+    elements = []
+    while idx < len(tokens) and depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == open_ch:
+            depth += 1
+        elif tok.type == tokenize.OP and tok.string == close_ch:
+            depth -= 1
+            if depth == 0:
+                idx += 1
+                break
+        elif tok.type == tokenize.STRING and depth == 1:
+            elements.append(_pgrep_python_decode_string_token(tok.string))
+        idx += 1
+    return elements, idx
+
+
+def _pgrep_python_list_argv_blocks(elements):
+    if not elements:
+        return False
+    if not _pgrep_python_is_pgrep_executable(elements[0]):
+        return False
+    return _pgrep_argv_tokens_has_full_flag(elements[1:])
+
+
+def _pgrep_python_shell_string_blocks(snippet):
+    if not snippet:
+        return False
+    folded = pgrep_obfuscation_fold(_pgrep_mask_shell_comments(snippet))
+    if PGREP_WORD.search(folded):
+        seg = re.match(r"[^\n;&|]*", folded.lstrip())
+        if seg and (
+            pgrep_segment_has_full_flag(seg.group(0))
+            or _pgrep_lifecycle_pkill_match(snippet)
+        ):
+            return True
+    return bool(_pgrep_lifecycle_pkill_match(snippet))
+
+
+def _pgrep_python_scan_value_token(tokens, idx):
+    if idx >= len(tokens):
+        return False
+    tok = tokens[idx]
+    if tok.type == tokenize.STRING:
+        return _pgrep_python_shell_string_blocks(
+            _pgrep_python_decode_string_token(tok.string)
+        )
+    if tok.type == tokenize.OP and tok.string in ("[", "("):
+        elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
+        return bool(elements and _pgrep_python_list_argv_blocks(elements))
+    return False
+
+
+def _pgrep_python_call_args_block(tokens, open_paren_idx):
+    import tokenize
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif paren_depth == 1:
+            if tok.type == tokenize.STRING:
+                if _pgrep_python_shell_string_blocks(
+                    _pgrep_python_decode_string_token(tok.string)
+                ):
+                    return True
+            elif tok.type == tokenize.OP and tok.string in ("[", "("):
+                elements, idx = _pgrep_python_collect_sequence_elements(tokens, idx)
+                if elements and _pgrep_python_list_argv_blocks(elements):
+                    return True
+                continue
+            elif (
+                tok.type == tokenize.NAME
+                and idx + 2 < len(tokens)
+                and tokens[idx + 1].type == tokenize.OP
+                and tokens[idx + 1].string == "="
+            ):
+                if _pgrep_python_scan_value_token(tokens, idx + 2):
+                    return True
+                idx += 2
+        idx += 1
+    return False
+
+
 def _pgrep_python_stdin_shell_invoke(body):
     import tokenize
     from io import BytesIO
@@ -324,48 +437,9 @@ def _pgrep_python_stdin_shell_invoke(body):
     except (tokenize.TokenError, SyntaxError, UnicodeError):
         return False
 
-    def _collect_call_args(open_idx):
-        idx = open_idx
-        if idx >= len(tokens) or tokens[idx].type != tokenize.OP or tokens[idx].string != "(":
-            return None
-        idx += 1
-        depth = 1
-        parts = []
-        while idx < len(tokens) and depth:
-            tok = tokens[idx]
-            if tok.type == tokenize.OP and tok.string == "(":
-                depth += 1
-            elif tok.type == tokenize.OP and tok.string == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-            elif tok.type == tokenize.STRING:
-                parts.append(tok.string)
-            elif tok.type == tokenize.NAME and depth == 1:
-                parts.append(tok.string)
-            idx += 1
-        return " ".join(parts) if parts else None
-
-    def _snippet_hits_pgrep_or_pkill(snippet):
-        if not snippet:
-            return False
-        import ast
-
-        raw = snippet.strip()
-        try:
-            if raw.startswith(("\"", "'")):
-                raw = ast.literal_eval(raw)
-        except Exception:
-            raw = raw.strip("\"'")
-        folded = pgrep_obfuscation_fold(_pgrep_mask_shell_comments(raw))
-        if PGREP_WORD.search(folded):
-            seg = re.match(r"[^\n;&|]*", folded.lstrip())
-            if seg and (
-                pgrep_segment_has_full_flag(seg.group(0))
-                or _pgrep_lifecycle_pkill_match(raw)
-            ):
-                return True
-        return bool(_pgrep_lifecycle_pkill_match(raw))
+    _SUBPROCESS_METHODS = frozenset(
+        ("run", "call", "check_call", "check_output", "Popen")
+    )
 
     idx = 0
     while idx < len(tokens):
@@ -377,11 +451,17 @@ def _pgrep_python_stdin_shell_invoke(body):
             and tokens[idx + 1].type == tokenize.OP
             and tokens[idx + 1].string == "."
             and tokens[idx + 2].type == tokenize.NAME
-            and tokens[idx + 2].string == "system"
         ):
-            snippet = _collect_call_args(idx + 3)
-            if snippet and _snippet_hits_pgrep_or_pkill(snippet):
-                return True
+            meth = tokens[idx + 2].string
+            if meth in ("system", "popen") or meth.startswith("exec"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(tokens, args_start)
+                ):
+                    return True
         if tok.type == tokenize.NAME and tok.string == "subprocess":
             j = idx + 1
             while j + 1 < len(tokens):
@@ -390,7 +470,7 @@ def _pgrep_python_stdin_shell_invoke(body):
                 if tokens[j + 1].type != tokenize.NAME:
                     break
                 meth = tokens[j + 1].string
-                if meth not in ("run", "call", "Popen", "check_output"):
+                if meth not in _SUBPROCESS_METHODS:
                     j += 2
                     continue
                 args_start = j + 2
@@ -398,17 +478,13 @@ def _pgrep_python_stdin_shell_invoke(body):
                     args_start < len(tokens)
                     and tokens[args_start].type == tokenize.OP
                     and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(tokens, args_start)
                 ):
-                    blob = _collect_call_args(args_start)
-                    if blob and _snippet_hits_pgrep_or_pkill(blob):
-                        return True
-                    if blob and re.search(r"['\"]pgrep['\"]", blob, re.I) and re.search(
-                        r"['\"]-f['\"]", blob
-                    ):
-                        return True
+                    return True
                 break
         idx += 1
     return False
+
 
 
 def _pgrep_pgrep_match_interpreter_stdin_body(body):
