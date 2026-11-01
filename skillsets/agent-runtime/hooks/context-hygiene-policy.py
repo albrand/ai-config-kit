@@ -770,6 +770,51 @@ def _pgrep_earliest_shell_fault(text):
 
 
 
+def _pgrep_in_single_quote_bash(text, pos):
+    dq = sq = False
+    i, n = 0, min(pos, len(text))
+    while i < n:
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            elif text[i] == '\n':
+                sq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+    return sq
+
+
+def _pgrep_pgrep_mentions_outside_single_quotes(text, start, end):
+    segment = text[start:end]
+    folded = pgrep_obfuscation_fold(segment)
+    if not PGREP_WORD.search(folded):
+        return False
+    for m in PGREP_WORD.finditer(segment):
+        if not _pgrep_in_single_quote_bash(text, start + m.start()):
+            return True
+    return False
+
+
 def _pgrep_fail_closed_after_shell_fault(text):
     fault = _pgrep_earliest_shell_fault(text)
     if fault is None:
@@ -777,6 +822,8 @@ def _pgrep_fail_closed_after_shell_fault(text):
     tail = text[fault:]
     if _pgrep_lifecycle_pkill_match(tail):
         return True
+    if not _pgrep_pgrep_mentions_outside_single_quotes(text, fault, len(text)):
+        return False
     try:
         scan = _pgrep_prepare_scan_text(tail)
         if _pgrep_pgrep_match_in_fragment(scan):
@@ -785,7 +832,8 @@ def _pgrep_fail_closed_after_shell_fault(text):
         pass
     folded = pgrep_obfuscation_fold(tail)
     if PGREP_WORD.search(folded) and PGREP_FULL_FLAG.search(folded):
-        return True
+        if _pgrep_pgrep_mentions_outside_single_quotes(text, fault, len(text)):
+            return True
     return False
 
 
@@ -892,6 +940,59 @@ def _pgrep_parse_heredoc_delim(text, i):
     return (m.group(0), strip_tabs, j + m.end())
 
 
+
+
+_PGREP_HEREDOC_STDIN_WRAPPERS = frozenset(
+    {"sudo", "env", "timeout", "command", "exec", "nohup", "time", "nice"}
+)
+_PGREP_HEREDOC_STDIN_INTERP = frozenset(
+    {"python", "python3", "node", "perl", "ruby", "bash", "sh", "zsh", "dash", "ksh"}
+)
+
+
+def _pgrep_word_tokens_before(text, cmd_start, op_start):
+    tokens = []
+    i = cmd_start
+    while i < op_start:
+        i = _pgrep_skip_space(text, i)
+        if i >= op_start:
+            break
+        ws = i
+        we = _pgrep_skip_one_word(text, i, op_start)
+        if ws >= we:
+            break
+        tokens.append(_pgrep_bare_word(text[ws:we]))
+        i = we
+    return tokens
+
+
+def _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
+    tokens = _pgrep_word_tokens_before(text, cmd_start, op_start)
+    if not tokens:
+        return False
+    idx = 0
+    while idx < len(tokens) and tokens[idx].lower() in _PGREP_HEREDOC_STDIN_WRAPPERS:
+        idx += 1
+    if idx >= len(tokens):
+        return False
+    base = tokens[idx].rsplit("/", 1)[-1].lower()
+    if base not in _PGREP_HEREDOC_STDIN_INTERP:
+        return False
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        return True
+    rest = tokens[idx + 1 :]
+    if base in ("python", "python3", "node", "perl", "ruby"):
+        if not rest:
+            return True
+        for tok in rest:
+            if tok == "-":
+                return True
+            if tok.startswith("-"):
+                continue
+            return False
+        return True
+    return False
+
 def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     span = _pgrep_first_word_span(text, cmd_start, op_start)
     if not span:
@@ -917,6 +1018,8 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if len(cleaned.split()) <= 1:
             return True
+    if _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
+        return True
     return False
 
 
@@ -1093,15 +1196,18 @@ def _pgrep_iter_heredoc_bodies(text):
             delim, strip_tabs, j = parsed
             line_end = text.find("\n", j)
             op_line_end = line_end if line_end != -1 else n
+            stdin_prog = _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, i)
             executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
             if not executable:
                 executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
+            if not executable and stdin_prog:
+                executable = True
             line_end = text.find("\n", j)
             if line_end == -1:
                 body_start = n
                 body_end = n
                 if executable and body_start < body_end:
-                    yield body_start, body_end, executable
+                    yield body_start, body_end, executable, stdin_prog
                 break
             body_start = line_end + 1
             k = body_start
@@ -1116,7 +1222,7 @@ def _pgrep_iter_heredoc_bodies(text):
                 if cmp_line == delim:
                     body_end = k
                     if executable and body_start < body_end:
-                        yield body_start, body_end, executable
+                        yield body_start, body_end, executable, stdin_prog
                     i = line_term + 1 if line_term < n else n
                     break
                 k = line_term + 1 if line_term < n else n
@@ -1866,12 +1972,14 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
-    for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
+    for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(raw):
         if executable:
             masked_body = _pgrep_mask_shell_comments(text[body_start:body_end])
             if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
                 return True
             if _pgrep_pgrep_match_shell_script_lines(masked_body):
+                return True
+            if stdin_prog and _pgrep_pgrep_match_interpreter_stdin_body(masked_body):
                 return True
     return False
 
@@ -2223,7 +2331,7 @@ def _pgrep_blank_nonexecutable_heredoc_bodies(text):
         return text
     executable_spans = {
         (body_start, body_end)
-        for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(text)
+        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
         if executable
     }
     chars = list(text)
@@ -2234,6 +2342,17 @@ def _pgrep_blank_nonexecutable_heredoc_bodies(text):
             if chars[k] != "\n":
                 chars[k] = " "
     return "".join(chars)
+
+
+def _pgrep_pgrep_match_interpreter_stdin_body(text):
+    folded = pgrep_obfuscation_fold(text)
+    for m in PGREP_WORD.finditer(folded):
+        seg = re.match(r"[^\n;&|]*", folded[m.end() :])
+        if not seg:
+            continue
+        if pgrep_segment_has_full_flag(seg.group(0)):
+            return True
+    return False
 
 
 def _pgrep_pgrep_match_shell_script_lines(text):

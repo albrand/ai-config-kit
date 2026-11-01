@@ -624,6 +624,35 @@ class ContextHygiene(unittest.TestCase):
 
 
 
+
+    def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
+        sq = '\'"\'"\''
+        blocked_interp = (
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
+            f"printf 'a {sq}b{sq}\n'; pgrep -f x",
+            "echo ''\"\"\"; pgrep -f x",
+        )
+        allowed_interp = (
+            "cat <<EOF\npgrep -f x\nEOF",
+            "python3 script.py <<EOF\npgrep -f x\nEOF",
+            "echo ''\"\"'\\n'\"\"' -f`pgrep'",
+            f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
+            f"x='it{sq}s -f `pgrep`'; echo \"$x\"",
+        )
+        for cmd in blocked_interp:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed_interp:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
     def test_guard_followups_2_fault_repro2(self):
         pk = "p" + "kill"
         sq = '\'"\'"\''
