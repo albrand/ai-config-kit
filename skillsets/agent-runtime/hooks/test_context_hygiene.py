@@ -761,6 +761,12 @@ pgrep -f bb',
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_r15_quoted_word_list_heredoc_literal(self):
+        cmd = 'for c in "cat <<E | sh\npgrep -f x\nE"; do echo "$c"; done'
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
     def test_heredoc_exec_gaps_table_rows(self):
         pk = "p" + "kill"
         blocked = (

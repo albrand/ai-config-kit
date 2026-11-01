@@ -1416,7 +1416,9 @@ def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
 def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
     line_start = text.rfind("\n", 0, op_start) + 1
     op_line = text[line_start:op_start]
-    if not re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\s*<<", op_line, re.I):
+    if text[op_start : op_start + 2] != "<<":
+        return False
+    if not re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I):
         return False
     if re.search(r"\bcat\s*>|\btee\s+[^<\s]", op_line):
         return False
@@ -1616,6 +1618,7 @@ def _pgrep_iter_heredoc_bodies(text):
             if not (
                 text[i : i + 2] == "<<"
                 and (i == 0 or text[i - 1] in " \t\n;&|(")
+                and _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, i)
             ):
                 i += 1
                 continue
