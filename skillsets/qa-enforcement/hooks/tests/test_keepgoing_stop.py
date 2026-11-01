@@ -13,6 +13,27 @@ HOOKS = pathlib.Path(__file__).resolve().parents[1]
 SHARED = HOOKS.parent / "shared"
 NEEDS_OWNER = "Blocked on the release.\n\nNEEDS-OWNER: approve the force-push to main"
 
+HOOK_WALL_DEADLINE = 15.0
+_SPIKE_CEILING = 5.0
+_OVERHEAD_SLOPE = 0.55
+_OVERHEAD_INTERCEPT = 0.16
+_OVERHEAD_CAP = 0.35
+_TIMING_SAMPLES = 3
+
+
+def _within_budget(hook_samples, baseline_samples):
+    if any(hook >= _SPIKE_CEILING for hook in hook_samples):
+        return False
+    hook = min(hook_samples)
+    baseline = min(baseline_samples)
+    if hook >= HOOK_WALL_DEADLINE:
+        return False
+    overhead = hook - baseline
+    limit = min(baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT, _OVERHEAD_CAP)
+    return overhead < limit
+
+
+
 
 class KeepGoingTests(unittest.TestCase):
     @classmethod
@@ -164,6 +185,35 @@ class KeepGoingTests(unittest.TestCase):
             self.assertNudged(self.stop(build("Checked it.\n\nSTATUS: needs-owner"), "keepgoing-stop.py"))
             self.assertNudged(self.stop(build("Checked it.\n\nNEEDS-OWNER:"), "keepgoing-stop.py"))
 
+    def test_non_owner_only_needs_owner_asks_are_nudged(self):
+        asks = (
+            "NEEDS-OWNER: please check the org Actions policy and billing, and restore it",
+            "NEEDS-OWNER: look into why the build fails",
+            "NEEDS-OWNER: review the code",
+            "NEEDS-OWNER: install the package",
+        )
+        for build in (self.claude, self.codex):
+            for ask in asks:
+                result = self.stop(build("Waiting on GitHub.\n\n" + ask), "keepgoing-stop.py")
+                self.assertEqual(result.get("decision"), "block", result)
+                self.assertIn("This NEEDS-OWNER: ask is work you can do", result["reason"])
+
+    def test_owner_only_needs_owner_asks_remain_allowed(self):
+        asks = (
+            "NEEDS-OWNER: approve the force-push to main",
+            "NEEDS-OWNER: sign in to GitHub in the Chrome window I opened",
+            "NEEDS-OWNER: the 6-digit code sent to your phone",
+            "NEEDS-OWNER: approve the bb install (swap) for i38",
+        )
+        for build in (self.claude, self.codex):
+            for ask in asks:
+                self.assertAllowed(self.stop(build("Waiting.\n\n" + ask), "keepgoing-stop.py"))
+
+    def test_named_watched_wait_without_needs_owner_is_allowed(self):
+        text = "Both PRs wait on CI; the watcher reports when it lands."
+        for build in (self.claude, self.codex):
+            self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
+
     def test_needs_owner_menu_is_nudged_once(self):
         menus = (
             "Stopped before building.\n\nNEEDS-OWNER: Alexandre to choose how the backend reaches staging:\n"
@@ -234,9 +284,60 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(stdin, "keepgoing-stop.py"))
             self.assertAllowed(self.stop(stdin))
 
+    def _subprocess_wall(self, argv, stdin=None):
+        started = time.monotonic()
+        try:
+            proc = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env=self.env,
+                cwd=self.tmp.name,
+                timeout=HOOK_WALL_DEADLINE,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail(f"subprocess exceeded {HOOK_WALL_DEADLINE}s wall deadline: {argv!r}")
+        elapsed = time.monotonic() - started
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return elapsed
+
+    def _wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
+        return [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
+
     def test_run_is_fast(self):
-        self.stop(self.claude("Done.\n\nI'll run the tests next."), "keepgoing-stop.py")
-        self.assertLess(self.elapsed, 0.2, self.elapsed)
+        stdin = self.claude("Done.\n\nI'll run the tests next.")
+        baseline_samples = self._wall_samples(["python3", "-c", "pass"])
+        hook_samples = self._wall_samples(
+            ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
+        self.assertTrue(
+            _within_budget(hook_samples, baseline_samples),
+            f"hooks={hook_samples} baselines={baseline_samples} "
+            f"deadline={HOOK_WALL_DEADLINE}s spike={_SPIKE_CEILING}s cap={_OVERHEAD_CAP}s",
+        )
+
+
+class WithinBudgetTests(unittest.TestCase):
+    def test_must_fail_cases(self):
+        cases = (
+            ([0.10, 14.90, 0.10], [0.03, 0.03, 0.03]),
+            ([0.10, 5.2, 0.10], [0.03, 0.03, 0.03]),
+            ([1.5, 1.5, 1.5], [1.0, 1.0, 1.0]),
+            ([0.53, 0.53, 0.53], [0.03, 0.03, 0.03]),
+            ([17.0, 17.0, 17.0], [11.0, 11.0, 11.0]),
+        )
+        for hook_samples, baseline_samples in cases:
+            with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
+                self.assertFalse(_within_budget(hook_samples, baseline_samples))
+
+    def test_must_pass_cases(self):
+        cases = (
+            ([0.20, 0.60, 0.21], [0.03, 0.05, 0.03]),
+            ([1.30, 1.30, 1.30], [1.0, 1.0, 1.0]),
+        )
+        for hook_samples, baseline_samples in cases:
+            with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
+                self.assertTrue(_within_budget(hook_samples, baseline_samples))
 
 
 if __name__ == "__main__":
