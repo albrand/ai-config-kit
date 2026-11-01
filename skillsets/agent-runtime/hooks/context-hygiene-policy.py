@@ -260,8 +260,136 @@ NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view",
 
 KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
 
+
+
+def _pgrep_data_heredoc_body_spans(text):
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and not stdin_prog and literal
+    ]
+
+
+def _pgrep_nonexecutable_heredoc_body_spans(text):
+    # Literal data heredoc bodies: delimiter quoted; body is not expanded.
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and not stdin_prog and literal
+    ]
+
+
+
+
+def _pgrep_backtick_data_heredoc_body_spans(text):
+    # Literal non-shell heredoc bodies: backticks are data, not command substitutions.
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, _stdin_prog, literal in _pgrep_iter_heredoc_bodies(text)
+        if not executable and literal
+    ]
+
+
+
+def _pgrep_interpreter_stdin_heredoc_body_spans(text):
+    return [
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog, _literal in _pgrep_iter_heredoc_bodies(text)
+        if stdin_prog and not executable
+    ]
+
+
+def _pgrep_outer_scan_skip_heredoc_body_spans(text):
+    data = _pgrep_nonexecutable_heredoc_body_spans(text)
+    interp = _pgrep_interpreter_stdin_heredoc_body_spans(text)
+    if not data:
+        return interp
+    if not interp:
+        return data
+    merged = data + interp
+    merged.sort()
+    return merged
+
+
+def _pgrep_pgrep_match_interpreter_stdin_body(body):
+    masked = _pgrep_mask_shell_comments(body)
+    if not PGREP_WORD.search(pgrep_obfuscation_fold(masked)):
+        return False
+    chunk = _pgrep_prepare_scan_text(pgrep_obfuscation_fold(masked))
+    for inner in _pgrep_each_dollar_paren(chunk):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+    for inner in _pgrep_each_backtick(chunk):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+    return False
+
+
+def _pgrep_match_expandable_data_heredoc_substitutions(text):
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
+        if executable or stdin_prog or literal:
+            continue
+        body = text[body_start:body_end]
+        if _pgrep_pgrep_match_heredoc_body_substitutions(body):
+            return True
+    return False
+
+def _pgrep_pgrep_match_heredoc_body_substitutions(body):
+    masked = _pgrep_mask_shell_comments(body)
+    chunk = _pgrep_prepare_scan_text(pgrep_obfuscation_fold(masked))
+    for inner in _pgrep_each_dollar_paren(chunk):
+        inner = _pgrep_mask_shell_comments(inner)
+        if re.search(r"pgrep", inner, re.I) and _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+        if _pgrep_lifecycle_pkill_match(inner):
+            return True
+    for inner in _pgrep_each_backtick(chunk):
+        inner = _pgrep_mask_shell_comments(inner)
+        if re.search(r"pgrep", inner, re.I) and _pgrep_pgrep_match_in_fragment(inner, _depth=1):
+            return True
+        if _pgrep_lifecycle_pkill_match(inner):
+            return True
+    return False
+
+def _pgrep_pos_in_nonexecutable_heredoc_body(text, pos, spans=None, hint=0):
+    if spans is None:
+        spans = _pgrep_nonexecutable_heredoc_body_spans(text)
+    in_span, _ = _pgrep_pos_in_sorted_spans(pos, spans, hint)
+    return in_span
+
+
+def _pgrep_pos_in_sorted_spans(pos, spans, hint=0):
+    n = len(spans)
+    while hint < n and spans[hint][1] <= pos:
+        hint += 1
+    if hint < n and spans[hint][0] <= pos < spans[hint][1]:
+        return True, hint
+    return False, hint
+
+
+def _pgrep_pos_in_data_heredoc_body(text, pos, data_spans=None):
+    spans = data_spans if data_spans is not None else _pgrep_data_heredoc_body_spans(text)
+    in_span, _ = _pgrep_pos_in_sorted_spans(pos, spans, 0)
+    return in_span
+
+
 def pgrep_obfuscation_fold(text):
-    text = re.sub(r"\\\n\s*", "", text)
+    data_spans = _pgrep_data_heredoc_body_spans(text)
+    hint = [0]
+
+    def _fold_backslash_nl(m):
+        in_span, hint[0] = _pgrep_pos_in_sorted_spans(m.start(), data_spans, hint[0])
+        if in_span:
+            return m.group(0)
+        return ""
+
+    text = re.sub(r"\\\n\s*", _fold_backslash_nl, text)
     text = re.sub(r"(?<=[a-zA-Z0-9_])['\"]{2}(?=[a-zA-Z0-9_])", "", text)
     text = re.sub(r'(?<=[a-zA-Z0-9_])"([a-zA-Z0-9_])"(?=[a-zA-Z0-9_])', r"\1", text)
     text = re.sub(r"(?<=[a-zA-Z0-9_])'([a-zA-Z0-9_])'(?=[a-zA-Z0-9_])", r"\1", text)
@@ -278,12 +406,27 @@ def _pgrep_skip_space(text, i):
     return i
 
 
+def _pgrep_skip_past_heredoc_body(text, i, bodies, bi):
+    nb = len(bodies)
+    while bi < nb and i >= bodies[bi][1]:
+        bi += 1
+    if bi < nb and bodies[bi][0] <= i < bodies[bi][1]:
+        return bodies[bi][1], bi
+    return None, bi
+
+
 def _pgrep_single_quote_spans(text):
     """One pass: single-quoted regions (shell: no escapes inside '...')."""
     spans = []
     i, n = 0, len(text)
     dq = False
+    hd_bodies = _pgrep_heredoc_body_spans(text)
+    hd_bi = 0
     while i < n:
+        skip, hd_bi = _pgrep_skip_past_heredoc_body(text, i, hd_bodies, hd_bi)
+        if skip is not None:
+            i = skip
+            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 i += 2
@@ -428,6 +571,8 @@ def _pgrep_heredoc_body_spans(text):
                 i = j
                 continue
         i += 1
+    if hd is not None and body_start is not None and body_start < n:
+        spans.append((body_start, n))
     return spans
 
 
@@ -510,6 +655,359 @@ def _pgrep_mask_shell_comments_safe(text):
 
 
 
+def _pgrep_mask_line_hash_comments(text):
+    if "#" not in text:
+        return text
+    lines = text.split("\n")
+    out = []
+    for line in lines:
+        i = 0
+        n = len(line)
+        buf = []
+        while i < n:
+            if line[i] == "#" and _pgrep_hash_starts_comment(line, i):
+                buf.append(" " * (n - i))
+                break
+            buf.append(line[i])
+            i += 1
+        out.append("".join(buf))
+    return "\n".join(out)
+
+
+def _pgrep_mask_lifecycle_comments_linear(text):
+    if "#" not in text and "$(" not in text and "`" not in text:
+        return text
+    sq = _pgrep_single_quote_spans(text)
+    out = []
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            out.append(text[i:skip])
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == "\"":
+                out.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("$(" + (inner if inner is not None else "") + ")")
+                i = j
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("`" + (inner if inner is not None else "") + "`")
+                i = j
+                continue
+            out.append(text[i])
+            i += 1
+            continue
+        if text[i] == "\"":
+            out.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("$(" + (inner if inner is not None else "") + ")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("`" + (inner if inner is not None else "") + "`")
+            i = j
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+
+def _pgrep_mask_lifecycle_comments(text):
+    try:
+        if "#" not in text and "$(" not in text:
+            return text
+        spans = _pgrep_heredoc_body_spans(text)
+        if not spans:
+            return _pgrep_mask_lifecycle_comments_linear(text)
+        out = []
+        i, n, si = 0, len(text), 0
+        while i < n:
+            while si < len(spans) and i >= spans[si][1]:
+                si += 1
+            if si < len(spans) and spans[si][0] <= i < spans[si][1]:
+                end = spans[si][1]
+                out.append(text[i:end])
+                i = end
+                continue
+            j = spans[si][0] if si < len(spans) and i < spans[si][0] else n
+            chunk = text[i:j]
+            if chunk:
+                out.append(_pgrep_mask_lifecycle_comments_linear(chunk))
+            i = j
+        return "".join(out)
+    except Exception:
+        return text
+
+
+def _pgrep_lifecycle_pkill_match(text):
+    masked = _pgrep_mask_lifecycle_comments(text)
+    if BB_LIFECYCLE_PKILL.search(masked):
+        return True
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+            chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
+            if BB_LIFECYCLE_PKILL.search(chunk):
+                return True
+    return False
+
+
+def _pgrep_quote_fault_in_segment(text, base, fault):
+    dq = sq = False
+    dq_start = sq_start = 0
+    n = len(text)
+    i = 0
+    while i < n:
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            nl = text.find("\n", i)
+            i = n if nl == -1 else nl + 1
+            continue
+        if text[i] == "'":
+            sq = True
+            sq_start = base + i
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            dq_start = base + i
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+    if dq:
+        fault[0] = min(fault[0], dq_start)
+    if sq:
+        fault[0] = min(fault[0], sq_start)
+
+
+def _pgrep_earliest_shell_fault(text, quote_fault=True):
+    n = len(text)
+    fault = [n]
+    spans = _pgrep_heredoc_body_spans(text)
+    if quote_fault:
+        if not spans:
+            _pgrep_quote_fault_in_segment(text, 0, fault)
+        else:
+            pos = 0
+            for body_start, body_end in spans:
+                if pos < body_start:
+                    _pgrep_quote_fault_in_segment(text[pos:body_start], pos, fault)
+                pos = body_end
+            if pos < n:
+                _pgrep_quote_fault_in_segment(text[pos:], pos, fault)
+    hd = None
+    hd_start = 0
+    i = 0
+    sq = dq2 = False
+    while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                hd = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    i += 1
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            nl = text.find("\n", i)
+            i = n if nl == -1 else nl + 1
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq2:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq2 = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq2 = True
+            i += 1
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                hd_start = i
+                _, strip_tabs, j = parsed
+                hd = (parsed[0], strip_tabs, "op")
+                i = j
+                continue
+        i += 1
+    if hd is not None:
+        fault[0] = min(fault[0], hd_start)
+    data_spans = _pgrep_data_heredoc_body_spans(text)
+    span_hint = 0
+    for m in re.finditer(r"\\(?:\r?\n|$)", text):
+        pos = m.start()
+        in_span, span_hint = _pgrep_pos_in_sorted_spans(pos, data_spans, span_hint)
+        if in_span:
+            continue
+        line_start = text.rfind("\n", 0, pos) + 1
+        hash_at = text.find("#", line_start, pos)
+        if hash_at != -1 and _pgrep_hash_starts_comment(text, hash_at):
+            continue
+        fault[0] = min(fault[0], pos)
+    return fault[0] if fault[0] < n else None
+
+
+
+
+def _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
+    if fault is None or fault + 2 > len(shell) or not shell.startswith("<<", fault):
+        return False
+    cmd_start = 0
+    for m in re.finditer(r"[;&|\n]|&&|\|\|", shell[:fault]):
+        cmd_start = m.end()
+    cmd_start = _pgrep_skip_space(shell, cmd_start)
+    if _pgrep_heredoc_owner_executable(shell, cmd_start, fault):
+        return False
+    line_end = shell.find("\n", fault)
+    if line_end == -1:
+        line_end = len(shell)
+    parsed = _pgrep_parse_heredoc_delim(shell, fault)
+    if parsed:
+        if parsed[0] == "":
+            return True
+        if _pgrep_heredoc_opener_line_pipes_to_shell(shell, parsed[2], line_end):
+            return False
+    head = shell.split("<<", 1)[0]
+    last = re.split(r"&&|\|\||;", head)[-1]
+    if any(rx.search(last) for rx in HEREDOC_EXEMPT):
+        return True
+    if _pgrep_heredoc_interpreter_stdin_executable(shell, cmd_start, fault):
+        return True
+    return True
+
+
+
+
+def _pgrep_bash_n_syntax_error(cmd):
+    import subprocess
+
+    cache = getattr(_pgrep_bash_n_syntax_error, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_bash_n_syntax_error._cache = cache
+    if cmd in cache:
+        return cache[cmd]
+    try:
+        r = subprocess.run(
+            ["bash", "-n"],
+            input=cmd,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        out = r.returncode != 0
+    except UnicodeEncodeError:
+        out = True
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        out = None
+    cache[cmd] = out
+    return out
+
+
+def _pgrep_fail_closed_after_shell_fault(text, cmd=None):
+    shell = cmd if isinstance(cmd, str) and cmd.strip() else text
+    if not isinstance(shell, str) or not shell.strip():
+        return False
+    bash_err = _pgrep_bash_n_syntax_error(shell)
+    if bash_err is True:
+        tail = shell
+    elif bash_err is False:
+        return False
+    else:
+        fault = _pgrep_earliest_shell_fault(shell, quote_fault=True)
+        if fault is None:
+            return False
+        if _pgrep_fail_closed_skip_unterminated_data_heredoc(shell, fault):
+            return False
+        if _pgrep_pos_in_data_heredoc_body(shell, fault):
+            return False
+        tail = shell[fault:]
+    if _pgrep_lifecycle_pkill_match(tail):
+        return False
+    try:
+        scan = _pgrep_prepare_scan_text(tail)
+        if _pgrep_pgrep_match_in_fragment(scan):
+            return True
+    except Exception:
+        pass
+    folded = pgrep_obfuscation_fold(tail)
+    if PGREP_WORD.search(folded) and PGREP_FULL_FLAG.search(folded):
+        return True
+    return False
+
+
+
 
 
 
@@ -587,7 +1085,7 @@ def _pgrep_tail_after_first_heredoc(text):
     return ""
 
 
-def _pgrep_parse_heredoc_delim(text, i):
+def _pgrep_parse_heredoc_delim_ex(text, i):
     n = len(text)
     if i + 2 > n or text[i : i + 2] != "<<":
         return None
@@ -597,20 +1095,84 @@ def _pgrep_parse_heredoc_delim(text, i):
         strip_tabs = True
         j += 1
     if j >= n:
-        return ("", strip_tabs, j)
+        return ("", strip_tabs, j, True)
     if text[j] in "'\"":
         q = text[j]
         k = j + 1
         while k < n and text[k] != q:
             k += 1
         if k >= n:
-            return ("", strip_tabs, n)
-        return (text[j + 1 : k], strip_tabs, k + 1)
+            return ("", strip_tabs, n, True)
+        return (text[j + 1 : k], strip_tabs, k + 1, True)
+    if text[j] == "\\" and j + 1 < n:
+        m = re.match(r"[A-Za-z0-9_]+", text[j + 1 :])
+        if m:
+            return (m.group(0), strip_tabs, j + 1 + m.end(), True)
     m = re.match(r"[A-Za-z0-9_]+", text[j:])
     if not m:
         return None
-    return (m.group(0), strip_tabs, j + m.end())
+    return (m.group(0), strip_tabs, j + m.end(), False)
 
+
+def _pgrep_parse_heredoc_delim(text, i):
+    parsed = _pgrep_parse_heredoc_delim_ex(text, i)
+    if parsed is None:
+        return None
+    return parsed[0], parsed[1], parsed[2]
+
+
+
+
+_PGREP_HEREDOC_STDIN_WRAPPERS = frozenset(
+    {"sudo", "env", "timeout", "command", "exec", "nohup", "time", "nice"}
+)
+_PGREP_HEREDOC_STDIN_INTERP = frozenset(
+    {"python", "python3", "node", "perl", "ruby", "bash", "sh", "zsh", "dash", "ksh"}
+)
+
+
+def _pgrep_word_tokens_before(text, cmd_start, op_start):
+    tokens = []
+    i = cmd_start
+    while i < op_start:
+        i = _pgrep_skip_space(text, i)
+        if i >= op_start:
+            break
+        ws = i
+        we = _pgrep_skip_one_word(text, i, op_start)
+        if ws >= we:
+            break
+        tokens.append(_pgrep_bare_word(text[ws:we]))
+        i = we
+    return tokens
+
+
+def _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
+    tokens = _pgrep_word_tokens_before(text, cmd_start, op_start)
+    if not tokens:
+        return False
+    idx = 0
+    while idx < len(tokens) and tokens[idx].lower() in _PGREP_HEREDOC_STDIN_WRAPPERS:
+        idx += 1
+    if idx >= len(tokens):
+        return False
+    base = tokens[idx].rsplit("/", 1)[-1].lower()
+    if base not in _PGREP_HEREDOC_STDIN_INTERP:
+        return False
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        return False
+    rest = tokens[idx + 1 :]
+    if base in ("python", "python3", "node", "perl", "ruby"):
+        if not rest:
+            return True
+        for tok in rest:
+            if tok == "-":
+                return True
+            if tok.startswith("-"):
+                continue
+            return False
+        return True
+    return False
 
 def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     span = _pgrep_first_word_span(text, cmd_start, op_start)
@@ -683,6 +1245,11 @@ def _pgrep_skip_ssh_prefix_after_command(text, i, limit):
     if i >= limit:
         return None
     i = _pgrep_skip_one_word(text, i, limit)
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit or text[i] != "-":
+            break
+        i = _pgrep_skip_ssh_option_token(text, i, limit)
     i = _pgrep_skip_space(text, i)
     if i >= limit:
         return limit
@@ -801,13 +1368,14 @@ def _pgrep_iter_heredoc_bodies(text):
             cmd_start = _pgrep_skip_space(text, i)
             continue
         if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
-            parsed = _pgrep_parse_heredoc_delim(text, i)
+            parsed = _pgrep_parse_heredoc_delim_ex(text, i)
             if not parsed:
                 i += 2
                 continue
-            delim, strip_tabs, j = parsed
+            delim, strip_tabs, j, literal = parsed
             line_end = text.find("\n", j)
             op_line_end = line_end if line_end != -1 else n
+            stdin_prog = _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, i)
             executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
             if not executable:
                 executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
@@ -815,8 +1383,8 @@ def _pgrep_iter_heredoc_bodies(text):
             if line_end == -1:
                 body_start = n
                 body_end = n
-                if executable and body_start < body_end:
-                    yield body_start, body_end, executable
+                if body_start < body_end:
+                    yield body_start, body_end, executable, stdin_prog, literal
                 break
             body_start = line_end + 1
             k = body_start
@@ -830,14 +1398,14 @@ def _pgrep_iter_heredoc_bodies(text):
                 cmp_line = line.lstrip("\t") if strip_tabs else line
                 if cmp_line == delim:
                     body_end = k
-                    if executable and body_start < body_end:
-                        yield body_start, body_end, executable
+                    if body_start < body_end:
+                        yield body_start, body_end, executable, stdin_prog, literal
                     i = line_term + 1 if line_term < n else n
                     break
                 k = line_term + 1 if line_term < n else n
             else:
-                if executable and body_start < n:
-                    yield body_start, n, executable
+                if body_start < n:
+                    yield body_start, n, executable, stdin_prog, literal
                 break
             continue
         i += 1
@@ -1464,11 +2032,17 @@ def _pgrep_position_is_invocation(text, pos):
 
 def _pgrep_each_dollar_paren(text):
     sq = _pgrep_single_quote_spans(text)
+    skip_hd = _pgrep_outer_scan_skip_heredoc_body_spans(text)
+    skip_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             i = skip
+            continue
+        in_skip, skip_hint[0] = _pgrep_pos_in_sorted_spans(i, skip_hd, skip_hint[0])
+        if in_skip:
+            i += 1
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -1500,11 +2074,17 @@ def _pgrep_each_dollar_paren(text):
 
 def _pgrep_each_backtick(text):
     sq = _pgrep_single_quote_spans(text)
+    ne_hd = _pgrep_backtick_data_heredoc_body_spans(text)
+    ne_hint = [0]
     i, n, dq, sq_idx = 0, len(text), False, 0
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             i = skip
+            continue
+        in_ne_hd, ne_hint[0] = _pgrep_pos_in_sorted_spans(i, ne_hd, ne_hint[0])
+        if in_ne_hd:
+            i += 1
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
@@ -1581,11 +2161,20 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         inner = _pgrep_mask_shell_comments(inner)
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
-    for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
-        if executable and _pgrep_pgrep_match_in_fragment(
-            _pgrep_mask_shell_comments(text[body_start:body_end]), _depth=_depth + 1
-        ):
-            return True
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(raw):
+        body = raw[body_start:body_end]
+        if executable:
+            masked_body = _pgrep_mask_shell_comments(body)
+            if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
+                return True
+            if _pgrep_pgrep_match_shell_script_lines(masked_body):
+                return True
+        elif stdin_prog:
+            if _pgrep_pgrep_match_interpreter_stdin_body(body):
+                return True
+        elif not literal:
+            if _pgrep_pgrep_match_heredoc_body_substitutions(body):
+                return True
     return False
 
 
@@ -1612,18 +2201,42 @@ def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
         i = we
 
 
-def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
-    saw_word = False
+def _pgrep_mark_exec_quotes_in_remote_region(text, rem, cmd_end, out):
+    i = rem
     while i < cmd_end:
         i = _pgrep_skip_space(text, i)
         if i >= cmd_end:
             return
         if text[i] in "'\"":
-            if saw_word:
-                out.add(i)
             return
-        i = _pgrep_skip_one_word(text, i, cmd_end)
-        saw_word = True
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if we <= ws:
+            return
+        base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+        if base in _PGREP_SHELL_WORDS:
+            _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+            return
+        if base == "eval":
+            j = _pgrep_skip_space(text, we)
+            if j < cmd_end and text[j] in "'\"":
+                out.add(j)
+            return
+        if base in _PGREP_DASH_C_OPENERS:
+            _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+            return
+        i = we
+
+
+def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
+    rem = _pgrep_skip_ssh_prefix_after_command(text, i, cmd_end)
+    if rem is None or rem >= cmd_end:
+        return
+    rem = _pgrep_skip_space(text, rem)
+    if rem < cmd_end and text[rem] in "'\"":
+        out.add(rem)
+        return
+    _pgrep_mark_exec_quotes_in_remote_region(text, rem, cmd_end, out)
 
 
 def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
@@ -1766,7 +2379,13 @@ def _pgrep_executable_single_quote_starts(text):
 
 def _pgrep_iter_quoted_spans(text):
     i, n, dq, dq_start = 0, len(text), False, 0
+    hd_bodies = _pgrep_heredoc_body_spans(text)
+    hd_bi = 0
     while i < n:
+        skip, hd_bi = _pgrep_skip_past_heredoc_body(text, i, hd_bodies, hd_bi)
+        if skip is not None:
+            i = skip
+            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 i += 2
@@ -1900,6 +2519,37 @@ def _pgrep_process_command_substitutions(text, inner_fn):
 _PGREP_SUBST_EXPAND_MAX = 64
 
 
+def _pgrep_blank_nonexecutable_heredoc_bodies(text):
+    chars = list(text)
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
+        if executable or not literal:
+            continue
+        for k in range(body_start, body_end):
+            if chars[k] != "\n":
+                chars[k] = " "
+    return "".join(chars)
+
+
+
+
+def _pgrep_pgrep_match_shell_script_lines(text):
+    for line in _pgrep_mask_shell_comments(text).split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(
+            r"(?:\S+/)*pgrep\b(.*)$",
+            line,
+            re.I,
+        )
+        if not m:
+            continue
+        seg = m.group(1)
+        if pgrep_segment_has_full_flag(seg):
+            return True
+    return False
+
+
 def _pgrep_prepare_scan_text(text):
     chunk = pgrep_obfuscation_fold(text)
     chunk = _pgrep_mask_shell_comments_safe(chunk)
@@ -1908,6 +2558,7 @@ def _pgrep_prepare_scan_text(text):
         if nxt == chunk:
             break
         chunk = nxt
+    chunk = _pgrep_blank_nonexecutable_heredoc_bodies(chunk)
     return _pgrep_blank_data_quotes(chunk)
 
 
@@ -2159,7 +2810,12 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
             return True
     return False
 
-def pgrep_full_match(text):
+def pgrep_full_match(text, cmd=None):
+    if _pgrep_fail_closed_after_shell_fault(text, cmd=cmd):
+        return True
+    shell = cmd if isinstance(cmd, str) and cmd.strip() else text
+    if _pgrep_match_expandable_data_heredoc_substitutions(shell):
+        return True
     if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
         return False
     ctx = _PgrepScanContext(text)
@@ -2230,6 +2886,7 @@ def bb_lifecycle_guard(raw):
     # quotes arrive escaped once more. Unescape twice to reach the shell text.
     for _ in range(2):
         text = text.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+    cmd = None
     try:
         cmd = (p.get("tool_input") or {}).get("command")
         if isinstance(cmd, list):
@@ -2244,7 +2901,8 @@ def bb_lifecycle_guard(raw):
     except Exception:
         pass
     try:
-        if pgrep_full_match(text):
+        pgrep_cmd = cmd if isinstance(cmd, str) else None
+        if pgrep_full_match(text, cmd=pgrep_cmd):
             verdict(True, PGREP_F_DENY)
     except Exception:
         pass
@@ -2258,7 +2916,7 @@ def bb_lifecycle_guard(raw):
     if not lifecycle_block:
         lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_block = bool(BB_LIFECYCLE_PKILL.search(_pgrep_mask_shell_comments_for_lifecycle(text)))
+        lifecycle_block = _pgrep_lifecycle_pkill_match(text)
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
@@ -2334,7 +2992,8 @@ def main():
                     % (os.path.basename(fp), sz / 1024.0, sz / 4))
     verdict(False)
 
-try:
-    main()
-except Exception:
-    verdict(False)   # fail open, always
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        verdict(False)   # fail open, always

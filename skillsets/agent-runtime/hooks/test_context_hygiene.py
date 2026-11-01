@@ -173,6 +173,40 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_data_heredoc_backslash_lines_stay_fast_at_depth_20000(self):
+        import time
+
+        n = 20000
+        cmd = "cat <<'EOF'\n" + "x \\n" * n + "EOF\n"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 8.0)
+        self.assertFalse(v["block"], cmd[:48])
+
+    def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
+        # echo x + backslash-newline + pgrep: joined echo args (main parity).
+        data_hd = "cat > f.md <<'EOF'\nline \\\\\nno pgrep -f here\nEOF"
+        allowed = (
+            data_hd,
+            data_hd + "\necho ok",
+            'echo x \
+pgrep -f bb',
+        )
+        blocked = (
+            "bash <<'EOF'\nline \\\\\npgrep -f x\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_prefix_assignments_do_not_persist_across_commands(self):
         allowed = (
             "P=echo; P=pgrep echo; $P -f x",
@@ -575,6 +609,217 @@ class ContextHygiene(unittest.TestCase):
                 v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+
+    def test_guard_followups_2_ssh_pkill_quoted_grep_subst_fault(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"ssh host {pk} node",
+            f"ssh -p 22 host {pk} -f x",
+            "ssh host 'pgrep -f x'",
+            'ssh host "pgrep -f x"',
+            "ssh host bash -c 'pgrep -f x'",
+            'ssh host sh -c "pgrep -f x"',
+            "ssh -p 22 host bash -lc 'pgrep -f x'",
+            f"$(true # c\n); {pk} node",
+            f'echo "$(true; {pk} node)"',
+            f"`true; {pk} node`",
+            'echo "it\'s"; pgrep -f x',
+            "cat <<'EOF'\nIt's\nEOF\n" + pk + " node",
+            "echo 'unterminated\npgrep -f bb",
+            "echo 'pgrep -f bb\npgrep -f bb",
+            'echo "pgrep -f bb\npgrep -f bb',
+        )
+        allowed = (
+            "cat <<EOF\nline\npgrep -f bb",
+            "echo \\\npgrep -f bb",
+            f"ssh host echo {pk} node",
+            "ssh host grep -n 'pgrep -f' f",
+            f'echo "$(true # note; {pk} node\n)"',
+            f"x=$(true # c; {pk} node\n)",
+            "cat > /tmp/r.md <<'EOF'\nIt's done; never use pgrep -f here.\nEOF\necho ok",
+            f"bb thread tell t --message-file - <<'EOF'\nDon't run {pk} node.\nEOF",
+            "printf '%s\\n' \"note: don't use pgrep -f (it's banned)\"",
+            "sed -e 's/a/b/' -e 's/single-quote cases/x/' f; echo \"avoid pgrep -f\"",
+            '{ echo "2026 notes: it\'s fine, no ' + pk + '"; } >> log',
+            'L="SC4 it\'s ok"; echo "$L pgrep -f is banned"',
+            'git commit -m "Don\'t use pgrep -f"',
+            'echo "don\'t"; echo \'never pgrep -f\'',
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+
+    def test_pgrep_unterminated_data_heredoc_delimiter_suffix_allows_body(self):
+        cmd = "cat <<EOF\nline \\nno pgrep -f\nEOF; echo ok"
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_pgrep_interpreter_stdin_heredoc_scans_dollar_paren(self):
+        cmd = (
+            "python3 -I - <<'EOF'\n"
+            '"w=$(ssh h \'cat f; pgrep -fa x >w && w R\')",\n'
+            "EOF"
+        )
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        self.assertTrue(v["block"], cmd)
+        self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+    def test_pgrep_r12_expandable_data_heredoc_substitutions(self):
+        pg = "p" + "grep"
+        pk = "p" + "kill"
+        blocked = (
+            f"cat <<EOF\n$({pg} -f x)\nEOF",
+            f"cat <<EOF\n`{pg} -f x`\nEOF",
+            f"cat > f <<EOF\nnote $({pk} node)\nEOF",
+            f"tee f <<EOF\n`{pk} node`\nEOF",
+            f"cat <<EOF\n$(echo a; {pg} -f x)\nEOF",
+        )
+        allowed = (
+            f"cat <<'EOF'\n$({pg} -f x)\nEOF",
+            f'cat <<"EOF"\n`{pg} -f x`\nEOF',
+            f"cat <<\\EOF\n$({pg} -f x)\nEOF",
+            "cat <<EOF\nnever use pgrep -f here\nEOF",
+            f"cat <<EOF\n\\$({pg} -f x) is escaped\nEOF",
+            f"python3 - <<'EOF'\nprint('$({pg} -f x)')\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_pgrep_interpreter_stdin_heredoc_comment_and_lone_quote_allowed(self):
+        allowed = (
+            "python <<''\n#$(pgrep-f \n",
+            "python <<''\n'$(pgrep-f \n",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd[:40]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_pgrep_r10_backslash_fold_and_data_heredoc(self):
+        allowed_a = (
+            'echo a \\\nno pgrep -f',
+            "git commit -m x \\\n  --trailer 'note: no pgrep -f'",
+            "printf '%s\\n' \\\n  'do not use pgrep -f'",
+            "echo ok \\\n  && echo 'never pgrep -f'",
+            'ls \\\npgrep -f x',
+        )
+        allowed_b = (
+            "cat <<'E'\npgrep -f",
+            "<<'E'\npgrep -f",
+            'cat <<E\npgrep -f bb',
+        )
+        blocked = (
+            'sudo \\\n pgrep -f x',
+            'echo a\n\\\npgrep -f x',
+        )
+        for cmd in allowed_a + allowed_b:
+            with self.subTest(allowed=cmd[:55]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:55]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+    def test_pgrep_fail_closed_skips_apostrophe_in_shell_comments(self):
+        allowed = (
+            "echo ok # it's a note about pgrep -f",
+            "x=1 # can't stop; pgrep -f y",
+        )
+        blocked = (
+            "echo ok # it's a note\npgrep -f x",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
+    def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
+        sq = '\'"\'"\''
+        blocked_interp = (
+            f"printf 'a {sq}b{sq}\n'; pgrep -f x",
+            "echo ''\"\"\"; pgrep -f x",
+        )
+        allowed_interp = (
+            "cat <<EOF\npgrep -f x\nEOF",
+            "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "python3 script.py <<EOF\npgrep -f x\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
+            "echo ''\"\"'\\n'\"\"' -f`pgrep'",
+            f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
+            f"x='it{sq}s -f `pgrep`'; echo \"$x\"",
+        )
+        for cmd in blocked_interp:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed_interp:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+    def test_guard_followups_2_fault_repro2(self):
+        pk = "p" + "kill"
+        sq = '\'"\'"\''
+        allowed = (
+            "bb thread tell t --message-file - <<'EOF'\nI can't do it.\nSlip: I ran `pgrep -f` once.\nEOF\necho sent",
+            f"cat > r.md <<'EOF'\nIt didn't work; don't use {pk}.\nEOF",
+            "cat <<EOF\nwe can't use pgrep -f here\nEOF",
+            f"printf 'a {sq}%s{sq} b: `pgrep -f x` is banned\\n' y",
+            "echo 'it'\\''s fine, never pgrep -f'",
+            'echo "a"\'b\'"c pgrep -f"',
+            f"x='don{sq}t'; echo \"$x pgrep -f\"",
+        )
+        blocked = (
+            "cat <<'EOF' | sh\nI can't\npgrep -f x\nEOF",
+            "cat <<'EOF'\nI can't\nEOF\npgrep -f x",
+            f"printf 'a {sq}b{sq}\\n'; pgrep -f x",
+            f"echo 'it'\''s'; {pk} node",
+            "echo 'unterminated\npgrep -f bb",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
 
 
 if __name__ == "__main__":
