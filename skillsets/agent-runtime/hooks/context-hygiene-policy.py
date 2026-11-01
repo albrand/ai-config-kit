@@ -642,24 +642,26 @@ def _pgrep_earliest_shell_fault(text):
     fault = n
     dq = False
     dq_start = 0
+    sq = False
+    sq_start = 0
     i = 0
     while i < n:
-        if text[i] == "'":
-            start = i
-            i += 1
-            while i < n and text[i] != "'":
-                i += 1
-            if i >= n:
-                fault = min(fault, start)
-                break
-            i += 1
-            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 i += 2
                 continue
             if text[i] == '"':
                 dq = False
+            i += 1
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            sq_start = i
             i += 1
             continue
         if text[i] == '"':
@@ -673,6 +675,8 @@ def _pgrep_earliest_shell_fault(text):
         i += 1
     if dq:
         fault = min(fault, dq_start)
+    if sq:
+        fault = min(fault, sq_start)
     hd = None
     hd_start = 0
     i = 0
@@ -1864,6 +1868,33 @@ def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
         i = we
 
 
+def _pgrep_mark_exec_quotes_in_remote_region(text, rem, cmd_end, out):
+    i = rem
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        if text[i] in "'\"":
+            return
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if we <= ws:
+            return
+        base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+        if base in _PGREP_SHELL_WORDS:
+            _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+            return
+        if base == "eval":
+            j = _pgrep_skip_space(text, we)
+            if j < cmd_end and text[j] in "'\"":
+                out.add(j)
+            return
+        if base in _PGREP_DASH_C_OPENERS:
+            _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+            return
+        i = we
+
+
 def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
     rem = _pgrep_skip_ssh_prefix_after_command(text, i, cmd_end)
     if rem is None or rem >= cmd_end:
@@ -1871,6 +1902,8 @@ def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
     rem = _pgrep_skip_space(text, rem)
     if rem < cmd_end and text[rem] in "'\"":
         out.add(rem)
+        return
+    _pgrep_mark_exec_quotes_in_remote_region(text, rem, cmd_end, out)
 
 
 def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
