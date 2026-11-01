@@ -873,5 +873,29 @@ pgrep -f bb',
 
 
 
+    def test_r17_python_subprocess_keyword_data_not_scanned(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\", \"ok\"], input=\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"cat\"], input=\"pgrep -f x\", text=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\"], env={\"X\": \"pgrep -f x\"})\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\"], cwd=\"pgrep -f x\")\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(\"pgrep -f x\", shell=True, input=\"y\")\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()
