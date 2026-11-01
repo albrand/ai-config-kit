@@ -621,21 +621,45 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     return False
 
 
+_PGREP_SSH_OPT_WITH_ARG = frozenset("BbcDEeFIiJLlmOoPpQRSWw")
+
+
+def _pgrep_skip_ssh_option_token(text, i, limit):
+    ws = i
+    we = _pgrep_skip_one_word(text, i, limit)
+    word = _pgrep_bare_word(text[ws:we])
+    if not word.startswith("-") or word == "-":
+        return we
+    if word.startswith("--"):
+        return we
+    if word == "-o":
+        j = _pgrep_skip_space(text, we)
+        if j < limit:
+            return _pgrep_skip_one_word(text, j, limit)
+        return we
+    if word.startswith("-o") and len(word) > 2:
+        return we
+    opt = word[1:]
+    k = 0
+    while k < len(opt):
+        ch = opt[k]
+        k += 1
+        if ch in _PGREP_SSH_OPT_WITH_ARG:
+            if k < len(opt):
+                return we
+            j = _pgrep_skip_space(text, we)
+            if j < limit:
+                return _pgrep_skip_one_word(text, j, limit)
+            return we
+    return we
+
+
 def _pgrep_skip_ssh_prefix_after_command(text, i, limit):
     while i < limit:
         i = _pgrep_skip_space(text, i)
         if i >= limit or text[i] != "-":
             break
-        ws = i
-        we = _pgrep_skip_one_word(text, i, limit)
-        if _pgrep_bare_word(text[ws:we]) == "-o":
-            i = _pgrep_skip_space(text, we)
-            if i < limit:
-                i = _pgrep_skip_one_word(text, i, limit)
-            else:
-                i = we
-        else:
-            i = we
+        i = _pgrep_skip_ssh_option_token(text, i, limit)
     i = _pgrep_skip_space(text, i)
     if i >= limit:
         return None

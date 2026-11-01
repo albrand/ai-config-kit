@@ -466,6 +466,11 @@ class ContextHygiene(unittest.TestCase):
         blocked = (
             "ssh host pgrep -f worker",
             "ssh -o A=b host pgrep -f w",
+            "ssh -p 22 host pgrep -f w",
+            "ssh -i k host pgrep -f w",
+            "ssh -l u host pgrep -f w",
+            "ssh -J j host pgrep -f w",
+            "ssh -p 22 -i k u@h pgrep -f w",
             "cat <<E | sh\npgrep -f x\nE",
             "cat <<E | bash -s\npgrep -f x\nE",
             "cat <<E | ssh h\npgrep -f x\nE",
