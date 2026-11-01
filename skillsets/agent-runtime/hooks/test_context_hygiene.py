@@ -624,5 +624,37 @@ class ContextHygiene(unittest.TestCase):
 
 
 
+    def test_guard_followups_2_fault_repro2(self):
+        pk = "p" + "kill"
+        sq = '\'"\'"\''
+        allowed = (
+            "bb thread tell t --message-file - <<'EOF'\nI can't do it.\nSlip: I ran `pgrep -f` once.\nEOF\necho sent",
+            f"cat > r.md <<'EOF'\nIt didn't work; don't use {pk}.\nEOF",
+            "cat <<EOF\nwe can't use pgrep -f here\nEOF",
+            f"printf 'a {sq}%s{sq} b: `pgrep -f x` is banned\\n' y",
+            "echo 'it'\''s fine, never pgrep -f'",
+            'echo "a"\'b\'"c pgrep -f"',
+            f"x='don{sq}t'; echo \"$x pgrep -f\"",
+        )
+        blocked = (
+            "cat <<'EOF' | sh\nI can't\npgrep -f x\nEOF",
+            "cat <<'EOF'\nI can't\nEOF\npgrep -f x",
+            f"printf 'a {sq}b{sq}\\n'; pgrep -f x",
+            f"echo 'it'\''s'; {pk} node",
+            "echo 'unterminated\npgrep -f bb",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:60]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:60]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

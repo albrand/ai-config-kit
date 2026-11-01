@@ -278,12 +278,27 @@ def _pgrep_skip_space(text, i):
     return i
 
 
+def _pgrep_skip_past_heredoc_body(text, i, bodies, bi):
+    nb = len(bodies)
+    while bi < nb and i >= bodies[bi][1]:
+        bi += 1
+    if bi < nb and bodies[bi][0] <= i < bodies[bi][1]:
+        return bodies[bi][1], bi
+    return None, bi
+
+
 def _pgrep_single_quote_spans(text):
     """One pass: single-quoted regions (shell: no escapes inside '...')."""
     spans = []
     i, n = 0, len(text)
     dq = False
+    hd_bodies = _pgrep_heredoc_body_spans(text)
+    hd_bi = 0
     while i < n:
+        skip, hd_bi = _pgrep_skip_past_heredoc_body(text, i, hd_bodies, hd_bi)
+        if skip is not None:
+            i = skip
+            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 i += 2
@@ -637,13 +652,10 @@ def _pgrep_lifecycle_pkill_match(text):
     return False
 
 
-def _pgrep_earliest_shell_fault(text):
+def _pgrep_quote_fault_in_segment(text, base, fault):
+    dq = sq = False
+    dq_start = sq_start = 0
     n = len(text)
-    fault = n
-    dq = False
-    dq_start = 0
-    sq = False
-    sq_start = 0
     i = 0
     while i < n:
         if dq:
@@ -661,12 +673,12 @@ def _pgrep_earliest_shell_fault(text):
             continue
         if text[i] == "'":
             sq = True
-            sq_start = i
+            sq_start = base + i
             i += 1
             continue
         if text[i] == '"':
             dq = True
-            dq_start = i
+            dq_start = base + i
             i += 1
             continue
         if text[i] == "\\" and i + 1 < n:
@@ -674,9 +686,25 @@ def _pgrep_earliest_shell_fault(text):
             continue
         i += 1
     if dq:
-        fault = min(fault, dq_start)
+        fault[0] = min(fault[0], dq_start)
     if sq:
-        fault = min(fault, sq_start)
+        fault[0] = min(fault[0], sq_start)
+
+
+def _pgrep_earliest_shell_fault(text):
+    n = len(text)
+    fault = [n]
+    spans = _pgrep_heredoc_body_spans(text)
+    if not spans:
+        _pgrep_quote_fault_in_segment(text, 0, fault)
+    else:
+        pos = 0
+        for body_start, body_end in spans:
+            if pos < body_start:
+                _pgrep_quote_fault_in_segment(text[pos:body_start], pos, fault)
+            pos = body_end
+        if pos < n:
+            _pgrep_quote_fault_in_segment(text[pos:], pos, fault)
     hd = None
     hd_start = 0
     i = 0
@@ -735,10 +763,11 @@ def _pgrep_earliest_shell_fault(text):
                 continue
         i += 1
     if hd is not None:
-        fault = min(fault, hd_start)
+        fault[0] = min(fault[0], hd_start)
     for m in re.finditer(r"\\(?:\r?\n|$)", text):
-        fault = min(fault, m.start())
-    return fault if fault < n else None
+        fault[0] = min(fault[0], m.start())
+    return fault[0] if fault[0] < n else None
+
 
 
 def _pgrep_fail_closed_after_shell_fault(text):
@@ -1838,10 +1867,12 @@ def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _dept
         if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
             return True
     for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
-        if executable and _pgrep_pgrep_match_in_fragment(
-            _pgrep_mask_shell_comments(text[body_start:body_end]), _depth=_depth + 1
-        ):
-            return True
+        if executable:
+            masked_body = _pgrep_mask_shell_comments(text[body_start:body_end])
+            if _pgrep_pgrep_match_in_fragment(masked_body, _depth=_depth + 1):
+                return True
+            if _pgrep_pgrep_match_shell_script_lines(masked_body):
+                return True
     return False
 
 
@@ -2046,7 +2077,13 @@ def _pgrep_executable_single_quote_starts(text):
 
 def _pgrep_iter_quoted_spans(text):
     i, n, dq, dq_start = 0, len(text), False, 0
+    hd_bodies = _pgrep_heredoc_body_spans(text)
+    hd_bi = 0
     while i < n:
+        skip, hd_bi = _pgrep_skip_past_heredoc_body(text, i, hd_bodies, hd_bi)
+        if skip is not None:
+            i = skip
+            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 i += 2
@@ -2180,6 +2217,43 @@ def _pgrep_process_command_substitutions(text, inner_fn):
 _PGREP_SUBST_EXPAND_MAX = 64
 
 
+def _pgrep_blank_nonexecutable_heredoc_bodies(text):
+    spans = _pgrep_heredoc_body_spans(text)
+    if not spans:
+        return text
+    executable_spans = {
+        (body_start, body_end)
+        for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(text)
+        if executable
+    }
+    chars = list(text)
+    for body_start, body_end in spans:
+        if (body_start, body_end) in executable_spans:
+            continue
+        for k in range(body_start, body_end):
+            if chars[k] != "\n":
+                chars[k] = " "
+    return "".join(chars)
+
+
+def _pgrep_pgrep_match_shell_script_lines(text):
+    for line in _pgrep_mask_shell_comments(text).split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(
+            r"(?:\S+/)*pgrep\b(.*)$",
+            line,
+            re.I,
+        )
+        if not m:
+            continue
+        seg = m.group(1)
+        if pgrep_segment_has_full_flag(seg):
+            return True
+    return False
+
+
 def _pgrep_prepare_scan_text(text):
     chunk = pgrep_obfuscation_fold(text)
     chunk = _pgrep_mask_shell_comments_safe(chunk)
@@ -2188,6 +2262,7 @@ def _pgrep_prepare_scan_text(text):
         if nxt == chunk:
             break
         chunk = nxt
+    chunk = _pgrep_blank_nonexecutable_heredoc_bodies(chunk)
     return _pgrep_blank_data_quotes(chunk)
 
 
