@@ -83,6 +83,7 @@ class RealdataReplayGateTests(unittest.TestCase):
         self.original_denylist = os.environ.get("REALDATA_REPLAY_DENYLIST")
         self.denylist = Path(self.temp.name) / "tenant-labels.txt"
         self.denylist.write_text("Acme Energy\n", encoding="utf-8")
+        self.denylist.chmod(0o600)
         os.environ["REALDATA_REPLAY_DENYLIST"] = str(self.denylist)
         self.repo = Path(self.temp.name) / "pallium-app"
         self.repo.mkdir()

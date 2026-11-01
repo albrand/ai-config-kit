@@ -16,6 +16,7 @@ block=false. A blocking hook that misfires must never wedge an agent.
 
 Disable entirely with CONTEXT_HYGIENE=off.
 """
+import bisect
 import sys, json, os, re
 
 HEREDOC_LINES, HEREDOC_BYTES = 10, 1000
@@ -90,6 +91,155 @@ BB_LIFECYCLE = [
     re.compile(r'\bkillall\s+(?:-\S+\s+)*[\\"]*bb[\\"]*(?:\s|$|[\\";])'),
     re.compile(r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'),
 ]
+PGREP_FULL_FLAG = re.compile(
+    r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
+_PGREP_OPT_SHORT_TAKES_ARG = frozenset("dFUGPgstu")
+_PGREP_OPT_LONG_TAKES_ARG = frozenset(
+    {
+        "pidfile",
+        "signal",
+        "ns",
+        "nslist",
+        "cgroup",
+        "parent",
+        "session",
+        "terminal",
+        "euid",
+        "uid",
+        "group",
+        "pgroup",
+        "delim",
+        "delimiter",
+    }
+)
+
+
+def _pgrep_bare_option_token(tok):
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "'\"":
+        return tok[1:-1]
+    return tok
+
+
+def _pgrep_iter_pgrep_segment_tokens(segment):
+    i, n = 0, len(segment)
+    while i < n:
+        while i < n and segment[i].isspace():
+            i += 1
+        if i >= n:
+            return
+        if segment[i] in ";&|":
+            return
+        if segment[i] == "'":
+            j = i + 1
+            while j < n and segment[j] != "'":
+                j += 1
+            if j < n:
+                j += 1
+            yield segment[i:j]
+            i = j
+            continue
+        if segment[i] == '"':
+            j = i + 1
+            while j < n:
+                if segment[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if segment[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            yield segment[i:j]
+            i = j
+            continue
+        j = i
+        while j < n and not segment[j].isspace() and segment[j] not in ";&|":
+            j += 1
+        yield segment[i:j]
+        i = j
+
+
+def _pgrep_short_option_token_has_full(bare):
+    if not bare.startswith("-") or bare.startswith("--"):
+        return False
+    body = bare[1:]
+    if not body:
+        return False
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c == "f":
+            return True
+        if c in _PGREP_OPT_SHORT_TAKES_ARG:
+            return False
+        i += 1
+    return False
+
+
+def _pgrep_long_option_token_has_full(bare):
+    if not bare.startswith("--"):
+        return False
+    name = bare[2:]
+    if not name:
+        return False
+    eq = name.find("=")
+    opt = name[:eq] if eq >= 0 else name
+    return opt == "full"
+
+
+def _pgrep_segment_option_prefix(segment):
+    m = re.search(r"(?:^|\s)--(?:\s|$)", segment)
+    return segment[: m.start()] if m else segment
+
+
+def _pgrep_segment_tokenize(segment):
+    tokens = list(_pgrep_iter_pgrep_segment_tokens(segment))
+    for tok in tokens:
+        if tok and tok[0] in "'\"":
+            if len(tok) < 2 or tok[0] != tok[-1]:
+                return tokens, False
+    return tokens, True
+
+
+def _pgrep_argv_tokens_has_full_flag(tokens):
+    idx = 0
+    while idx < len(tokens):
+        bare = _pgrep_bare_option_token(tokens[idx])
+        if bare == "--":
+            return False
+        if bare.startswith("--"):
+            if _pgrep_long_option_token_has_full(bare):
+                return True
+            opt = bare[2:].split("=", 1)[0]
+            if opt in _PGREP_OPT_LONG_TAKES_ARG and "=" not in bare[2:] and idx + 1 < len(tokens):
+                idx += 1
+            idx += 1
+            continue
+        if bare.startswith("-") and len(bare) > 1:
+            if _pgrep_short_option_token_has_full(bare):
+                return True
+            body = bare[1:]
+            if body and body[0] in _PGREP_OPT_SHORT_TAKES_ARG and len(body) == 1:
+                if idx + 1 < len(tokens):
+                    idx += 1
+            idx += 1
+            continue
+        idx += 1
+    return False
+
+
+def _pgrep_segment_argv_has_full_flag(segment):
+    segment = _pgrep_segment_option_prefix(segment)
+    tokens, ok = _pgrep_segment_tokenize(segment)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
+    rough = re.findall(r"\S+", segment)
+    return _pgrep_argv_tokens_has_full_flag(rough)
+PGREP_F_DENY = (
+    "[no-pgrep-f] Hard prohibition: never use pgrep -f or pgrep --full. "
+    "Use pgrep -x NAME or ps -o pid,command -p PID instead."
+)
+PGREP_WORD = re.compile(r'\bpgrep\b')
+PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
@@ -106,6 +256,1768 @@ ELECTRON_CACHE = [
 NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view", "readfile", "grep", "glob"}
 
 KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
+
+def pgrep_obfuscation_fold(text):
+    text = re.sub(r"\\\n\s*", "", text)
+    text = re.sub(r"(?<=[a-zA-Z0-9_])['\"]{2}(?=[a-zA-Z0-9_])", "", text)
+    text = re.sub(r'(?<=[a-zA-Z0-9_])"([a-zA-Z0-9_])"(?=[a-zA-Z0-9_])', r"\1", text)
+    text = re.sub(r"(?<=[a-zA-Z0-9_])'([a-zA-Z0-9_])'(?=[a-zA-Z0-9_])", r"\1", text)
+    text = re.sub(r"\bp(?:\\?g)(?:\\?r)(?:\\?e)(?:\\?p)\b", "pgrep", text, flags=re.I)
+    return text
+
+
+
+
+def _pgrep_skip_space(text, i):
+    n = len(text)
+    while i < n and text[i].isspace():
+        i += 1
+    return i
+
+
+def _pgrep_single_quote_spans(text):
+    """One pass: single-quoted regions (shell: no escapes inside '...')."""
+    spans = []
+    i, n = 0, len(text)
+    dq = False
+    while i < n:
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            start = i
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            spans.append((start, i))
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+    return spans
+
+def _pgrep_sq_skip_past(spans, pos, idx):
+    n = len(spans)
+    while idx < n and pos >= spans[idx][1]:
+        idx += 1
+    if idx < n and spans[idx][0] <= pos < spans[idx][1]:
+        return spans[idx][1], idx
+    return None, idx
+
+
+def _pgrep_in_single_quote(spans, pos):
+    end, _ = _pgrep_sq_skip_past(spans, pos, 0)
+    return end is not None
+
+
+def _pgrep_single_quote_end(spans, pos):
+    end, _ = _pgrep_sq_skip_past(spans, pos, 0)
+    return end if end is not None else pos + 1
+
+
+def _pgrep_read_dollar_paren(text, i, sq, sq_idx=0):
+    j, depth, n = i + 2, 1, len(text)
+    while j < n and depth:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
+        if skip is not None:
+            j = skip
+            continue
+        if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
+            depth += 1
+            j += 2
+            continue
+        if text[j] == ")":
+            depth -= 1
+            j += 1
+            continue
+        j += 1
+    return text[i + 2 : j - 1], j, sq_idx
+
+
+def _pgrep_read_backtick(text, i, sq, sq_idx=0):
+    j, n = i + 1, len(text)
+    while j < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
+        if skip is not None:
+            j = skip
+            continue
+        if text[j] == "`":
+            return text[i + 1 : j], j + 1, sq_idx
+        if text[j] == "\\" and j + 1 < n:
+            j += 2
+            continue
+        j += 1
+    return None, n, sq_idx
+
+
+def _pgrep_heredoc_body_spans(text):
+    spans = []
+    n = len(text)
+    i = 0
+    sq = dq = False
+    hd = None
+    body_start = None
+    while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                    body_start = i + 1
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                if body_start is not None and body_start < i:
+                    spans.append((body_start, i))
+                hd = None
+                body_start = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    i += 1
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                _, strip_tabs, j = parsed
+                hd = (parsed[0], strip_tabs, "op")
+                i = j
+                continue
+        i += 1
+    return spans
+
+
+def _pgrep_mask_shell_comments_outside_heredoc(text):
+    if "#" not in text:
+        return text
+    sq = _pgrep_single_quote_spans(text)
+    out = []
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            out.append(text[i:skip])
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == '"':
+                out.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                out.append("`")
+                if inner is not None:
+                    out.append(_pgrep_mask_shell_comments(inner))
+                out.append("`")
+                i = j
+                continue
+            out.append(text[i])
+            i += 1
+            continue
+        if text[i] == '"':
+            out.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            out.append("$(")
+            out.append(_pgrep_mask_shell_comments(inner))
+            out.append(")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            out.append("`")
+            if inner is not None:
+                out.append(_pgrep_mask_shell_comments(inner))
+            out.append("`")
+            i = j
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _pgrep_hash_starts_comment(text, i):
+    if i >= len(text) or text[i] != "#":
+        return False
+    if i > 0 and text[i - 1] == "\\":
+        return False
+    if i > 0 and text[i - 1] == "$":
+        return False
+    if i >= 2 and text[i - 1] == "{" and text[i - 2] == "$":
+        return False
+    if i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_"):
+        return False
+    if i == 0:
+        return True
+    return text[i - 1] in " \t\n;&|()"
+
+
+def _pgrep_mask_shell_comments(text):
+    if "#" not in text:
+        return text
+    spans = _pgrep_heredoc_body_spans(text)
+    if not spans:
+        return _pgrep_mask_shell_comments_outside_heredoc(text)
+    out = []
+    i, n, si = 0, len(text), 0
+    while i < n:
+        while si < len(spans) and i >= spans[si][1]:
+            si += 1
+        if si < len(spans) and spans[si][0] <= i < spans[si][1]:
+            end = spans[si][1]
+            out.append(text[i:end])
+            i = end
+            continue
+        j = spans[si][0] if si < len(spans) and i < spans[si][0] else n
+        chunk = text[i:j]
+        if chunk:
+            out.append(_pgrep_mask_shell_comments_outside_heredoc(chunk))
+        i = j
+    return "".join(out)
+
+
+def _pgrep_tail_after_first_heredoc(text):
+    i = text.find("<<")
+    if i == -1:
+        return ""
+    if i > 0 and text[i - 1] not in " \t\n;&|(":
+        return ""
+    parsed = _pgrep_parse_heredoc_delim(text, i)
+    if not parsed:
+        return ""
+    delim, strip_tabs, j = parsed
+    n = len(text)
+    k = j
+    while k < n and text[k] != "\n":
+        k += 1
+    if k >= n:
+        return ""
+    k += 1
+    while k < n:
+        line_term = text.find("\n", k)
+        if line_term == -1:
+            line_term = n
+        line = text[k:line_term]
+        if line.endswith("\r"):
+            line = line[:-1]
+        cmp_line = line.lstrip("\t") if strip_tabs else line
+        if cmp_line == delim:
+            k = line_term
+            if k < n and text[k] == "\n":
+                k += 1
+            return text[k:]
+        k = line_term + 1 if line_term < n else n
+    return ""
+
+
+def _pgrep_parse_heredoc_delim(text, i):
+    n = len(text)
+    if i + 2 > n or text[i : i + 2] != "<<":
+        return None
+    j = i + 2
+    strip_tabs = False
+    if j < n and text[j] == "-":
+        strip_tabs = True
+        j += 1
+    if j >= n:
+        return ("", strip_tabs, j)
+    if text[j] in "'\"":
+        q = text[j]
+        k = j + 1
+        while k < n and text[k] != q:
+            k += 1
+        if k >= n:
+            return ("", strip_tabs, n)
+        return (text[j + 1 : k], strip_tabs, k + 1)
+    m = re.match(r"[A-Za-z0-9_]+", text[j:])
+    if not m:
+        return None
+    return (m.group(0), strip_tabs, j + m.end())
+
+
+def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
+    span = _pgrep_first_word_span(text, cmd_start, op_start)
+    if not span:
+        return False
+    word = text[span[0] : span[1]].strip().strip("\"'")
+    base = word.rsplit("/", 1)[-1].lower()
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        return True
+    segment = text[cmd_start:op_start]
+    if re.search(r"\beval\b", segment, re.I):
+        return True
+    if re.search(r"\bxargs\b", segment, re.I):
+        return True
+    if re.search(
+        r"(?:^|[;&|(\s])(?:sudo|env|command|exec|nohup|time|nice)\s+(?:\S+\s+)*?(?:\S+/)*(?:bash|sh|zsh|dash|ksh)\b",
+        segment,
+        re.I,
+    ):
+        return True
+    if re.search(r"\bssh\b", segment, re.I):
+        after = text[span[1] : op_start]
+        cleaned = re.sub(r"-\S+", " ", after)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if len(cleaned.split()) <= 1:
+            return True
+    return False
+
+
+def _pgrep_iter_heredoc_bodies(text):
+    n = len(text)
+    i = 0
+    sq = dq = False
+    cmd_start = 0
+    while i < n:
+        if sq:
+            if text[i] == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            sq = True
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] in ";\n|&":
+            i += 1
+            cmd_start = _pgrep_skip_space(text, i)
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            i += 2
+            cmd_start = _pgrep_skip_space(text, i)
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if not parsed:
+                i += 2
+                continue
+            delim, strip_tabs, j = parsed
+            executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
+            line_end = text.find("\n", j)
+            if line_end == -1:
+                body_start = n
+                body_end = n
+                if executable and body_start < body_end:
+                    yield body_start, body_end, executable
+                break
+            body_start = line_end + 1
+            k = body_start
+            while k < n:
+                line_term = text.find("\n", k)
+                if line_term == -1:
+                    line_term = n
+                line = text[k:line_term]
+                if line.endswith("\r"):
+                    line = line[:-1]
+                cmp_line = line.lstrip("\t") if strip_tabs else line
+                if cmp_line == delim:
+                    body_end = k
+                    if executable and body_start < body_end:
+                        yield body_start, body_end, executable
+                    i = line_term + 1 if line_term < n else n
+                    break
+                k = line_term + 1 if line_term < n else n
+            else:
+                if executable and body_start < n:
+                    yield body_start, n, executable
+                break
+            continue
+        i += 1
+
+
+def _pgrep_iter_simple_command_spans(text):
+    n = len(text)
+    start = 0
+    i = 0
+    sq = dq = False
+    hd = None
+    while i < n:
+        if hd is not None:
+            delim, strip_tabs, phase = hd
+            if phase == "op":
+                if text[i] == "\n":
+                    hd = (delim, strip_tabs, "body")
+                i += 1
+                continue
+            line_term = text.find("\n", i)
+            if line_term == -1:
+                line_term = n
+            line = text[i:line_term]
+            if line.endswith("\r"):
+                line = line[:-1]
+            cmp_line = line.lstrip("\t") if strip_tabs else line
+            if cmp_line == delim:
+                hd = None
+                i = line_term
+                if i < n and text[i] == "\n":
+                    yield start, i
+                    i += 1
+                    start = _pgrep_skip_space(text, i)
+                continue
+            i = line_term + 1 if line_term < n else n
+            continue
+        c = text[i]
+        if sq:
+            if c == "'":
+                sq = False
+            i += 1
+            continue
+        if dq:
+            if c == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                dq = False
+            i += 1
+            continue
+        if c == "'":
+            sq = True
+            i += 1
+            continue
+        if c == '"':
+            dq = True
+            i += 1
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            yield start, i
+            i += 2
+            start = _pgrep_skip_space(text, i)
+            continue
+        if c in ";\n|":
+            yield start, i
+            i += 1
+            start = _pgrep_skip_space(text, i)
+            continue
+        if c == "&":
+            yield start, i
+            i += 1
+            start = _pgrep_skip_space(text, i)
+            continue
+        if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            parsed = _pgrep_parse_heredoc_delim(text, i)
+            if parsed:
+                delim, strip_tabs, j = parsed
+                hd = (delim, strip_tabs, "op")
+                i = j
+                continue
+        i += 1
+    yield start, n
+
+def _pgrep_skip_case_header(text, i):
+    n = len(text)
+    while i < n:
+        i = _pgrep_skip_space(text, i)
+        if re.match(r"in\b", text[i:], re.I):
+            return _pgrep_skip_space(text, i + 2)
+        i = _pgrep_skip_one_word(text, i, n)
+    return i
+
+
+_PGREP_LEADER_KWS = frozenset(
+    ("if", "while", "until", "then", "do", "else", "function", "case")
+)
+_PGREP_LEADER_DELTA = {}
+
+
+def _pgrep_after_command_leaders(text, i):
+    n = len(text)
+    i = _pgrep_skip_space(text, i)
+    base = i
+    semi = text.find(";", base)
+    probe_ok = semi != -1 and semi - base <= 120
+    if probe_ok:
+        delta = _PGREP_LEADER_DELTA.get(text[base:semi])
+        if delta is not None:
+            return base + delta
+    if i < n and text[i] not in "({!":
+        wend = _pgrep_skip_one_word(text, i, n)
+        if text[i:wend].lower() not in _PGREP_LEADER_KWS and not re.match(
+            r"\w+\s*\(\s*\)", text[i:]
+        ):
+            if probe_ok:
+                _PGREP_LEADER_DELTA[text[base:semi]] = i - base
+            return i
+    while i < n:
+        start = i
+        if text[i] == "(":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        if text[i] == "{":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        if text[i] == "!":
+            i = _pgrep_skip_space(text, i + 1)
+            continue
+        for kw in ("if", "while", "until", "then", "do", "else", "function", "case"):
+            m = re.match(rf"{kw}\b", text[i:], re.I)
+            if m:
+                kwl = m.group(0).lower()
+                i = _pgrep_skip_space(text, i + m.end())
+                if kwl == "function":
+                    wm = re.match(r"(\w+)\b", text[i:])
+                    if wm:
+                        i = _pgrep_skip_space(text, i + wm.end())
+                    if i < n and text[i] == "{":
+                        i = _pgrep_skip_space(text, i + 1)
+                elif kwl == "case":
+                    i = _pgrep_skip_case_header(text, i)
+                    pm = re.match(r"[^)]*\)", text[i:])
+                    if pm:
+                        i = _pgrep_skip_space(text, i + pm.end())
+                continue
+        m = re.match(r"(\w+)\s*\(\s*\)", text[i:])
+        if m:
+            i = _pgrep_skip_space(text, i + m.end())
+            if i < n and text[i] == "{":
+                i = _pgrep_skip_space(text, i + 1)
+            continue
+        if i == start:
+            break
+    if probe_ok:
+        _PGREP_LEADER_DELTA[text[base:semi]] = i - base
+    return i
+
+def _pgrep_skip_env_token(text, i):
+    i = _pgrep_skip_space(text, i)
+    if i >= len(text):
+        return i
+    if text[i] == "-":
+        m = re.match(r"-(\w+)(?:\s+(\S+))?", text[i:])
+        return i + m.end() if m else i + 1
+    m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:])
+    if m:
+        return i + m.end()
+    m = re.match(r"\S+", text[i:])
+    return i + m.end() if m else i + 1
+
+def _pgrep_skip_sudo_prefix(text, i):
+    while True:
+        i = _pgrep_skip_space(text, i)
+        if i >= len(text) or text[i] != "-":
+            break
+        m = re.match(r"-(\w+)(?:\s+(\S+))?", text[i:])
+        if not m:
+            break
+        i += m.end()
+    return i
+
+def _pgrep_skip_xargs_options(text, i):
+    while True:
+        i = _pgrep_skip_space(text, i)
+        if i >= len(text) or text[i] != "-":
+            break
+        m = re.match(r"-\S+", text[i:])
+        if not m:
+            break
+        i += m.end()
+    return i
+
+
+def _pgrep_skip_one_word(text, i, limit):
+    i = _pgrep_skip_space(text, i)
+    if i >= limit:
+        return i
+    if text[i] == '"':
+        j = i + 1
+        while j < limit:
+            if text[j] == "\\" and j + 1 < limit:
+                j += 2
+                continue
+            if text[j] == '"':
+                return j + 1
+            j += 1
+        return limit
+    if text[i] == "'":
+        j = i + 1
+        while j < limit and text[j] != "'":
+            j += 1
+        return j + 1 if j < limit else limit
+    m = re.match(r"[^\s\"';|&]+", text[i:limit])
+    return i + m.end() if m else i + 1
+
+
+def _pgrep_skip_dash_options(text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags):
+    short_with_arg = set(short_with_arg)
+    short_flags = set(short_flags)
+    long_with_arg = set(long_with_arg)
+    long_flags = set(long_flags)
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit or text[i] != "-":
+            break
+        if text.startswith("--", i):
+            m = re.match(r"--([\w-]+)", text[i:limit])
+            if not m:
+                break
+            opt = m.group(1)
+            i += m.end()
+            if opt in long_with_arg:
+                i = _pgrep_skip_one_word(text, i, limit)
+            continue
+        if i + 1 < limit and text[i + 1].isdigit():
+            i = _pgrep_skip_one_word(text, i, limit)
+            continue
+        j = i + 1
+        while j < limit and text[j].isalpha():
+            ch = text[j]
+            j += 1
+            if ch in short_with_arg:
+                i = j
+                i = _pgrep_skip_one_word(text, i, limit)
+                j = i
+                break
+        else:
+            i = j
+    return i
+
+
+def _pgrep_skip_wrapper_consumer(name, text, i, limit):
+    n = name.lower()
+    if n == "sudo":
+        return _pgrep_skip_sudo_prefix(text, i)
+    if n == "env":
+        while True:
+            i = _pgrep_skip_space(text, i)
+            if i >= limit:
+                break
+            if text[i] == "-":
+                nxt = _pgrep_skip_env_token(text, i)
+                if nxt == i or nxt > limit:
+                    break
+                i = nxt
+                continue
+            m = re.match(
+                r"(\w+)=(?:[^\s\"'';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')",
+                text[i:limit],
+            )
+            if m:
+                i += m.end()
+                continue
+            break
+        return i
+    if n == "xargs":
+        return _pgrep_skip_xargs_options(text, i)
+    if n == "timeout":
+        i = _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="sk",
+            short_flags="fv",
+            long_with_arg=("kill-after", "signal"),
+            long_flags=("foreground", "preserve-status", "verbose"),
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "nice":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="n", short_flags="", long_with_arg=(), long_flags=()
+        )
+        return i
+    if n == "ionice":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="cn", short_flags="t", long_with_arg=(), long_flags=()
+        )
+    if n == "stdbuf":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="ioe", short_flags="", long_with_arg=("input", "output", "error"), long_flags=()
+        )
+    if n == "chrt":
+        i = _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="bf",
+            short_flags="",
+            long_with_arg=("pid", "ppid", "clock", "deadline", "sched", "policy"),
+            long_flags=(),
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "taskset":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="cp", short_flags="a", long_with_arg=(), long_flags=()
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "flock":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="n", short_flags="ux", long_with_arg=(), long_flags=()
+        )
+        return _pgrep_skip_one_word(text, i, limit)
+    if n == "setsid":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="w", short_flags="fc", long_with_arg=(), long_flags=()
+        )
+    if n == "time":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="", short_flags="pv", long_with_arg=(), long_flags=("format", "output", "verbose")
+        )
+    if n == "caffeinate":
+        return _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="dimsutw",
+            short_flags="",
+            long_with_arg=("timeout", "expire", "sleep", "wake", "start", "end"),
+            long_flags=("fail", "assert", "lock", "disable", "enable"),
+        )
+    if n == "doas":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="unL", short_flags="", long_with_arg=(), long_flags=()
+        )
+    if n == "runuser":
+        i = _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="u", short_flags="", long_with_arg=(), long_flags=()
+        )
+        i = _pgrep_skip_space(text, i)
+        if i + 1 < limit and text[i : i + 2] == "--":
+            i += 2
+        return i
+    if n == "watch":
+        return _pgrep_skip_dash_options(
+            text,
+            i,
+            limit,
+            short_with_arg="ntd",
+            short_flags="bg",
+            long_with_arg=("interval", "differences", "errexit", "color", "exec"),
+            long_flags=("beep", "color", "exact", "no-title", "precise", "show", "differences"),
+        )
+    if n == "command":
+        return _pgrep_skip_dash_options(
+            text, i, limit, short_with_arg="p", short_flags="v", long_with_arg=(), long_flags=()
+        )
+    return i
+
+
+_PGREP_WRAPPER_WORDS = (
+    "sudo",
+    "env",
+    "command",
+    "exec",
+    "nohup",
+    "time",
+    "nice",
+    "xargs",
+    "timeout",
+    "ionice",
+    "stdbuf",
+    "chrt",
+    "taskset",
+    "flock",
+    "setsid",
+    "caffeinate",
+    "doas",
+    "runuser",
+    "watch",
+)
+_PGREP_WRAPPER_RE = re.compile(
+    r"(?:%s)\b" % "|".join(re.escape(w) for w in _PGREP_WRAPPER_WORDS),
+    re.I,
+)
+
+
+def _pgrep_skip_assignments_and_wrappers(text, i, limit):
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit:
+            return i
+        m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:limit])
+        if m:
+            i += m.end()
+            continue
+        wm = _PGREP_WRAPPER_RE.match(text[i:limit])
+        if not wm:
+            break
+        w = wm.group(0)
+        i += wm.end()
+        i = _pgrep_skip_wrapper_consumer(w, text, i, limit)
+    return i
+
+
+def _pgrep_bare_word(word):
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+        return word[1:-1]
+    return word
+
+
+def _pgrep_command_words(text, cmd_start, cmd_end):
+    words = []
+    i = cmd_start
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            break
+        s = i
+        e = _pgrep_skip_one_word(text, i, cmd_end)
+        words.append((s, e, text[s:e]))
+        i = e
+    return words
+
+
+def _pgrep_skip_launcher_options(text, i, limit, short_with_arg, short_flags, long_with_arg=(), long_flags=()):
+    return _pgrep_skip_dash_options(
+        text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags
+    )
+
+
+def _pgrep_prefix_launch_region(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
+    if i >= cmd_end:
+        return None
+    s = i
+    e = _pgrep_skip_one_word(text, i, cmd_end)
+    base = _pgrep_bare_word(text[s:e]).rsplit("/", 1)[-1].lower()
+    if base == "chroot":
+        i = _pgrep_skip_one_word(text, e, cmd_end)
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return None
+        return i, cmd_end
+    if base in ("strace", "ltrace"):
+        i = _pgrep_skip_launcher_options(
+            text,
+            e,
+            cmd_end,
+            short_with_arg="p",
+            short_flags="faehikqrstvxy",
+            long_with_arg=("trace", "trace-path", "output", "write", "chdir", "stack-traces", "follow-execve"),
+            long_flags=("follow-forks", "follow-fork", "follow-clone", "follow-vfork"),
+        )
+        return i, cmd_end
+    if base == "nsenter":
+        i = _pgrep_skip_launcher_options(
+            text, e, cmd_end, short_with_arg="tU", short_flags="F", long_with_arg=("target", "user"), long_flags=()
+        )
+        return i, cmd_end
+    if base == "unshare":
+        i = _pgrep_skip_launcher_options(
+            text, e, cmd_end, short_with_arg="f", short_flags="", long_with_arg=("mount-proc", "mount-sys"), long_flags=()
+        )
+        return i, cmd_end
+    if base == "valgrind":
+        i = _pgrep_skip_launcher_options(
+            text,
+            e,
+            cmd_end,
+            short_with_arg="",
+            short_flags="",
+            long_with_arg=("tool", "log-file", "log-fd", "log-socket", "xml-file", "xml-fd", "xml-socket"),
+            long_flags=("help", "version", "quiet", "trace-children", "track-fds", "time-stamp"),
+        )
+        return i, cmd_end
+    if base == "gdb":
+        words = _pgrep_command_words(text, s, cmd_end)
+        for idx, (ws, we, w) in enumerate(words):
+            if _pgrep_bare_word(w) == "--args" and idx + 1 < len(words):
+                return words[idx + 1][0], cmd_end
+        return None
+    return None
+
+
+def _pgrep_embedded_launch_regions(text, cmd_start, cmd_end):
+    chunk = text[cmd_start:cmd_end]
+    if "-exec" not in chunk and "-ok" not in chunk and ":::" not in chunk:
+        return
+    words = _pgrep_command_words(text, cmd_start, cmd_end)
+    if not words:
+        return
+    first = _pgrep_bare_word(words[0][2]).rsplit("/", 1)[-1].lower()
+    if first == "parallel":
+        j = 1
+        while j < len(words):
+            w = words[j][2]
+            if _pgrep_bare_word(w) == ":::":
+                break
+            if w.startswith("-"):
+                j += 1
+                continue
+            inner_start = words[j][0]
+            inner_end = cmd_end
+            for k in range(j, len(words)):
+                if _pgrep_bare_word(words[k][2]) == ":::":
+                    inner_end = words[k][0]
+                    break
+            yield inner_start, inner_end
+            return
+    for idx, (ws, we, w) in enumerate(words):
+        bare = _pgrep_bare_word(w)
+        if bare in ("-exec", "-execdir", "-ok", "-okdir") and idx + 1 < len(words):
+            inner_start = words[idx + 1][0]
+            inner_end = cmd_end
+            for j in range(idx + 2, len(words)):
+                bj = _pgrep_bare_word(words[j][2])
+                if bj in ("\\;", ";", "+"):
+                    inner_end = words[j][0]
+                    break
+            yield inner_start, inner_end
+
+
+def _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+    pref = _pgrep_prefix_launch_region(text, cmd_start, cmd_end)
+    if pref:
+        yield pref
+    yield from _pgrep_embedded_launch_regions(text, cmd_start, cmd_end)
+
+
+def _pgrep_position_is_launched_pgrep(text, pos):
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start or pos >= cmd_end:
+            continue
+        for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+            span = _pgrep_first_word_span(text, ls, le)
+            if span and span[0] <= pos < span[1]:
+                return bool(re.search(r"pgrep$", text[span[0] : span[1]], re.I))
+        return False
+    return False
+
+def _pgrep_first_word_span(text, cmd_start, cmd_end, *, _leader=None):
+    i = _leader if _leader is not None else _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
+    if i >= cmd_end:
+        return None
+    if text[i] == '"':
+        j = i + 1
+        while j < cmd_end:
+            if text[j] == "\\" and j + 1 < cmd_end:
+                j += 2
+                continue
+            if text[j] == '"':
+                return i, j + 1
+            j += 1
+        return i, cmd_end
+    if text[i] == "'":
+        j = i + 1
+        while j < cmd_end and text[j] != "'":
+            j += 1
+        if j < cmd_end:
+            j += 1
+        return i, j
+    m = re.match(r"((?:[^\s\"';|&]+/)*pgrep)\b", text[i:cmd_end], re.I)
+    if m:
+        return i, i + m.end()
+    m = re.match(r"(\S+)", text[i:cmd_end])
+    if m:
+        return i, i + m.end()
+    return None
+
+
+def _pgrep_position_in_command_word(text, pos):
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start or pos >= cmd_end:
+            continue
+        span = _pgrep_first_word_span(text, cmd_start, cmd_end)
+        if span and span[0] <= pos < span[1]:
+            return span, text[span[0] : span[1]]
+        return None, None
+    return None, None
+
+
+def _pgrep_word_is_var_command(word, var):
+    if re.match(rf"^\$\{{{var}\}}$|^\${var}\b$", word):
+        return True
+    return bool(re.match(rf'^"\$\{{{var}\}}"$|^"\${var}"$', word))
+
+
+# pgrep invocation routes (each must be the first word of a simple command):
+# - literal pgrep or path-prefixed pgrep with -f/--full or flag-var tail
+# - $VAR / ${VAR} binary alias (P=pgrep, P=/usr/bin/pgrep) with -f/--full or flag-var tail
+# - script-alias variable as command word (CMD='pgrep -f …'; $CMD)
+# - the same rules inside bash -c / eval / ssh / $(…) / backticks
+
+
+def _pgrep_position_is_var_invocation(text, pos, var):
+    span, word = _pgrep_position_in_command_word(text, pos)
+    if not span:
+        return False
+    return _pgrep_word_is_var_command(word, var)
+
+
+def _pgrep_position_is_invocation(text, pos):
+    span, word = _pgrep_position_in_command_word(text, pos)
+    if span and re.search(r"pgrep$", word, re.I):
+        return True
+    return _pgrep_position_is_launched_pgrep(text, pos)
+
+def _pgrep_each_dollar_paren(text):
+    sq = _pgrep_single_quote_spans(text)
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, i, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+                yield inner
+                continue
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, i, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            yield inner
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
+
+def _pgrep_each_backtick(text):
+    sq = _pgrep_single_quote_spans(text)
+    i, n, dq, sq_idx = 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if text[i] == "`":
+                inner, i, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is not None:
+                    yield inner
+                continue
+            i += 1
+            continue
+        if text[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if text[i] == "`":
+            inner, i, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is not None:
+                yield inner
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
+
+_PGREP_FRAGMENT_MAX_DEPTH = 64
+
+
+def _pgrep_pgrep_match_in_fragment(text, raw_for_bindings=None, _ctx=None, _depth=0):
+    if _depth > _PGREP_FRAGMENT_MAX_DEPTH:
+        return False
+    if _ctx is None:
+        raw = text if raw_for_bindings is None else raw_for_bindings
+        _ctx = _PgrepScanContext(raw)
+        text = _ctx.scan
+    else:
+        raw = _ctx.raw
+    for m in PGREP_WORD.finditer(text):
+        if not _ctx.pgrep_word_is_invocation(m.start()):
+            continue
+        _, _, flags_here = _ctx.bindings_at(m.start())
+        if not flags_here:
+            tail = text[m.end() : m.end() + 96].lstrip()
+            if tail and not pgrep_segment_has_full_flag(
+                tail[:32]
+            ) and not pgrep_segment_uses_flag_var(tail[:32], flags_here):
+                continue
+        segment = re.match(r"[^\n;&|]*", text[m.end() :])
+        if not segment:
+            continue
+        seg = segment.group(0)
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flags_here):
+            return True
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if is_exec:
+            inner = _pgrep_mask_shell_comments(text[start + 1 : end - 1])
+            if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
+                return True
+    for inner in _pgrep_each_dollar_paren(text):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
+            return True
+    for inner in _pgrep_each_backtick(text):
+        if not re.search(r"pgrep", inner, re.I):
+            continue
+        inner = _pgrep_mask_shell_comments(inner)
+        if _pgrep_pgrep_match_in_fragment(inner, _depth=_depth + 1):
+            return True
+    for body_start, body_end, executable in _pgrep_iter_heredoc_bodies(raw):
+        if executable and _pgrep_pgrep_match_in_fragment(
+            _pgrep_mask_shell_comments(text[body_start:body_end]), _depth=_depth + 1
+        ):
+            return True
+    return False
+
+
+_PGREP_SHELL_WORDS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+_PGREP_DASH_C_OPENERS = frozenset(("su", "runuser", "script"))
+
+
+def _pgrep_word_is_dash_c_flag(word):
+    return bool(re.match(r"^-[a-zA-Z]*c$", _pgrep_bare_word(word)))
+
+
+def _pgrep_mark_dash_c_exec_quote(text, i, cmd_end, out):
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if _pgrep_word_is_dash_c_flag(text[ws:we]):
+            i = _pgrep_skip_space(text, we)
+            if i < cmd_end and text[i] in "'\"":
+                out.add(i)
+            return
+        i = we
+
+
+def _pgrep_mark_ssh_exec_quote(text, i, cmd_end, out):
+    saw_word = False
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        if text[i] in "'\"":
+            if saw_word:
+                out.add(i)
+            return
+        i = _pgrep_skip_one_word(text, i, cmd_end)
+        saw_word = True
+
+
+def _pgrep_mark_exec_quotes_in_command(text, cmd_start, cmd_end, out):
+    i0 = _pgrep_skip_space(text, cmd_start)
+    if i0 < cmd_end:
+        wend = _pgrep_skip_one_word(text, i0, cmd_end)
+        if text[i0:wend].lower() in ("for", "while", "until"):
+            return
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return
+        asn = _pgrep_assignment_at(text, i, cmd_end)
+        if asn:
+            i = asn[2]
+            continue
+        wm = _PGREP_WRAPPER_RE.match(text[i:cmd_end])
+        if wm:
+            w = wm.group(0)
+            wl = w.lower()
+            wi = i + len(w)
+            if wl == "watch":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                wi = _pgrep_skip_space(text, wi)
+                if wi < cmd_end and text[wi] in "'\"":
+                    out.add(wi)
+                return
+            if wl == "xargs":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                wi = _pgrep_skip_space(text, wi)
+                if wi < cmd_end and text[wi] in "'\"":
+                    out.add(wi)
+                return
+            if wl == "runuser":
+                wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+                _pgrep_mark_dash_c_exec_quote(text, wi, cmd_end, out)
+                return
+            wi = _pgrep_skip_wrapper_consumer(w, text, wi, cmd_end)
+            i = wi
+            continue
+        break
+    ws = i
+    we = _pgrep_skip_one_word(text, i, cmd_end)
+    if we <= ws:
+        return
+    base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+    if base in _PGREP_SHELL_WORDS:
+        _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+    elif base == "eval":
+        i = _pgrep_skip_space(text, we)
+        if i < cmd_end and text[i] in "'\"":
+            out.add(i)
+    elif base == "ssh":
+        _pgrep_mark_ssh_exec_quote(text, we, cmd_end, out)
+    elif base in _PGREP_DASH_C_OPENERS:
+        _pgrep_mark_dash_c_exec_quote(text, we, cmd_end, out)
+
+
+def _pgrep_enqueue_substitution_chunks(chunk, origin, pending):
+    sq = _pgrep_single_quote_spans(chunk)
+    i, n, dq, sq_idx = 0, len(chunk), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            i = skip
+            continue
+        if dq:
+            if chunk[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if chunk[i] == '"':
+                dq = False
+                i += 1
+                continue
+            if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+                if "'" in inner or '"' in inner:
+                    pending.append((origin + i + 2, inner))
+                i = j
+                continue
+            if chunk[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+                if inner is not None and ("'" in inner or '"' in inner):
+                    pending.append((origin + i + 1, inner))
+                i = j
+                continue
+            i += 1
+            continue
+        if chunk[i] == '"':
+            dq = True
+            i += 1
+            continue
+        if chunk.startswith("$", i) and i + 1 < n and chunk[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(chunk, i, sq, sq_idx)
+            if "'" in inner or '"' in inner:
+                pending.append((origin + i + 2, inner))
+            i = j
+            continue
+        if chunk[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(chunk, i, sq, sq_idx)
+            if inner is not None and ("'" in inner or '"' in inner):
+                pending.append((origin + i + 1, inner))
+            i = j
+            continue
+        if chunk[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
+
+def _pgrep_executable_single_quote_starts(text):
+    if "'" not in text and '"' not in text:
+        return set()
+    out = set()
+    pending = [(0, text)]
+    idx = 0
+    while idx < len(pending):
+        origin, chunk = pending[idx]
+        idx += 1
+        for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(chunk):
+            i0 = _pgrep_skip_space(chunk, cmd_start)
+            if i0 < cmd_end:
+                wend = _pgrep_skip_one_word(chunk, i0, cmd_end)
+                if chunk[i0:wend].lower() in ("for", "while", "until"):
+                    continue
+            local = set()
+            _pgrep_mark_exec_quotes_in_command(chunk, cmd_start, cmd_end, local)
+            for pos in local:
+                out.add(origin + pos)
+        _pgrep_enqueue_substitution_chunks(chunk, origin, pending)
+    return out
+
+
+def _pgrep_iter_quoted_spans(text):
+    i, n, dq, dq_start = 0, len(text), False, 0
+    while i < n:
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if text[i] == '"':
+                yield dq_start, i + 1
+                dq = False
+            i += 1
+            continue
+        if text[i] == "'":
+            start = i
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            yield start, i
+            continue
+        if text[i] == '"':
+            dq = True
+            dq_start = i
+            i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        i += 1
+
+def _pgrep_quote_is_assignment_value(text, start):
+    i = start - 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i < 0 or text[i] != "=":
+        return False
+    j = i - 1
+    while j >= 0 and (text[j].isalnum() or text[j] == "_"):
+        j -= 1
+    return True
+
+
+def _pgrep_iter_quoted_spans_meta(text):
+    if "'" not in text and '"' not in text:
+        for start, end in _pgrep_iter_quoted_spans(text):
+            yield start, end, False
+        return
+    exec_starts = _pgrep_executable_single_quote_starts(text)
+    for start, end in _pgrep_iter_quoted_spans(text):
+        yield start, end, start in exec_starts
+
+
+
+
+def _pgrep_blank_data_quotes(text):
+    chars = list(text)
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if is_exec or _pgrep_quote_is_assignment_value(text, start):
+            continue
+        inner = text[start + 1 : end - 1]
+        if "$(" in inner or "`" in inner:
+            continue
+        if "pgrep" not in inner.lower():
+            continue
+        if not PGREP_WORD.search(pgrep_obfuscation_fold(inner)):
+            continue
+        for k in range(start + 1, end - 1):
+            chars[k] = " "
+    return "".join(chars)
+
+def _pgrep_process_command_substitutions(text, inner_fn):
+    sq = _pgrep_single_quote_spans(text)
+    parts, i, n, dq, sq_idx = [], 0, len(text), False, 0
+    while i < n:
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            parts.append(text[i:skip])
+            i = skip
+            continue
+        if dq:
+            if text[i] == "\\" and i + 1 < n:
+                parts.append(text[i : i + 2])
+                i += 2
+                continue
+            if text[i] == '"':
+                parts.append(text[i])
+                dq = False
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+                parts.append("$(" + inner_fn(inner) + ")")
+                i = j
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is None:
+                    parts.append(text[i:])
+                    break
+                parts.append("`" + inner_fn(inner) + "`")
+                i = j
+                continue
+            parts.append(text[i])
+            i += 1
+            continue
+        if text[i] == '"':
+            parts.append(text[i])
+            dq = True
+            i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            parts.append("$(" + inner_fn(inner) + ")")
+            i = j
+            continue
+        if text[i] == "`":
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is None:
+                parts.append(text[i:])
+                break
+            parts.append("`" + inner_fn(inner) + "`")
+            i = j
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            parts.append(text[i : i + 2])
+            i += 2
+            continue
+        parts.append(text[i])
+        i += 1
+    return "".join(parts)
+
+
+_PGREP_SUBST_EXPAND_MAX = 64
+
+
+def _pgrep_prepare_scan_text(text):
+    chunk = pgrep_obfuscation_fold(text)
+    chunk = _pgrep_mask_shell_comments(chunk)
+    for _ in range(_PGREP_SUBST_EXPAND_MAX):
+        nxt = _pgrep_process_command_substitutions(chunk, pgrep_obfuscation_fold)
+        if nxt == chunk:
+            break
+        chunk = nxt
+    return _pgrep_blank_data_quotes(chunk)
+
+
+_PGREP_ASSIGNMENT = re.compile(
+    r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+)
+
+
+def _pgrep_unquote_assign_value(val):
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in "'\"":
+        return val[1:-1]
+    return val
+
+
+def _pgrep_assignment_at(text, i, limit):
+    m = _PGREP_ASSIGNMENT.match(text[i:limit])
+    if not m:
+        return None
+    name = m.group(1)
+    val = text[i + len(name) + 1 : i + m.end()]
+    return name, val, i + m.end()
+
+
+def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):
+    binary.discard(name)
+    script.discard(name)
+    flag_vars.discard(name)
+    raw = _pgrep_unquote_assign_value(val)
+    folded = pgrep_obfuscation_fold(raw).strip()
+    if re.match(r"^(-f|--full)$", folded):
+        flag_vars.add(name)
+        return
+    wm = re.match(r"(?:\S+/)*pgrep\b", folded, re.I)
+    if not wm:
+        return
+    tail = folded[wm.end() :]
+    if pgrep_segment_has_full_flag(tail):
+        script.add(name)
+    else:
+        binary.add(name)
+
+
+def _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    saw = False
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            return saw
+        asn = _pgrep_assignment_at(text, i, cmd_end)
+        if not asn:
+            return False
+        saw = True
+        i = asn[2]
+    return saw
+
+
+def _pgrep_collect_var_bindings(text):
+    binary, script, flag_vars = set(), set(), set()
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        eb, es, ef = set(binary), set(script), set(flag_vars)
+        i = _pgrep_after_command_leaders(text, cmd_start)
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if not asn:
+                break
+            name, val, nxt = asn
+            _pgrep_apply_var_binding(name, val, eb, es, ef)
+            i = nxt
+        if _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+            binary, script, flag_vars = eb, es, ef
+    return binary, script, flag_vars
+
+
+def _pgrep_bindings_at_pos(text, pos):
+    binary, script, flag_vars = set(), set(), set()
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start:
+            break
+        eb, es, ef = set(binary), set(script), set(flag_vars)
+        i = _pgrep_after_command_leaders(text, cmd_start)
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if not asn:
+                break
+            name, val, nxt = asn
+            _pgrep_apply_var_binding(name, val, eb, es, ef)
+            i = nxt
+        if cmd_start <= pos < cmd_end:
+            return eb, es, ef
+        if _pgrep_simple_command_is_assignments_only(text, cmd_start, cmd_end):
+            binary, script, flag_vars = eb, es, ef
+    return binary, script, flag_vars
+
+import bisect
+
+
+class _PgrepScanContext:
+    __slots__ = (
+        "raw",
+        "scan",
+        "cmd_spans",
+        "_bind_pos",
+        "_bind_b",
+        "_bind_s",
+        "_bind_f",
+        "_inv_starts",
+        "_inv_ends",
+        "_cmd_starts",
+    )
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.scan = _pgrep_prepare_scan_text(raw)
+        self.cmd_spans = tuple(_pgrep_iter_simple_command_spans(self.scan))
+        pos, b, s, f, inv = _pgrep_build_binding_snapshot_arrays(self.scan, self.cmd_spans)
+        self._bind_pos = pos
+        self._bind_b = b
+        self._bind_s = s
+        self._bind_f = f
+        self._cmd_starts = [c[0] for c in self.cmd_spans]
+        self._inv_starts = [p[0] for p in inv]
+        self._inv_ends = [p[1] for p in inv]
+
+    def bindings_at(self, pos):
+        idx = bisect.bisect_right(self._bind_pos, pos) - 1
+        if idx < 0:
+            return set(), set(), set()
+        return self._bind_b[idx], self._bind_s[idx], self._bind_f[idx]
+
+    def pgrep_word_is_invocation(self, pos):
+        idx = bisect.bisect_right(self._inv_starts, pos) - 1
+        if idx < 0:
+            return False
+        return pos < self._inv_ends[idx]
+
+    def var_is_command_word(self, pos, var):
+        idx = bisect.bisect_right(self._cmd_starts, pos) - 1
+        if idx < 0:
+            return False
+        cmd_start, cmd_end = self.cmd_spans[idx]
+        if pos >= cmd_end:
+            return False
+        span = _pgrep_first_word_span(self.scan, cmd_start, cmd_end)
+        if span and span[0] <= pos < span[1]:
+            return _pgrep_word_is_var_command(self.scan[span[0] : span[1]], var)
+        return False
+
+
+_PGREP_EMPTY_BIND = frozenset()
+
+
+_PGREP_LAUNCH_HINT = re.compile(
+    r"(?:^|[\s;|&(])(?:ssh|bash|sh|eval|sudo|docker|kubectl|find|parallel|chroot|strace|gdb|nsenter|valgrind|ltrace|unshare|runuser|xargs|watch)\b",
+    re.I,
+)
+
+
+def _pgrep_build_binding_snapshot_arrays(text, cmd_spans):
+    positions = [0]
+    binaries = [_PGREP_EMPTY_BIND]
+    scripts = [_PGREP_EMPTY_BIND]
+    flags = [_PGREP_EMPTY_BIND]
+    inv = []
+    binary, script, flag_vars = set(), set(), set()
+    for cmd_start, cmd_end in cmd_spans:
+        leader = _pgrep_after_command_leaders(text, cmd_start)
+        positions.append(leader)
+        binaries.append(frozenset(binary) if binary else _PGREP_EMPTY_BIND)
+        scripts.append(frozenset(script) if script else _PGREP_EMPTY_BIND)
+        flags.append(frozenset(flag_vars) if flag_vars else _PGREP_EMPTY_BIND)
+        fw = _pgrep_first_word_span(text, cmd_start, cmd_end, _leader=leader)
+        if fw and _pgrep_word_span_is_pgrep_command_word(text, fw[0], fw[1]):
+            inv.append(fw)
+        else:
+            chunk = text[cmd_start:cmd_end]
+            if PGREP_WORD.search(chunk) and _PGREP_LAUNCH_HINT.search(chunk):
+                for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
+                    lfw = _pgrep_first_word_span(text, ls, le)
+                    if lfw and _pgrep_word_span_is_pgrep_command_word(text, lfw[0], lfw[1]):
+                        inv.append(lfw)
+        eb, es, ef = set(binary), set(script), set(flag_vars)
+        i = leader
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if not asn:
+                break
+            name, val, nxt = asn
+            _pgrep_apply_var_binding(name, val, eb, es, ef)
+            positions.append(nxt)
+            binaries.append(frozenset(eb))
+            scripts.append(frozenset(es))
+            flags.append(frozenset(ef))
+            i = nxt
+        if "=" in text[cmd_start:cmd_end] and _pgrep_simple_command_is_assignments_only(
+            text, cmd_start, cmd_end
+        ):
+            binary, script, flag_vars = eb, es, ef
+    return positions, binaries, scripts, flags, inv
+
+
+def _pgrep_word_span_is_pgrep_command_word(text, s, e):
+    w = text[s:e]
+    if w and w[0] not in "'\"":
+        wl = w.lower()
+        if wl == "pgrep" or wl.endswith("/pgrep"):
+            return True
+    if len(w) >= 2 and w[0] == w[-1] and w[0] in "'\"":
+        inner = w[1:-1].lstrip()
+        if not inner:
+            return False
+        iw = _pgrep_skip_one_word(inner, 0, len(inner))
+        return bool(re.search(r"(?:^|(?:\S+/)*)(?:pgrep)\b", pgrep_obfuscation_fold(inner[:iw]), re.I))
+    return bool(re.search(r"(?:\S+/)*pgrep\b", pgrep_obfuscation_fold(w), re.I))
+
+
+
+def pgrep_segment_has_full_flag(segment):
+    segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
+    opts = _pgrep_segment_option_prefix(segment)
+    tokens, ok = _pgrep_segment_tokenize(opts)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
+    unquoted = re.sub(r"(?:^|\s)'(-f|--full)'(?=\s|$)", r" \1", segment)
+    unquoted = re.sub(r'(?:^|\s)"(-f|--full)"(?=\s|$)', r" \1", unquoted)
+    uopts = _pgrep_segment_option_prefix(unquoted)
+    tokens, ok = _pgrep_segment_tokenize(uopts)
+    if ok:
+        return _pgrep_argv_tokens_has_full_flag(tokens)
+    rough = re.findall(r"\S+", uopts)
+    return _pgrep_argv_tokens_has_full_flag(rough)
+
+def pgrep_segment_uses_flag_var(segment, flag_vars):
+    for var in flag_vars:
+        if re.search(rf'["\']?\${{{var}}}|["\']?\${var}\b', segment):
+            return True
+    return False
+
+def pgrep_full_match(text):
+    if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
+        return False
+    ctx = _PgrepScanContext(text)
+    if _pgrep_pgrep_match_in_fragment(ctx.scan, _ctx=ctx):
+        return True
+    scan = ctx.scan
+    for m in PGREP_VAR_INVOKE.finditer(scan):
+        var = m.group(1) or m.group(2)
+        binary_aliases, script_aliases, flag_vars = ctx.bindings_at(m.start())
+        if var in script_aliases:
+            if ctx.var_is_command_word(m.start(), var):
+                return True
+            continue
+        if var not in binary_aliases:
+            continue
+        if not ctx.var_is_command_word(m.start(), var):
+            continue
+        segment = re.match(r"[^\n;&|]*", scan[m.end() :])
+        if not segment:
+            continue
+        seg = segment.group(0)
+        if pgrep_segment_has_full_flag(seg) or pgrep_segment_uses_flag_var(seg, flag_vars):
+            return True
+    return False
 
 def kills_bb_pid(text):
     import subprocess
@@ -161,7 +2073,13 @@ def bb_lifecycle_guard(raw):
         if isinstance(cmd, str) and "<<" in cmd:
             head = cmd.split("<<", 1)[0]
             if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
-                text = head
+                tail = _pgrep_tail_after_first_heredoc(cmd)
+                text = head + ("\n" + tail if tail else "")
+    except Exception:
+        pass
+    try:
+        if pgrep_full_match(text):
+            verdict(True, PGREP_F_DENY)
     except Exception:
         pass
     if any(rx.search(text) for rx in ELECTRON_CACHE):
