@@ -93,6 +93,133 @@ BB_LIFECYCLE = [
 ]
 PGREP_FULL_FLAG = re.compile(
     r'(?:^|\s)(?:-f(?:\s|$|=)|-[^\s=]*f[^\s=]*(?:\s|$|=)|--full(?:\s|$|=))')
+_PGREP_SHORT_TAKES_ARG = frozenset("dFUGPgstu")
+_PGREP_SEGMENT_FULL_FALLBACK = re.compile(
+    r'(?:^|\s)(?:-f(?:\s|$|=)|--full(?:\s|$|=))'
+)
+_PGREP_LONG_TAKES_ARG = frozenset(
+    {
+        "pidfile",
+        "signal",
+        "ns",
+        "nslist",
+        "cgroup",
+        "parent",
+        "session",
+        "terminal",
+        "euid",
+        "uid",
+        "group",
+        "pgroup",
+        "delim",
+    }
+)
+
+
+def _pgrep_bare_option_token(tok):
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "'\"":
+        return tok[1:-1]
+    return tok
+
+
+def _pgrep_iter_pgrep_segment_tokens(segment):
+    i, n = 0, len(segment)
+    while i < n:
+        while i < n and segment[i].isspace():
+            i += 1
+        if i >= n:
+            return
+        if segment[i] in ";&|":
+            return
+        if segment[i] == "'":
+            j = i + 1
+            while j < n and segment[j] != "'":
+                j += 1
+            if j < n:
+                j += 1
+            yield segment[i:j]
+            i = j
+            continue
+        if segment[i] == '"':
+            j = i + 1
+            while j < n:
+                if segment[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if segment[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            yield segment[i:j]
+            i = j
+            continue
+        j = i
+        while j < n and not segment[j].isspace() and segment[j] not in ";&|":
+            j += 1
+        yield segment[i:j]
+        i = j
+
+
+def _pgrep_short_option_token_has_full(bare):
+    if not bare.startswith("-") or bare.startswith("--"):
+        return False
+    body = bare[1:]
+    if not body:
+        return False
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c == "f":
+            return True
+        if c in _PGREP_SHORT_TAKES_ARG:
+            return False
+        i += 1
+    return False
+
+
+def _pgrep_long_option_token_has_full(bare):
+    if not bare.startswith("--"):
+        return False
+    name = bare[2:]
+    if not name:
+        return False
+    eq = name.find("=")
+    opt = name[:eq] if eq >= 0 else name
+    return opt == "full"
+
+
+def _pgrep_segment_option_prefix(segment):
+    m = re.search(r"(?:^|\s)--(?:\s|$)", segment)
+    return segment[: m.start()] if m else segment
+
+
+def _pgrep_segment_argv_has_full_flag(segment):
+    segment = _pgrep_segment_option_prefix(segment)
+    tokens = list(_pgrep_iter_pgrep_segment_tokens(segment))
+    idx = 0
+    while idx < len(tokens):
+        bare = _pgrep_bare_option_token(tokens[idx])
+        if bare == "--":
+            return False
+        if bare.startswith("--"):
+            if _pgrep_long_option_token_has_full(bare):
+                return True
+            opt = bare[2:].split("=", 1)[0]
+            if opt in _PGREP_LONG_TAKES_ARG and "=" not in bare[2:] and idx + 1 < len(tokens):
+                idx += 1
+            idx += 1
+            continue
+        if bare.startswith("-") and len(bare) > 1:
+            if _pgrep_short_option_token_has_full(bare):
+                return True
+            body = bare[1:]
+            if body and body[0] in _PGREP_SHORT_TAKES_ARG and len(body) == 1:
+                if idx + 1 < len(tokens):
+                    idx += 1
+            idx += 1
+            continue
+        idx += 1
+    return False
 PGREP_F_DENY = (
     "[no-pgrep-f] Hard prohibition: never use pgrep -f or pgrep --full. "
     "Use pgrep -x NAME or ps -o pid,command -p PID instead."
@@ -1625,11 +1752,17 @@ def _pgrep_word_span_is_pgrep_command_word(text, s, e):
 
 def pgrep_segment_has_full_flag(segment):
     segment = re.sub(r'\\(-f|--full)(?=\s|$)', r'\1', segment)
-    if PGREP_FULL_FLAG.search(segment):
+    opts = _pgrep_segment_option_prefix(segment)
+    if _pgrep_segment_argv_has_full_flag(opts):
+        return True
+    if _PGREP_SEGMENT_FULL_FALLBACK.search(opts):
         return True
     unquoted = re.sub(r"(?:^|\s)'(-f|--full)'(?=\s|$)", r" \1", segment)
     unquoted = re.sub(r'(?:^|\s)"(-f|--full)"(?=\s|$)', r" \1", unquoted)
-    return bool(PGREP_FULL_FLAG.search(unquoted))
+    uopts = _pgrep_segment_option_prefix(unquoted)
+    if _pgrep_segment_argv_has_full_flag(uopts):
+        return True
+    return bool(_PGREP_SEGMENT_FULL_FALLBACK.search(uopts))
 
 def pgrep_segment_uses_flag_var(segment, flag_vars):
     for var in flag_vars:

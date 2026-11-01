@@ -389,6 +389,38 @@ class ContextHygiene(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertFalse(verdict(bash(cmd))["block"])
 
+    def test_pgrep_argv_parsing_distinguishes_full_match_flag(self):
+        blocked = (
+            "pgrep -f node",
+            "pgrep --full node",
+            "pgrep -af node",
+            "pgrep -lf node",
+            "pgrep -u 1 -f x",
+            "pgrep --list-full -f node",
+        )
+        allowed = (
+            "pgrep --list-full node",
+            "pgrep --pidfile /tmp/p",
+            "pgrep -x -- -f",
+            "pgrep --list-name node",
+            "pgrep -F /tmp/pid",
+            "pgrep -a node",
+            "pgrep -l node",
+            "pgrep --signal TERM node",
+            "pgrep --ns 1 node",
+            "pgrep --cgroup a node",
+            "pgrep -A node",
+            "pgrep --ignore-ancestors node",
+        )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
