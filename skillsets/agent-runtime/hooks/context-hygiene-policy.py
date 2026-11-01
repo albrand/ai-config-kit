@@ -260,8 +260,33 @@ NON_SHELL_TOOLS = {"write", "edit", "multiedit", "notebookedit", "read", "view",
 
 KILL_PIDS = re.compile(r'\bkill\s+((?:-\S+\s+)*)((?:\d+\s*)+)')
 
+
+
+def _pgrep_data_heredoc_body_spans(text):
+    spans = _pgrep_heredoc_body_spans(text)
+    if not spans:
+        return []
+    executable_spans = {
+        (body_start, body_end)
+        for body_start, body_end, executable, stdin_prog in _pgrep_iter_heredoc_bodies(text)
+        if executable or stdin_prog
+    }
+    return [(a, b) for a, b in spans if (a, b) not in executable_spans]
+
+
+def _pgrep_pos_in_data_heredoc_body(text, pos):
+    for body_start, body_end in _pgrep_data_heredoc_body_spans(text):
+        if body_start <= pos < body_end:
+            return True
+    return False
+
 def pgrep_obfuscation_fold(text):
-    text = re.sub(r"\\\n\s*", "", text)
+    def _fold_backslash_nl(m):
+        if _pgrep_pos_in_data_heredoc_body(text, m.start()):
+            return m.group(0)
+        return ""
+
+    text = re.sub(r"\\\n\s*", _fold_backslash_nl, text)
     text = re.sub(r"(?<=[a-zA-Z0-9_])['\"]{2}(?=[a-zA-Z0-9_])", "", text)
     text = re.sub(r'(?<=[a-zA-Z0-9_])"([a-zA-Z0-9_])"(?=[a-zA-Z0-9_])', r"\1", text)
     text = re.sub(r"(?<=[a-zA-Z0-9_])'([a-zA-Z0-9_])'(?=[a-zA-Z0-9_])", r"\1", text)
@@ -765,7 +790,10 @@ def _pgrep_earliest_shell_fault(text):
     if hd is not None:
         fault[0] = min(fault[0], hd_start)
     for m in re.finditer(r"\\(?:\r?\n|$)", text):
-        fault[0] = min(fault[0], m.start())
+        pos = m.start()
+        if _pgrep_pos_in_data_heredoc_body(text, pos):
+            continue
+        fault[0] = min(fault[0], pos)
     return fault[0] if fault[0] < n else None
 
 

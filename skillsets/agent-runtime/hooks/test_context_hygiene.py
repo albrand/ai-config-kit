@@ -173,6 +173,27 @@ class ContextHygiene(unittest.TestCase):
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
+        data_hd = "cat > f.md <<'EOF'\nline \\\nno pgrep -f here\nEOF"
+        allowed = (
+            data_hd,
+            data_hd + "\necho ok",
+        )
+        blocked = (
+            "bash <<'EOF'\nline \\\npgrep -f x\nEOF",
+            "echo x \\\npgrep -f bb",
+        )
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(cmd=cmd):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
+
     def test_pgrep_prefix_assignments_do_not_persist_across_commands(self):
         allowed = (
             "P=echo; P=pgrep echo; $P -f x",
