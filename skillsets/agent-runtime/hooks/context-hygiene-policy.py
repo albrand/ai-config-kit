@@ -1211,30 +1211,74 @@ def _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
 
 
 
-def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
-    i = cmd_start
-    while i < op_start:
-        i = _pgrep_skip_space(text, i)
-        if i >= op_start:
-            break
-        ws = i
-        we = _pgrep_skip_one_word(text, i, op_start)
-        if ws >= we:
-            break
-        if _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower() != "ssh":
-            i = we
-            continue
-        rem = _pgrep_skip_ssh_prefix_after_command(text, we, op_start)
-        if rem is None or rem >= op_start:
-            return False
-        rem = _pgrep_skip_space(text, rem)
-        ws2 = rem
-        we2 = _pgrep_skip_one_word(text, rem, op_start)
-        if ws2 >= we2:
-            return False
-        sh = _pgrep_bare_word(text[ws2:we2]).rsplit("/", 1)[-1].lower()
-        return sh in ("bash", "sh", "zsh", "dash", "ksh")
+def _pgrep_find_exec_script_quote_open(text, cmd_start, op_start):
+    i = _pgrep_skip_assignments_and_wrappers(text, cmd_start, op_start)
+    i = _pgrep_skip_space(text, i)
+    if i >= op_start:
+        return None
+    ws = i
+    we = _pgrep_skip_one_word(text, i, op_start)
+    if ws >= we:
+        return None
+    base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+    if base == "eval":
+        j = _pgrep_skip_space(text, we)
+        if j < op_start and text[j] in "'\"":
+            return j
+        return None
+    if base in _PGREP_SHELL_WORDS:
+        k = we
+        while k < op_start:
+            k = _pgrep_skip_space(text, k)
+            if k >= op_start:
+                break
+            ws2 = k
+            we2 = _pgrep_skip_one_word(text, k, op_start)
+            if ws2 >= we2:
+                break
+            if _pgrep_word_is_dash_c_flag(text[ws2:we2]) or _pgrep_bare_word(text[ws2:we2]) == "-c":
+                j = _pgrep_skip_space(text, we2)
+                if j < op_start and text[j] in "'\"":
+                    return j
+                return None
+            k = we2
+    return None
+
+
+def _pgrep_dollar_at_inner_shell_command_position(text, quote_open, dollar_pos):
+    if quote_open is None or dollar_pos <= quote_open + 1:
+        return True
+    prefix = text[quote_open + 1 : dollar_pos].rstrip()
+    if not prefix:
+        return True
+    if prefix[-1] in ";\n|":
+        return True
+    if prefix.endswith("&&") or prefix.endswith("||"):
+        return True
     return False
+
+
+def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
+    i = _pgrep_skip_assignments_and_wrappers(text, cmd_start, op_start)
+    i = _pgrep_skip_space(text, i)
+    if i >= op_start:
+        return False
+    ws = i
+    we = _pgrep_skip_one_word(text, i, op_start)
+    if ws >= we:
+        return False
+    if _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower() != "ssh":
+        return False
+    rem = _pgrep_skip_ssh_prefix_after_command(text, we, op_start)
+    if rem is None or rem >= op_start:
+        return False
+    rem = _pgrep_skip_space(text, rem)
+    ws2 = rem
+    we2 = _pgrep_skip_one_word(text, rem, op_start)
+    if ws2 >= we2:
+        return False
+    sh = _pgrep_bare_word(text[ws2:we2]).rsplit("/", 1)[-1].lower()
+    return sh in ("bash", "sh", "zsh", "dash", "ksh")
 
 
 def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
@@ -1243,22 +1287,16 @@ def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
     op_line = text[cmd_start:op_start]
     if "$(" not in op_line:
         return False
-    if not re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I):
+    m = re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I)
+    if not m:
         return False
     if re.search(r"\bcat\s*>|\btee\s+[^<\s]", op_line):
         return False
-    tokens = _pgrep_word_tokens_before(text, cmd_start, op_start)
-    if not tokens:
+    quote_open = _pgrep_find_exec_script_quote_open(text, cmd_start, op_start)
+    if quote_open is None:
         return False
-    base = tokens[0].rsplit("/", 1)[-1].lower()
-    if base == "eval":
-        return True
-    if base in ("bash", "sh", "zsh", "dash", "ksh"):
-        for tok in tokens[1:]:
-            bare = _pgrep_bare_word(tok)
-            if bare == "-c" or _pgrep_word_is_dash_c_flag(tok):
-                return True
-    return False
+    dollar_pos = cmd_start + m.start()
+    return _pgrep_dollar_at_inner_shell_command_position(text, quote_open, dollar_pos)
 
 
 def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
@@ -1270,8 +1308,6 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     if base in ("bash", "sh", "zsh", "dash", "ksh"):
         return True
     segment = text[cmd_start:op_start]
-    if re.search(r"\beval\b", segment, re.I):
-        return True
     if re.search(r"\bxargs\b", segment, re.I):
         return True
     if re.search(
