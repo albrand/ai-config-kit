@@ -18,6 +18,7 @@ Disable entirely with CONTEXT_HYGIENE=off.
 """
 import bisect
 import sys, json, os, re
+import tokenize
 
 HEREDOC_LINES, HEREDOC_BYTES = 10, 1000
 READ_BYTES = 15000
@@ -311,7 +312,291 @@ def _pgrep_outer_scan_skip_heredoc_body_spans(text):
     return merged
 
 
+def _pgrep_python_decode_string_token(tok_string):
+    import ast
+
+    try:
+        return ast.literal_eval(tok_string)
+    except Exception:
+        return tok_string.strip(chr(34) + chr(39))
+
+
+def _pgrep_python_is_pgrep_executable(argv0):
+    if not isinstance(argv0, str):
+        return False
+    return argv0.rsplit("/", 1)[-1].lower() == "pgrep"
+
+
+def _pgrep_python_collect_sequence_elements(tokens, start):
+    if start >= len(tokens) or tokens[start].type != tokenize.OP:
+        return None, start
+    open_ch = tokens[start].string
+    if open_ch not in ("[", "("):
+        return None, start
+    close_ch = "]" if open_ch == "[" else ")"
+    idx = start + 1
+    depth = 1
+    elements = []
+    while idx < len(tokens) and depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == open_ch:
+            depth += 1
+        elif tok.type == tokenize.OP and tok.string == close_ch:
+            depth -= 1
+            if depth == 0:
+                idx += 1
+                break
+        elif tok.type == tokenize.STRING and depth == 1:
+            elements.append(_pgrep_python_decode_string_token(tok.string))
+        idx += 1
+    return elements, idx
+
+
+def _pgrep_python_skip_value(tokens, idx):
+    if idx >= len(tokens):
+        return idx
+    tok = tokens[idx]
+    if tok.type in (tokenize.STRING, tokenize.NAME, tokenize.NUMBER):
+        return idx + 1
+    if tok.type == tokenize.OP and tok.string in ("[", "(", "{"):
+        open_ch = tok.string
+        close = {"[": "]", "(": ")", "{": "}"}[open_ch]
+        depth = 1
+        idx += 1
+        while idx < len(tokens) and depth:
+            t = tokens[idx]
+            if t.type == tokenize.OP and t.string == open_ch:
+                depth += 1
+            elif t.type == tokenize.OP and t.string == close:
+                depth -= 1
+            idx += 1
+        return idx
+    return idx + 1
+
+
+def _pgrep_python_list_argv_blocks(elements, executable_override=None):
+    if not elements:
+        return False
+    program = (
+        executable_override if executable_override is not None else elements[0]
+    )
+    if not _pgrep_python_is_pgrep_executable(program):
+        return False
+    return _pgrep_argv_tokens_has_full_flag(elements[1:])
+
+
+def _pgrep_python_shell_string_blocks(snippet):
+    if not snippet:
+        return False
+    folded = pgrep_obfuscation_fold(_pgrep_mask_shell_comments(snippet))
+    if PGREP_WORD.search(folded):
+        seg = re.match(r"[^\n;&|]*", folded.lstrip())
+        if seg and (
+            pgrep_segment_has_full_flag(seg.group(0))
+            or _pgrep_lifecycle_pkill_match(snippet)
+        ):
+            return True
+    return bool(_pgrep_lifecycle_pkill_match(snippet))
+
+
+def _pgrep_python_call_executable_string(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif (
+            paren_depth == 1
+            and tok.type == tokenize.NAME
+            and tok.string == "executable"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tokens[idx + 2].type == tokenize.STRING
+        ):
+            return _pgrep_python_decode_string_token(tokens[idx + 2].string)
+        idx += 1
+    return None
+
+
+def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif (
+            paren_depth == 1
+            and tok.type == tokenize.NAME
+            and tok.string == "shell"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tokens[idx + 2].type == tokenize.NAME
+            and tokens[idx + 2].string == "True"
+        ):
+            return True
+        idx += 1
+    return False
+
+
+def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_override=None):
+    if idx >= len(tokens):
+        return False
+    tok = tokens[idx]
+    if tok.type == tokenize.OP and tok.string in ("[", "("):
+        elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
+        return bool(
+            elements
+            and _pgrep_python_list_argv_blocks(elements, executable_override)
+        )
+    if tok.type == tokenize.STRING and shell_true:
+        return _pgrep_python_shell_string_blocks(
+            _pgrep_python_decode_string_token(tok.string)
+        )
+    return False
+
+
+def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    saw_positional = False
+    shell_true = _pgrep_python_call_has_shell_true(tokens, open_paren_idx)
+    executable_override = _pgrep_python_call_executable_string(
+        tokens, open_paren_idx
+    )
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif paren_depth == 1:
+            if (
+                tok.type == tokenize.NAME
+                and idx + 2 < len(tokens)
+                and tokens[idx + 1].type == tokenize.OP
+                and tokens[idx + 1].string == "="
+            ):
+                kw = tok.string
+                val_idx = idx + 2
+                if kw == "args" and _pgrep_python_scan_args_keyword_value(
+                    tokens, val_idx, shell_true, executable_override
+                ):
+                    return True
+                idx = _pgrep_python_skip_value(tokens, val_idx) - 1
+            elif tok.type == tokenize.STRING:
+                if not saw_positional:
+                    saw_positional = True
+                    if (string_is_shell or shell_true) and _pgrep_python_shell_string_blocks(
+                        _pgrep_python_decode_string_token(tok.string)
+                    ):
+                        return True
+            elif tok.type == tokenize.OP and tok.string in ("[", "("):
+                if not saw_positional:
+                    saw_positional = True
+                    elements, idx = _pgrep_python_collect_sequence_elements(
+                        tokens, idx
+                    )
+                    if elements and _pgrep_python_list_argv_blocks(
+                        elements, executable_override
+                    ):
+                        return True
+                    continue
+            elif tok.type == tokenize.NAME:
+                saw_positional = True
+        idx += 1
+    return False
+
+
+def _pgrep_python_stdin_shell_invoke(body):
+    from io import BytesIO
+
+    try:
+        tokens = list(
+            tokenize.tokenize(
+                BytesIO(body.encode("utf-8", "surrogateescape")).readline
+            )
+        )
+    except (tokenize.TokenError, SyntaxError, UnicodeError):
+        return False
+
+    _SUBPROCESS_METHODS = frozenset(
+        ("run", "call", "check_call", "check_output", "Popen")
+    )
+
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if (
+            tok.type == tokenize.NAME
+            and tok.string == "os"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "."
+            and tokens[idx + 2].type == tokenize.NAME
+        ):
+            meth = tokens[idx + 2].string
+            if meth in ("system", "popen"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, string_is_shell=True
+                    )
+                ):
+                    return True
+            if meth.startswith("exec"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(tokens, args_start)
+                ):
+                    return True
+        if tok.type == tokenize.NAME and tok.string == "subprocess":
+            j = idx + 1
+            while j + 1 < len(tokens):
+                if tokens[j].type != tokenize.OP or tokens[j].string != ".":
+                    break
+                if tokens[j + 1].type != tokenize.NAME:
+                    break
+                meth = tokens[j + 1].string
+                if meth not in _SUBPROCESS_METHODS:
+                    j += 2
+                    continue
+                args_start = j + 2
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(tokens, args_start)
+                ):
+                    return True
+                break
+        idx += 1
+    return False
+
+
+
 def _pgrep_pgrep_match_interpreter_stdin_body(body):
+    if _pgrep_python_stdin_shell_invoke(body):
+        return True
     masked = _pgrep_mask_shell_comments(body)
     if not PGREP_WORD.search(pgrep_obfuscation_fold(masked)):
         return False
@@ -475,10 +760,34 @@ def _pgrep_single_quote_end(spans, pos):
 
 def _pgrep_read_dollar_paren(text, i, sq, sq_idx=0):
     j, depth, n = i + 2, 1, len(text)
+    dq = sq_local = False
     while j < n and depth:
         skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
         if skip is not None:
             j = skip
+            continue
+        if sq_local:
+            if text[j] == "'":
+                sq_local = False
+            j += 1
+            continue
+        if dq:
+            if text[j] == "\\" and j + 1 < n:
+                j += 2
+                continue
+            if text[j] == '"':
+                dq = False
+                j += 1
+                continue
+            j += 1
+            continue
+        if text[j] == "'":
+            sq_local = True
+            j += 1
+            continue
+        if text[j] == '"':
+            dq = True
+            j += 1
             continue
         if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
             depth += 1
@@ -680,67 +989,134 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     sq = _pgrep_single_quote_spans(text)
     out = []
     i, n, dq, sq_idx = 0, len(text), False, 0
+    subst_depth = 0
+    sub_dq = sub_sq = False
+
+    def _mask_hash_run(end_at_subst_close=False, close_depth=0):
+        nonlocal i
+        while i < n:
+            if text[i] == "\n":
+                return
+            if end_at_subst_close and text[i] == ")" and subst_depth == close_depth:
+                return
+            out.append(" ")
+            i += 1
+
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
         if skip is not None:
             out.append(text[i:skip])
             i = skip
             continue
+        if subst_depth > 0:
+            if sub_sq:
+                out.append(text[i])
+                if text[i] == "'":
+                    sub_sq = False
+                i += 1
+                continue
+            if sub_dq:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append(text[i : i + 2])
+                    i += 2
+                    continue
+                out.append(text[i])
+                if text[i] == '"':
+                    sub_dq = False
+                i += 1
+                continue
+            if text[i] == "'":
+                out.append(text[i])
+                sub_sq = True
+                i += 1
+                continue
+            if text[i] == '"':
+                out.append(text[i])
+                sub_dq = True
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                out.append("$(")
+                subst_depth += 1
+                i += 2
+                continue
+            if text[i] == ")":
+                out.append(text[i])
+                subst_depth -= 1
+                i += 1
+                continue
+            if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+                _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
+                continue
+            if text[i] == "`":
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is None:
+                    out.append(text[i:])
+                    break
+                if "#" in inner:
+                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
+                out.append("`" + inner + "`")
+                i = j
+                continue
+            out.append(text[i])
+            i += 1
+            continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 out.append(text[i : i + 2])
                 i += 2
                 continue
-            if text[i] == "\"":
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                out.append("$(")
+                subst_depth = 1
+                sub_dq = sub_sq = False
+                i += 2
+                continue
+            if text[i] == '"':
                 out.append(text[i])
                 dq = False
                 i += 1
                 continue
-            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
-                if inner is not None and "\n" in inner:
-                    inner = _pgrep_mask_line_hash_comments(inner)
-                out.append("$(" + (inner if inner is not None else "") + ")")
-                i = j
-                continue
             if text[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-                if inner is not None and "\n" in inner:
-                    inner = _pgrep_mask_line_hash_comments(inner)
-                out.append("`" + (inner if inner is not None else "") + "`")
+                if inner is None:
+                    out.append(text[i:])
+                    break
+                if "#" in inner:
+                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
+                out.append("`" + inner + "`")
                 i = j
                 continue
             out.append(text[i])
             i += 1
             continue
-        if text[i] == "\"":
+        if text[i] == '"':
             out.append(text[i])
             dq = True
             i += 1
             continue
         if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-            while i < n and text[i] != "\n":
-                out.append(" ")
-                i += 1
+            _mask_hash_run()
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
-            if inner is not None and "\n" in inner:
-                inner = _pgrep_mask_line_hash_comments(inner)
-            out.append("$(" + (inner if inner is not None else "") + ")")
-            i = j
+            out.append("$(")
+            subst_depth = 1
+            sub_dq = sub_sq = False
+            i += 2
             continue
         if text[i] == "`":
             inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-            if inner is not None and "\n" in inner:
-                inner = _pgrep_mask_line_hash_comments(inner)
-            out.append("`" + (inner if inner is not None else "") + "`")
+            if inner is None:
+                out.append(text[i:])
+                break
+            if "#" in inner:
+                inner = _pgrep_mask_lifecycle_comments_linear(inner)
+            out.append("`" + inner + "`")
             i = j
             continue
         out.append(text[i])
         i += 1
     return "".join(out)
-
 
 
 def _pgrep_mask_lifecycle_comments(text):
@@ -770,14 +1146,32 @@ def _pgrep_mask_lifecycle_comments(text):
         return text
 
 
+def _pgrep_pkill_pos_in_nonexec_quote(text, pos):
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if is_exec or text[start] != "'":
+            continue
+        if end <= start + 1 or text[end - 1] != "'":
+            continue
+        if start + 1 <= pos < end - 1:
+            return True
+    return False
+
+
+def _pgrep_lifecycle_pkill_word_match(text, masked):
+    for m in BB_LIFECYCLE_PKILL.finditer(masked):
+        if not _pgrep_pkill_pos_in_nonexec_quote(text, m.start()):
+            return True
+    return False
+
+
 def _pgrep_lifecycle_pkill_match(text):
     masked = _pgrep_mask_lifecycle_comments(text)
-    if BB_LIFECYCLE_PKILL.search(masked):
+    if _pgrep_lifecycle_pkill_word_match(text, masked):
         return True
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
-            if BB_LIFECYCLE_PKILL.search(chunk):
+            if _pgrep_lifecycle_pkill_word_match(text[ls:le], chunk):
                 return True
     return False
 
@@ -1174,6 +1568,57 @@ def _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
         return True
     return False
 
+
+
+def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
+    i = cmd_start
+    while i < op_start:
+        i = _pgrep_skip_space(text, i)
+        if i >= op_start:
+            break
+        ws = i
+        we = _pgrep_skip_one_word(text, i, op_start)
+        if ws >= we:
+            break
+        if _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower() != "ssh":
+            i = we
+            continue
+        rem = _pgrep_skip_ssh_prefix_after_command(text, we, op_start)
+        if rem is None or rem >= op_start:
+            return False
+        rem = _pgrep_skip_space(text, rem)
+        ws2 = rem
+        we2 = _pgrep_skip_one_word(text, rem, op_start)
+        if ws2 >= we2:
+            return False
+        sh = _pgrep_bare_word(text[ws2:we2]).rsplit("/", 1)[-1].lower()
+        return sh in ("bash", "sh", "zsh", "dash", "ksh")
+    return False
+
+
+def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
+    line_start = text.rfind("\n", 0, op_start) + 1
+    op_line = text[line_start:op_start]
+    if text[op_start : op_start + 2] != "<<":
+        return False
+    if not re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I):
+        return False
+    if re.search(r"\bcat\s*>|\btee\s+[^<\s]", op_line):
+        return False
+    tokens = _pgrep_word_tokens_before(text, cmd_start, op_start)
+    if not tokens:
+        return False
+    base = tokens[0].rsplit("/", 1)[-1].lower()
+    if base == "eval":
+        return True
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        for tok in tokens[1:]:
+            bare = _pgrep_bare_word(tok)
+            if bare == "-c" or _pgrep_word_is_dash_c_flag(tok):
+                return True
+    return False
+
+
 def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     span = _pgrep_first_word_span(text, cmd_start, op_start)
     if not span:
@@ -1192,6 +1637,8 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
         segment,
         re.I,
     ):
+        return True
+    if _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
         return True
     if re.search(r"\bssh\b", segment, re.I):
         after = text[span[1] : op_start]
@@ -1349,8 +1796,15 @@ def _pgrep_iter_heredoc_bodies(text):
                 continue
             if text[i] == '"':
                 dq = False
-            i += 1
-            continue
+                i += 1
+                continue
+            if not (
+                text[i : i + 2] == "<<"
+                and (i == 0 or text[i - 1] in " \t\n;&|(")
+                and _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, i)
+            ):
+                i += 1
+                continue
         if text[i] == "'":
             sq = True
             i += 1
@@ -1379,6 +1833,8 @@ def _pgrep_iter_heredoc_bodies(text):
             executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
             if not executable:
                 executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
+            if not executable and _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, i):
+                executable = True
             line_end = text.find("\n", j)
             if line_end == -1:
                 body_start = n
@@ -1416,8 +1872,44 @@ def _pgrep_iter_simple_command_spans(text):
     start = 0
     i = 0
     sq = dq = False
+    subst_depth = 0
+    sub_dq = sub_sq = False
     hd = None
     while i < n:
+        if subst_depth > 0:
+            if sub_sq:
+                if text[i] == "'":
+                    sub_sq = False
+                i += 1
+                continue
+            if sub_dq:
+                if text[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    sub_dq = False
+                    i += 1
+                    continue
+                i += 1
+                continue
+            if text[i] == "'":
+                sub_sq = True
+                i += 1
+                continue
+            if text[i] == '"':
+                sub_dq = True
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                subst_depth += 1
+                i += 2
+                continue
+            if text[i] == ")":
+                subst_depth -= 1
+                i += 1
+                continue
+            i += 1
+            continue
         if hd is not None:
             delim, strip_tabs, phase = hd
             if phase == "op":
@@ -1463,6 +1955,11 @@ def _pgrep_iter_simple_command_spans(text):
         if c == '"':
             dq = True
             i += 1
+            continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            subst_depth = 1
+            sub_dq = sub_sq = False
+            i += 2
             continue
         if text.startswith("&&", i) or text.startswith("||", i):
             yield start, i

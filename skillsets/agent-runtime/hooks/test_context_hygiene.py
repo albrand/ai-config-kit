@@ -761,18 +761,47 @@ pgrep -f bb',
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_r15_quoted_word_list_heredoc_literal(self):
+        cmd = 'for c in "cat <<E | sh\npgrep -f x\nE"; do echo "$c"; done'
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_heredoc_exec_gaps_table_rows(self):
+        pk = "p" + "kill"
+        blocked = (
+            "ssh -p 22 host bash <<'EOF'\nI can't\npgrep -f x\nEOF",
+            'eval "$(cat <<EOF\npgrep -f x\nEOF\n)"',
+            "bash -c \"$(cat <<'EOF'\npgrep -f x\nEOF\n)\"",
+            'echo "$(printf %s \"x\n# note\"; ' + pk + ' node)"',
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+        )
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
         sq = '\'"\'"\''
         blocked_interp = (
             f"printf 'a {sq}b{sq}\n'; pgrep -f x",
             "echo ''\"\"\"; pgrep -f x",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
         )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
-            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
-            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             "echo ''\"\"'\\n'\"\"' -f`pgrep'",
             f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
@@ -816,6 +845,107 @@ pgrep -f bb',
                 )
         for cmd in blocked:
             with self.subTest(blocked=cmd[:60]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+    def test_r16_python_subprocess_pgrep_executable(self):
+        allowed = (
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\", \"pgrep\", \"-f\"])\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"printf\", \"%s\", \"pgrep\", \"-f\"])\nEOF",
+        )
+        blocked = (
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.check_call([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess\nsubprocess.run([\"/usr/bin/pgrep\", \"-f\", \"x\"])\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+    def test_r17_python_subprocess_keyword_data_not_scanned(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\", \"ok\"], input=\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"cat\"], input=\"pgrep -f x\", text=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\"], env={\"X\": \"pgrep -f x\"})\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo\"], cwd=\"pgrep -f x\")\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(\"pgrep -f x\", shell=True, input=\"y\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(args=[\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(cwd=\"/\", args=[\"pgrep\", \"-f\", \"x\"])\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+    def test_r19_python_subprocess_executable_overrides_argv0(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.Popen([\"pgrep\", \"-f\", \"x\"], executable=\"/bin/echo\", text=True)\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"/usr/bin/pgrep\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"x\", \"-f\", \"y\"], executable=\"/usr/bin/pgrep\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"pgrep\")\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+    def test_r20_python_string_is_shell_only_with_shell_true(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.Popen(\"pgrep -f x\", shell=False)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.check_output(args=\"pgrep -f x\")\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", shell=True, executable=\"/bin/bash\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(args=\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.check_output(\"pgrep -f x\", text=True, shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nos.system(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nos.popen(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], shell=False)\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
                 self.assertTrue(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
