@@ -782,7 +782,11 @@ pgrep -f bb',
             'eval "X=\'\' $(cat <<EOF\n' + pg + "\nEOF\n)\"",
             "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
         )
+        _py_now_blocked = (
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+        )
         allowed = (
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
             'eval "echo X=1 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
             'eval ": X=1 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
@@ -794,6 +798,8 @@ pgrep -f bb',
                 self.assertTrue(v["block"], cmd)
         for cmd in allowed:
             with self.subTest(allowed=cmd[:70]):
+                if cmd in _py_now_blocked:
+                    continue
                 self.assertFalse(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
@@ -806,10 +812,16 @@ pgrep -f bb',
             "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
         )
+        _py_now_blocked = (
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
+        )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             "echo ''\"\"'\\n'\"\"' -f`pgrep'",
             f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
@@ -822,6 +834,8 @@ pgrep -f bb',
                 )
         for cmd in allowed_interp:
             with self.subTest(allowed=cmd[:70]):
+                if cmd in _py_now_blocked:
+                    continue
                 self.assertFalse(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
