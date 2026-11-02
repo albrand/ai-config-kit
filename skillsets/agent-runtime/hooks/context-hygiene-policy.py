@@ -401,6 +401,9 @@ def _pgrep_python_literal_at(tokens, idx):
 
 
 _PGREP_PYTHON_EXEC_UNKNOWN = object()
+_PGREP_PYTHON_SUBPROCESS_METHODS = frozenset(
+    ("run", "call", "check_call", "check_output", "Popen")
+)
 
 
 def _pgrep_python_is_pgrep_executable(argv0):
@@ -697,6 +700,14 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
     tok = tokens[idx]
     if tok.type == tokenize.OP and tok.string in ("[", "("):
         elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
+        if (
+            shell_true
+            and elements
+            and _pgrep_python_list_argv_blocks_shell_true(
+                elements, executable_override
+            )
+        ):
+            return True
         return bool(
             elements
             and _pgrep_python_list_argv_blocks(elements, executable_override)
@@ -796,6 +807,15 @@ def _pgrep_python_call_args_block(
                     tokens, idx
                 )
                 if (
+                    shell_true
+                    and not program_unknown
+                    and elements
+                    and _pgrep_python_list_argv_blocks_shell_true(
+                        elements, executable_override
+                    )
+                ):
+                    return True
+                if (
                     not program_unknown
                     and elements
                     and _pgrep_python_list_argv_blocks(
@@ -811,6 +831,150 @@ def _pgrep_python_call_args_block(
         idx += 1
     return False
 
+
+
+
+
+def _pgrep_python_shell_true_argv0_blocks(runner, cmd_text):
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
+        return False
+    if not isinstance(cmd_text, str):
+        return False
+    if _pgrep_python_is_pgrep_executable(runner):
+        return _pgrep_python_shell_string_blocks(cmd_text)
+    if not _pgrep_python_is_shell_program(runner):
+        return False
+    masked = _pgrep_mask_shell_comments(cmd_text.strip())
+    folded = pgrep_obfuscation_fold(masked)
+    m = re.match(r"\s*(\S+)", folded)
+    if not m:
+        return False
+    head = m.group(1).rsplit("/", 1)[-1].lower()
+    if head in (
+        "echo",
+        "printf",
+        "print",
+        "cat",
+        "grep",
+        "egrep",
+        "fgrep",
+        "tee",
+        "sort",
+        "wc",
+        "test",
+        "true",
+        "false",
+    ):
+        return False
+    if head == "pkill" or head.endswith("pkill"):
+        return _pgrep_lifecycle_pkill_match(cmd_text)
+    if head == "pgrep" or head.endswith("pgrep"):
+        seg = re.match(r"[^\n;&|]*", folded.lstrip())
+        if seg and pgrep_segment_has_full_flag(seg.group(0)):
+            return True
+        return bool(_pgrep_lifecycle_pkill_match(cmd_text))
+    return False
+
+
+def _pgrep_python_list_argv_blocks_shell_true(elements, executable_override=None):
+    if executable_override is _PGREP_PYTHON_EXEC_UNKNOWN:
+        return False
+    if not elements:
+        return False
+    runner = _pgrep_python_resolved_runner(
+        executable_override, None, shell_default="/bin/sh"
+    )
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
+        return False
+    first = elements[0]
+    if isinstance(first, str):
+        return _pgrep_python_shell_true_argv0_blocks(runner, first)
+    return False
+
+
+def _pgrep_python_drop_import_binding(subprocess_direct, os_system, name):
+    subprocess_direct.pop(name, None)
+    os_system.discard(name)
+
+
+def _pgrep_python_bindings_at(tokens, before_idx):
+    subprocess_aliases = {"subprocess"}
+    subprocess_direct = {}
+    os_system = set()
+    idx = 0
+    while idx < before_idx:
+        tok = tokens[idx]
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < before_idx:
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < before_idx and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < before_idx and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < before_idx and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < before_idx
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        idx += 1
+    return subprocess_aliases, subprocess_direct, os_system
 
 
 def _pgrep_python_stdin_shell_invoke(body):
@@ -833,6 +997,29 @@ def _pgrep_python_stdin_shell_invoke(body):
     idx = 0
     while idx < len(tokens):
         tok = tokens[idx]
+        subprocess_aliases, subprocess_direct, os_system = _pgrep_python_bindings_at(
+            tokens, idx
+        )
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in os_system
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(
+                tokens, idx + 1, string_is_shell=True
+            )
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in subprocess_direct
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(tokens, idx + 1, popen_style=True)
+        ):
+            return True
         if (
             tok.type == tokenize.NAME
             and tok.string == "os"
@@ -3706,6 +3893,12 @@ def pgrep_full_match(text, cmd=None):
     shell = cmd if isinstance(cmd, str) and cmd.strip() else text
     if _pgrep_match_expandable_data_heredoc_substitutions(shell):
         return True
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(
+        shell
+    ):
+        if stdin_prog and not executable:
+            if _pgrep_pgrep_match_interpreter_stdin_body(shell[body_start:body_end]):
+                return True
     if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
         return False
     ctx = _PgrepScanContext(text)

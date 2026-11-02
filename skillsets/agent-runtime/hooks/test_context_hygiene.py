@@ -1165,6 +1165,33 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_py_subprocess_gaps_shell_true_list_and_from_imports(self):
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep -f x\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.Popen([\"pkill node\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import run\nrun([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import Popen as P\nP([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nfrom os import system\nsystem(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import check_output\ncheck_output(\"pgrep -f x\", shell=True)\nEOF",
+        )
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo pgrep -f x\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep -f x\"], shell=True, executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import run\nrun([\"echo\",\"pgrep -f x\"])\nEOF",
+            "python3 - <<'EOF'\ndef run(x): pass\nrun([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nprint(\"from subprocess import run; run(['pgrep','-f','x']\")\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
 
 
 if __name__ == "__main__":
