@@ -874,5 +874,21 @@ pgrep -f bb',
 
 
 
+
+    def test_r43_eval_heredoc_owner(self):
+        pg = "p" + "grep -f x"
+        blocked = (
+            "eval sh <<EOF\n" + pg + "\nEOF",
+            "eval `cat` <<EOF\n" + pg + "\nEOF",
+            "eval $(cat) <<EOF\n" + pg + "\nEOF",
+            'eval "$(</dev/stdin)" <<EOF\n' + pg + "\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
