@@ -1165,32 +1165,52 @@ def _pgrep_mask_lifecycle_comments(text):
         return text
 
 
-def _pgrep_pkill_pos_in_nonexec_quote(text, pos):
+def _pgrep_nonexec_single_quote_spans(text):
+    spans = []
     for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
         if is_exec or text[start] != "'":
             continue
         if end <= start + 1 or text[end - 1] != "'":
             continue
-        if start + 1 <= pos < end - 1:
-            return True
-    return False
+        spans.append((start, end))
+    return spans
 
 
-def _pgrep_lifecycle_pkill_word_match(text, masked):
+def _pgrep_pos_in_nonexec_single_quote(pos, sq_spans):
+    if not sq_spans:
+        return False
+    starts = [s[0] for s in sq_spans]
+    idx = bisect.bisect_right(starts, pos) - 1
+    if idx < 0:
+        return False
+    start, end = sq_spans[idx]
+    return start + 1 <= pos < end - 1
+
+
+def _pgrep_pkill_pos_in_nonexec_quote(text, pos, sq_spans=None):
+    if sq_spans is None:
+        sq_spans = _pgrep_nonexec_single_quote_spans(text)
+    return _pgrep_pos_in_nonexec_single_quote(pos, sq_spans)
+
+
+def _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans=None, pos_offset=0):
+    if sq_spans is None:
+        sq_spans = _pgrep_nonexec_single_quote_spans(text)
     for m in BB_LIFECYCLE_PKILL.finditer(masked):
-        if not _pgrep_pkill_pos_in_nonexec_quote(text, m.start()):
+        if not _pgrep_pos_in_nonexec_single_quote(pos_offset + m.start(), sq_spans):
             return True
     return False
 
 
 def _pgrep_lifecycle_pkill_match(text):
     masked = _pgrep_mask_lifecycle_comments(text)
-    if _pgrep_lifecycle_pkill_word_match(text, masked):
+    sq_spans = _pgrep_nonexec_single_quote_spans(text)
+    if _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans):
         return True
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
-            if _pgrep_lifecycle_pkill_word_match(text[ls:le], chunk):
+            if _pgrep_lifecycle_pkill_word_match(text[ls:le], chunk, sq_spans, ls):
                 return True
     return False
 

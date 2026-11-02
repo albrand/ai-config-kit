@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import time
 import sys
 import tempfile
 import unittest
@@ -974,6 +975,17 @@ pgrep -f bb',
                 self.assertTrue(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
+
+
+
+    def test_r23_quoted_command_position_pkill_is_linear(self):
+        unit = "echo 'a; pkill b'"
+        cmd = "; ".join([unit] * 2000)
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertFalse(v["block"], cmd[:80])
+        self.assertLess(elapsed, 3.0, f"r23 n=2000 took {elapsed:.2f}s")
 
 
 
