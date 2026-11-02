@@ -761,6 +761,33 @@ pgrep -f bb',
                 self.assertTrue(v["block"], cmd)
                 self.assertTrue(v["reason"].startswith("[no-pgrep-f]"))
 
+    def test_r15_quoted_word_list_heredoc_literal(self):
+        cmd = 'for c in "cat <<E | sh\npgrep -f x\nE"; do echo "$c"; done'
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_heredoc_exec_gaps_table_rows(self):
+        pk = "p" + "kill"
+        blocked = (
+            "ssh -p 22 host bash <<'EOF'\nI can't\npgrep -f x\nEOF",
+            'eval "$(cat <<EOF\npgrep -f x\nEOF\n)"',
+            "bash -c \"$(cat <<'EOF'\npgrep -f x\nEOF\n)\"",
+        )
+        allowed = (
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
+            "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_guard_followups_2_interpreter_heredoc_and_quote_idiom(self):
         sq = '\'"\'"\''
         blocked_interp = (
@@ -820,6 +847,47 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+
+
+    def test_r42_addside_heredoc_exec_false_blocks(self):
+        pg = "p" + "grep -f x"
+        allowed = (
+            "echo ssh host bash <<'EOF'\n" + pg + "\nEOF",
+            'eval "echo $(cat <<\'EOF\'\n' + pg + '\nEOF\n)"',
+            "printf '%s\\n' ssh host bash <<EOF\n" + pg + "\nEOF",
+        )
+        blocked = (
+            "ssh host bash <<EOF\n" + pg + "\nEOF",
+            'eval "$(cat <<EOF\n' + pg + '\nEOF\n)"',
+            "echo hi; ssh host bash <<EOF\n" + pg + "\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+
+    def test_r43_eval_heredoc_owner(self):
+        pg = "p" + "grep -f x"
+        blocked = (
+            "eval sh <<EOF\n" + pg + "\nEOF",
+            "eval `cat` <<EOF\n" + pg + "\nEOF",
+            "eval $(cat) <<EOF\n" + pg + "\nEOF",
+            'eval "$(</dev/stdin)" <<EOF\n' + pg + "\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
 
 
 if __name__ == "__main__":

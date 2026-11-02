@@ -475,10 +475,34 @@ def _pgrep_single_quote_end(spans, pos):
 
 def _pgrep_read_dollar_paren(text, i, sq, sq_idx=0):
     j, depth, n = i + 2, 1, len(text)
+    dq = sq_local = False
     while j < n and depth:
         skip, sq_idx = _pgrep_sq_skip_past(sq, j, sq_idx)
         if skip is not None:
             j = skip
+            continue
+        if sq_local:
+            if text[j] == "'":
+                sq_local = False
+            j += 1
+            continue
+        if dq:
+            if text[j] == "\\" and j + 1 < n:
+                j += 2
+                continue
+            if text[j] == '"':
+                dq = False
+                j += 1
+                continue
+            j += 1
+            continue
+        if text[j] == "'":
+            sq_local = True
+            j += 1
+            continue
+        if text[j] == '"':
+            dq = True
+            j += 1
             continue
         if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
             depth += 1
@@ -509,6 +533,14 @@ def _pgrep_read_backtick(text, i, sq, sq_idx=0):
 
 
 def _pgrep_heredoc_body_spans(text):
+    cache = getattr(_pgrep_heredoc_body_spans, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_heredoc_body_spans._cache = cache
+    key = text
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
     spans = []
     n = len(text)
     i = 0
@@ -573,6 +605,9 @@ def _pgrep_heredoc_body_spans(text):
         i += 1
     if hd is not None and body_start is not None and body_start < n:
         spans.append((body_start, n))
+    cache[key] = spans
+    if len(cache) > 8:
+        cache.clear()
     return spans
 
 
@@ -1174,6 +1209,96 @@ def _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, op_start):
         return True
     return False
 
+
+
+def _pgrep_find_exec_script_quote_open(text, cmd_start, op_start):
+    i = _pgrep_skip_assignments_and_wrappers(text, cmd_start, op_start)
+    i = _pgrep_skip_space(text, i)
+    if i >= op_start:
+        return None
+    ws = i
+    we = _pgrep_skip_one_word(text, i, op_start)
+    if ws >= we:
+        return None
+    base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+    if base == "eval":
+        j = _pgrep_skip_space(text, we)
+        if j < op_start and text[j] in "'\"":
+            return j
+        return None
+    if base in _PGREP_SHELL_WORDS:
+        k = we
+        while k < op_start:
+            k = _pgrep_skip_space(text, k)
+            if k >= op_start:
+                break
+            ws2 = k
+            we2 = _pgrep_skip_one_word(text, k, op_start)
+            if ws2 >= we2:
+                break
+            if _pgrep_word_is_dash_c_flag(text[ws2:we2]) or _pgrep_bare_word(text[ws2:we2]) == "-c":
+                j = _pgrep_skip_space(text, we2)
+                if j < op_start and text[j] in "'\"":
+                    return j
+                return None
+            k = we2
+    return None
+
+
+def _pgrep_dollar_at_inner_shell_command_position(text, quote_open, dollar_pos):
+    if quote_open is None or dollar_pos <= quote_open + 1:
+        return True
+    prefix = text[quote_open + 1 : dollar_pos].rstrip()
+    if not prefix:
+        return True
+    if prefix[-1] in ";\n|":
+        return True
+    if prefix.endswith("&&") or prefix.endswith("||"):
+        return True
+    return False
+
+
+def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
+    i = _pgrep_skip_assignments_and_wrappers(text, cmd_start, op_start)
+    i = _pgrep_skip_space(text, i)
+    if i >= op_start:
+        return False
+    ws = i
+    we = _pgrep_skip_one_word(text, i, op_start)
+    if ws >= we:
+        return False
+    if _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower() != "ssh":
+        return False
+    rem = _pgrep_skip_ssh_prefix_after_command(text, we, op_start)
+    if rem is None or rem >= op_start:
+        return False
+    rem = _pgrep_skip_space(text, rem)
+    ws2 = rem
+    we2 = _pgrep_skip_one_word(text, rem, op_start)
+    if ws2 >= we2:
+        return False
+    sh = _pgrep_bare_word(text[ws2:we2]).rsplit("/", 1)[-1].lower()
+    return sh in ("bash", "sh", "zsh", "dash", "ksh")
+
+
+def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
+    if text[op_start : op_start + 2] != "<<":
+        return False
+    op_line = text[cmd_start:op_start]
+    if "$(" not in op_line:
+        return False
+    m = re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I)
+    if not m:
+        return False
+    if re.search(r"\bcat\s*>|\btee\s+[^<\s]", op_line):
+        return False
+    quote_open = _pgrep_find_exec_script_quote_open(text, cmd_start, op_start)
+    if quote_open is None:
+        return False
+    dollar_pos = cmd_start + m.start()
+    return _pgrep_dollar_at_inner_shell_command_position(text, quote_open, dollar_pos)
+
+
 def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     span = _pgrep_first_word_span(text, cmd_start, op_start)
     if not span:
@@ -1192,6 +1317,8 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
         segment,
         re.I,
     ):
+        return True
+    if _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
         return True
     if re.search(r"\bssh\b", segment, re.I):
         after = text[span[1] : op_start]
@@ -1337,6 +1464,7 @@ def _pgrep_iter_heredoc_bodies(text):
     i = 0
     sq = dq = False
     cmd_start = 0
+    quoted_cat_subst_exec = False
     while i < n:
         if sq:
             if text[i] == "'":
@@ -1349,8 +1477,19 @@ def _pgrep_iter_heredoc_bodies(text):
                 continue
             if text[i] == '"':
                 dq = False
-            i += 1
-            continue
+                i += 1
+                continue
+            if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+                if "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
+                    text, cmd_start, i
+                ):
+                    quoted_cat_subst_exec = True
+                else:
+                    i += 2
+                    continue
+            else:
+                i += 1
+                continue
         if text[i] == "'":
             sq = True
             i += 1
@@ -1376,9 +1515,17 @@ def _pgrep_iter_heredoc_bodies(text):
             line_end = text.find("\n", j)
             op_line_end = line_end if line_end != -1 else n
             stdin_prog = _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, i)
-            executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
-            if not executable:
-                executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
+            if quoted_cat_subst_exec:
+                executable = True
+                quoted_cat_subst_exec = False
+            else:
+                executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
+                if not executable:
+                    executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
+                if not executable and "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
+                    text, cmd_start, i
+                ):
+                    executable = True
             line_end = text.find("\n", j)
             if line_end == -1:
                 body_start = n
@@ -1412,12 +1559,59 @@ def _pgrep_iter_heredoc_bodies(text):
 
 
 def _pgrep_iter_simple_command_spans(text):
+    cache = getattr(_pgrep_iter_simple_command_spans, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_iter_simple_command_spans._cache = cache
+    key = text
+    hit = cache.get(key)
+    if hit is not None:
+        for span in hit:
+            yield span
+        return
+    spans = []
     n = len(text)
     start = 0
     i = 0
     sq = dq = False
+    subst_depth = 0
+    sub_dq = sub_sq = False
     hd = None
     while i < n:
+        if subst_depth > 0:
+            if sub_sq:
+                if text[i] == "'":
+                    sub_sq = False
+                i += 1
+                continue
+            if sub_dq:
+                if text[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    sub_dq = False
+                    i += 1
+                    continue
+                i += 1
+                continue
+            if text[i] == "'":
+                sub_sq = True
+                i += 1
+                continue
+            if text[i] == '"':
+                sub_dq = True
+                i += 1
+                continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                subst_depth += 1
+                i += 2
+                continue
+            if text[i] == ")":
+                subst_depth -= 1
+                i += 1
+                continue
+            i += 1
+            continue
         if hd is not None:
             delim, strip_tabs, phase = hd
             if phase == "op":
@@ -1436,7 +1630,7 @@ def _pgrep_iter_simple_command_spans(text):
                 hd = None
                 i = line_term
                 if i < n and text[i] == "\n":
-                    yield start, i
+                    spans.append((start, i))
                     i += 1
                     start = _pgrep_skip_space(text, i)
                 continue
@@ -1464,18 +1658,23 @@ def _pgrep_iter_simple_command_spans(text):
             dq = True
             i += 1
             continue
+        if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+            subst_depth = 1
+            sub_dq = sub_sq = False
+            i += 2
+            continue
         if text.startswith("&&", i) or text.startswith("||", i):
-            yield start, i
+            spans.append((start, i))
             i += 2
             start = _pgrep_skip_space(text, i)
             continue
         if c in ";\n|":
-            yield start, i
+            spans.append((start, i))
             i += 1
             start = _pgrep_skip_space(text, i)
             continue
         if c == "&":
-            yield start, i
+            spans.append((start, i))
             i += 1
             start = _pgrep_skip_space(text, i)
             continue
@@ -1487,7 +1686,13 @@ def _pgrep_iter_simple_command_spans(text):
                 i = j
                 continue
         i += 1
-    yield start, n
+    spans.append((start, n))
+    cache[key] = spans
+    if len(cache) > 32:
+        cache.clear()
+    for span in spans:
+        yield span
+
 
 def _pgrep_skip_case_header(text, i):
     n = len(text)
