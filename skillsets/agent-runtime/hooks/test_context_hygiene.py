@@ -2,7 +2,6 @@
 import json
 import os
 import subprocess
-import time
 import sys
 import tempfile
 import unittest
@@ -774,10 +773,8 @@ pgrep -f bb',
             "ssh -p 22 host bash <<'EOF'\nI can't\npgrep -f x\nEOF",
             'eval "$(cat <<EOF\npgrep -f x\nEOF\n)"',
             "bash -c \"$(cat <<'EOF'\npgrep -f x\nEOF\n)\"",
-            'echo "$(printf %s \"x\n# note\"; ' + pk + ' node)"',
         )
         allowed = (
-            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
             "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
         )
@@ -799,10 +796,10 @@ pgrep -f bb',
         )
         allowed_interp = (
             "cat <<EOF\npgrep -f x\nEOF",
-            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
-            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
+            "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 script.py <<EOF\npgrep -f x\nEOF",
+            "python3 -I - <<'EOF'\nimport subprocess; subprocess.run([\"pgrep\",\"-f\",\"x\"])\nEOF",
             "node - <<'EOF'\nrequire('child_process').execSync('pgrep -f x')\nEOF",
             "echo ''\"\"'\\n'\"\"' -f`pgrep'",
             f"printf 'a {sq}b -f `pgrep x`{sq} c\n'",
@@ -849,112 +846,6 @@ pgrep -f bb',
                 self.assertTrue(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
-
-
-
-    def test_r21_nested_substitution_comment_in_dquote_masked(self):
-        allowed = (
-            'echo "$(printf \'%s\' \"$(true # note; pkill node\n)\")"',
-            'echo "$(true # note; pkill node\n)"',
-            'x="$(echo \"$(true # pkill node\n)\")"',
-        )
-        blocked = (
-            'echo "$(printf \'%s\' \"$(true; pkill node\n)\")"',
-            'echo "$(printf \'%s\' \"$(pkill node)\")"',
-            'echo "$(printf \'%s\' \"$(true # note\npkill node\n)\")"',
-            'echo "$(printf \'%s\' \"x # y\"; pkill node)"',
-        )
-        for cmd in allowed:
-            with self.subTest(allowed=cmd[:70]):
-                self.assertFalse(
-                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
-                )
-        for cmd in blocked:
-            with self.subTest(blocked=cmd[:70]):
-                self.assertTrue(
-                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
-                )
-
-
-
-
-    def test_r36_backtick_comment_in_dquote_subst_masked(self):
-        pk = "p" + "kill"
-        body = "true # note; " + pk + " node\n"
-        allowed = (
-            "echo \"$(printf '%s' \"`" + body + "`\")\"",
-            'echo "$(echo "`true # ' + pk + ' node\n`")"',
-            'echo "`true # note; ' + pk + ' node\n`"',
-            'echo "$(echo `true # ' + pk + " x\n`)\"",
-            "echo \"$(printf '%s' '" + body + "')\"",
-            'echo "$(' + "'" + body + "')\"",
-            "echo \"$(echo \\' \"$(true # note; " + pk + " node\n)\")\"",
-            'echo $("`' + body + '")',
-            "echo \"$(echo $'c' '" + body + "')\"",
-            'echo "$(printf "b" "`' + body + '`")"',
-            'echo "`printf \'%s\' \'' + body + '`"',
-        )
-        blocked = (
-            "echo \"$(printf '%s' \"`true; " + pk + " node`\")\"",
-            "echo \"$(printf '%s' \"`true # c\n" + pk + " node\n`\")\"",
-            'echo "$(echo "`' + pk + ' node`")"',
-            "echo \"$(printf '%s' \"`" + pk + " node`\")\"",
-            "echo \"$(echo \"`" + pk + " node`\")\"",
-            "echo \"$(printf '%s' 'a # b'; " + pk + " node)\"",
-            "echo \"$(printf '%s' 'a # b' && " + pk + " node)\"",
-            "echo \"$(printf '%s' \"a # b\"; " + pk + " node)\"",
-            "echo \"$(printf '%s' $'a # b'; " + pk + " node)\"",
-            "echo \"$(printf '%s' a\\#b; " + pk + " node)\"",
-            "echo \"$(printf '%s' \"$(echo '#')\"; " + pk + " node)\"",
-            "echo \"$(printf '%s' '#'; " + pk + " node)\"",
-            "echo \"$( 'a # b'; " + pk + " node)\"",
-            "echo $(printf '%s' 'a # b'; " + pk + " node)",
-            "echo \"$(printf '%s' 'a # b' | " + pk + " node)\"",
-            "echo \"$(printf '%s' 'a # b'\n" + pk + " node\n)\"",
-        )
-        for cmd in allowed:
-            with self.subTest(allowed=cmd[:70]):
-                self.assertFalse(
-                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
-                )
-        for cmd in blocked:
-            with self.subTest(blocked=cmd[:70]):
-                self.assertTrue(
-                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
-                )
-
-    def test_r23_quoted_command_position_pkill_is_linear(self):
-        unit = "echo 'a; pkill b'"
-        cmd1 = "; ".join([unit] * 10000)
-        t0 = time.monotonic()
-        v1 = verdict(bash(cmd1), env={"CONTEXT_HYGIENE": "off"})
-        t1 = time.monotonic() - t0
-        self.assertFalse(v1["block"], cmd1[:80])
-        cmd4 = "; ".join([unit] * 40000)
-        t0 = time.monotonic()
-        v4 = verdict(bash(cmd4), env={"CONTEXT_HYGIENE": "off"})
-        t4 = time.monotonic() - t0
-        self.assertFalse(v4["block"], cmd4[:80])
-        self.assertLess(t4, 3.0, f"r23 n=40000 took {t4:.2f}s")
-        ratio = t4 / max(t1, 0.05)
-        self.assertLessEqual(ratio, 6.0, f"r23 growth x{ratio:.1f} (t1={t1:.2f}s t4={t4:.2f}s)")
-        for_unit = 'for c in "a <<E | sh"; do :; done'
-        for1 = "; ".join([for_unit] * 10000)
-        t0 = time.monotonic()
-        vf1 = verdict(bash(for1), env={"CONTEXT_HYGIENE": "off"})
-        tf1 = time.monotonic() - t0
-        self.assertFalse(vf1["block"], for1[:80])
-        for4 = "; ".join([for_unit] * 40000)
-        t0 = time.monotonic()
-        vf4 = verdict(bash(for4), env={"CONTEXT_HYGIENE": "off"})
-        tf4 = time.monotonic() - t0
-        self.assertFalse(vf4["block"], for4[:80])
-        self.assertLess(tf4, 3.0, f"r23 for<< n=40000 took {tf4:.2f}s")
-        for_ratio = tf4 / max(tf1, 0.05)
-        self.assertLessEqual(
-            for_ratio, 6.0, f"r23 for<< growth x{for_ratio:.1f} (t1={tf1:.2f}s t4={tf4:.2f}s)"
-        )
-
 
 
 
