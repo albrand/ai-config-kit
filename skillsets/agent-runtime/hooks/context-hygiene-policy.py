@@ -924,7 +924,7 @@ def _pgrep_heredoc_body_spans(text):
     if cache is None:
         cache = {}
         _pgrep_heredoc_body_spans._cache = cache
-    key = (len(text), hash(text))
+    key = text
     hit = cache.get(key)
     if hit is not None:
         return hit
@@ -2051,7 +2051,7 @@ def _pgrep_iter_simple_command_spans(text):
     if cache is None:
         cache = {}
         _pgrep_iter_simple_command_spans._cache = cache
-    key = (len(text), hash(text))
+    key = text
     hit = cache.get(key)
     if hit is not None:
         for span in hit:
