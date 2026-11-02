@@ -1254,6 +1254,10 @@ def _pgrep_skip_leading_assignments(text, i, limit):
         if m:
             i += m.end()
             continue
+        m = re.match(r"(\w+)=(?=\s)", text[i:limit])
+        if m:
+            i += m.end()
+            continue
         break
     return i
 
