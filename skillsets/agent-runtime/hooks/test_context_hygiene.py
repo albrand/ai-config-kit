@@ -980,12 +980,19 @@ pgrep -f bb',
 
     def test_r23_quoted_command_position_pkill_is_linear(self):
         unit = "echo 'a; pkill b'"
-        cmd = "; ".join([unit] * 2000)
+        cmd1 = "; ".join([unit] * 10000)
         t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
-        self.assertFalse(v["block"], cmd[:80])
-        self.assertLess(elapsed, 3.0, f"r23 n=2000 took {elapsed:.2f}s")
+        v1 = verdict(bash(cmd1), env={"CONTEXT_HYGIENE": "off"})
+        t1 = time.monotonic() - t0
+        self.assertFalse(v1["block"], cmd1[:80])
+        cmd4 = "; ".join([unit] * 40000)
+        t0 = time.monotonic()
+        v4 = verdict(bash(cmd4), env={"CONTEXT_HYGIENE": "off"})
+        t4 = time.monotonic() - t0
+        self.assertFalse(v4["block"], cmd4[:80])
+        self.assertLess(t4, 3.0, f"r23 n=40000 took {t4:.2f}s")
+        ratio = t4 / max(t1, 0.05)
+        self.assertLessEqual(ratio, 6.0, f"r23 growth x{ratio:.1f} (t1={t1:.2f}s t4={t4:.2f}s)")
 
 
 

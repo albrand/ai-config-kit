@@ -1278,41 +1278,61 @@ def _pgrep_nonexec_single_quote_spans(text):
     return spans
 
 
-def _pgrep_pos_in_nonexec_single_quote(pos, sq_spans):
+def _pgrep_pos_in_nonexec_single_quote(pos, sq_spans, sq_starts=None):
     if not sq_spans:
         return False
-    starts = [s[0] for s in sq_spans]
-    idx = bisect.bisect_right(starts, pos) - 1
+    if sq_starts is None:
+        sq_starts = [s[0] for s in sq_spans]
+    idx = bisect.bisect_right(sq_starts, pos) - 1
     if idx < 0:
         return False
     start, end = sq_spans[idx]
     return start + 1 <= pos < end - 1
 
 
-def _pgrep_pkill_pos_in_nonexec_quote(text, pos, sq_spans=None):
+def _pgrep_pkill_pos_in_nonexec_quote(text, pos, sq_spans=None, sq_starts=None):
     if sq_spans is None:
         sq_spans = _pgrep_nonexec_single_quote_spans(text)
-    return _pgrep_pos_in_nonexec_single_quote(pos, sq_spans)
+    return _pgrep_pos_in_nonexec_single_quote(pos, sq_spans, sq_starts)
 
 
-def _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans=None, pos_offset=0):
+def _pgrep_lifecycle_pkill_word_match(
+    text, masked, sq_spans=None, sq_starts=None, pos_offset=0, span_hint=None
+):
     if sq_spans is None:
         sq_spans = _pgrep_nonexec_single_quote_spans(text)
+    span_idx = span_hint[0] if span_hint is not None else 0
+    n_spans = len(sq_spans)
     for m in BB_LIFECYCLE_PKILL.finditer(masked):
-        if not _pgrep_pos_in_nonexec_single_quote(pos_offset + m.start(), sq_spans):
+        pos = pos_offset + m.start()
+        while span_idx < n_spans and pos >= sq_spans[span_idx][1] - 1:
+            span_idx += 1
+        in_quote = False
+        if span_idx < n_spans:
+            start, end = sq_spans[span_idx]
+            if start + 1 <= pos < end - 1:
+                in_quote = True
+        if not in_quote:
+            if span_hint is not None:
+                span_hint[0] = span_idx
             return True
+    if span_hint is not None:
+        span_hint[0] = span_idx
     return False
 
 
 def _pgrep_lifecycle_pkill_match(text):
     masked = _pgrep_mask_lifecycle_comments(text)
     sq_spans = _pgrep_nonexec_single_quote_spans(text)
-    if _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans):
+    span_hint = [0]
+    if _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans, None, 0, span_hint):
         return True
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
-            if _pgrep_lifecycle_pkill_word_match(text[ls:le], chunk, sq_spans, ls):
+            if _pgrep_lifecycle_pkill_word_match(
+                text[ls:le], chunk, sq_spans, None, ls, span_hint
+            ):
                 return True
     return False
 
