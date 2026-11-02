@@ -777,12 +777,16 @@ pgrep -f bb',
             'eval "X=1 $(cat <<\'EOF\'\n' + pg + "\nEOF\n)\"",
             'bash -c "A=1 B=2 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
             'eval "A=\'x y\' $(cat <<EOF\n' + pg + "\nEOF\n)\"",
+            'eval "X= $(cat <<\'EOF\'\n' + pg + "\nEOF\n)\"",
+            'bash -c "A= B=1 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
+            'eval "X=\'\' $(cat <<EOF\n' + pg + "\nEOF\n)\"",
         )
         allowed = (
             "python3 - <<EOF\nimport os; os.system('pgrep -f x')\nEOF",
             "python3 - <<'EOF'\nprint(\"os.system('pgrep -f x')\")\nEOF",
             'eval "echo X=1 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
             'eval ": X=1 $(cat <<EOF\n' + pg + "\nEOF\n)\"",
+            'eval "X= echo $(cat <<EOF\n' + pg + "\nEOF\n)\"",
         )
         for cmd in blocked:
             with self.subTest(blocked=cmd[:70]):
