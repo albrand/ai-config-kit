@@ -920,6 +920,14 @@ def _pgrep_read_backtick(text, i, sq, sq_idx=0):
 
 
 def _pgrep_heredoc_body_spans(text):
+    cache = getattr(_pgrep_heredoc_body_spans, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_heredoc_body_spans._cache = cache
+    key = (len(text), hash(text))
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
     spans = []
     n = len(text)
     i = 0
@@ -984,6 +992,9 @@ def _pgrep_heredoc_body_spans(text):
         i += 1
     if hd is not None and body_start is not None and body_start < n:
         spans.append((body_start, n))
+    cache[key] = spans
+    if len(cache) > 8:
+        cache.clear()
     return spans
 
 
@@ -1758,9 +1769,10 @@ def _pgrep_ssh_remote_shell_reads_heredoc(text, cmd_start, op_start):
 
 
 def _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, op_start):
-    line_start = text.rfind("\n", 0, op_start) + 1
-    op_line = text[line_start:op_start]
     if text[op_start : op_start + 2] != "<<":
+        return False
+    op_line = text[cmd_start:op_start]
+    if "$(" not in op_line:
         return False
     if not re.search(r"\$\(\s*(?:\S+/)*(?:cat|tee)\b", op_line, re.I):
         return False
@@ -1959,11 +1971,15 @@ def _pgrep_iter_heredoc_bodies(text):
                 dq = False
                 i += 1
                 continue
-            if not (
-                text[i : i + 2] == "<<"
-                and (i == 0 or text[i - 1] in " \t\n;&|(")
-                and _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, i)
-            ):
+            if text[i : i + 2] == "<<" and (i == 0 or text[i - 1] in " \t\n;&|("):
+                if "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
+                    text, cmd_start, i
+                ):
+                    pass
+                else:
+                    i += 2
+                    continue
+            else:
                 i += 1
                 continue
         if text[i] == "'":
@@ -1994,7 +2010,9 @@ def _pgrep_iter_heredoc_bodies(text):
             executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
             if not executable:
                 executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
-            if not executable and _pgrep_heredoc_cat_subst_for_exec(text, cmd_start, i):
+            if not executable and "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
+                text, cmd_start, i
+            ):
                 executable = True
             line_end = text.find("\n", j)
             if line_end == -1:
@@ -2029,6 +2047,17 @@ def _pgrep_iter_heredoc_bodies(text):
 
 
 def _pgrep_iter_simple_command_spans(text):
+    cache = getattr(_pgrep_iter_simple_command_spans, "_cache", None)
+    if cache is None:
+        cache = {}
+        _pgrep_iter_simple_command_spans._cache = cache
+    key = (len(text), hash(text))
+    hit = cache.get(key)
+    if hit is not None:
+        for span in hit:
+            yield span
+        return
+    spans = []
     n = len(text)
     start = 0
     i = 0
@@ -2089,7 +2118,7 @@ def _pgrep_iter_simple_command_spans(text):
                 hd = None
                 i = line_term
                 if i < n and text[i] == "\n":
-                    yield start, i
+                    spans.append((start, i))
                     i += 1
                     start = _pgrep_skip_space(text, i)
                 continue
@@ -2123,17 +2152,17 @@ def _pgrep_iter_simple_command_spans(text):
             i += 2
             continue
         if text.startswith("&&", i) or text.startswith("||", i):
-            yield start, i
+            spans.append((start, i))
             i += 2
             start = _pgrep_skip_space(text, i)
             continue
         if c in ";\n|":
-            yield start, i
+            spans.append((start, i))
             i += 1
             start = _pgrep_skip_space(text, i)
             continue
         if c == "&":
-            yield start, i
+            spans.append((start, i))
             i += 1
             start = _pgrep_skip_space(text, i)
             continue
@@ -2145,7 +2174,13 @@ def _pgrep_iter_simple_command_spans(text):
                 i = j
                 continue
         i += 1
-    yield start, n
+    spans.append((start, n))
+    cache[key] = spans
+    if len(cache) > 32:
+        cache.clear()
+    for span in spans:
+        yield span
+
 
 def _pgrep_skip_case_header(text, i):
     n = len(text)

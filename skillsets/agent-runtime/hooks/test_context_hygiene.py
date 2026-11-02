@@ -993,6 +993,22 @@ pgrep -f bb',
         self.assertLess(t4, 3.0, f"r23 n=40000 took {t4:.2f}s")
         ratio = t4 / max(t1, 0.05)
         self.assertLessEqual(ratio, 6.0, f"r23 growth x{ratio:.1f} (t1={t1:.2f}s t4={t4:.2f}s)")
+        for_unit = 'for c in "a <<E | sh"; do :; done'
+        for1 = "; ".join([for_unit] * 10000)
+        t0 = time.monotonic()
+        vf1 = verdict(bash(for1), env={"CONTEXT_HYGIENE": "off"})
+        tf1 = time.monotonic() - t0
+        self.assertFalse(vf1["block"], for1[:80])
+        for4 = "; ".join([for_unit] * 40000)
+        t0 = time.monotonic()
+        vf4 = verdict(bash(for4), env={"CONTEXT_HYGIENE": "off"})
+        tf4 = time.monotonic() - t0
+        self.assertFalse(vf4["block"], for4[:80])
+        self.assertLess(tf4, 3.0, f"r23 for<< n=40000 took {tf4:.2f}s")
+        for_ratio = tf4 / max(tf1, 0.05)
+        self.assertLessEqual(
+            for_ratio, 6.0, f"r23 for<< growth x{for_ratio:.1f} (t1={tf1:.2f}s t4={tf4:.2f}s)"
+        )
 
 
 
