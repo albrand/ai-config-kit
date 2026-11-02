@@ -719,10 +719,12 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     sub_dq = sub_sq = sub_dsq = False
     subst_stack = []
 
-    def _mask_hash_run(end_at_subst_close=False, close_depth=0):
+    def _mask_hash_run(end_at_subst_close=False, close_depth=0, stop_at_backtick=False):
         nonlocal i
         while i < n:
             if text[i] == "\n":
+                return
+            if stop_at_backtick and text[i] == "`":
                 return
             if end_at_subst_close and text[i] == ")" and subst_depth == close_depth:
                 return
@@ -768,8 +770,10 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if sub_sq:
-                if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-                    _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
+                if text[i] == "#":
+                    while i < n and text[i] != "'":
+                        out.append(" ")
+                        i += 1
                     continue
                 if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
                     out.append("$(")
@@ -829,7 +833,11 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
                 nested_bt = subst_depth > 1 and subst_stack[-1][3]
                 if not (nested_bt and _subst_root_is_backtick()):
-                    _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
+                    _mask_hash_run(
+                        end_at_subst_close=True,
+                        close_depth=subst_depth,
+                        stop_at_backtick=bool(subst_stack and subst_stack[-1][3]),
+                    )
                     continue
             if text[i] == "`":
                 if subst_stack and subst_stack[-1][3]:

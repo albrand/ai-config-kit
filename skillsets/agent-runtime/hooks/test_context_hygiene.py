@@ -900,6 +900,17 @@ pgrep -f bb',
             'echo "$(echo "`' + pk + ' node`")"',
             "echo \"$(printf '%s' \"`" + pk + " node`\")\"",
             "echo \"$(echo \"`" + pk + " node`\")\"",
+            "echo \"$(printf '%s' 'a # b'; " + pk + " node)\"",
+            "echo \"$(printf '%s' 'a # b' && " + pk + " node)\"",
+            "echo \"$(printf '%s' \"a # b\"; " + pk + " node)\"",
+            "echo \"$(printf '%s' $'a # b'; " + pk + " node)\"",
+            "echo \"$(printf '%s' a\\#b; " + pk + " node)\"",
+            "echo \"$(printf '%s' \"$(echo '#')\"; " + pk + " node)\"",
+            "echo \"$(printf '%s' '#'; " + pk + " node)\"",
+            "echo \"$( 'a # b'; " + pk + " node)\"",
+            "echo $(printf '%s' 'a # b'; " + pk + " node)",
+            "echo \"$(printf '%s' 'a # b' | " + pk + " node)\"",
+            "echo \"$(printf '%s' 'a # b'\n" + pk + " node\n)\"",
         )
         for cmd in allowed:
             with self.subTest(allowed=cmd[:70]):
