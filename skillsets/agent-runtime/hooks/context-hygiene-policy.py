@@ -770,16 +770,6 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if sub_sq:
-                if text[i] == "#":
-                    while i < n and text[i] != "'":
-                        out.append(" ")
-                        i += 1
-                    continue
-                if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                    out.append("$(")
-                    _push_subst_frame()
-                    i += 2
-                    continue
                 out.append(text[i])
                 if text[i] == "'":
                     sub_sq = False
