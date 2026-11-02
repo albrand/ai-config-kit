@@ -1012,6 +1012,61 @@ pgrep -f bb',
 
 
 
+
+    def test_r29_nonliteral_program_or_shell_is_unknown(self):
+        G = "p" + "grep"
+
+        def py(call):
+            return (
+                "python3 - <<'EOF'\nimport os, subprocess\n" + call + "\nEOF"
+            )
+
+        allowed = (
+            py(
+                'subprocess.run(["'
+                + G
+                + '", "-f", "x"], executable=os.path.join("/bin", "echo"))'
+            ),
+            py('subprocess.run(["' + G + '", "-f", "x"], executable=exe)'),
+            py('subprocess.run(["' + G + '", "-f", "x"], **kw)'),
+            py('subprocess.run("' + G + ' -f x", shell=use_shell)'),
+            py('subprocess.run([prog, "-f", "x"])'),
+            py("subprocess.run(cmd, shell=True)"),
+            py(
+                'subprocess.run(["'
+                + G
+                + '", "-f", "x"], executable="/bin/echo")'
+            ),
+        )
+        blocked = (
+            py('subprocess.run(["' + G + '", "-f", "x"])'),
+            py(
+                'subprocess.run(["'
+                + G
+                + '", "-f", "x"], executable="/usr/bin/'
+                + G
+                + '")'
+            ),
+            py('subprocess.run(["' + G + '", "-f", "x"], cwd=os.getcwd())'),
+            py(
+                'subprocess.run("' + G + ' -f x", shell=True, env=dict(os.environ))'
+            ),
+            "python3 - <<'EOF'\nimport os\nos.system(\"" + G + " -f x\")\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"],
+                    cmd,
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"],
+                    cmd,
+                )
+
+
     def test_r25_python_bytes_and_fstring_literals(self):
         allowed = (
             "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=b\"/bin/echo\")\nEOF",

@@ -400,6 +400,9 @@ def _pgrep_python_literal_at(tokens, idx):
     return None, idx + 1
 
 
+_PGREP_PYTHON_EXEC_UNKNOWN = object()
+
+
 def _pgrep_python_is_pgrep_executable(argv0):
     if not isinstance(argv0, str):
         return False
@@ -467,11 +470,16 @@ def _pgrep_python_skip_value(tokens, idx):
 
 
 def _pgrep_python_list_argv_blocks(elements, executable_override=None):
+    if executable_override is _PGREP_PYTHON_EXEC_UNKNOWN:
+        return False
     if not elements and executable_override is None:
         return False
-    program = (
-        executable_override if executable_override is not None else elements[0]
-    )
+    if executable_override is not None:
+        program = executable_override
+    elif elements:
+        program = elements[0]
+    else:
+        return False
     if not isinstance(program, str) or not _pgrep_python_is_pgrep_executable(program):
         return False
     return _pgrep_argv_tokens_has_full_flag(elements[1:])
@@ -491,7 +499,7 @@ def _pgrep_python_shell_string_blocks(snippet):
     return bool(_pgrep_lifecycle_pkill_match(snippet))
 
 
-def _pgrep_python_call_executable_string(tokens, open_paren_idx):
+def _pgrep_python_call_executable_override(tokens, open_paren_idx):
     idx = open_paren_idx + 1
     paren_depth = 1
     while idx < len(tokens) and paren_depth:
@@ -509,11 +517,28 @@ def _pgrep_python_call_executable_string(tokens, open_paren_idx):
             and idx + 2 < len(tokens)
             and tokens[idx + 1].type == tokenize.OP
             and tokens[idx + 1].string == "="
-            and tokens[idx + 2].type == tokenize.STRING
         ):
-            return _pgrep_python_decode_string_token(tokens[idx + 2].string)
+            val = tokens[idx + 2]
+            if val.type == tokenize.STRING:
+                return _pgrep_python_decode_string_token(val.string)
+            return _PGREP_PYTHON_EXEC_UNKNOWN
         idx += 1
     return None
+
+
+def _pgrep_python_call_has_kwargs_star(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+        elif paren_depth == 1 and tok.type == tokenize.OP and tok.string == "**":
+            return True
+        idx += 1
+    return False
 
 
 def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
@@ -569,7 +594,8 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
     paren_depth = 1
     saw_positional = False
     shell_true = _pgrep_python_call_has_shell_true(tokens, open_paren_idx)
-    executable_override = _pgrep_python_call_executable_string(
+    kwargs_unknown = _pgrep_python_call_has_kwargs_star(tokens, open_paren_idx)
+    executable_override = _pgrep_python_call_executable_override(
         tokens, open_paren_idx
     )
     fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
@@ -590,8 +616,12 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
             ):
                 kw = tok.string
                 val_idx = idx + 2
-                if kw == "args" and _pgrep_python_scan_args_keyword_value(
-                    tokens, val_idx, shell_true, executable_override
+                if (
+                    kw == "args"
+                    and not kwargs_unknown
+                    and _pgrep_python_scan_args_keyword_value(
+                        tokens, val_idx, shell_true, executable_override
+                    )
                 ):
                     return True
                 idx = _pgrep_python_skip_value(tokens, val_idx) - 1
@@ -611,8 +641,12 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
                     elements, idx = _pgrep_python_collect_sequence_elements(
                         tokens, idx
                     )
-                    if elements and _pgrep_python_list_argv_blocks(
-                        elements, executable_override
+                    if (
+                        not kwargs_unknown
+                        and elements
+                        and _pgrep_python_list_argv_blocks(
+                            elements, executable_override
+                        )
                     ):
                         return True
                     continue
