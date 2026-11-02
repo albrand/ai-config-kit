@@ -709,7 +709,7 @@ def _pgrep_mask_line_hash_comments(text):
     return "\n".join(out)
 
 
-def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=False):
+def _pgrep_mask_lifecycle_comments_linear(text):
     if "#" not in text and "$(" not in text and "`" not in text:
         return text
     sq = _pgrep_single_quote_spans(text)
@@ -790,10 +790,7 @@ def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=Fal
                 i += 1
                 continue
             if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-                _mask_hash_run(
-                    end_at_subst_close=subst_comment_stops_at_close,
-                    close_depth=subst_depth,
-                )
+                _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
                 continue
             if text[i] == "`":
                 inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
@@ -801,9 +798,7 @@ def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=Fal
                     out.append(text[i:])
                     break
                 if "#" in inner:
-                    inner = _pgrep_mask_lifecycle_comments_linear(
-                        inner, subst_comment_stops_at_close
-                    )
+                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
                 out.append("`" + inner + "`")
                 i = j
                 continue
@@ -832,9 +827,7 @@ def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=Fal
                     out.append(text[i:])
                     break
                 if "#" in inner:
-                    inner = _pgrep_mask_lifecycle_comments_linear(
-                        inner, subst_comment_stops_at_close
-                    )
+                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
                 out.append("`" + inner + "`")
                 i = j
                 continue
@@ -861,9 +854,7 @@ def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=Fal
                 out.append(text[i:])
                 break
             if "#" in inner:
-                inner = _pgrep_mask_lifecycle_comments_linear(
-                        inner, subst_comment_stops_at_close
-                    )
+                inner = _pgrep_mask_lifecycle_comments_linear(inner)
             out.append("`" + inner + "`")
             i = j
             continue
@@ -873,13 +864,13 @@ def _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close=Fal
 
 
 
-def _pgrep_mask_lifecycle_comments(text, subst_comment_stops_at_close=False):
+def _pgrep_mask_lifecycle_comments(text):
     try:
         if "#" not in text and "$(" not in text:
             return text
         spans = _pgrep_heredoc_body_spans(text)
         if not spans:
-            return _pgrep_mask_lifecycle_comments_linear(text, subst_comment_stops_at_close)
+            return _pgrep_mask_lifecycle_comments_linear(text)
         out = []
         i, n, si = 0, len(text), 0
         while i < n:
@@ -893,7 +884,7 @@ def _pgrep_mask_lifecycle_comments(text, subst_comment_stops_at_close=False):
             j = spans[si][0] if si < len(spans) and i < spans[si][0] else n
             chunk = text[i:j]
             if chunk:
-                out.append(_pgrep_mask_lifecycle_comments_linear(chunk, subst_comment_stops_at_close))
+                out.append(_pgrep_mask_lifecycle_comments_linear(chunk))
             i = j
         return "".join(out)
     except Exception:
@@ -955,20 +946,14 @@ def _pgrep_lifecycle_pkill_word_match(
 
 
 def _pgrep_lifecycle_pkill_match(text):
-    bash_invalid = _pgrep_bash_n_syntax_error(text) is True
-    legacy = bash_invalid and "\n" not in text
-    masked = _pgrep_mask_lifecycle_comments(
-        text, subst_comment_stops_at_close=legacy
-    )
+    masked = _pgrep_mask_lifecycle_comments(text)
     sq_spans = _pgrep_nonexec_single_quote_spans(text)
     span_hint = [0]
     if _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans, None, 0, span_hint):
         return True
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
-            chunk = _pgrep_mask_lifecycle_comments(
-                text[ls:le], subst_comment_stops_at_close=legacy
-            )
+            chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
             if _pgrep_lifecycle_pkill_word_match(
                 text[ls:le], chunk, sq_spans, None, ls, span_hint
             ):
@@ -3237,8 +3222,7 @@ def bb_lifecycle_guard(raw):
     if not lifecycle_block:
         lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_shell = cmd if isinstance(cmd, str) and cmd.strip() else text
-        lifecycle_block = _pgrep_lifecycle_pkill_match(lifecycle_shell)
+        lifecycle_block = _pgrep_lifecycle_pkill_match(text)
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
