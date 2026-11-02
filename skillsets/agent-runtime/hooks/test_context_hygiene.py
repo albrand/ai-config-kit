@@ -1105,6 +1105,44 @@ pgrep -f bb',
 
 
 
+    def test_r45_executable_resolves_runner(self):
+        G = "p" + "grep"
+
+        def py(call):
+            return "python3 - <<'EOF'\nimport os, subprocess\n" + call + "\nEOF"
+
+        allowed = (
+            py(
+                'subprocess.run(["bash", "-c", "'
+                + G
+                + ' -f x"], executable="/bin/echo")'
+            ),
+            py(
+                'subprocess.run("'
+                + G
+                + ' -f x", shell=True, executable="/bin/echo")'
+            ),
+            py('subprocess.Popen(["bash", "-c", "' + G + ' -f x"], -1, "/bin/echo")'),
+        )
+        blocked = (
+            py('subprocess.run(["' + G + '", "-f", "x"], executable=None)'),
+            py('subprocess.call(["' + G + '", "-f", "x"], executable=None)'),
+            py('subprocess.check_call(["' + G + '", "-f", "x"], executable=None)'),
+            py('subprocess.check_output(["' + G + '", "-f", "x"], executable=None)'),
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
     def test_python_stdin_prose_and_alias_examples(self):
         allowed = (
             "python3 - <<'EOF'\nprint(\"never use pgrep -f\")\nEOF",

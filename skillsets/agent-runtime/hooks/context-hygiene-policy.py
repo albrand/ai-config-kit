@@ -779,13 +779,17 @@ def _pgrep_python_call_args_block(
                     if string_is_shell or shell_true:
                         lit, idx = _pgrep_python_literal_at(tokens, idx)
                         if lit is not None:
-                            runner = _pgrep_python_resolved_runner(
-                                executable_override,
-                                None,
-                                shell_default="/bin/sh" if shell_true else None,
-                            )
-                            if _pgrep_python_shell_cmd_blocks(runner, lit):
-                                return True
+                            if string_is_shell and not shell_true:
+                                if _pgrep_python_shell_string_blocks(lit):
+                                    return True
+                            else:
+                                runner = _pgrep_python_resolved_runner(
+                                    executable_override,
+                                    None,
+                                    shell_default="/bin/sh" if shell_true else None,
+                                )
+                                if _pgrep_python_shell_cmd_blocks(runner, lit):
+                                    return True
                         continue
             elif tok.type == tokenize.OP and tok.string in ("[", "("):
                 elements, idx = _pgrep_python_collect_sequence_elements(
