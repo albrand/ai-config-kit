@@ -1245,8 +1245,24 @@ def _pgrep_find_exec_script_quote_open(text, cmd_start, op_start):
     return None
 
 
+def _pgrep_skip_leading_assignments(text, i, limit):
+    while i < limit:
+        i = _pgrep_skip_space(text, i)
+        if i >= limit:
+            return i
+        m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:limit])
+        if m:
+            i += m.end()
+            continue
+        break
+    return i
+
+
 def _pgrep_dollar_at_inner_shell_command_position(text, quote_open, dollar_pos):
     if quote_open is None or dollar_pos <= quote_open + 1:
+        return True
+    _after_assign = _pgrep_skip_leading_assignments(text, quote_open + 1, dollar_pos)
+    if _after_assign >= dollar_pos or not text[_after_assign:dollar_pos].strip():
         return True
     prefix = text[quote_open + 1 : dollar_pos].rstrip()
     if not prefix:
