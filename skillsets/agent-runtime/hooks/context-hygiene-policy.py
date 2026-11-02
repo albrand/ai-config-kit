@@ -715,191 +715,68 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     sq = _pgrep_single_quote_spans(text)
     out = []
     i, n, dq, sq_idx = 0, len(text), False, 0
-    subst_depth = 0
-    sub_dq = sub_sq = sub_dsq = False
-    subst_stack = []
-
-    def _mask_hash_run(end_at_subst_close=False, close_depth=0, stop_at_backtick=False):
-        nonlocal i
-        while i < n:
-            if text[i] == "\n":
-                return
-            if stop_at_backtick and text[i] == "`":
-                return
-            if end_at_subst_close and text[i] == ")" and subst_depth == close_depth:
-                return
-            out.append(" ")
-            i += 1
-
-    def _push_subst_frame(close_on_backtick=False):
-        nonlocal subst_depth, sub_dq, sub_sq, sub_dsq
-        subst_stack.append((sub_dq, sub_sq, sub_dsq, close_on_backtick))
-        subst_depth += 1
-        sub_dq = sub_sq = sub_dsq = False
-
-    def _pop_subst_frame():
-        nonlocal subst_depth, sub_dq, sub_sq, sub_dsq
-        subst_depth -= 1
-        if subst_stack:
-            sub_dq, sub_sq, sub_dsq, _ = subst_stack.pop()
-
-    def _subst_root_is_backtick():
-        return bool(subst_stack and subst_stack[0][3])
-
     while i < n:
-        if subst_depth == 0:
-            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-            if skip is not None:
-                out.append(text[i:skip])
-                i = skip
-                continue
-        if subst_depth > 0:
-            if not sub_sq and not sub_dq and not sub_dsq:
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i : i + 2])
-                    i += 2
-                    continue
-            if sub_dsq:
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i : i + 2])
-                    i += 2
-                    continue
-                out.append(text[i])
-                if text[i] == "'":
-                    sub_dsq = False
-                i += 1
-                continue
-            if sub_sq:
-                if text[i] == "#":
-                    while i < n and text[i] != "'":
-                        out.append(" ")
-                        i += 1
-                    continue
-                if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                    out.append("$(")
-                    _push_subst_frame()
-                    i += 2
-                    continue
-                out.append(text[i])
-                if text[i] == "'":
-                    sub_sq = False
-                i += 1
-                continue
-            if sub_dq:
-                if text[i] == "\\" and i + 1 < n:
-                    out.append(text[i : i + 2])
-                    i += 2
-                    continue
-                if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                    out.append("$(")
-                    _push_subst_frame()
-                    i += 2
-                    continue
-                if text[i] == "`":
-                    out.append("`")
-                    _push_subst_frame(close_on_backtick=True)
-                    i += 1
-                    continue
-                out.append(text[i])
-                if text[i] == '"':
-                    sub_dq = False
-                i += 1
-                continue
-            if text.startswith("$'", i):
-                out.append("$'")
-                i += 2
-                sub_dsq = True
-                continue
-            if text[i] == "'":
-                out.append(text[i])
-                sub_sq = True
-                i += 1
-                continue
-            if text[i] == '"':
-                out.append(text[i])
-                sub_dq = True
-                i += 1
-                continue
-            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                out.append("$(")
-                _push_subst_frame()
-                i += 2
-                continue
-            if text[i] == ")":
-                out.append(text[i])
-                _pop_subst_frame()
-                i += 1
-                continue
-            if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-                nested_bt = subst_depth > 1 and subst_stack[-1][3]
-                if not (nested_bt and _subst_root_is_backtick()):
-                    _mask_hash_run(
-                        end_at_subst_close=True,
-                        close_depth=subst_depth,
-                        stop_at_backtick=bool(subst_stack and subst_stack[-1][3]),
-                    )
-                    continue
-            if text[i] == "`":
-                if subst_stack and subst_stack[-1][3]:
-                    out.append("`")
-                    _pop_subst_frame()
-                    i += 1
-                    continue
-                out.append("`")
-                _push_subst_frame(close_on_backtick=True)
-                i += 1
-                continue
-            out.append(text[i])
-            i += 1
+        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+        if skip is not None:
+            out.append(text[i:skip])
+            i = skip
             continue
         if dq:
             if text[i] == "\\" and i + 1 < n:
                 out.append(text[i : i + 2])
                 i += 2
                 continue
-            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-                out.append("$(")
-                subst_stack.clear()
-                _push_subst_frame()
-                i += 2
-                continue
-            if text[i] == '"':
+            if text[i] == "\"":
                 out.append(text[i])
                 dq = False
                 i += 1
                 continue
+            if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("$(" + (inner if inner is not None else "") + ")")
+                i = j
+                continue
             if text[i] == "`":
-                out.append("`")
-                subst_stack.clear()
-                _push_subst_frame(close_on_backtick=True)
-                i += 1
+                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+                if inner is not None and "\n" in inner:
+                    inner = _pgrep_mask_line_hash_comments(inner)
+                out.append("`" + (inner if inner is not None else "") + "`")
+                i = j
                 continue
             out.append(text[i])
             i += 1
             continue
-        if text[i] == '"':
+        if text[i] == "\"":
             out.append(text[i])
             dq = True
             i += 1
             continue
         if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-            _mask_hash_run()
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
-            out.append("$(")
-            subst_stack.clear()
-            _push_subst_frame()
-            i += 2
+            inner, j, sq_idx = _pgrep_read_dollar_paren(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("$(" + (inner if inner is not None else "") + ")")
+            i = j
             continue
         if text[i] == "`":
-            out.append("`")
-            subst_stack.clear()
-            _push_subst_frame(close_on_backtick=True)
-            i += 1
+            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
+            if inner is not None and "\n" in inner:
+                inner = _pgrep_mask_line_hash_comments(inner)
+            out.append("`" + (inner if inner is not None else "") + "`")
+            i = j
             continue
         out.append(text[i])
         i += 1
     return "".join(out)
+
+
 
 def _pgrep_mask_lifecycle_comments(text):
     try:
@@ -928,72 +805,14 @@ def _pgrep_mask_lifecycle_comments(text):
         return text
 
 
-def _pgrep_nonexec_single_quote_spans(text):
-    spans = []
-    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
-        if is_exec or text[start] != "'":
-            continue
-        if end <= start + 1 or text[end - 1] != "'":
-            continue
-        spans.append((start, end))
-    return spans
-
-
-def _pgrep_pos_in_nonexec_single_quote(pos, sq_spans, sq_starts=None):
-    if not sq_spans:
-        return False
-    if sq_starts is None:
-        sq_starts = [s[0] for s in sq_spans]
-    idx = bisect.bisect_right(sq_starts, pos) - 1
-    if idx < 0:
-        return False
-    start, end = sq_spans[idx]
-    return start + 1 <= pos < end - 1
-
-
-def _pgrep_pkill_pos_in_nonexec_quote(text, pos, sq_spans=None, sq_starts=None):
-    if sq_spans is None:
-        sq_spans = _pgrep_nonexec_single_quote_spans(text)
-    return _pgrep_pos_in_nonexec_single_quote(pos, sq_spans, sq_starts)
-
-
-def _pgrep_lifecycle_pkill_word_match(
-    text, masked, sq_spans=None, sq_starts=None, pos_offset=0, span_hint=None
-):
-    if sq_spans is None:
-        sq_spans = _pgrep_nonexec_single_quote_spans(text)
-    span_idx = span_hint[0] if span_hint is not None else 0
-    n_spans = len(sq_spans)
-    for m in BB_LIFECYCLE_PKILL.finditer(masked):
-        pos = pos_offset + m.start()
-        while span_idx < n_spans and pos >= sq_spans[span_idx][1] - 1:
-            span_idx += 1
-        in_quote = False
-        if span_idx < n_spans:
-            start, end = sq_spans[span_idx]
-            if start + 1 <= pos < end - 1:
-                in_quote = True
-        if not in_quote:
-            if span_hint is not None:
-                span_hint[0] = span_idx
-            return True
-    if span_hint is not None:
-        span_hint[0] = span_idx
-    return False
-
-
 def _pgrep_lifecycle_pkill_match(text):
     masked = _pgrep_mask_lifecycle_comments(text)
-    sq_spans = _pgrep_nonexec_single_quote_spans(text)
-    span_hint = [0]
-    if _pgrep_lifecycle_pkill_word_match(text, masked, sq_spans, None, 0, span_hint):
+    if BB_LIFECYCLE_PKILL.search(masked):
         return True
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
-            if _pgrep_lifecycle_pkill_word_match(
-                text[ls:le], chunk, sq_spans, None, ls, span_hint
-            ):
+            if BB_LIFECYCLE_PKILL.search(chunk):
                 return True
     return False
 
