@@ -991,6 +991,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     i, n, dq, sq_idx = 0, len(text), False, 0
     subst_depth = 0
     sub_dq = sub_sq = False
+    subst_stack = []
 
     def _mask_hash_run(end_at_subst_close=False, close_depth=0):
         nonlocal i
@@ -1001,6 +1002,18 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 return
             out.append(" ")
             i += 1
+
+    def _push_subst_frame():
+        nonlocal subst_depth, sub_dq, sub_sq
+        subst_stack.append((sub_dq, sub_sq))
+        subst_depth += 1
+        sub_dq = sub_sq = False
+
+    def _pop_subst_frame():
+        nonlocal subst_depth, sub_dq, sub_sq
+        subst_depth -= 1
+        if subst_stack:
+            sub_dq, sub_sq = subst_stack.pop()
 
     while i < n:
         skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
@@ -1020,6 +1033,11 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                     out.append(text[i : i + 2])
                     i += 2
                     continue
+                if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                    out.append("$(")
+                    _push_subst_frame()
+                    i += 2
+                    continue
                 out.append(text[i])
                 if text[i] == '"':
                     sub_dq = False
@@ -1037,12 +1055,12 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
                 out.append("$(")
-                subst_depth += 1
+                _push_subst_frame()
                 i += 2
                 continue
             if text[i] == ")":
                 out.append(text[i])
-                subst_depth -= 1
+                _pop_subst_frame()
                 i += 1
                 continue
             if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
@@ -1117,6 +1135,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
         out.append(text[i])
         i += 1
     return "".join(out)
+
 
 
 def _pgrep_mask_lifecycle_comments(text):

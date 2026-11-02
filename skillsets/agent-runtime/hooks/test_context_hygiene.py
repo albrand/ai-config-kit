@@ -952,5 +952,30 @@ pgrep -f bb',
 
 
 
+    def test_r21_nested_substitution_comment_in_dquote_masked(self):
+        allowed = (
+            'echo "$(printf \'%s\' \"$(true # note; pkill node\n)\")"',
+            'echo "$(true # note; pkill node\n)"',
+            'x="$(echo \"$(true # pkill node\n)\")"',
+        )
+        blocked = (
+            'echo "$(printf \'%s\' \"$(true; pkill node\n)\")"',
+            'echo "$(printf \'%s\' \"$(pkill node)\")"',
+            'echo "$(printf \'%s\' \"$(true # note\npkill node\n)\")"',
+            'echo "$(printf \'%s\' \"x # y\"; pkill node)"',
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()
