@@ -531,12 +531,16 @@ pgrep -f bb',
         def deep_cmd(depth, body, tail):
             return "$(" * depth + body + ")" * depth + "; " + tail
 
-        for body in ("echo '#'", 'echo "#"', "true # c"):
+        for body in ("echo '#'", 'echo "#"'):
             cmd = deep_cmd(500, body, pk + " node")
             with self.subTest(depth=500, body=body):
                 v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertTrue(v["block"], cmd[:80])
                 self.assertTrue(v["reason"].startswith("[bb-lifecycle]"), v["reason"][:40])
+        cmd_comment = deep_cmd(500, "true # c", pk + " node")
+        with self.subTest(depth=500, body="true # c"):
+            v = verdict(bash(cmd_comment), env={"CONTEXT_HYGIENE": "off"})
+            self.assertFalse(v["block"], cmd_comment[:80])
         cmd1k = deep_cmd(1000, "echo '#'", pk + " node")
         v = verdict(bash(cmd1k), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"])
@@ -875,7 +879,30 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
-
+    def test_r33_comment_in_subst_runs_to_newline(self):
+        pk = "p" + "kill"
+        allowed = (
+            'echo "$(true # ) ' + pk + ' node\n)"',
+            "echo $(true # ) | " + pk + " node\n)",
+            "x=$(true # ) && " + pk + " node\n)",
+            'echo "$(true # ); ' + pk + ' node\n)"',
+            'echo "$(true # )\n)" # ; ' + pk + " x",
+        )
+        blocked = (
+            'echo "$(true # )\n' + pk + ' node\n)"',
+            "echo $(true #c\n); " + pk + " node",
+            'echo "$(true # c\n)"; ' + pk + " node",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
 
     def test_r23_quoted_command_position_pkill_is_linear(self):
         unit = "echo 'a; pkill b'"
