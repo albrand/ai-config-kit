@@ -716,7 +716,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     out = []
     i, n, dq, sq_idx = 0, len(text), False, 0
     subst_depth = 0
-    sub_dq = sub_sq = False
+    sub_dq = sub_sq = sub_dsq = False
     subst_stack = []
 
     def _mask_hash_run(end_at_subst_close=False, close_depth=0):
@@ -729,26 +729,53 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             out.append(" ")
             i += 1
 
-    def _push_subst_frame():
-        nonlocal subst_depth, sub_dq, sub_sq
-        subst_stack.append((sub_dq, sub_sq))
+    def _push_subst_frame(close_on_backtick=False):
+        nonlocal subst_depth, sub_dq, sub_sq, sub_dsq
+        subst_stack.append((sub_dq, sub_sq, sub_dsq, close_on_backtick))
         subst_depth += 1
-        sub_dq = sub_sq = False
+        sub_dq = sub_sq = sub_dsq = False
 
     def _pop_subst_frame():
-        nonlocal subst_depth, sub_dq, sub_sq
+        nonlocal subst_depth, sub_dq, sub_sq, sub_dsq
         subst_depth -= 1
         if subst_stack:
-            sub_dq, sub_sq = subst_stack.pop()
+            sub_dq, sub_sq, sub_dsq, _ = subst_stack.pop()
+
+    def _subst_root_is_backtick():
+        return bool(subst_stack and subst_stack[0][3])
 
     while i < n:
-        skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-        if skip is not None:
-            out.append(text[i:skip])
-            i = skip
-            continue
+        if subst_depth == 0:
+            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+            if skip is not None:
+                out.append(text[i:skip])
+                i = skip
+                continue
         if subst_depth > 0:
+            if not sub_sq and not sub_dq and not sub_dsq:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append(text[i : i + 2])
+                    i += 2
+                    continue
+            if sub_dsq:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append(text[i : i + 2])
+                    i += 2
+                    continue
+                out.append(text[i])
+                if text[i] == "'":
+                    sub_dsq = False
+                i += 1
+                continue
             if sub_sq:
+                if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
+                    _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
+                    continue
+                if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                    out.append("$(")
+                    _push_subst_frame()
+                    i += 2
+                    continue
                 out.append(text[i])
                 if text[i] == "'":
                     sub_sq = False
@@ -764,10 +791,20 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                     _push_subst_frame()
                     i += 2
                     continue
+                if text[i] == "`":
+                    out.append("`")
+                    _push_subst_frame(close_on_backtick=True)
+                    i += 1
+                    continue
                 out.append(text[i])
                 if text[i] == '"':
                     sub_dq = False
                 i += 1
+                continue
+            if text.startswith("$'", i):
+                out.append("$'")
+                i += 2
+                sub_dsq = True
                 continue
             if text[i] == "'":
                 out.append(text[i])
@@ -790,17 +827,19 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if text[i] == "#" and _pgrep_hash_starts_comment(text, i):
-                _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
-                continue
+                nested_bt = subst_depth > 1 and subst_stack[-1][3]
+                if not (nested_bt and _subst_root_is_backtick()):
+                    _mask_hash_run(end_at_subst_close=True, close_depth=subst_depth)
+                    continue
             if text[i] == "`":
-                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-                if inner is None:
-                    out.append(text[i:])
-                    break
-                if "#" in inner:
-                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
-                out.append("`" + inner + "`")
-                i = j
+                if subst_stack and subst_stack[-1][3]:
+                    out.append("`")
+                    _pop_subst_frame()
+                    i += 1
+                    continue
+                out.append("`")
+                _push_subst_frame(close_on_backtick=True)
+                i += 1
                 continue
             out.append(text[i])
             i += 1
@@ -812,8 +851,8 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
                 out.append("$(")
-                subst_depth = 1
-                sub_dq = sub_sq = False
+                subst_stack.clear()
+                _push_subst_frame()
                 i += 2
                 continue
             if text[i] == '"':
@@ -822,14 +861,10 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if text[i] == "`":
-                inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-                if inner is None:
-                    out.append(text[i:])
-                    break
-                if "#" in inner:
-                    inner = _pgrep_mask_lifecycle_comments_linear(inner)
-                out.append("`" + inner + "`")
-                i = j
+                out.append("`")
+                subst_stack.clear()
+                _push_subst_frame(close_on_backtick=True)
+                i += 1
                 continue
             out.append(text[i])
             i += 1
@@ -844,25 +879,19 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             continue
         if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
             out.append("$(")
-            subst_depth = 1
-            sub_dq = sub_sq = False
+            subst_stack.clear()
+            _push_subst_frame()
             i += 2
             continue
         if text[i] == "`":
-            inner, j, sq_idx = _pgrep_read_backtick(text, i, sq, sq_idx)
-            if inner is None:
-                out.append(text[i:])
-                break
-            if "#" in inner:
-                inner = _pgrep_mask_lifecycle_comments_linear(inner)
-            out.append("`" + inner + "`")
-            i = j
+            out.append("`")
+            subst_stack.clear()
+            _push_subst_frame(close_on_backtick=True)
+            i += 1
             continue
         out.append(text[i])
         i += 1
     return "".join(out)
-
-
 
 def _pgrep_mask_lifecycle_comments(text):
     try:

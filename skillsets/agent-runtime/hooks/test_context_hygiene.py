@@ -877,6 +877,41 @@ pgrep -f bb',
 
 
 
+
+    def test_r36_backtick_comment_in_dquote_subst_masked(self):
+        pk = "p" + "kill"
+        body = "true # note; " + pk + " node\n"
+        allowed = (
+            "echo \"$(printf '%s' \"`" + body + "`\")\"",
+            'echo "$(echo "`true # ' + pk + ' node\n`")"',
+            'echo "`true # note; ' + pk + ' node\n`"',
+            'echo "$(echo `true # ' + pk + " x\n`)\"",
+            "echo \"$(printf '%s' '" + body + "')\"",
+            'echo "$(' + "'" + body + "')\"",
+            "echo \"$(echo \\' \"$(true # note; " + pk + " node\n)\")\"",
+            'echo $("`' + body + '")',
+            "echo \"$(echo $'c' '" + body + "')\"",
+            'echo "$(printf "b" "`' + body + '`")"',
+            'echo "`printf \'%s\' \'' + body + '`"',
+        )
+        blocked = (
+            "echo \"$(printf '%s' \"`true; " + pk + " node`\")\"",
+            "echo \"$(printf '%s' \"`true # c\n" + pk + " node\n`\")\"",
+            'echo "$(echo "`' + pk + ' node`")"',
+            "echo \"$(printf '%s' \"`" + pk + " node`\")\"",
+            "echo \"$(echo \"`" + pk + " node`\")\"",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_r23_quoted_command_position_pkill_is_linear(self):
         unit = "echo 'a; pkill b'"
         cmd1 = "; ".join([unit] * 10000)
