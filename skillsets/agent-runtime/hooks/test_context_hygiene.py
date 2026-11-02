@@ -531,16 +531,12 @@ pgrep -f bb',
         def deep_cmd(depth, body, tail):
             return "$(" * depth + body + ")" * depth + "; " + tail
 
-        for body in ("echo '#'", 'echo "#"'):
+        for body in ("echo '#'", 'echo "#"', "true # c"):
             cmd = deep_cmd(500, body, pk + " node")
             with self.subTest(depth=500, body=body):
                 v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertTrue(v["block"], cmd[:80])
                 self.assertTrue(v["reason"].startswith("[bb-lifecycle]"), v["reason"][:40])
-        cmd_comment = deep_cmd(500, "true # c", pk + " node")
-        with self.subTest(depth=500, body="true # c"):
-            v = verdict(bash(cmd_comment), env={"CONTEXT_HYGIENE": "off"})
-            self.assertFalse(v["block"], cmd_comment[:80])
         cmd1k = deep_cmd(1000, "echo '#'", pk + " node")
         v = verdict(bash(cmd1k), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"])
