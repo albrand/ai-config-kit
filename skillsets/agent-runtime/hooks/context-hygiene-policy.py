@@ -1308,6 +1308,8 @@ def _pgrep_heredoc_owner_executable(text, cmd_start, op_start):
     if base in ("bash", "sh", "zsh", "dash", "ksh"):
         return True
     segment = text[cmd_start:op_start]
+    if re.search(r"\beval\b", segment, re.I):
+        return True
     if re.search(r"\bxargs\b", segment, re.I):
         return True
     if re.search(
@@ -1462,6 +1464,7 @@ def _pgrep_iter_heredoc_bodies(text):
     i = 0
     sq = dq = False
     cmd_start = 0
+    quoted_cat_subst_exec = False
     while i < n:
         if sq:
             if text[i] == "'":
@@ -1480,7 +1483,7 @@ def _pgrep_iter_heredoc_bodies(text):
                 if "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
                     text, cmd_start, i
                 ):
-                    pass
+                    quoted_cat_subst_exec = True
                 else:
                     i += 2
                     continue
@@ -1512,13 +1515,17 @@ def _pgrep_iter_heredoc_bodies(text):
             line_end = text.find("\n", j)
             op_line_end = line_end if line_end != -1 else n
             stdin_prog = _pgrep_heredoc_interpreter_stdin_executable(text, cmd_start, i)
-            executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
-            if not executable:
-                executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
-            if not executable and "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
-                text, cmd_start, i
-            ):
+            if quoted_cat_subst_exec:
                 executable = True
+                quoted_cat_subst_exec = False
+            else:
+                executable = _pgrep_heredoc_owner_executable(text, cmd_start, i)
+                if not executable:
+                    executable = _pgrep_heredoc_opener_line_pipes_to_shell(text, j, op_line_end)
+                if not executable and "$(" in text[cmd_start:i] and _pgrep_heredoc_cat_subst_for_exec(
+                    text, cmd_start, i
+                ):
+                    executable = True
             line_end = text.find("\n", j)
             if line_end == -1:
                 body_start = n
