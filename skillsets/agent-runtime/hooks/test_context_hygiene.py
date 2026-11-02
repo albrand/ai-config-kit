@@ -899,5 +899,29 @@ pgrep -f bb',
 
 
 
+    def test_r19_python_subprocess_executable_overrides_argv0(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.Popen([\"pgrep\", \"-f\", \"x\"], executable=\"/bin/echo\", text=True)\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"/usr/bin/pgrep\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"x\", \"-f\", \"y\"], executable=\"/usr/bin/pgrep\")\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=\"pgrep\")\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

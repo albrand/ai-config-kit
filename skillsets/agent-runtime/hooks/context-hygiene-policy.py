@@ -374,10 +374,13 @@ def _pgrep_python_skip_value(tokens, idx):
     return idx + 1
 
 
-def _pgrep_python_list_argv_blocks(elements):
+def _pgrep_python_list_argv_blocks(elements, executable_override=None):
     if not elements:
         return False
-    if not _pgrep_python_is_pgrep_executable(elements[0]):
+    program = (
+        executable_override if executable_override is not None else elements[0]
+    )
+    if not _pgrep_python_is_pgrep_executable(program):
         return False
     return _pgrep_argv_tokens_has_full_flag(elements[1:])
 
@@ -394,6 +397,31 @@ def _pgrep_python_shell_string_blocks(snippet):
         ):
             return True
     return bool(_pgrep_lifecycle_pkill_match(snippet))
+
+
+def _pgrep_python_call_executable_string(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif (
+            paren_depth == 1
+            and tok.type == tokenize.NAME
+            and tok.string == "executable"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tokens[idx + 2].type == tokenize.STRING
+        ):
+            return _pgrep_python_decode_string_token(tokens[idx + 2].string)
+        idx += 1
+    return None
 
 
 def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
@@ -422,13 +450,16 @@ def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
     return False
 
 
-def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true):
+def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_override=None):
     if idx >= len(tokens):
         return False
     tok = tokens[idx]
     if tok.type == tokenize.OP and tok.string in ("[", "("):
         elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
-        return bool(elements and _pgrep_python_list_argv_blocks(elements))
+        return bool(
+            elements
+            and _pgrep_python_list_argv_blocks(elements, executable_override)
+        )
     if tok.type == tokenize.STRING and shell_true:
         return _pgrep_python_shell_string_blocks(
             _pgrep_python_decode_string_token(tok.string)
@@ -441,6 +472,9 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx):
     paren_depth = 1
     saw_positional = False
     shell_true = _pgrep_python_call_has_shell_true(tokens, open_paren_idx)
+    executable_override = _pgrep_python_call_executable_string(
+        tokens, open_paren_idx
+    )
     while idx < len(tokens) and paren_depth:
         tok = tokens[idx]
         if tok.type == tokenize.OP and tok.string == "(":
@@ -459,7 +493,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx):
                 kw = tok.string
                 val_idx = idx + 2
                 if kw == "args" and _pgrep_python_scan_args_keyword_value(
-                    tokens, val_idx, shell_true
+                    tokens, val_idx, shell_true, executable_override
                 ):
                     return True
                 idx = _pgrep_python_skip_value(tokens, val_idx) - 1
@@ -476,7 +510,9 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx):
                     elements, idx = _pgrep_python_collect_sequence_elements(
                         tokens, idx
                     )
-                    if elements and _pgrep_python_list_argv_blocks(elements):
+                    if elements and _pgrep_python_list_argv_blocks(
+                        elements, executable_override
+                    ):
                         return True
                     continue
             elif tok.type == tokenize.NAME:
