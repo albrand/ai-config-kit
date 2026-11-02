@@ -312,13 +312,92 @@ def _pgrep_outer_scan_skip_heredoc_body_spans(text):
     return merged
 
 
+def _pgrep_python_normalise_literal(val):
+    if isinstance(val, bytes):
+        return val.decode("latin-1")
+    if isinstance(val, str):
+        return val
+    return None
+
+
+def _pgrep_python_string_literal_has_replacements(tok_string):
+    s = tok_string.lstrip("rRbBfFuU")
+    if len(s) < 2:
+        return False
+    q = s[0]
+    if q not in ('"', "'") or s[-1] != q:
+        return False
+    body = s[1:-1]
+    i = 0
+    while i < len(body):
+        if body[i] == "{":
+            j = i + 1
+            while j < len(body) and body[j] != "}":
+                j += 1
+            if j < len(body):
+                inner = body[i + 1 : j].strip()
+                if inner or body[i : j + 1] != "{}":
+                    return True
+            i = j + 1 if j < len(body) else len(body)
+        else:
+            i += 1
+    return False
+
+
+def _pgrep_python_fstring_token_types():
+    start = getattr(tokenize, "FSTRING_START", None)
+    middle = getattr(tokenize, "FSTRING_MIDDLE", None)
+    end = getattr(tokenize, "FSTRING_END", None)
+    return start, middle, end
+
+
+def _pgrep_python_read_plain_fstring(tokens, idx):
+    fstart, fmid, fend = _pgrep_python_fstring_token_types()
+    if fstart is None or tokens[idx].type != fstart:
+        return None, idx
+    parts = []
+    idx += 1
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok.type == fmid:
+            parts.append(tok.string)
+            idx += 1
+        elif tok.type == fend:
+            idx += 1
+            break
+        else:
+            return None, idx
+    text = "".join(parts)
+    if "{" in text and "}" in text:
+        return None, idx
+    return text, idx
+
+
 def _pgrep_python_decode_string_token(tok_string):
     import ast
 
+    if tok_string and tok_string[0] in "fF":
+        if _pgrep_python_string_literal_has_replacements(tok_string):
+            return None
     try:
-        return ast.literal_eval(tok_string)
+        val = ast.literal_eval(tok_string)
     except Exception:
-        return tok_string.strip(chr(34) + chr(39))
+        if tok_string[:1] in "fFrRbBuU" or (
+            len(tok_string) > 1 and tok_string[1:2] in "fFrRbBuU"
+        ):
+            return None
+        val = tok_string.strip(chr(34) + chr(39))
+    return _pgrep_python_normalise_literal(val)
+
+
+def _pgrep_python_literal_at(tokens, idx):
+    tok = tokens[idx]
+    fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
+    if tok.type == tokenize.STRING:
+        return _pgrep_python_decode_string_token(tok.string), idx + 1
+    if fstart is not None and tok.type == fstart:
+        return _pgrep_python_read_plain_fstring(tokens, idx)
+    return None, idx + 1
 
 
 def _pgrep_python_is_pgrep_executable(argv0):
@@ -337,6 +416,7 @@ def _pgrep_python_collect_sequence_elements(tokens, start):
     idx = start + 1
     depth = 1
     elements = []
+    fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
     while idx < len(tokens) and depth:
         tok = tokens[idx]
         if tok.type == tokenize.OP and tok.string == open_ch:
@@ -346,8 +426,14 @@ def _pgrep_python_collect_sequence_elements(tokens, start):
             if depth == 0:
                 idx += 1
                 break
-        elif tok.type == tokenize.STRING and depth == 1:
-            elements.append(_pgrep_python_decode_string_token(tok.string))
+        elif depth == 1 and (
+            tok.type == tokenize.STRING
+            or (fstart is not None and tok.type == fstart)
+        ):
+            lit, idx = _pgrep_python_literal_at(tokens, idx)
+            if lit is not None:
+                elements.append(lit)
+            continue
         idx += 1
     return elements, idx
 
@@ -356,6 +442,12 @@ def _pgrep_python_skip_value(tokens, idx):
     if idx >= len(tokens):
         return idx
     tok = tokens[idx]
+    fstart, fmid, fend = _pgrep_python_fstring_token_types()
+    if fstart is not None and tok.type == fstart:
+        idx += 1
+        while idx < len(tokens) and tokens[idx].type != fend:
+            idx += 1
+        return idx + 1 if idx < len(tokens) else idx
     if tok.type in (tokenize.STRING, tokenize.NAME, tokenize.NUMBER):
         return idx + 1
     if tok.type == tokenize.OP and tok.string in ("[", "(", "{"):
@@ -375,18 +467,18 @@ def _pgrep_python_skip_value(tokens, idx):
 
 
 def _pgrep_python_list_argv_blocks(elements, executable_override=None):
-    if not elements:
+    if not elements and executable_override is None:
         return False
     program = (
         executable_override if executable_override is not None else elements[0]
     )
-    if not _pgrep_python_is_pgrep_executable(program):
+    if not isinstance(program, str) or not _pgrep_python_is_pgrep_executable(program):
         return False
     return _pgrep_argv_tokens_has_full_flag(elements[1:])
 
 
 def _pgrep_python_shell_string_blocks(snippet):
-    if not snippet:
+    if not snippet or not isinstance(snippet, str):
         return False
     folded = pgrep_obfuscation_fold(_pgrep_mask_shell_comments(snippet))
     if PGREP_WORD.search(folded):
@@ -460,10 +552,15 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
             elements
             and _pgrep_python_list_argv_blocks(elements, executable_override)
         )
-    if tok.type == tokenize.STRING and shell_true:
-        return _pgrep_python_shell_string_blocks(
-            _pgrep_python_decode_string_token(tok.string)
-        )
+    fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
+    if shell_true and (
+        tok.type == tokenize.STRING
+        or (fstart is not None and tok.type == fstart)
+    ):
+        lit, _end = _pgrep_python_literal_at(tokens, idx)
+        if lit is None:
+            return False
+        return _pgrep_python_shell_string_blocks(lit)
     return False
 
 
@@ -475,6 +572,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
     executable_override = _pgrep_python_call_executable_string(
         tokens, open_paren_idx
     )
+    fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
     while idx < len(tokens) and paren_depth:
         tok = tokens[idx]
         if tok.type == tokenize.OP and tok.string == "(":
@@ -497,13 +595,16 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
                 ):
                     return True
                 idx = _pgrep_python_skip_value(tokens, val_idx) - 1
-            elif tok.type == tokenize.STRING:
+            elif tok.type == tokenize.STRING or (
+                fstart is not None and tok.type == fstart
+            ):
                 if not saw_positional:
                     saw_positional = True
-                    if (string_is_shell or shell_true) and _pgrep_python_shell_string_blocks(
-                        _pgrep_python_decode_string_token(tok.string)
-                    ):
-                        return True
+                    if string_is_shell or shell_true:
+                        lit, idx = _pgrep_python_literal_at(tokens, idx)
+                        if lit is not None and _pgrep_python_shell_string_blocks(lit):
+                            return True
+                        continue
             elif tok.type == tokenize.OP and tok.string in ("[", "("):
                 if not saw_positional:
                     saw_positional = True
@@ -519,6 +620,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
                 saw_positional = True
         idx += 1
     return False
+
 
 
 def _pgrep_python_stdin_shell_invoke(body):

@@ -989,5 +989,33 @@ pgrep -f bb',
 
 
 
+    def test_r25_python_bytes_and_fstring_literals(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=b\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(b\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"echo\"], input=b\"pgrep -f x\")\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(b\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([b\"pgrep\", b\"-f\", b\"x\"])\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nos.system(b\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(args=b\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], executable=b\"/usr/bin/pgrep\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(f\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(r\"pgrep -f x\", shell=True)\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()
