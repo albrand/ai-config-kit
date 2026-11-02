@@ -541,6 +541,91 @@ def _pgrep_python_call_has_kwargs_star(tokens, open_paren_idx):
     return False
 
 
+def _pgrep_python_call_has_args_star(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+        elif paren_depth == 1 and tok.type == tokenize.OP and tok.string == "*":
+            return True
+        idx += 1
+    return False
+
+
+def _pgrep_python_skip_positional_value(tokens, idx):
+    if idx >= len(tokens):
+        return idx
+    tok = tokens[idx]
+    if (
+        tok.type == tokenize.OP
+        and tok.string == "-"
+        and idx + 1 < len(tokens)
+        and tokens[idx + 1].type == tokenize.NUMBER
+    ):
+        return idx + 2
+    return _pgrep_python_skip_value(tokens, idx)
+
+
+def _pgrep_python_positional_program_value(tokens, idx):
+    if idx >= len(tokens):
+        return _PGREP_PYTHON_EXEC_UNKNOWN
+    tok = tokens[idx]
+    fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
+    if tok.type == tokenize.STRING:
+        return _pgrep_python_decode_string_token(tok.string)
+    if fstart is not None and tok.type == fstart:
+        lit, _end = _pgrep_python_literal_at(tokens, idx)
+        if lit is None or not isinstance(lit, str):
+            return _PGREP_PYTHON_EXEC_UNKNOWN
+        return lit
+    return _PGREP_PYTHON_EXEC_UNKNOWN
+
+
+def _pgrep_python_popen_style_positional_executable(tokens, open_paren_idx):
+    idx = open_paren_idx + 1
+    paren_depth = 1
+    positionals = []
+    while idx < len(tokens) and paren_depth:
+        tok = tokens[idx]
+        if tok.type == tokenize.OP and tok.string == "(":
+            paren_depth += 1
+        elif tok.type == tokenize.OP and tok.string == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        elif paren_depth == 1:
+            if tok.type == tokenize.OP and tok.string == ",":
+                idx += 1
+                continue
+            if tok.type == tokenize.OP and tok.string == "*":
+                return _PGREP_PYTHON_EXEC_UNKNOWN
+            if (
+                tok.type == tokenize.NAME
+                and idx + 2 < len(tokens)
+                and tokens[idx + 1].type == tokenize.OP
+                and tokens[idx + 1].string == "="
+            ):
+                break
+            val_idx = idx
+            positionals.append(val_idx)
+            idx = _pgrep_python_skip_positional_value(tokens, val_idx) - 1
+        idx += 1
+    if len(positionals) < 3:
+        return None
+    return _pgrep_python_positional_program_value(tokens, positionals[2])
+
+
+def _pgrep_python_subprocess_executable_override(tokens, open_paren_idx):
+    kw = _pgrep_python_call_executable_override(tokens, open_paren_idx)
+    if kw is not None:
+        return kw
+    return _pgrep_python_popen_style_positional_executable(tokens, open_paren_idx)
+
+
 def _pgrep_python_call_has_shell_true(tokens, open_paren_idx):
     idx = open_paren_idx + 1
     paren_depth = 1
@@ -589,15 +674,28 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
     return False
 
 
-def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False):
+def _pgrep_python_call_args_block(
+    tokens, open_paren_idx, string_is_shell=False, popen_style=False
+):
     idx = open_paren_idx + 1
     paren_depth = 1
     saw_positional = False
     shell_true = _pgrep_python_call_has_shell_true(tokens, open_paren_idx)
     kwargs_unknown = _pgrep_python_call_has_kwargs_star(tokens, open_paren_idx)
-    executable_override = _pgrep_python_call_executable_override(
+    args_unknown = popen_style and _pgrep_python_call_has_args_star(
         tokens, open_paren_idx
     )
+    program_unknown = kwargs_unknown or args_unknown
+    if popen_style:
+        executable_override = _pgrep_python_subprocess_executable_override(
+            tokens, open_paren_idx
+        )
+    else:
+        executable_override = _pgrep_python_call_executable_override(
+            tokens, open_paren_idx
+        )
+    if program_unknown:
+        executable_override = _PGREP_PYTHON_EXEC_UNKNOWN
     fstart, _fmid, _fend = _pgrep_python_fstring_token_types()
     while idx < len(tokens) and paren_depth:
         tok = tokens[idx]
@@ -618,7 +716,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
                 val_idx = idx + 2
                 if (
                     kw == "args"
-                    and not kwargs_unknown
+                    and not program_unknown
                     and _pgrep_python_scan_args_keyword_value(
                         tokens, val_idx, shell_true, executable_override
                     )
@@ -642,7 +740,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False)
                         tokens, idx
                     )
                     if (
-                        not kwargs_unknown
+                        not program_unknown
                         and elements
                         and _pgrep_python_list_argv_blocks(
                             elements, executable_override
@@ -721,7 +819,9 @@ def _pgrep_python_stdin_shell_invoke(body):
                     args_start < len(tokens)
                     and tokens[args_start].type == tokenize.OP
                     and tokens[args_start].string == "("
-                    and _pgrep_python_call_args_block(tokens, args_start)
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, popen_style=True
+                    )
                 ):
                     return True
                 break

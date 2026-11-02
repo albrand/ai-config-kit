@@ -1037,6 +1037,11 @@ pgrep -f bb',
                 + G
                 + '", "-f", "x"], executable="/bin/echo")'
             ),
+            py(
+                'subprocess.Popen(["'
+                + G
+                + '", "-f", "x"], -1, "/bin/echo")'
+            ),
         )
         blocked = (
             py('subprocess.run(["' + G + '", "-f", "x"])'),
