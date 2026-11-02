@@ -469,22 +469,53 @@ def _pgrep_python_skip_value(tokens, idx):
     return idx + 1
 
 
+
+def _pgrep_python_is_shell_program(program):
+    if not isinstance(program, str):
+        return False
+    return program.rsplit("/", 1)[-1].lower() in _PGREP_SHELL_WORDS
+
+
+def _pgrep_python_resolved_runner(executable_override, elements, shell_default=None):
+    if executable_override is _PGREP_PYTHON_EXEC_UNKNOWN:
+        return _PGREP_PYTHON_EXEC_UNKNOWN
+    if executable_override is not None:
+        return executable_override
+    if shell_default is not None:
+        return shell_default
+    if elements:
+        return elements[0]
+    return None
+
+
+def _pgrep_python_shell_cmd_blocks(runner, cmd_text):
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
+        return False
+    if not _pgrep_python_is_pgrep_executable(runner) and not _pgrep_python_is_shell_program(
+        runner
+    ):
+        return False
+    return _pgrep_python_shell_string_blocks(cmd_text)
+
+
 def _pgrep_python_list_argv_blocks(elements, executable_override=None):
     if executable_override is _PGREP_PYTHON_EXEC_UNKNOWN:
         return False
-    if not elements and executable_override is None:
+    if not elements:
         return False
-    if executable_override is not None:
-        program = executable_override
-    elif elements:
-        program = elements[0]
-    else:
+    runner = _pgrep_python_resolved_runner(executable_override, elements)
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
         return False
-    if not isinstance(program, str) or not _pgrep_python_is_pgrep_executable(program):
-        return False
-    if _pgrep_python_list_shell_invoke_blocks(elements):
-        return True
-    return _pgrep_argv_tokens_has_full_flag(elements[1:])
+    if _pgrep_python_is_pgrep_executable(runner):
+        if _pgrep_argv_tokens_has_full_flag(elements[1:]):
+            return True
+        return any(
+            isinstance(el, str) and _pgrep_python_shell_string_blocks(el)
+            for el in elements[1:]
+        )
+    if _pgrep_python_is_shell_program(runner):
+        return _pgrep_python_list_shell_invoke_blocks(elements)
+    return False
 
 
 def _pgrep_python_shell_string_blocks(snippet):
@@ -523,6 +554,8 @@ def _pgrep_python_call_executable_override(tokens, open_paren_idx):
             val = tokens[idx + 2]
             if val.type == tokenize.STRING:
                 return _pgrep_python_decode_string_token(val.string)
+            if val.type == tokenize.NAME and val.string == "None":
+                return None
             return _PGREP_PYTHON_EXEC_UNKNOWN
         idx += 1
     return None
@@ -676,7 +709,10 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
         lit, _end = _pgrep_python_literal_at(tokens, idx)
         if lit is None:
             return False
-        return _pgrep_python_shell_string_blocks(lit)
+        runner = _pgrep_python_resolved_runner(
+            executable_override, None, shell_default="/bin/sh" if shell_true else None
+        )
+        return _pgrep_python_shell_cmd_blocks(runner, lit)
     return False
 
 
@@ -742,8 +778,14 @@ def _pgrep_python_call_args_block(
                     saw_positional = True
                     if string_is_shell or shell_true:
                         lit, idx = _pgrep_python_literal_at(tokens, idx)
-                        if lit is not None and _pgrep_python_shell_string_blocks(lit):
-                            return True
+                        if lit is not None:
+                            runner = _pgrep_python_resolved_runner(
+                                executable_override,
+                                None,
+                                shell_default="/bin/sh" if shell_true else None,
+                            )
+                            if _pgrep_python_shell_cmd_blocks(runner, lit):
+                                return True
                         continue
             elif tok.type == tokenize.OP and tok.string in ("[", "("):
                 elements, idx = _pgrep_python_collect_sequence_elements(
@@ -752,11 +794,8 @@ def _pgrep_python_call_args_block(
                 if (
                     not program_unknown
                     and elements
-                    and (
-                        _pgrep_python_list_argv_blocks(
-                            elements, executable_override
-                        )
-                        or _pgrep_python_list_shell_invoke_blocks(elements)
+                    and _pgrep_python_list_argv_blocks(
+                        elements, executable_override
                     )
                 ):
                     return True
@@ -849,15 +888,9 @@ def _pgrep_python_stdin_shell_invoke(body):
 
 
 def _pgrep_python_list_shell_invoke_blocks(elements):
-    if len(elements) < 3:
+    if len(elements) < 2:
         return False
-    prog = elements[0]
-    if not isinstance(prog, str):
-        return False
-    base = prog.rsplit("/", 1)[-1].lower()
-    if base not in _PGREP_SHELL_WORDS:
-        return False
-    i = 1
+    i = 0
     while i < len(elements):
         el = elements[i]
         if el == "-c" or (isinstance(el, str) and el.startswith("-") and "c" in el[1:]):
