@@ -923,5 +923,34 @@ pgrep -f bb',
 
 
 
+    def test_r20_python_string_is_shell_only_with_shell_true(self):
+        allowed = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.Popen(\"pgrep -f x\", shell=False)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.check_output(args=\"pgrep -f x\")\nEOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(\"pgrep -f x\", shell=True, executable=\"/bin/bash\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run(args=\"pgrep -f x\", shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.check_output(\"pgrep -f x\", text=True, shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nos.system(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nos.popen(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nimport os, subprocess\nsubprocess.run([\"pgrep\", \"-f\", \"x\"], shell=False)\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

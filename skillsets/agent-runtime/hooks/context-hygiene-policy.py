@@ -467,7 +467,7 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
     return False
 
 
-def _pgrep_python_call_args_block(tokens, open_paren_idx):
+def _pgrep_python_call_args_block(tokens, open_paren_idx, string_is_shell=False):
     idx = open_paren_idx + 1
     paren_depth = 1
     saw_positional = False
@@ -500,7 +500,7 @@ def _pgrep_python_call_args_block(tokens, open_paren_idx):
             elif tok.type == tokenize.STRING:
                 if not saw_positional:
                     saw_positional = True
-                    if _pgrep_python_shell_string_blocks(
+                    if (string_is_shell or shell_true) and _pgrep_python_shell_string_blocks(
                         _pgrep_python_decode_string_token(tok.string)
                     ):
                         return True
@@ -549,7 +549,18 @@ def _pgrep_python_stdin_shell_invoke(body):
             and tokens[idx + 2].type == tokenize.NAME
         ):
             meth = tokens[idx + 2].string
-            if meth in ("system", "popen") or meth.startswith("exec"):
+            if meth in ("system", "popen"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, string_is_shell=True
+                    )
+                ):
+                    return True
+            if meth.startswith("exec"):
                 args_start = idx + 3
                 if (
                     args_start < len(tokens)
