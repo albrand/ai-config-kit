@@ -849,5 +849,30 @@ pgrep -f bb',
 
 
 
+    def test_r42_addside_heredoc_exec_false_blocks(self):
+        pg = "p" + "grep -f x"
+        allowed = (
+            "echo ssh host bash <<'EOF'\n" + pg + "\nEOF",
+            'eval "echo $(cat <<\'EOF\'\n' + pg + '\nEOF\n)"',
+            "printf '%s\\n' ssh host bash <<EOF\n" + pg + "\nEOF",
+        )
+        blocked = (
+            "ssh host bash <<EOF\n" + pg + "\nEOF",
+            'eval "$(cat <<EOF\n' + pg + '\nEOF\n)"',
+            "echo hi; ssh host bash <<EOF\n" + pg + "\nEOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()
