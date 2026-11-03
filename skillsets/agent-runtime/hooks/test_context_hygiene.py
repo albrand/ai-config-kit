@@ -1323,6 +1323,24 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_masker_paren_inside_subst_comment_is_masked(self):
+        pk = "p" + "kill"
+        cmd = (
+            'echo "$(true # ) '
+            + pk
+            + " node\n"
+            + 'true)"'
+        )
+        import importlib.util
+        pol_path = Path(__file__).with_name("context-hygiene-policy.py")
+        spec = importlib.util.spec_from_file_location("context_hygiene_policy", pol_path)
+        pol = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pol)
+        self.assertNotIn(pk, pol._pgrep_mask_lifecycle_comments(cmd))
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
     def test_lifecycle_masker_comment_apostrophe_in_subst_still_blocks(self):
         pk = "p" + "kill"
         blocked = (
