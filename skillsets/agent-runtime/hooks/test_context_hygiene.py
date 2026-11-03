@@ -1194,5 +1194,18 @@ pgrep -f bb',
 
 
 
+    def test_python_stdin_large_heredoc_scan_bounded(self):
+        import time
+
+        n = 5000
+        body = "x=0\n" * n + "import subprocess\nsubprocess.run(['echo', 'hi'])\n"
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertFalse(v["block"], cmd[:80])
+        self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
+
+
 if __name__ == "__main__":
     unittest.main()
