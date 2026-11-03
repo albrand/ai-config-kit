@@ -1194,6 +1194,19 @@ pgrep -f bb',
 
 
 
+    def test_python_stdin_deep_brackets_scan_bounded(self):
+        import time
+
+        n = 500
+        line = "x=" + "[" * 199 + "0" + "]" * 199
+        body = (line + "\n") * (n // 20) + "import subprocess\nsubprocess.run(['echo','hi'])\n"
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertFalse(v["block"], cmd[:80])
+        self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
+
     def test_python_stdin_import_shadow_parameter(self):
         allowed = (
             "python3 - <<'EOF'\n"
