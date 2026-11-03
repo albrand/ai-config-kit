@@ -1369,6 +1369,34 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_case_unreachable_arm_reachability(self):
+        pk = "p" + "kill"
+        allowed = (
+            f"case x in z) {pk} node;; esac",
+            f"case x in x) true;; z) {pk} node;; esac",
+            f"x=$(case x in z) {pk} node;; esac)",
+            f"case x in z) true ;& y) {pk} node;; esac",
+        )
+        blocked = (
+            f"case x in x) true ;& z) {pk} node;; esac",
+            f'case "$1" in z) {pk} node;; esac',
+            f"case $v in z) {pk} node;; esac",
+            f"case x in *) {pk} node;; esac",
+            f"case x in [xy]) {pk} node;; esac",
+            f"case x in z|x) {pk} node;; esac",
+            f'case "x" in x) {pk} node;; esac',
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_blocks_pkill_reached_by_case_fallthrough(self):
         pk = "p" + "kill"
         blocked = (
