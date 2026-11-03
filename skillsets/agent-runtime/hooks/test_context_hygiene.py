@@ -1377,6 +1377,7 @@ pgrep -f bb',
             f"x=$(case x in z) {pk} node;; esac)",
             f"case x in z) true ;& y) {pk} node;; esac",
             f"case x in 'z') {pk} node;; esac",
+            f"case x in \\\\x) {pk} node;; esac",
         )
         blocked = (
             f"case x in x) true ;& z) {pk} node;; esac",

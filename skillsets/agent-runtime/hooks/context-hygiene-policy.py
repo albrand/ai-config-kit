@@ -5645,11 +5645,12 @@ def bb_lifecycle_guard(raw):
             "runtime that fork-stage.sh installs bb from, offline and checksum-verified. Without "
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
-    lifecycle_block = kills_bb_pid(text)
+    lifecycle_scan = cmd if isinstance(cmd, str) and cmd else text
+    lifecycle_block = kills_bb_pid(lifecycle_scan)
     if not lifecycle_block:
-        lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
+        lifecycle_block = any(rx.search(lifecycle_scan) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_block = _pgrep_lifecycle_pkill_match(text)
+        lifecycle_block = _pgrep_lifecycle_pkill_match(lifecycle_scan)
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
