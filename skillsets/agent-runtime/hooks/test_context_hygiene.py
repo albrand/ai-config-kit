@@ -1323,6 +1323,72 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_r35_fail_closed_unclosed_subst_comment(self):
+        pk = "p" + "kill"
+        cmd = "$(true # c)); " + pk + " node\necho hi"
+        self.assertTrue(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_lifecycle_masker_paren_inside_subst_comment_is_masked(self):
+        pk = "p" + "kill"
+        cmd = (
+            'echo "$(true # ) '
+            + pk
+            + " node\n"
+            + 'true)"'
+        )
+        import importlib.util
+        pol_path = Path(__file__).with_name("context-hygiene-policy.py")
+        spec = importlib.util.spec_from_file_location("context_hygiene_policy", pol_path)
+        pol = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pol)
+        self.assertNotIn(pk, pol._pgrep_mask_lifecycle_comments(cmd))
+        self.assertFalse(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_lifecycle_masker_comment_apostrophe_in_subst_still_blocks(self):
+        pk = "p" + "kill"
+        blocked = (
+            'echo "$(true # note ' + "'" + "\n" + pk + " node; echo 'x'\n" + ')"',
+            "echo \"$(true # don't\n" + pk + " -f x; echo 'y'\n)\"",
+        )
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            'echo "$(printf \'%s\' \'a $( ' + pk + " b')\"",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
+        pk = "p" + "kill"
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            'echo "$(printf \'%s\' \'a $( ' + pk + " b')\"",
+        )
+        blocked = (
+            "bash -c 'true\npgrep -f x'",
+            "ssh host 'cd /tmp\n" + pk + " node'",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+
     def test_python_stdin_large_heredoc_scan_bounded(self):
         import time
 
