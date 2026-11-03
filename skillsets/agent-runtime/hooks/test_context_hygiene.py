@@ -1259,6 +1259,70 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_python_stdin_launcher_prefix_argv(self):
+        blocked = (
+            "python3 - <<'EOF'\n"
+            "import subprocess\n"
+            'subprocess.run(["sudo", "pgrep", "-f", "x"])\n'
+            "EOF",
+            "python3 - <<'EOF'\n"
+            "import subprocess\n"
+            'subprocess.run(["sudo pgrep -f x"], shell=True)\n'
+            "EOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_python_stdin_annotation_does_not_shadow_import(self):
+        blocked = (
+            "python3 - <<'EOF'\n"
+            "from subprocess import run\n"
+            "def go(x: run = None): run(['pgrep', '-f', 'x'])\n"
+            "EOF",
+            "python3 - <<'EOF'\n"
+            "from os import system\n"
+            "v: system = None\n"
+            'system("pgrep -f x")\n'
+            "EOF",
+        )
+        allowed = (
+            "python3 - <<'EOF'\n"
+            "from subprocess import run\n"
+            'def invoke(run): run(["pgrep","-f","x"])\n'
+            "invoke(print)\n"
+            "EOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_python_stdin_parenthesised_from_import(self):
+        blocked = (
+            "python3 - <<'EOF'\n"
+            "from subprocess import (run,)\n"
+            'run(["pgrep", "-f", "x"])\n'
+            "EOF",
+            "python3 - <<'EOF'\n"
+            "from os import (system,)\n"
+            'system("pgrep -f x")\n'
+            "EOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_python_stdin_large_heredoc_scan_bounded(self):
         import time
 
