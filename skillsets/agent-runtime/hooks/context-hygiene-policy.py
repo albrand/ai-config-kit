@@ -1088,6 +1088,8 @@ def _pgrep_python_stdin_shell_invoke_one_pass(tokens):
                         tokenize.NEWLINE,
                         tokenize.NL,
                     ):
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                            break
                         if tokens[idx].type == tokenize.NAME:
                             imported = tokens[idx].string
                             alias = imported
@@ -1118,6 +1120,8 @@ def _pgrep_python_stdin_shell_invoke_one_pass(tokens):
                 tokenize.NEWLINE,
                 tokenize.NL,
             ):
+                if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                    break
                 if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
                     j = idx + 1
                     if (
