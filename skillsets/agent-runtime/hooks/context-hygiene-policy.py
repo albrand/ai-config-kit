@@ -2268,7 +2268,17 @@ def _pgrep_mask_lifecycle_comments_linear(text):
 
     def _mask_hash_run():
         nonlocal i
-        if "\n" in text[i:]:
+        use_newline = "\n" in text[i:] and (
+            subst_depth == 0
+            or _pgrep_subst_closes_after_hash_newline(
+                text, i, subst_depth, subst_stack
+            )
+        )
+        if use_newline and subst_depth > 0 and _pgrep_hash_paren_before_newline_has_separator(
+            text, i, n
+        ):
+            use_newline = False
+        if use_newline:
             while i < n and text[i] != "\n":
                 out.append(" ")
                 i += 1
@@ -2872,6 +2882,102 @@ def _pgrep_fail_closed_after_shell_fault(text, cmd=None):
 
 
 
+
+
+
+
+def _pgrep_hash_paren_before_newline_has_separator(text, hash_tail_i, n):
+    """r33 fail-safe: ``)`` before newline then ``;`` ``|`` or ``&&`` — do not newline-mask the tail."""
+    seg_end = text.find("\n", hash_tail_i)
+    if seg_end == -1:
+        seg_end = n
+    rp = text.find(")", hash_tail_i, seg_end)
+    if rp == -1:
+        return False
+    j = rp + 1
+    while j < n and text[j] in " \t":
+        j += 1
+    if j + 1 < n and text[j : j + 2] == "&&":
+        return True
+    if j < n and text[j] in ";|":
+        return True
+    return False
+
+
+def _pgrep_subst_closes_after_hash_newline(text, hash_i, frame_depth, subst_stack):
+    """True if the $()/backtick frame at frame_depth closes on a line after hash_i's comment line."""
+    nl = text.find("\n", hash_i)
+    if nl == -1:
+        return False
+    n = len(text)
+    d = frame_depth
+    bt = [entry[3] for entry in subst_stack]
+    j = nl + 1
+    sub_sq = sub_dq = sub_dsq = False
+    while j < n:
+        if sub_dsq:
+            if text[j] == "'":
+                sub_dsq = False
+            j += 1
+            continue
+        if sub_sq:
+            if text[j] == "'":
+                sub_sq = False
+            j += 1
+            continue
+        if sub_dq:
+            if text[j] == "\\" and j + 1 < n:
+                j += 2
+                continue
+            if text[j] == '"':
+                sub_dq = False
+            j += 1
+            continue
+        if not sub_sq and not sub_dq and not sub_dsq:
+            if text[j] == "\\" and j + 1 < n:
+                j += 2
+                continue
+        if text[j] == "#" and (
+            _pgrep_hash_starts_comment(text, j)
+            or (j > 0 and text[j - 1] == "`")
+        ):
+            end = text.find("\n", j)
+            j = n if end == -1 else end + 1
+            continue
+        if text.startswith("$'", j):
+            j += 2
+            sub_dsq = True
+            continue
+        if text[j] == "'":
+            sub_sq = True
+            j += 1
+            continue
+        if text[j] == '"':
+            sub_dq = True
+            j += 1
+            continue
+        if text.startswith("$", j) and j + 1 < n and text[j + 1] == "(":
+            d += 1
+            bt.append(False)
+            j += 2
+            continue
+        if text[j] == "`":
+            if d > 0 and len(bt) >= d and bt[d - 1]:
+                return True
+            d += 1
+            bt.append(True)
+            j += 1
+            continue
+        if text[j] == ")":
+            d -= 1
+            if d < frame_depth:
+                return True
+            if bt:
+                bt.pop()
+            j += 1
+            continue
+        j += 1
+    return False
 
 
 

@@ -1323,6 +1323,13 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_r35_fail_closed_unclosed_subst_comment(self):
+        pk = "p" + "kill"
+        cmd = "$(true # c)); " + pk + " node\necho hi"
+        self.assertTrue(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
     def test_lifecycle_masker_paren_inside_subst_comment_is_masked(self):
         pk = "p" + "kill"
         cmd = (
