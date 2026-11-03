@@ -2515,6 +2515,13 @@ def _pgrep_single_quote_literal_regions(text):
                 if text[i] == "\\" and i + 1 < n:
                     i += 2
                     continue
+            if text[i] == "#" and (
+                _pgrep_hash_starts_comment(text, i)
+                or (i > 0 and text[i - 1] == "`")
+            ):
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
             if text.startswith("$'", i):
                 i += 2
                 sub_dsq = True

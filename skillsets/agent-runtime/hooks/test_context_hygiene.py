@@ -1323,6 +1323,27 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_masker_comment_apostrophe_in_subst_still_blocks(self):
+        pk = "p" + "kill"
+        blocked = (
+            'echo "$(true # note ' + "'" + "\n" + pk + " node; echo 'x'\n" + ')"',
+            "echo \"$(true # don't\n" + pk + " -f x; echo 'y'\n)\"",
+        )
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            'echo "$(printf \'%s\' \'a $( ' + pk + " b')\"",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
         pk = "p" + "kill"
         allowed = (
