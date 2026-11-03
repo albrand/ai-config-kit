@@ -2273,7 +2273,7 @@ def _pgrep_mask_line_hash_comments(text):
 
 
 def _pgrep_mask_lifecycle_comments_linear(text):
-    if "#" not in text and "$(" not in text and "`" not in text:
+    if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
         return text
     sq = _pgrep_single_quote_spans(text)
     close_at = _pgrep_subst_close_at_map(text)
@@ -2284,6 +2284,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     subst_stack = []
     subst_openers = []
     case_stack = []
+    case_top = _PgrepSubstCaseState()
 
     def _mask_hash_run():
         nonlocal i
@@ -2305,6 +2306,8 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             return
         close_depth = subst_depth
         cs = case_stack[-1] if case_stack else None
+        if cs is None and subst_depth == 0 and case_top.phase == 2:
+            cs = case_top
         while i < n:
             if text[i] == ")" and subst_depth == close_depth:
                 if cs is not None and _pgrep_subst_case_close_paren_is_pattern(cs):
@@ -2345,6 +2348,19 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 out.append(text[i:skip])
                 i = skip
                 continue
+            if not sq and not dq:
+                ni = _pgrep_subst_case_unquoted_step(text, i, n, case_top)
+                if ni is not None:
+                    out.append(text[i:ni])
+                    i = ni
+                    continue
+                if case_top.phase == 2 and text[i] == "(":
+                    _pgrep_subst_case_open_paren(case_top)
+                if case_top.phase == 2 and text[i] == ")":
+                    if _pgrep_subst_case_close_paren_is_pattern(case_top):
+                        out.append("\n")
+                        i += 1
+                        continue
         if subst_depth > 0:
             if not sub_sq and not sub_dq and not sub_dsq:
                 if text[i] == "\\" and i + 1 < n:
@@ -2505,7 +2521,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
 
 def _pgrep_mask_lifecycle_comments(text):
     try:
-        if "#" not in text and "$(" not in text and "`" not in text:
+        if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
             return text
         spans = _pgrep_heredoc_body_spans(text)
         if not spans:
@@ -2542,6 +2558,7 @@ def _pgrep_single_quote_literal_regions(text):
     subst_depth = 0
     sub_dq = sub_sq = sub_dsq = False
     sub_sq_open = None
+    case_stack = []
     while i < n:
         if subst_depth > 0:
             if sub_dsq:
@@ -2601,14 +2618,31 @@ def _pgrep_single_quote_literal_regions(text):
                 i += 1
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                case_stack.append(_PgrepSubstCaseState())
                 subst_depth += 1
                 i += 2
                 continue
+            cs = case_stack[-1] if case_stack else None
+            if cs is not None:
+                ni = _pgrep_subst_case_unquoted_step(text, i, n, cs)
+                if ni is not None:
+                    i = ni
+                    continue
+                if text[i] == "(":
+                    _pgrep_subst_case_open_paren(cs)
+                    i += 1
+                    continue
             if text[i] == ")":
+                if cs is not None and _pgrep_subst_case_close_paren_is_pattern(cs):
+                    i += 1
+                    continue
                 subst_depth -= 1
+                if case_stack:
+                    case_stack.pop()
                 i += 1
                 continue
             if text[i] == "`":
+                case_stack.append(_PgrepSubstCaseState())
                 subst_depth += 1
                 i += 1
                 continue
@@ -2626,12 +2660,14 @@ def _pgrep_single_quote_literal_regions(text):
                 subst_depth = 1
                 sub_dq = sub_sq = sub_dsq = False
                 sub_sq_open = None
+                case_stack.append(_PgrepSubstCaseState())
                 i += 2
                 continue
             if text[i] == "`":
                 subst_depth = 1
                 sub_dq = sub_sq = sub_dsq = False
                 sub_sq_open = None
+                case_stack.append(_PgrepSubstCaseState())
                 i += 1
                 continue
             i += 1
@@ -2653,12 +2689,14 @@ def _pgrep_single_quote_literal_regions(text):
             subst_depth = 1
             sub_dq = sub_sq = sub_dsq = False
             sub_sq_open = None
+            case_stack.append(_PgrepSubstCaseState())
             i += 2
             continue
         if text[i] == "`":
             subst_depth = 1
             sub_dq = sub_sq = sub_dsq = False
             sub_sq_open = None
+            case_stack.append(_PgrepSubstCaseState())
             i += 1
             continue
         i += 1
@@ -2970,7 +3008,7 @@ def _pgrep_subst_hash_closes_after_newline(text, hash_i, opener, close_at, n):
 
 def _pgrep_subst_close_at_map(text):
     """One forward scan: map each ``$(`` / backtick opener index to its closer (if any)."""
-    if "#" not in text and "$(" not in text and "`" not in text:
+    if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
         return {}
     sq = _pgrep_single_quote_spans(text)
     close_at = {}
@@ -3873,7 +3911,15 @@ def _pgrep_subst_case_advance(text, i, n, state):
     if m:
         state.reset()
         return i + m.end()
+    if text.startswith(";;&", i):
+        state.in_pattern = True
+        state.pat_paren = 0
+        return i + 3
     if text.startswith(";;", i):
+        state.in_pattern = True
+        state.pat_paren = 0
+        return i + 2
+    if text.startswith(";&", i):
         state.in_pattern = True
         state.pat_paren = 0
         return i + 2

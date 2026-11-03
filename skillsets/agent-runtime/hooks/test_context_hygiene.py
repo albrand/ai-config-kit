@@ -1369,6 +1369,30 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_blocks_pkill_reached_by_case_fallthrough(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"case x in x) true ;& y) {pk} node;; esac",
+            f"case x in x) true ;;& x) {pk} node;; esac",
+            f'echo "$(case x in x) true ;& y) {pk} node;; esac)"',
+            f'echo "$(case x in x) true ;;& z) {pk} node;; esac)"',
+        )
+        allowed = (
+            f"case x in x) true ;& y) echo '{pk} node';; esac",
+            f"case x in x) true ;;& y) printf '%s' {pk};; esac",
+            "case x in x) echo '; pkill node ;&';; esac",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_blocks_pkill_in_case_arm_inside_dollar_paren(self):
         pk = "p" + "kill"
         blocked = (f'echo "$(case x in x) {pk} node;; esac)"',)
