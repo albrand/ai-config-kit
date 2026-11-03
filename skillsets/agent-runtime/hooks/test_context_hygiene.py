@@ -1376,6 +1376,7 @@ pgrep -f bb',
             f"case x in x) true;; z) {pk} node;; esac",
             f"x=$(case x in z) {pk} node;; esac)",
             f"case x in z) true ;& y) {pk} node;; esac",
+            f"case x in 'z') {pk} node;; esac",
         )
         blocked = (
             f"case x in x) true ;& z) {pk} node;; esac",
@@ -1385,6 +1386,11 @@ pgrep -f bb',
             f"case x in [xy]) {pk} node;; esac",
             f"case x in z|x) {pk} node;; esac",
             f'case "x" in x) {pk} node;; esac',
+            f'echo "$(case x in x\'\') {pk} node;; esac)"',
+            f"case x in 'x') {pk} node;; esac",
+            f'case x in x"") {pk} node;; esac',
+            f"case 'x' in x) {pk} node;; esac",
+            f"case x in '*') {pk} node;; esac",
         )
         for cmd in allowed:
             with self.subTest(allowed=cmd[:70]):

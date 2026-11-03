@@ -2361,12 +2361,37 @@ def _pgrep_mask_lifecycle_comments_linear(text):
 
     while i < n:
         if subst_depth == 0:
-            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-            if skip is not None:
-                out.append(text[i:skip])
-                i = skip
+            if not (case_top.phase == 2 and case_top.in_pattern):
+                skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+                if skip is not None:
+                    out.append(text[i:skip])
+                    i = skip
+                    continue
+            if case_top.phase == 2 and case_top.in_pattern and text[i] == "'":
+                out.append(text[i])
+                i += 1
+                while i < n and text[i] != "'":
+                    out.append(text[i])
+                    i += 1
+                if i < n:
+                    out.append(text[i])
+                    i += 1
                 continue
-            if not sq and not dq:
+            if case_top.phase == 2 and case_top.in_pattern and text[i] == '"':
+                out.append(text[i])
+                i += 1
+                while i < n and text[i] != '"':
+                    if text[i] == "\\" and i + 1 < n:
+                        out.append(text[i : i + 2])
+                        i += 2
+                        continue
+                    out.append(text[i])
+                    i += 1
+                if i < n:
+                    out.append(text[i])
+                    i += 1
+                continue
+            if not dq:
                 ni = _pgrep_subst_case_unquoted_step(text, i, n, case_top)
                 if ni is not None:
                     out.append(text[i:ni])
@@ -3889,20 +3914,97 @@ def _pgrep_skip_case_header(text, i):
     return i
 
 
+def _pgrep_case_token_may_match(token):
+    if not token:
+        return True
+    if "$" in token or "`" in token:
+        return True
+    if any(c in token for c in "*?["):
+        return True
+    return False
+
+
+def _pgrep_case_unquote_token(token):
+    """Bash quote removal for case words/patterns; (False, None) if the arm may match."""
+    if _pgrep_case_token_may_match(token):
+        return False, None
+    i, n = 0, len(token)
+    out = []
+    while i < n:
+        c = token[i]
+        if c == "'":
+            i += 1
+            while i < n and token[i] != "'":
+                out.append(token[i])
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if c == '"':
+            i += 1
+            while i < n and token[i] != '"':
+                if token[i] == "\\" and i + 1 < n:
+                    out.append(token[i + 1])
+                    i += 2
+                    continue
+                if token[i] in "$`":
+                    return False, None
+                out.append(token[i])
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(token[i + 1])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return True, "".join(out)
+
+
+def _pgrep_case_word_span(text, case_end, n):
+    i = _pgrep_skip_space(text, case_end)
+    w0 = i
+    while i < n:
+        i = _pgrep_skip_space(text, i)
+        if re.match(r"in\b", text[i:], re.I):
+            break
+        if text[i] == "'":
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if text[i] == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        j = i
+        while j < n and not text[j].isspace():
+            j += 1
+        i = j
+    return w0, i
+
+
 def _pgrep_case_word_literal(text, start, end):
     w = text[start:end]
     if not w:
         return False, None
-    if w[0] in "'\"":
-        if len(w) < 2 or w[-1] != w[0]:
-            return False, None
-        inner = w[1:-1]
-        if "$" in inner or "\\" in inner:
-            return False, None
-        return True, inner
-    if "$" in w or "\\" in w or any(c in w for c in "*?["):
+    ok, lit = _pgrep_case_unquote_token(w)
+    if not ok:
         return False, None
-    return True, w
+    return True, lit
 
 
 def _pgrep_case_pattern_alt_unwrap(alt):
@@ -3919,16 +4021,10 @@ def _pgrep_case_pattern_alt_plain(alt):
     alt = _pgrep_case_pattern_alt_unwrap(alt)
     if not alt:
         return False, None
-    if alt[0] in "'\"":
-        if len(alt) < 2 or alt[-1] != alt[0]:
-            return False, None
-        inner = alt[1:-1]
-        if "$" in inner or "\\" in inner:
-            return False, None
-        return True, inner
-    if "$" in alt or "\\" in alt or any(c in alt for c in "*?["):
+    ok, lit = _pgrep_case_unquote_token(alt)
+    if not ok:
         return False, None
-    return True, alt
+    return True, lit
 
 
 def _pgrep_case_split_pattern_alts(pattern):
@@ -4047,13 +4143,14 @@ def _pgrep_subst_case_try_enter(text, i, n, state):
     m = re.match(r"case\b", text[i:], re.I)
     if not m or not _pgrep_shell_word_start(text, i):
         return i
-    p = _pgrep_skip_space(text, i + m.end())
-    w0 = p
-    w1 = _pgrep_skip_one_word(text, p, n)
-    p = _pgrep_skip_space(text, w1)
-    if p >= n or not re.match(r"in\b", text[p:], re.I):
+    p = i + m.end()
+    w0, in_i = _pgrep_case_word_span(text, p, n)
+    w1 = in_i
+    while w1 > w0 and text[w1 - 1].isspace():
+        w1 -= 1
+    if w1 <= w0 or in_i >= n or not re.match(r"in\b", text[in_i:], re.I):
         return i
-    ni = _pgrep_skip_space(text, p + 2)
+    ni = _pgrep_skip_space(text, in_i + 2)
     wp, wl = _pgrep_case_word_literal(text, w0, w1)
     state.word_plain = wp
     state.word_lit = wl
