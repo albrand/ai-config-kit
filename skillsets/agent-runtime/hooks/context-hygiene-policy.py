@@ -1304,36 +1304,66 @@ def _pgrep_python_stdin_body_worth_scanning(body):
     return False
 
 
+def _pgrep_python_comprehension_for_bind_names(tokens, idx):
+    j = idx + 1
+    names = []
+    while j < len(tokens):
+        if tokens[j].type == tokenize.NAME:
+            names.append(tokens[j].string)
+            j += 1
+            if j < len(tokens) and tokens[j].type == tokenize.OP and tokens[j].string == ",":
+                j += 1
+                continue
+            break
+        break
+    if (
+        len(names) >= 1
+        and j < len(tokens)
+        and tokens[j].type == tokenize.NAME
+        and tokens[j].string == "in"
+    ):
+        return names
+    return None
+
+
 def _pgrep_python_comprehension_shadow_by_index(tokens):
-    comp_shadow_at = [set() for _ in range(len(tokens))]
-    bracket_stack = []
+    frames = []
+    frame_at = []
+    stack = []
     for idx, tok in enumerate(tokens):
-        if tok.type == tokenize.OP and tok.string == "[":
-            bracket_stack.append([idx, set()])
-        elif tok.type == tokenize.OP and tok.string == "]" and bracket_stack:
-            open_idx, names = bracket_stack.pop()
-            if names:
-                for j in range(open_idx, idx + 1):
-                    comp_shadow_at[j].update(names)
-        elif (
-            bracket_stack
-            and tok.type == tokenize.NAME
-            and tok.string == "for"
-            and idx + 2 < len(tokens)
-            and tokens[idx + 1].type == tokenize.NAME
-            and tokens[idx + 2].type == tokenize.NAME
-            and tokens[idx + 2].string == "in"
-        ):
-            bound = tokens[idx + 1].string
-            for frame in bracket_stack:
-                frame[1].add(bound)
-    return [frozenset(layer) for layer in comp_shadow_at]
+        if tok.type == tokenize.OP and tok.string in ("[", "(", "{"):
+            parent = stack[-1] if stack else None
+            fid = len(frames)
+            frames.append({"parent": parent, "names": set()})
+            stack.append(fid)
+        frame_at.append(stack[-1] if stack else -1)
+        if tok.type == tokenize.OP and tok.string in ("]", ")", "}"):
+            if stack:
+                stack.pop()
+        elif stack and tok.type == tokenize.NAME and tok.string == "for":
+            bound = _pgrep_python_comprehension_for_bind_names(tokens, idx)
+            if bound is not None:
+                frames[stack[-1]]["names"].update(bound)
+    return frames, frame_at
+
+
+def _pgrep_python_comprehension_shadows_name(frames, frame_at, idx, name):
+    fid = frame_at[idx]
+    while fid is not None and fid >= 0:
+        if name in frames[fid]["names"]:
+            return True
+        fid = frames[fid]["parent"]
+    return False
 
 
 def _pgrep_python_shadowed_import_name_at(
-    shadow_stack, inline_shadow, comp_at, name
+    shadow_stack, inline_shadow, comp_frames, comp_frame_at, idx, name
 ):
-    if name in inline_shadow or name in comp_at:
+    if name in inline_shadow:
+        return True
+    if _pgrep_python_comprehension_shadows_name(
+        comp_frames, comp_frame_at, idx, name
+    ):
         return True
     for layer in shadow_stack:
         if name in layer:
@@ -1587,7 +1617,7 @@ def _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
     os_system = set()
     shadow_stack = []
     inline_shadow = set()
-    comp_shadow_at = _pgrep_python_comprehension_shadow_by_index(tokens)
+    comp_frames, comp_frame_at = _pgrep_python_comprehension_shadow_by_index(tokens)
     pending_scope_params = None
     idx = 0
     while idx < len(tokens):
@@ -1707,7 +1737,12 @@ def _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
             tok.type == tokenize.NAME
             and tok.string in os_system
             and not _pgrep_python_shadowed_import_name_at(
-                shadow_stack, inline_shadow, comp_shadow_at[idx], tok.string
+                shadow_stack,
+                inline_shadow,
+                comp_frames,
+                comp_frame_at,
+                idx,
+                tok.string,
             )
             and idx + 1 < len(tokens)
             and tokens[idx + 1].type == tokenize.OP
@@ -1721,7 +1756,12 @@ def _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
             tok.type == tokenize.NAME
             and tok.string in subprocess_direct
             and not _pgrep_python_shadowed_import_name_at(
-                shadow_stack, inline_shadow, comp_shadow_at[idx], tok.string
+                shadow_stack,
+                inline_shadow,
+                comp_frames,
+                comp_frame_at,
+                idx,
+                tok.string,
             )
             and idx + 1 < len(tokens)
             and tokens[idx + 1].type == tokenize.OP

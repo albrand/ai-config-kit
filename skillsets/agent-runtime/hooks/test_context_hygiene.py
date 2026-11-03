@@ -1205,6 +1205,23 @@ pgrep -f bb',
             verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
         )
 
+    def test_python_stdin_nested_comps_hermes_k3000(self):
+        import time
+
+        k = 3000
+        inner = ",".join(f"[0 for v{i} in []]" for i in range(k))
+        body = (
+            "x=[(" + inner + ") for outer in []]\n"
+            "from subprocess import run\n"
+            'run(["pgrep","-f","x"])\n'
+        )
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertTrue(v["block"], cmd[:80])
+        self.assertLess(elapsed, 1.5, f"scan took {elapsed:.2f}s")
+
     def test_python_stdin_deep_brackets_scan_bounded(self):
         import time
 
