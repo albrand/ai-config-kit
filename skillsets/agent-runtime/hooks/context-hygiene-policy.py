@@ -1305,13 +1305,16 @@ def _pgrep_python_stdin_body_worth_scanning(body):
 
 
 def _pgrep_python_comprehension_shadow_by_index(tokens):
+    comp_shadow_at = [set() for _ in range(len(tokens))]
     bracket_stack = []
-    comp_shadow_at = []
     for idx, tok in enumerate(tokens):
         if tok.type == tokenize.OP and tok.string == "[":
-            bracket_stack.append(set())
+            bracket_stack.append([idx, set()])
         elif tok.type == tokenize.OP and tok.string == "]" and bracket_stack:
-            bracket_stack.pop()
+            open_idx, names = bracket_stack.pop()
+            if names:
+                for j in range(open_idx, idx + 1):
+                    comp_shadow_at[j].update(names)
         elif (
             bracket_stack
             and tok.type == tokenize.NAME
@@ -1321,12 +1324,10 @@ def _pgrep_python_comprehension_shadow_by_index(tokens):
             and tokens[idx + 2].type == tokenize.NAME
             and tokens[idx + 2].string == "in"
         ):
-            bracket_stack[-1].add(tokens[idx + 1].string)
-        union = set()
-        for layer in bracket_stack:
-            union.update(layer)
-        comp_shadow_at.append(frozenset(union))
-    return comp_shadow_at
+            bound = tokens[idx + 1].string
+            for frame in bracket_stack:
+                frame[1].add(bound)
+    return [frozenset(layer) for layer in comp_shadow_at]
 
 
 def _pgrep_python_shadowed_import_name_at(
@@ -1601,10 +1602,6 @@ def _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
                 shadow_stack.pop()
             idx += 1
             continue
-        if tok.type == tokenize.OP and tok.string == "[":
-            comp_stack.append(_pgrep_python_comprehension_for_names(tokens, idx))
-        elif tok.type == tokenize.OP and tok.string == "]" and comp_stack:
-            comp_stack.pop()
         if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < len(tokens):
             mod_tok = tokens[idx + 1]
             kw_tok = tokens[idx + 2]
@@ -1803,9 +1800,10 @@ def _pgrep_python_stdin_shell_invoke(body):
 
     if not _pgrep_python_stdin_body_worth_scanning(body):
         return False
-    if _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
-        return True
-    return False
+    try:
+        return _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens)
+    except Exception:
+        return _pgrep_python_stdin_shell_invoke_one_pass_v3(tokens)
 
     if _pgrep_python_stdin_shell_invoke_one_pass_v3(tokens):
         return True

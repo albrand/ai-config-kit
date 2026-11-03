@@ -1194,6 +1194,17 @@ pgrep -f bb',
 
 
 
+    def test_python_stdin_list_noise_before_os_system(self):
+        cmd = (
+            "python3 - <<'EOF'\n"
+            "xs=[1]\n"
+            'import os\nos.system("pgrep -f x")\n'
+            "EOF"
+        )
+        self.assertTrue(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
     def test_python_stdin_deep_brackets_scan_bounded(self):
         import time
 
