@@ -1369,6 +1369,24 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_blocks_pkill_in_case_arm_inside_dollar_paren(self):
+        pk = "p" + "kill"
+        blocked = (f'echo "$(case x in x) {pk} node;; esac)"',)
+        allowed = (
+            f'echo "$(case x in x) echo \'{pk} node\';; esac)"',
+            f'echo "$(case x in {pk}) true;; esac)"',
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
         pk = "p" + "kill"
         allowed = (
