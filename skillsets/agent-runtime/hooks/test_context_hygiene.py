@@ -1375,11 +1375,11 @@ pgrep -f bb',
             f"case x in x) true ;& y) {pk} node;; esac",
             f"case x in x) true ;;& x) {pk} node;; esac",
             f'echo "$(case x in x) true ;& y) {pk} node;; esac)"',
-            f'echo "$(case x in x) true ;;& z) {pk} node;; esac)"',
         )
         allowed = (
             f"case x in x) true ;& y) echo '{pk} node';; esac",
             f"case x in x) true ;;& y) printf '%s' {pk};; esac",
+            f'echo "$(case x in x) true ;;& z) {pk} node;; esac)"',
             "case x in x) echo '; pkill node ;&';; esac",
         )
         for cmd in blocked:
