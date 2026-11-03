@@ -1165,6 +1165,111 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_py_subprocess_gaps_shell_true_list_and_from_imports(self):
+        blocked = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep -f x\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.Popen([\"pkill node\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import run\nrun([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import Popen as P\nP([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nfrom os import system\nsystem(\"pgrep -f x\")\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import check_output\ncheck_output(\"pgrep -f x\", shell=True)\nEOF",
+        )
+        allowed = (
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"echo pgrep -f x\"], shell=True)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run([\"pgrep -f x\"], shell=True, executable=\"/bin/echo\")\nEOF",
+            "python3 - <<'EOF'\nfrom subprocess import run\nrun([\"echo\",\"pgrep -f x\"])\nEOF",
+            "python3 - <<'EOF'\ndef run(x): pass\nrun([\"pgrep\",\"-f\",\"x\"])\nEOF",
+            "python3 - <<'EOF'\nprint(\"from subprocess import run; run(['pgrep','-f','x']\")\nEOF",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+
+
+    def test_python_stdin_list_noise_before_os_system(self):
+        cmd = (
+            "python3 - <<'EOF'\n"
+            "xs=[1]\n"
+            'import os\nos.system("pgrep -f x")\n'
+            "EOF"
+        )
+        self.assertTrue(
+            verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+        )
+
+    def test_python_stdin_nested_comps_hermes_k3000(self):
+        import time
+
+        k = 3000
+        inner = ",".join(f"[0 for v{i} in []]" for i in range(k))
+        body = (
+            "x=[(" + inner + ") for outer in []]\n"
+            "from subprocess import run\n"
+            'run(["pgrep","-f","x"])\n'
+        )
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertTrue(v["block"], cmd[:80])
+        self.assertLess(elapsed, 1.5, f"scan took {elapsed:.2f}s")
+
+    def test_python_stdin_deep_brackets_scan_bounded(self):
+        import time
+
+        n = 500
+        line = "x=" + "[" * 199 + "0" + "]" * 199
+        body = (line + "\n") * (n // 20) + "import subprocess\nsubprocess.run(['echo','hi'])\n"
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertFalse(v["block"], cmd[:80])
+        self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
+
+    def test_python_stdin_import_shadow_parameter(self):
+        allowed = (
+            "python3 - <<'EOF'\n"
+            "from subprocess import run\n"
+            'def invoke(run): run(["pgrep","-f","x"])\n'
+            "invoke(print)\n"
+            "EOF",
+        )
+        blocked = (
+            "python3 - <<'EOF'\n"
+            "from subprocess import run; run(['pgrep','-f','x'])\n"
+            "EOF",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_python_stdin_large_heredoc_scan_bounded(self):
+        import time
+
+        n = 5000
+        body = "x=0\n" * n + "import subprocess\nsubprocess.run(['echo', 'hi'])\n"
+        cmd = "python3 - <<'EOF'\n" + body + "EOF"
+        start = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - start
+        self.assertFalse(v["block"], cmd[:80])
+        self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
 
 
 if __name__ == "__main__":

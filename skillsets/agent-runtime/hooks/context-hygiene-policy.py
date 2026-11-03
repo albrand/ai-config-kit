@@ -401,6 +401,9 @@ def _pgrep_python_literal_at(tokens, idx):
 
 
 _PGREP_PYTHON_EXEC_UNKNOWN = object()
+_PGREP_PYTHON_SUBPROCESS_METHODS = frozenset(
+    ("run", "call", "check_call", "check_output", "Popen")
+)
 
 
 def _pgrep_python_is_pgrep_executable(argv0):
@@ -697,6 +700,14 @@ def _pgrep_python_scan_args_keyword_value(tokens, idx, shell_true, executable_ov
     tok = tokens[idx]
     if tok.type == tokenize.OP and tok.string in ("[", "("):
         elements, _end = _pgrep_python_collect_sequence_elements(tokens, idx)
+        if (
+            shell_true
+            and elements
+            and _pgrep_python_list_argv_blocks_shell_true(
+                elements, executable_override
+            )
+        ):
+            return True
         return bool(
             elements
             and _pgrep_python_list_argv_blocks(elements, executable_override)
@@ -796,6 +807,15 @@ def _pgrep_python_call_args_block(
                     tokens, idx
                 )
                 if (
+                    shell_true
+                    and not program_unknown
+                    and elements
+                    and _pgrep_python_list_argv_blocks_shell_true(
+                        elements, executable_override
+                    )
+                ):
+                    return True
+                if (
                     not program_unknown
                     and elements
                     and _pgrep_python_list_argv_blocks(
@@ -813,6 +833,999 @@ def _pgrep_python_call_args_block(
 
 
 
+
+
+def _pgrep_python_shell_true_argv0_blocks(runner, cmd_text):
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
+        return False
+    if not isinstance(cmd_text, str):
+        return False
+    if _pgrep_python_is_pgrep_executable(runner):
+        return _pgrep_python_shell_string_blocks(cmd_text)
+    if not _pgrep_python_is_shell_program(runner):
+        return False
+    masked = _pgrep_mask_shell_comments(cmd_text.strip())
+    folded = pgrep_obfuscation_fold(masked)
+    m = re.match(r"\s*(\S+)", folded)
+    if not m:
+        return False
+    head = m.group(1).rsplit("/", 1)[-1].lower()
+    if head in (
+        "echo",
+        "printf",
+        "print",
+        "cat",
+        "grep",
+        "egrep",
+        "fgrep",
+        "tee",
+        "sort",
+        "wc",
+        "test",
+        "true",
+        "false",
+    ):
+        return False
+    if head == "pkill" or head.endswith("pkill"):
+        return _pgrep_lifecycle_pkill_match(cmd_text)
+    if head == "pgrep" or head.endswith("pgrep"):
+        seg = re.match(r"[^\n;&|]*", folded.lstrip())
+        if seg and pgrep_segment_has_full_flag(seg.group(0)):
+            return True
+        return bool(_pgrep_lifecycle_pkill_match(cmd_text))
+    return False
+
+
+def _pgrep_python_list_argv_blocks_shell_true(elements, executable_override=None):
+    if executable_override is _PGREP_PYTHON_EXEC_UNKNOWN:
+        return False
+    if not elements:
+        return False
+    runner = _pgrep_python_resolved_runner(
+        executable_override, None, shell_default="/bin/sh"
+    )
+    if runner is _PGREP_PYTHON_EXEC_UNKNOWN or not isinstance(runner, str):
+        return False
+    first = elements[0]
+    if isinstance(first, str):
+        return _pgrep_python_shell_true_argv0_blocks(runner, first)
+    return False
+
+
+def _pgrep_python_drop_import_binding(subprocess_direct, os_system, name):
+    subprocess_direct.pop(name, None)
+    os_system.discard(name)
+
+
+def _pgrep_python_bindings_at(tokens, before_idx):
+    subprocess_aliases = {"subprocess"}
+    subprocess_direct = {}
+    os_system = set()
+    idx = 0
+    while idx < before_idx:
+        tok = tokens[idx]
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < before_idx:
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < before_idx and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < before_idx and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < before_idx and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < before_idx
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        idx += 1
+    return subprocess_aliases, subprocess_direct, os_system
+
+
+
+
+def _pgrep_python_bindings_advance_to(
+    tokens,
+    cursor,
+    end_idx,
+    subprocess_aliases,
+    subprocess_direct,
+    os_system,
+):
+    idx = cursor
+    while idx < end_idx:
+        tok = tokens[idx]
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < end_idx:
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < end_idx and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < end_idx and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < end_idx and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < end_idx
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        idx += 1
+    return idx
+
+
+def _pgrep_python_stdin_shell_invoke_one_pass(tokens):
+    _SUBPROCESS_METHODS = frozenset(
+        ("run", "call", "check_call", "check_output", "Popen")
+    )
+    subprocess_aliases = {"subprocess"}
+    subprocess_direct = {}
+    os_system = set()
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < len(tokens):
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < len(tokens) and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                            break
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < len(tokens) and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                    break
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < len(tokens) and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        tok = tokens[idx]
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in os_system
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(
+                tokens, idx + 1, string_is_shell=True
+            )
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in subprocess_direct
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(tokens, idx + 1, popen_style=True)
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string == "os"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "."
+            and tokens[idx + 2].type == tokenize.NAME
+        ):
+            meth = tokens[idx + 2].string
+            if meth in ("system", "popen"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, string_is_shell=True
+                    )
+                ):
+                    return True
+            if meth.startswith("exec") or meth.startswith("spawn"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, exec_style=True
+                    )
+                ):
+                    return True
+        if tok.type == tokenize.NAME and tok.string in subprocess_aliases:
+            j = idx + 1
+            while j + 1 < len(tokens):
+                if tokens[j].type != tokenize.OP or tokens[j].string != ".":
+                    break
+                if tokens[j + 1].type != tokenize.NAME:
+                    break
+                meth = tokens[j + 1].string
+                if meth not in _SUBPROCESS_METHODS:
+                    j += 2
+                    continue
+                args_start = j + 2
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, popen_style=True
+                    )
+                ):
+                    return True
+                break
+        idx += 1
+    return False
+
+
+
+
+def _pgrep_python_shadowed_import_name(shadow_stack, inline_shadow, comp_stack, name):
+    if name in inline_shadow:
+        return True
+    for layer in comp_stack:
+        if name in layer:
+            return True
+    for layer in shadow_stack:
+        if name in layer:
+            return True
+    return False
+
+
+def _pgrep_python_def_parameter_names(tokens, def_idx):
+    idx = def_idx + 1
+    while idx < len(tokens) and tokens[idx].type != tokenize.NAME:
+        idx += 1
+    if idx >= len(tokens):
+        return set()
+    idx += 1
+    while idx < len(tokens) and not (
+        tokens[idx].type == tokenize.OP and tokens[idx].string == "("
+    ):
+        idx += 1
+    if idx >= len(tokens):
+        return set()
+    idx += 1
+    depth = 1
+    names = set()
+    while idx < len(tokens) and depth:
+        t = tokens[idx]
+        if t.type == tokenize.OP:
+            if t.string == "(":
+                depth += 1
+            elif t.string == ")":
+                depth -= 1
+        elif t.type == tokenize.NAME and depth == 1:
+            if t.string not in ("True", "False", "None"):
+                names.add(t.string)
+        idx += 1
+    return names
+
+
+def _pgrep_python_lambda_parameter_names(tokens, lambda_idx):
+    idx = lambda_idx + 1
+    depth = 0
+    names = set()
+    while idx < len(tokens):
+        t = tokens[idx]
+        if t.type == tokenize.OP and t.string == "(":
+            depth += 1
+            idx += 1
+            continue
+        if t.type == tokenize.OP and t.string == ")":
+            if depth:
+                depth -= 1
+                idx += 1
+                continue
+        if t.type == tokenize.OP and t.string == ":" and not depth:
+            break
+        if t.type == tokenize.NAME and (depth or not names):
+            if t.string not in ("True", "False", "None", "lambda"):
+                names.add(t.string)
+        idx += 1
+    return names
+
+
+
+
+def _pgrep_python_stdin_body_worth_scanning(body):
+    masked = _pgrep_mask_shell_comments(body)
+    folded = pgrep_obfuscation_fold(masked)
+    if PGREP_WORD.search(folded):
+        return True
+    if re.search(r"\bpkill\b", folded, re.I):
+        return True
+    return False
+
+
+def _pgrep_python_comprehension_for_bind_names(tokens, idx):
+    j = idx + 1
+    names = []
+    while j < len(tokens):
+        if tokens[j].type == tokenize.NAME:
+            names.append(tokens[j].string)
+            j += 1
+            if j < len(tokens) and tokens[j].type == tokenize.OP and tokens[j].string == ",":
+                j += 1
+                continue
+            break
+        break
+    if (
+        len(names) >= 1
+        and j < len(tokens)
+        and tokens[j].type == tokenize.NAME
+        and tokens[j].string == "in"
+    ):
+        return names
+    return None
+
+
+def _pgrep_python_comprehension_shadow_by_index(tokens):
+    frames = []
+    frame_at = []
+    stack = []
+    for idx, tok in enumerate(tokens):
+        if tok.type == tokenize.OP and tok.string in ("[", "(", "{"):
+            parent = stack[-1] if stack else None
+            fid = len(frames)
+            frames.append({"parent": parent, "names": set()})
+            stack.append(fid)
+        frame_at.append(stack[-1] if stack else -1)
+        if tok.type == tokenize.OP and tok.string in ("]", ")", "}"):
+            if stack:
+                stack.pop()
+        elif stack and tok.type == tokenize.NAME and tok.string == "for":
+            bound = _pgrep_python_comprehension_for_bind_names(tokens, idx)
+            if bound is not None:
+                frames[stack[-1]]["names"].update(bound)
+    return frames, frame_at
+
+
+def _pgrep_python_comprehension_shadows_name(frames, frame_at, idx, name):
+    fid = frame_at[idx]
+    while fid is not None and fid >= 0:
+        if name in frames[fid]["names"]:
+            return True
+        fid = frames[fid]["parent"]
+    return False
+
+
+def _pgrep_python_shadowed_import_name_at(
+    shadow_stack, inline_shadow, comp_frames, comp_frame_at, idx, name
+):
+    if name in inline_shadow:
+        return True
+    if _pgrep_python_comprehension_shadows_name(
+        comp_frames, comp_frame_at, idx, name
+    ):
+        return True
+    for layer in shadow_stack:
+        if name in layer:
+            return True
+    return False
+
+
+def _pgrep_python_comprehension_for_names(tokens, open_idx):
+    names = set()
+    depth = 0
+    idx = open_idx
+    while idx < len(tokens):
+        t = tokens[idx]
+        if t.type == tokenize.OP and t.string == "[":
+            depth += 1
+        elif t.type == tokenize.OP and t.string == "]":
+            depth -= 1
+            if depth == 0:
+                break
+        if (
+            depth >= 1
+            and t.type == tokenize.NAME
+            and t.string == "for"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.NAME
+            and tokens[idx + 2].type == tokenize.NAME
+            and tokens[idx + 2].string == "in"
+        ):
+            names.add(tokens[idx + 1].string)
+        idx += 1
+    return names
+
+
+def _pgrep_python_stdin_shell_invoke_one_pass_v3(tokens):
+    _SUBPROCESS_METHODS = frozenset(
+        ("run", "call", "check_call", "check_output", "Popen")
+    )
+    subprocess_aliases = {"subprocess"}
+    subprocess_direct = {}
+    os_system = set()
+    shadow_stack = []
+    inline_shadow = set()
+    comp_stack = []
+    pending_scope_params = None
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok.type == tokenize.INDENT:
+            shadow_stack.append(set(pending_scope_params or ()))
+            pending_scope_params = None
+            idx += 1
+            continue
+        if tok.type == tokenize.DEDENT:
+            if shadow_stack:
+                shadow_stack.pop()
+            idx += 1
+            continue
+        if tok.type == tokenize.OP and tok.string == "[":
+            comp_stack.append(_pgrep_python_comprehension_for_names(tokens, idx))
+        elif tok.type == tokenize.OP and tok.string == "]" and comp_stack:
+            comp_stack.pop()
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < len(tokens):
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < len(tokens) and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                            break
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < len(tokens) and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                    break
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string == "def":
+            pending_scope_params = _pgrep_python_def_parameter_names(tokens, idx)
+        elif tok.type == tokenize.NAME and tok.string == "lambda":
+            pending_scope_params = _pgrep_python_lambda_parameter_names(tokens, idx)
+        elif tok.type == tokenize.NAME and tok.string == "for" and idx + 3 < len(tokens):
+            if (
+                tokens[idx + 1].type == tokenize.NAME
+                and tokens[idx + 2].type == tokenize.NAME
+                and tokens[idx + 2].string == "in"
+            ):
+                pending_scope_params = {tokens[idx + 1].string}
+        elif (
+            tok.type == tokenize.NAME
+            and tok.string == "as"
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.NAME
+        ):
+            pending_scope_params = {tokens[idx + 1].string}
+        elif tok.type == tokenize.OP and tok.string == ":" and pending_scope_params is not None:
+            nxt = idx + 1
+            while nxt < len(tokens) and tokens[nxt].type in (tokenize.NL, tokenize.NEWLINE):
+                nxt += 1
+            if nxt < len(tokens) and tokens[nxt].type != tokenize.INDENT:
+                inline_shadow = set(pending_scope_params)
+                pending_scope_params = None
+        elif tok.type in (tokenize.NEWLINE, tokenize.NL):
+            inline_shadow = set()
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < len(tokens) and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        tok = tokens[idx]
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in os_system
+            and not _pgrep_python_shadowed_import_name(
+                shadow_stack, inline_shadow, comp_stack, tok.string
+            )
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(
+                tokens, idx + 1, string_is_shell=True
+            )
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in subprocess_direct
+            and not _pgrep_python_shadowed_import_name(
+                shadow_stack, inline_shadow, comp_stack, tok.string
+            )
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(tokens, idx + 1, popen_style=True)
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string == "os"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "."
+            and tokens[idx + 2].type == tokenize.NAME
+        ):
+            meth = tokens[idx + 2].string
+            if meth in ("system", "popen"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, string_is_shell=True
+                    )
+                ):
+                    return True
+            if meth.startswith("exec") or meth.startswith("spawn"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, exec_style=True
+                    )
+                ):
+                    return True
+        if tok.type == tokenize.NAME and tok.string in subprocess_aliases:
+            j = idx + 1
+            while j + 1 < len(tokens):
+                if tokens[j].type != tokenize.OP or tokens[j].string != ".":
+                    break
+                if tokens[j + 1].type != tokenize.NAME:
+                    break
+                meth = tokens[j + 1].string
+                if meth not in _SUBPROCESS_METHODS:
+                    j += 2
+                    continue
+                args_start = j + 2
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, popen_style=True
+                    )
+                ):
+                    return True
+                break
+        idx += 1
+    return False
+
+def _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens):
+    _SUBPROCESS_METHODS = frozenset(
+        ("run", "call", "check_call", "check_output", "Popen")
+    )
+    subprocess_aliases = {"subprocess"}
+    subprocess_direct = {}
+    os_system = set()
+    shadow_stack = []
+    inline_shadow = set()
+    comp_frames, comp_frame_at = _pgrep_python_comprehension_shadow_by_index(tokens)
+    pending_scope_params = None
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok.type == tokenize.INDENT:
+            shadow_stack.append(set(pending_scope_params or ()))
+            pending_scope_params = None
+            idx += 1
+            continue
+        if tok.type == tokenize.DEDENT:
+            if shadow_stack:
+                shadow_stack.pop()
+            idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string == "from" and idx + 3 < len(tokens):
+            mod_tok = tokens[idx + 1]
+            kw_tok = tokens[idx + 2]
+            if (
+                mod_tok.type == tokenize.NAME
+                and kw_tok.type == tokenize.NAME
+                and kw_tok.string == "import"
+            ):
+                mod = mod_tok.string
+                if mod in ("subprocess", "os"):
+                    idx += 3
+                    while idx < len(tokens) and tokens[idx].type not in (
+                        tokenize.NEWLINE,
+                        tokenize.NL,
+                    ):
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                            break
+                        if tokens[idx].type == tokenize.NAME:
+                            imported = tokens[idx].string
+                            alias = imported
+                            nxt = idx + 1
+                            if (
+                                nxt + 1 < len(tokens)
+                                and tokens[nxt].type == tokenize.NAME
+                                and tokens[nxt].string == "as"
+                                and tokens[nxt + 1].type == tokenize.NAME
+                            ):
+                                alias = tokens[nxt + 1].string
+                                idx = nxt + 2
+                            else:
+                                idx += 1
+                            if mod == "subprocess" and imported in _PGREP_PYTHON_SUBPROCESS_METHODS:
+                                subprocess_direct[alias] = True
+                            elif mod == "os" and imported == "system":
+                                os_system.add(alias)
+                            continue
+                        if tokens[idx].type == tokenize.OP and tokens[idx].string == ",":
+                            idx += 1
+                            continue
+                        break
+                    continue
+        if tok.type == tokenize.NAME and tok.string == "import":
+            idx += 1
+            while idx < len(tokens) and tokens[idx].type not in (
+                tokenize.NEWLINE,
+                tokenize.NL,
+            ):
+                if tokens[idx].type == tokenize.OP and tokens[idx].string == ";":
+                    break
+                if tokens[idx].type == tokenize.NAME and tokens[idx].string == "subprocess":
+                    j = idx + 1
+                    if (
+                        j + 1 < len(tokens)
+                        and tokens[j].type == tokenize.NAME
+                        and tokens[j].string == "as"
+                        and tokens[j + 1].type == tokenize.NAME
+                    ):
+                        subprocess_aliases.add(tokens[j + 1].string)
+                idx += 1
+            continue
+        if tok.type == tokenize.NAME and tok.string == "def":
+            pending_scope_params = _pgrep_python_def_parameter_names(tokens, idx)
+        elif tok.type == tokenize.NAME and tok.string == "lambda":
+            pending_scope_params = _pgrep_python_lambda_parameter_names(tokens, idx)
+        elif tok.type == tokenize.NAME and tok.string == "for" and idx + 3 < len(tokens):
+            if (
+                tokens[idx + 1].type == tokenize.NAME
+                and tokens[idx + 2].type == tokenize.NAME
+                and tokens[idx + 2].string == "in"
+            ):
+                pending_scope_params = {tokens[idx + 1].string}
+        elif (
+            tok.type == tokenize.NAME
+            and tok.string == "as"
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.NAME
+        ):
+            pending_scope_params = {tokens[idx + 1].string}
+        elif tok.type == tokenize.OP and tok.string == ":" and pending_scope_params is not None:
+            nxt = idx + 1
+            while nxt < len(tokens) and tokens[nxt].type in (tokenize.NL, tokenize.NEWLINE):
+                nxt += 1
+            if nxt < len(tokens) and tokens[nxt].type != tokenize.INDENT:
+                inline_shadow = set(pending_scope_params)
+                pending_scope_params = None
+        elif tok.type in (tokenize.NEWLINE, tokenize.NL):
+            inline_shadow = set()
+        if tok.type == tokenize.NAME and tok.string in ("def", "class"):
+            if idx + 1 < len(tokens) and tokens[idx + 1].type == tokenize.NAME:
+                _pgrep_python_drop_import_binding(
+                    subprocess_direct, os_system, tokens[idx + 1].string
+                )
+        elif (
+            tok.type == tokenize.NAME
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "="
+            and tok.string not in ("if", "elif", "for", "while")
+        ):
+            _pgrep_python_drop_import_binding(subprocess_direct, os_system, tok.string)
+        tok = tokens[idx]
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in os_system
+            and not _pgrep_python_shadowed_import_name_at(
+                shadow_stack,
+                inline_shadow,
+                comp_frames,
+                comp_frame_at,
+                idx,
+                tok.string,
+            )
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(
+                tokens, idx + 1, string_is_shell=True
+            )
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in subprocess_direct
+            and not _pgrep_python_shadowed_import_name_at(
+                shadow_stack,
+                inline_shadow,
+                comp_frames,
+                comp_frame_at,
+                idx,
+                tok.string,
+            )
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(tokens, idx + 1, popen_style=True)
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string == "os"
+            and idx + 2 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "."
+            and tokens[idx + 2].type == tokenize.NAME
+        ):
+            meth = tokens[idx + 2].string
+            if meth in ("system", "popen"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, string_is_shell=True
+                    )
+                ):
+                    return True
+            if meth.startswith("exec") or meth.startswith("spawn"):
+                args_start = idx + 3
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, exec_style=True
+                    )
+                ):
+                    return True
+        if tok.type == tokenize.NAME and tok.string in subprocess_aliases:
+            j = idx + 1
+            while j + 1 < len(tokens):
+                if tokens[j].type != tokenize.OP or tokens[j].string != ".":
+                    break
+                if tokens[j + 1].type != tokenize.NAME:
+                    break
+                meth = tokens[j + 1].string
+                if meth not in _SUBPROCESS_METHODS:
+                    j += 2
+                    continue
+                args_start = j + 2
+                if (
+                    args_start < len(tokens)
+                    and tokens[args_start].type == tokenize.OP
+                    and tokens[args_start].string == "("
+                    and _pgrep_python_call_args_block(
+                        tokens, args_start, popen_style=True
+                    )
+                ):
+                    return True
+                break
+        idx += 1
+    return False
+
+
 def _pgrep_python_stdin_shell_invoke(body):
     from io import BytesIO
 
@@ -825,6 +1838,21 @@ def _pgrep_python_stdin_shell_invoke(body):
     except (tokenize.TokenError, SyntaxError, UnicodeError):
         return False
 
+    if not _pgrep_python_stdin_body_worth_scanning(body):
+        return False
+    try:
+        return _pgrep_python_stdin_shell_invoke_one_pass_v4(tokens)
+    except Exception:
+        return _pgrep_python_stdin_shell_invoke_one_pass_v3(tokens)
+
+    if _pgrep_python_stdin_shell_invoke_one_pass_v3(tokens):
+        return True
+    return False
+
+    if _pgrep_python_stdin_shell_invoke_one_pass(tokens):
+        return True
+    return False
+
     _SUBPROCESS_METHODS = frozenset(
         ("run", "call", "check_call", "check_output", "Popen")
     )
@@ -833,6 +1861,29 @@ def _pgrep_python_stdin_shell_invoke(body):
     idx = 0
     while idx < len(tokens):
         tok = tokens[idx]
+        subprocess_aliases, subprocess_direct, os_system = _pgrep_python_bindings_at(
+            tokens, idx
+        )
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in os_system
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(
+                tokens, idx + 1, string_is_shell=True
+            )
+        ):
+            return True
+        if (
+            tok.type == tokenize.NAME
+            and tok.string in subprocess_direct
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1].type == tokenize.OP
+            and tokens[idx + 1].string == "("
+            and _pgrep_python_call_args_block(tokens, idx + 1, popen_style=True)
+        ):
+            return True
         if (
             tok.type == tokenize.NAME
             and tok.string == "os"
@@ -3706,6 +4757,12 @@ def pgrep_full_match(text, cmd=None):
     shell = cmd if isinstance(cmd, str) and cmd.strip() else text
     if _pgrep_match_expandable_data_heredoc_substitutions(shell):
         return True
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(
+        shell
+    ):
+        if stdin_prog and not executable:
+            if _pgrep_pgrep_match_interpreter_stdin_body(shell[body_start:body_end]):
+                return True
     if not PGREP_WORD.search(pgrep_obfuscation_fold(text)):
         return False
     ctx = _PgrepScanContext(text)
