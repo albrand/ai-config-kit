@@ -1323,6 +1323,26 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
+        pk = "p" + "kill"
+        allowed = (
+            "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
+            'echo "$(printf \'%s\' \'a $( ' + pk + " b')\"",
+        )
+        blocked = (
+            "bash -c 'true\npgrep -f x'",
+            "ssh host 'cd /tmp\n" + pk + " node'",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+
     def test_python_stdin_large_heredoc_scan_bounded(self):
         import time
 
