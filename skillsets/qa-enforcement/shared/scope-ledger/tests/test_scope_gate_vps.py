@@ -114,26 +114,58 @@ sys.exit(1)
             errors,
         )
 
+    def _plugin_list_mock(self, stdout):
+        proc = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+        with mock.patch.object(subprocess, "run", return_value=proc):
+            return self.sg.plugin_tools_from_bb("bb")
+
     def test_plugin_tools_empty_listing_ok_error_fails(self):
-        ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Error: HTTP 401: Unauthorized")
-        with mock.patch.object(subprocess, "run", return_value=ok):
-            tools, err = self.sg.plugin_tools_from_bb("bb")
-        self.assertIsNone(err)
-        self.assertEqual(tools, {})
+        for empty in ("[]", '{"plugins": []}'):
+            with self.subTest(empty=empty):
+                tools, err = self._plugin_list_mock(empty)
+                self.assertIsNone(err, err)
+                self.assertEqual(tools, {})
         with mock.patch.object(subprocess, "run", return_value=bad):
             tools, err = self.sg.plugin_tools_from_bb("bb")
         self.assertIsNone(tools)
         self.assertIn("401", err)
 
+    def test_plugin_tools_error_object_in_stdout_fails(self):
+        tools, err = self._plugin_list_mock('{"error":"HTTP 401: Unauthorized"}')
+        self.assertIsNone(tools)
+        self.assertIn("401", err)
+
+    def test_plugin_tools_vps_error_envelope_fails(self):
+        stdout = json.dumps(
+            {"ok": False, "error": {"code": "http_401", "message": "HTTP 401: Unauthorized"}}
+        )
+        tools, err = self._plugin_list_mock(stdout)
+        self.assertIsNone(tools)
+        self.assertIn("401", err)
+
+    def test_plugin_tools_empty_object_listing_fails(self):
+        tools, err = self._plugin_list_mock("{}")
+        self.assertIsNone(tools)
+        self.assertIn("empty object", err)
+
     def test_plugin_tools_null_listing_fails_selftest_registry_check(self):
-        """bb plugin list --json may print null with exit 0; that must not pass as empty registry."""
-        null_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="null", stderr="")
-        with mock.patch.object(subprocess, "run", return_value=null_ok):
-            tools, err = self.sg.plugin_tools_from_bb("bb")
+        tools, err = self._plugin_list_mock("null")
         self.assertIsNone(tools)
         self.assertIsNotNone(err)
         self.assertIn("invalid plugin listing", err)
+
+    def test_plugin_tools_listing_with_registered_tool_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "demo-plugin"
+            root.mkdir()
+            (root / "register.ts").write_text('bb.agents.registerTool({name: "AskUserQuestion"});')
+            listing = json.dumps(
+                [{"id": "demo-plugin", "enabled": True, "rootDir": str(root)}]
+            )
+            tools, err = self._plugin_list_mock(listing)
+        self.assertIsNone(err, err)
+        self.assertIn("AskUserQuestion", tools)
 
     def test_loose_tools_empty_registry_passes(self):
         self.assertEqual(self.sg.loose_tools({}), [])

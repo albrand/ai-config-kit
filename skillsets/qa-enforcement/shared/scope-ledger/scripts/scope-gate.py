@@ -1421,6 +1421,56 @@ def loose_tools(tools):
     return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
 
 
+def _plugin_listing_failure_message(listing):
+    """Top-level error fields in bb plugin list JSON; None if not an error envelope."""
+    if not isinstance(listing, dict):
+        return None
+    if "error" in listing:
+        err = listing["error"]
+        if isinstance(err, str):
+            return err
+        if isinstance(err, dict):
+            msg = err.get("message")
+            if msg:
+                return str(msg)
+            code = err.get("code")
+            if code:
+                return str(code)
+        return str(err)
+    for key in ("message", "status"):
+        val = listing.get(key)
+        if val not in (None, "", False):
+            return str(val)
+    return None
+
+
+def _positively_empty_plugin_listing(listing):
+    if listing == []:
+        return True
+    if isinstance(listing, dict) and isinstance(listing.get("plugins"), list) and not listing["plugins"]:
+        return True
+    return False
+
+
+def _valid_plugin_listing_shape(listing):
+    """Return an error string when the JSON is not a readable plugin registry listing."""
+    if isinstance(listing, list):
+        return None
+    if isinstance(listing, dict):
+        fail = _plugin_listing_failure_message(listing)
+        if fail:
+            return fail
+        if "plugins" in listing:
+            if isinstance(listing["plugins"], list):
+                return None
+            return "invalid plugin listing: plugins is not an array"
+        if not listing:
+            return "invalid plugin listing: empty object"
+        return "invalid plugin listing: missing plugins array"
+    kind = "null" if listing is None else type(listing).__name__
+    return f"invalid plugin listing: expected array or object, got {kind}"
+
+
 def plugin_tools_from_bb(bb="bb"):
     """Return ({tool: plugin}, error). On success error is None; tools may be empty."""
     import subprocess
@@ -1442,9 +1492,9 @@ def plugin_tools_from_bb(bb="bb"):
         listing = json.loads(out)
     except ValueError as e:
         return None, f"invalid JSON from bb plugin list: {e}"
-    if not isinstance(listing, (list, dict)):
-        kind = "null" if listing is None else type(listing).__name__
-        return None, f"invalid plugin listing: expected array or object, got {kind}"
+    shape_err = _valid_plugin_listing_shape(listing)
+    if shape_err:
+        return None, shape_err
     roots = {}
 
     def walk(o):
@@ -1457,6 +1507,8 @@ def plugin_tools_from_bb(bb="bb"):
             for v in o:
                 walk(v)
     walk(listing)
+    if not roots and not _positively_empty_plugin_listing(listing):
+        return None, "plugin listing yielded no enabled plugins"
     return _swept(roots), None
 
 
