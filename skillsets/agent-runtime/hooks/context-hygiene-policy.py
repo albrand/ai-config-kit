@@ -4045,7 +4045,7 @@ def _pgrep_case_pattern_alt_plain(alt):
 
 
 _PGREP_CASE_LITERAL_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@\-"
+    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@\-"
 )
 
 
@@ -4110,7 +4110,7 @@ def _pgrep_case_arm_statically_unreachable(state, pattern_text):
             return False
         if not _pgrep_case_literal_only_after_quotes(lit):
             return False
-        if lit == state.word_lit:
+        if lit.casefold() == state.word_lit.casefold():
             return False
     return True
 

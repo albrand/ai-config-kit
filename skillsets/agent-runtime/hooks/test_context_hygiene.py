@@ -1394,6 +1394,12 @@ pgrep -f bb',
             f"case x in 'z') {pk} node;; esac",
         )
         blocked = (
+            "shopt -s nocasematch; case x in X) "
+            + pk
+            + " node;; esac",
+            'shopt -s nocasematch; echo "$(case x in X) '
+            + pk
+            + ' node;; esac)"',
             "shopt -s extglob\ncase x in @(x|y)) "
             + pk
             + " node;; esac",
