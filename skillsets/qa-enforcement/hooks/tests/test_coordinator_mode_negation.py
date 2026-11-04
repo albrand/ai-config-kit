@@ -31,6 +31,9 @@ NON_COORDINATOR = (
 CLAUSE_COORDINATOR = (
     ("don't spawn anything yet and orchestrate the rollout after lunch", True),
     ("do not delegate yet but be the coordinator for the migration", True),
+    ("Do not delegate the review while you act as the coordinator for the migration", True),
+    ("don't spawn more than 2 children although you should orchestrate the rollout", True),
+    ("do not delegate anything until you are the orchestrator for the release", True),
 )
 MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {

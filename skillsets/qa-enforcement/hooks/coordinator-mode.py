@@ -128,10 +128,44 @@ def event(sid, kind, **kw):
         pass
 
 
+def negation_floor(span):
+    head = re.match(
+        r"(?:(?:don'?t|do not)\s+(?:orchestrate|spawn|delegate)|"
+        r"no need to (?:delegate|orchestrat\w*)|"
+        r"skip (?:the )?children|"
+        r"don'?t use (?:the )?(?:children|child agents|sub-?agents))\b",
+        span,
+        re.I,
+    )
+    return head.end() if head else 0
+
+
+def negation_removal_end(span):
+    """How much of a negation match may be removed without swallowing a COORD hit."""
+    floor = negation_floor(span)
+    hit = COORD.search(span, floor)
+    if hit:
+        return hit.start()
+    return len(span)
+
+
 def strip_negated_spans(prompt):
     text = prompt
-    for pat in NEGATION_STRIP:
-        text = pat.sub(" ", text)
+    while True:
+        removed = False
+        for pat in NEGATION_STRIP:
+            m = pat.search(text)
+            if not m:
+                continue
+            span = m.group(0)
+            end = negation_removal_end(span)
+            if end <= 0:
+                continue
+            text = text[: m.start()] + (" " * end) + text[m.start() + end :]
+            removed = True
+            break
+        if not removed:
+            break
     return text
 
 
