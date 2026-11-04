@@ -55,23 +55,18 @@ SOLO = re.compile(
     r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
     r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
     r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
+# Stop a negated span at punctuation or a clause joiner so a later positive ask stays.
+_NEG_TAIL = r"(?:(?!\s+(?:and|but|then|so|or)\b)[^.;,])*"
 NEGATION_STRIP = (
-    re.compile(r"don'?t orchestrate(?:\s+\w+){0,2}", re.I),
-    re.compile(r"do not orchestrate(?:\s+\w+){0,2}", re.I),
-    re.compile(r"don'?t spawn[^.;,]*", re.I),
-    re.compile(r"do not spawn[^.;,]*", re.I),
-    re.compile(r"don'?t delegate[^.;,]*", re.I),
-    re.compile(r"do not delegate[^.;,]*", re.I),
-    re.compile(r"no need to (?:delegate|orchestrat\w*)[^.;,]*", re.I),
-    re.compile(r"skip (?:the )?children[^.;,]*", re.I),
-    re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)[^.;,]*", re.I),
-)
-STRONG_COORD = re.compile(
-    r"\borchestrate\b|(?:be|act as|become|you are|you're|as|work as|run as)\s+(?:the\s+)?(?:orchestrator|coordinator|master(?: thread)?|lead agent)"
-    r"|(?:spawn|launch|coordinate|create|dispatch|delegate to|split (?:it |this |the work )?(?:across|between|among)|use)\s+"
-    + _AGENTS
-    + r"|fan[- ]?out|subagents swarm allowed|divide (?:and|&) conquer",
-    re.I,
+    re.compile(r"don'?t orchestrate(?:\s+(?!(?:and|but|then|so|or)\b)\w+){0,2}", re.I),
+    re.compile(r"do not orchestrate(?:\s+(?!(?:and|but|then|so|or)\b)\w+){0,2}", re.I),
+    re.compile(r"don'?t spawn" + _NEG_TAIL, re.I),
+    re.compile(r"do not spawn" + _NEG_TAIL, re.I),
+    re.compile(r"don'?t delegate" + _NEG_TAIL, re.I),
+    re.compile(r"do not delegate" + _NEG_TAIL, re.I),
+    re.compile(r"no need to (?:delegate|orchestrat\w*)" + _NEG_TAIL, re.I),
+    re.compile(r"skip (?:the )?children" + _NEG_TAIL, re.I),
+    re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)" + _NEG_TAIL, re.I),
 )
 WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
 COORD = re.compile(
@@ -141,15 +136,15 @@ def strip_negated_spans(prompt):
 
 
 def wants_coordinator(prompt):
-    """True when a positive coordinator ask remains after negated spans are removed."""
+    """True when COORD still matches after negated spans are removed."""
     stripped = strip_negated_spans(prompt)
-    if STRONG_COORD.search(stripped):
-        return True
-    if WEAK_WITH_AGENTS.search(stripped):
-        if re.search(r"do not delegate|don'?t delegate|\bdirectly\b", prompt, re.I):
-            return False
-        return True
-    return bool(COORD.search(stripped))
+    if not COORD.search(stripped):
+        return False
+    if WEAK_WITH_AGENTS.search(stripped) and re.search(
+            r"do not delegate|don'?t delegate|\bdirectly\b", prompt, re.I):
+        without_weak = re.sub(r"\bwith\s+" + _AGENTS, " ", stripped, flags=re.I)
+        return bool(COORD.search(without_weak))
+    return True
 
 
 def classify(prompt, first):

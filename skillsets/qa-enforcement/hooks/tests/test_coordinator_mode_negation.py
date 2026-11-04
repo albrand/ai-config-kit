@@ -24,6 +24,14 @@ CLASSIFY_ROWS = (
     ("spawn children for the frontend; no need to delegate the migration", True),
     ("use subagents for research, but skip the children for the final review", True),
 )
+NON_COORDINATOR = (
+    ("the orchestrate plugin needs docs", False),
+    ("update the orchestrate skill readme", False),
+)
+CLAUSE_COORDINATOR = (
+    ("don't spawn anything yet and orchestrate the rollout after lunch", True),
+    ("do not delegate yet but be the coordinator for the migration", True),
+)
 MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {
     "tool_name": "write",
@@ -77,6 +85,19 @@ class CoordinatorModeNegationTests(unittest.TestCase):
 
     def test_classify_table_eight_rows(self):
         for prompt, want_coord in CLASSIFY_ROWS:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_orchestrate_plugin_and_skill_are_not_coordinator(self):
+        for prompt, want_coord in NON_COORDINATOR:
+            with self.subTest(prompt=prompt):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+                self.assertEqual(got, "")
+
+    def test_negation_does_not_swallow_later_coordinator_clause(self):
+        for prompt, want_coord in CLAUSE_COORDINATOR:
             with self.subTest(prompt=prompt[:56]):
                 got = self.classify(prompt, False)
                 self.assertEqual(got == "coordinator", want_coord, (got, prompt))
