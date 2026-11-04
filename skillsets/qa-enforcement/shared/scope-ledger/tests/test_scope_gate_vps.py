@@ -126,6 +126,15 @@ sys.exit(1)
         self.assertIsNone(tools)
         self.assertIn("401", err)
 
+    def test_plugin_tools_null_listing_fails_selftest_registry_check(self):
+        """bb plugin list --json may print null with exit 0; that must not pass as empty registry."""
+        null_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="null", stderr="")
+        with mock.patch.object(subprocess, "run", return_value=null_ok):
+            tools, err = self.sg.plugin_tools_from_bb("bb")
+        self.assertIsNone(tools)
+        self.assertIsNotNone(err)
+        self.assertIn("invalid plugin listing", err)
+
     def test_loose_tools_empty_registry_passes(self):
         self.assertEqual(self.sg.loose_tools({}), [])
 

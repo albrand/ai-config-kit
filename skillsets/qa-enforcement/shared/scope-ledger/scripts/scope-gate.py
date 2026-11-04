@@ -1436,10 +1436,15 @@ def plugin_tools_from_bb(bb="bb"):
     if p.returncode != 0:
         detail = err or out or f"exit {p.returncode}"
         return None, detail
+    if not out:
+        return None, "empty output from bb plugin list"
     try:
-        listing = json.loads(out or "null")
+        listing = json.loads(out)
     except ValueError as e:
         return None, f"invalid JSON from bb plugin list: {e}"
+    if not isinstance(listing, (list, dict)):
+        kind = "null" if listing is None else type(listing).__name__
+        return None, f"invalid plugin listing: expected array or object, got {kind}"
     roots = {}
 
     def walk(o):
