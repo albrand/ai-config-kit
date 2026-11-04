@@ -4045,7 +4045,7 @@ def _pgrep_case_pattern_alt_plain(alt):
 
 
 _PGREP_CASE_LITERAL_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@-"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@\-"
 )
 
 
