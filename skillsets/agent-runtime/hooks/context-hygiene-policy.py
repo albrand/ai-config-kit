@@ -5328,7 +5328,7 @@ _PGREP_SUBST_EXPAND_MAX = 64
 def _pgrep_blank_nonexecutable_heredoc_bodies(text):
     chars = list(text)
     for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
-        if executable or not literal:
+        if executable or stdin_prog:
             continue
         for k in range(body_start, body_end):
             if chars[k] != "\n":
@@ -5704,18 +5704,19 @@ def bb_lifecycle_guard(raw):
         cmd = (p.get("tool_input") or {}).get("command")
         if isinstance(cmd, list):
             cmd = " ".join(c for c in cmd if isinstance(c, str))
-        # A heredoc that only writes a file (cat > /tmp/x <<'EOF') executes
-        # nothing; scan just the command before it, as the heredoc rule does.
-        if isinstance(cmd, str) and "<<" in cmd:
-            head = cmd.split("<<", 1)[0]
-            if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
-                tail = _pgrep_tail_after_first_heredoc(cmd)
-                text = head + ("\n" + tail if tail else "")
     except Exception:
         pass
     try:
         pgrep_cmd = cmd if isinstance(cmd, str) else None
-        if pgrep_full_match(text, cmd=pgrep_cmd):
+        shell_for_pgrep = cmd if isinstance(cmd, str) and cmd.strip() else text
+        pgrep_scan = _pgrep_blank_nonexecutable_heredoc_bodies(shell_for_pgrep)
+        if isinstance(cmd, str) and "<<" in cmd:
+            head = cmd.split("<<", 1)[0]
+            if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
+                tail = _pgrep_tail_after_first_heredoc(cmd)
+                if not tail:
+                    pgrep_scan = head
+        if pgrep_full_match(pgrep_scan, cmd=pgrep_cmd):
             verdict(True, PGREP_F_DENY)
     except Exception:
         pass
@@ -5725,12 +5726,8 @@ def bb_lifecycle_guard(raw):
             "runtime that fork-stage.sh installs bb from, offline and checksum-verified. Without "
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
-    lifecycle_scan = cmd if isinstance(cmd, str) and cmd else text
-    if isinstance(cmd, str) and "<<" in cmd:
-        head = cmd.split("<<", 1)[0]
-        if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
-            tail = _pgrep_tail_after_first_heredoc(cmd)
-            lifecycle_scan = head + ("\n" + tail if tail else "")
+    shell_for_lifecycle = cmd if isinstance(cmd, str) and cmd.strip() else text
+    lifecycle_scan = _pgrep_blank_nonexecutable_heredoc_bodies(shell_for_lifecycle)
     lifecycle_block = kills_bb_pid(lifecycle_scan)
     if not lifecycle_block:
         lifecycle_block = any(rx.search(lifecycle_scan) for rx in BB_LIFECYCLE[:-1])
