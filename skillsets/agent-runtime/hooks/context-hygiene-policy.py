@@ -87,7 +87,7 @@ def verdict(block, reason=""):
 # blocked if it is a bb.app process (the incident's final step was
 # `kill -TERM 78123`, the desktop main process).
 BB_LIFECYCLE_PKILL = re.compile(
-    r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'
+    r'(?:^|[;&|(`\n])\s*(?:(?:sudo|env|command|exec|nohup|timeout)\s+(?:-\S+\s+|\d+\s+|\w+=\S*\s+)*)*(?:\w+=\S*\s+)*(?:\S*/)?pkill(?=\s|$|[;&|)`])'
 )
 BB_LIFECYCLE = [
     re.compile(r'tell\s+application\s+(?:id\s+)?[\\"]*(?:dev\.bb\.desktop|bb)[\\"]*\s+to\s+quit', re.I),
@@ -2780,7 +2780,120 @@ def _pgrep_lifecycle_pkill_word_match(
     return False
 
 
-def _pgrep_lifecycle_pkill_match(text):
+_PGREP_LIFECYCLE_VAR_REF = re.compile(r"^\$(\w+)$|^\$\{(\w+)\}$")
+
+
+def _pgrep_lifecycle_var_ref_name(word):
+    w = word.strip()
+    if len(w) >= 2 and w[0] == w[-1] and w[0] in "'\"":
+        w = w[1:-1].strip()
+    m = _PGREP_LIFECYCLE_VAR_REF.match(w)
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
+def _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, into):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            break
+        asn = _pgrep_assignment_at(text, i, cmd_end)
+        if not asn:
+            break
+        name, val, nxt = asn
+        into[name] = _pgrep_unquote_assign_value(val)
+        i = nxt
+
+
+def _pgrep_lifecycle_expand_var_segment(segment, binds):
+    if not binds:
+        return segment
+    var = _pgrep_lifecycle_var_ref_name(segment)
+    if var is None:
+        return segment
+    return binds.get(var)
+
+
+def _pgrep_lifecycle_bindings_for_pos(text, pos):
+    binds = {}
+    for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        if pos < cmd_start:
+            break
+        _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, binds)
+        if pos < cmd_end:
+            break
+    return binds
+
+
+def _pgrep_lifecycle_scan_resolved_arg(text, arg_text, binds, depth):
+    expanded = _pgrep_lifecycle_expand_var_segment(arg_text, binds)
+    if not expanded:
+        return False
+    if expanded == arg_text:
+        inner = expanded
+        if len(inner) >= 2 and inner[0] == inner[-1] and inner[0] in "'\"":
+            inner = inner[1:-1]
+        return _pgrep_lifecycle_pkill_match(inner, depth + 1)
+    return _pgrep_lifecycle_pkill_match(expanded, depth + 1)
+
+
+def _pgrep_lifecycle_var_and_nested_exec_pkill(text, cmd_start, cmd_end, binds, depth):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_assignments_and_wrappers(text, i, cmd_end)
+    i = _pgrep_skip_space(text, i)
+    if i >= cmd_end:
+        return False
+    ws = i
+    we = _pgrep_skip_one_word(text, i, cmd_end)
+    if we <= ws:
+        return False
+    word = text[ws:we]
+    var = _pgrep_lifecycle_var_ref_name(word)
+    if var and var in binds:
+        expanded = binds[var]
+        if expanded and _pgrep_lifecycle_pkill_match(expanded, depth + 1):
+            return True
+    base = _pgrep_bare_word(word).rsplit("/", 1)[-1].lower()
+    if base == "eval":
+        j = _pgrep_skip_space(text, we)
+        if j < cmd_end:
+            arg_ws = j
+            arg_we = _pgrep_skip_one_word(text, j, cmd_end)
+            if _pgrep_lifecycle_scan_resolved_arg(
+                text, text[arg_ws:arg_we], binds, depth
+            ):
+                return True
+    if base in ("bash", "sh", "zsh", "dash", "ksh"):
+        k = we
+        while k < cmd_end:
+            k = _pgrep_skip_space(text, k)
+            if k >= cmd_end:
+                break
+            ws2 = k
+            we2 = _pgrep_skip_one_word(text, k, cmd_end)
+            if ws2 >= we2:
+                break
+            if _pgrep_word_is_dash_c_flag(text[ws2:we2]) or _pgrep_bare_word(
+                text[ws2:we2]
+            ) == "-c":
+                j = _pgrep_skip_space(text, we2)
+                if j < cmd_end:
+                    arg_ws = j
+                    arg_we = _pgrep_skip_one_word(text, j, cmd_end)
+                    if _pgrep_lifecycle_scan_resolved_arg(
+                        text, text[arg_ws:arg_we], binds, depth
+                    ):
+                        return True
+                return False
+            k = we2
+    return False
+
+
+def _pgrep_lifecycle_pkill_match(text, _depth=0):
+    if _depth > _PGREP_FRAGMENT_MAX_DEPTH:
+        return False
     masked = _pgrep_mask_lifecycle_comments(text)
     exec_starts = _pgrep_executable_single_quote_starts(text)
     regions = _pgrep_single_quote_literal_regions(text)
@@ -2789,14 +2902,53 @@ def _pgrep_lifecycle_pkill_match(text):
         text, masked, exec_starts, regions, region_idx, 0
     ):
         return True
+    carry = {}
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
+        _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, carry)
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
             if _pgrep_lifecycle_pkill_word_match(
                 text, chunk, exec_starts, regions, region_idx, ls
             ):
                 return True
+        if _pgrep_lifecycle_var_and_nested_exec_pkill(
+            text, cmd_start, cmd_end, carry, _depth
+        ):
+            return True
+    if not re.search(r"\bpkill\b", text, re.I):
+        return False
+    for start, end, is_exec in _pgrep_iter_quoted_spans_meta(text):
+        if not is_exec:
+            continue
+        inner = text[start + 1 : end - 1]
+        binds = _pgrep_lifecycle_bindings_for_pos(text, start)
+        expanded = _pgrep_lifecycle_expand_var_segment(inner, binds)
+        if not expanded:
+            continue
+        if expanded != inner:
+            if _pgrep_lifecycle_pkill_match(expanded, _depth + 1):
+                return True
+            continue
+        if _pgrep_lifecycle_pkill_match(
+            _pgrep_mask_lifecycle_comments(inner), _depth + 1
+        ):
+            return True
+    for inner in _pgrep_each_dollar_paren(text):
+        if not re.search(r"\bpkill\b", inner, re.I):
+            continue
+        if _pgrep_lifecycle_pkill_match(
+            _pgrep_mask_lifecycle_comments(inner), _depth + 1
+        ):
+            return True
+    for inner in _pgrep_each_backtick(text):
+        if not re.search(r"\bpkill\b", inner, re.I):
+            continue
+        if _pgrep_lifecycle_pkill_match(
+            _pgrep_mask_lifecycle_comments(inner), _depth + 1
+        ):
+            return True
     return False
+
 
 
 def _pgrep_quote_fault_in_segment(text, base, fault):
