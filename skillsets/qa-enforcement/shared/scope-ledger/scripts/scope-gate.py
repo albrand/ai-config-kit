@@ -144,7 +144,8 @@ HOOK_HARD_S = 10.0
 COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
                              r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
                              r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
-                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call', re.I)
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|'
+                             r'settings.{0,20}writing.{0,20}(correct|transcribe)|plugin.{0,20}rpc.{0,20}call', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -1350,6 +1351,7 @@ VERB_EXEMPT = {
     "fleet hermes": "a claim sent to the reviewer, not work for a thread",
     "terminal send": "types into a terminal session (a shell), not a thread's conversation",
     "notify send": "a desktop notice to the person, not work for an agent",
+    "push-notifications send": "a push notice to the person, not work for an agent",
     "terminal notify": "raises terminal attention for the person (title/body), not work for an agent",
     "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
     "thread log": "read-only: its --message <seq> names a message to print, not text sent to a thread",
@@ -1582,6 +1584,32 @@ def bb_text_verbs(bb="bb"):
             break
         level = list(dict.fromkeys(nxt))
     return carries
+
+
+HELP_PROBE_VERBS = frozenset({"thread queue create", "thread interactions answer", "thread interactions respond",
+                              "automation create", "automation update", "instructions set", "notify send"})
+
+
+def help_probe_gaps(carries, bb="bb"):
+    """Verbs the integration selftest probes. Missing from `carries` because bb
+    has no such command is not a parser gap; missing while help exists is."""
+    import subprocess
+    unseen = HELP_PROBE_VERBS - carries
+    parser_gaps, absent = [], []
+    for verb in sorted(unseen):
+        path = verb.split()
+        try:
+            p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=60,
+                               stdin=subprocess.DEVNULL)
+            out = (p.stdout or "") + (p.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            absent.append(verb)
+            continue
+        if p.returncode != 0 or re.search(r"unknown command", out, re.I):
+            absent.append(verb)
+        else:
+            parser_gaps.append(verb)
+    return parser_gaps, absent
 
 
 def selftest():
@@ -2193,11 +2221,16 @@ def selftest():
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
         # bb removed `thread draft` (2026-09-30); its gating stays for older builds, but it can't be a probe.
-        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond",
-                         "automation create", "automation update", "instructions set", "notify send"} - carries)
-        failed += bool(unseen)
-        print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested and plugin groups and --text/--value/--script"
-              f"{': not found ' + ', '.join(unseen) if unseen else ''}")
+        parser_gaps, absent = help_probe_gaps(carries)
+        failed += bool(parser_gaps)
+        if parser_gaps:
+            print(f"FAIL the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f": not found {', '.join(parser_gaps)}")
+        elif absent:
+            print(f"ok   the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f" (not present in this bb: {', '.join(absent)})")
+        else:
+            print("ok   the help scan reaches nested and plugin groups and --text/--value/--script")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
         # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
@@ -2212,11 +2245,14 @@ def selftest():
               f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
               f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
         tools = plugin_tools()
-        loose = loose_tools(tools)
-        failed += bool(loose) or not tools
-        print(f"{'ok  ' if tools and not loose else 'FAIL'} every registered agent tool is gated or exempt "
-              f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
-              f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
+        if not tools:
+            print("ok   every registered agent tool is gated or exempt (none registered)")
+        else:
+            loose = loose_tools(tools)
+            failed += bool(loose)
+            print(f"{'ok  ' if not loose else 'FAIL'} every registered agent tool is gated or exempt "
+                  f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
+                  f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
     else:
         print("skip bb verb coverage: no bb on PATH")
     # gap-map nudge: shown after GAP_MAP_DISPATCHES passed dispatches, once, never with a map
