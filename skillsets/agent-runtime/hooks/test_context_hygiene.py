@@ -1433,6 +1433,31 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_data_heredoc_bodies_exempt_wherever_they_appear(self):
+        pk = "p" + "kill"
+        allowed = (
+            "cat > f1 <<'EOF'\nx\nEOF\ncat > f2 <<'EOF'\n" + pk + " node\nEOF",
+            "cat > f1 <<'EOF'\n" + pk + " node\nEOF\ncat > f2 <<'EOF'\n" + pk + " node\nEOF",
+            "cat > f1 <<'A'\n" + pk + " node\nA\ncat > f2 <<'B'\n" + pk + " node\nB",
+            "cat > f1 <<EOF\n" + pk + " node\nEOF\ncat > f2 <<EOF\n" + pk + " node\nEOF",
+            "echo start\ncat > f1 <<'EOF'\n" + pk + " node\nEOF",
+        )
+        blocked = (
+            "cat > f1 <<'EOF'\nx\nEOF\ncat > f2 <<'EOF'\ny\nEOF\n"
+            + pk
+            + " node | sh",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_blocks_pkill_reached_by_case_fallthrough(self):
         pk = "p" + "kill"
         blocked = (
