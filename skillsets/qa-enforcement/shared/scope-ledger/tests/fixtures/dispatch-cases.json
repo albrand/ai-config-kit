@@ -1,1465 +1,272 @@
 {
   "about": "Shell commands for the gate. {brief} is a file whose text serves P1, {nobrief} one that serves nothing, {tmp} their directory (the Claude cwd and the Codex workdir). want: 0 allow, 2 deny. The first eight are data that only MENTIONS a dispatch; the pre-tokenizer gate denied them.",
   "fix_brief_cases": [
-    {
-      "label": "writer fix brief without citations is denied",
-      "verdict": "FAIL",
-      "role": "writer",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "quote_report": true,
-      "space_report": true,
-      "spawn_prompt_file": true,
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "nonexistent Markdown output path is ignored",
-      "verdict": "FAIL",
-      "role": "writer",
-      "missing_report": true,
-      "repo_field": "Worktree",
-      "checked": false,
-      "citation": null,
-      "want": 0,
-      "git_spec": null
-    },
-    {
-      "label": "nonexistent Markdown output below a file parent is ignored",
-      "verdict": "FAIL",
-      "role": "writer",
-      "report_parent_is_file": true,
-      "repo_field": "Worktree",
-      "checked": false,
-      "citation": null,
-      "want": 0,
-      "git_spec": null
-    },
-    {
-      "label": "self-labelled read-only reviewer naming FAIL still needs citations",
-      "verdict": "FAIL",
-      "role": "independent reviewer",
-      "read_only": true,
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "Markdown anchor after a plain FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_anchor": "#summary",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "Markdown anchor inside an angle FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_anchor": "#summary",
-      "angle_report": true,
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "Markdown anchor inside a quoted FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_anchor": "#summary",
-      "quote_report": true,
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "escaped space in an unquoted FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "space_report": true,
-      "escaped_report": true,
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "period after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": ".",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "comma after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": ",",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "semicolon after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": ";",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "colon after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": ":",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "closing parenthesis after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": ")",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "closing bracket after a FAIL report path is enforced",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": null,
-      "report_suffix": "]",
-      "want": 2,
-      "needle": "at least one file:line citation",
-      "git_spec": null
-    },
-    {
-      "label": "citation missing at the reviewed SHA is denied",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1",
-      "want": 2,
-      "needle": "does not exist at",
-      "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1"
-    },
-    {
-      "label": "stale Checked against SHA is denied even when the citation exists there",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "checked_sha": "parent",
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1",
-      "exists_at_checked_sha": true,
-      "want": 2,
-      "needle": "does not match the named worktree HEAD",
-      "git_spec": null,
-      "git_head_check": true
-    },
-    {
-      "label": "existing unreadable absolute Markdown review path fails closed",
-      "verdict": "FAIL",
-      "unreadable_report": true,
-      "repo_field": "Worktree",
-      "checked": false,
-      "citation": null,
-      "want": 2,
-      "needle": "could not read referenced review file",
-      "git_spec": null
-    },
-    {
-      "label": "valid citation is allowed after git checks it",
-      "verdict": "FAIL",
-      "repo_field": "Repo",
-      "checked": true,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1",
-      "want": 0,
-      "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1"
-    },
-    {
-      "label": "Repo line is the fallback for an invalid Worktree",
-      "verdict": "FAIL",
-      "repo_field": "Repo",
-      "invalid_worktree": true,
-      "checked": true,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1",
-      "want": 0,
-      "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1"
-    },
-    {
-      "label": "citation beyond the file line count is denied",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": true,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:999999",
-      "want": 2,
-      "needle": "exceeds",
-      "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:999999"
-    },
-    {
-      "label": "missing Checked against line is denied",
-      "verdict": "FAIL",
-      "repo_field": "Worktree",
-      "checked": false,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1",
-      "want": 2,
-      "needle": "Checked against",
-      "git_spec": null
-    },
-    {
-      "label": "non-fix brief is unaffected",
-      "verdict": "PASS",
-      "repo_field": "Worktree",
-      "checked": false,
-      "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1",
-      "want": 0,
-      "git_spec": null
-    }
+    {"label": "writer fix brief without citations is denied", "verdict": "FAIL", "role": "writer", "repo_field": "Worktree", "checked": true, "citation": null, "quote_report": true, "space_report": true, "spawn_prompt_file": true, "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "nonexistent Markdown output path is ignored", "verdict": "FAIL", "role": "writer", "missing_report": true, "repo_field": "Worktree", "checked": false, "citation": null, "want": 0, "git_spec": null},
+    {"label": "nonexistent Markdown output below a file parent is ignored", "verdict": "FAIL", "role": "writer", "report_parent_is_file": true, "repo_field": "Worktree", "checked": false, "citation": null, "want": 0, "git_spec": null},
+    {"label": "self-labelled read-only reviewer naming FAIL still needs citations", "verdict": "FAIL", "role": "independent reviewer", "read_only": true, "repo_field": "Worktree", "checked": true, "citation": null, "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "Markdown anchor after a plain FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_anchor": "#summary", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "Markdown anchor inside an angle FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_anchor": "#summary", "angle_report": true, "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "Markdown anchor inside a quoted FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_anchor": "#summary", "quote_report": true, "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "escaped space in an unquoted FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "space_report": true, "escaped_report": true, "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "period after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": ".", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "comma after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": ",", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "semicolon after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": ";", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "colon after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": ":", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "closing parenthesis after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": ")", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "closing bracket after a FAIL report path is enforced", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": null, "report_suffix": "]", "want": 2, "needle": "at least one file:line citation", "git_spec": null},
+    {"label": "citation missing at the reviewed SHA is denied", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1", "want": 2, "needle": "does not exist at", "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1"},
+    {"label": "stale Checked against SHA is denied even when the citation exists there", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "checked_sha": "parent", "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1", "exists_at_checked_sha": true, "want": 2, "needle": "does not match the named worktree HEAD", "git_spec": null, "git_head_check": true},
+    {"label": "existing unreadable absolute Markdown review path fails closed", "verdict": "FAIL", "unreadable_report": true, "repo_field": "Worktree", "checked": false, "citation": null, "want": 2, "needle": "could not read referenced review file", "git_spec": null},
+    {"label": "valid citation is allowed after git checks it", "verdict": "FAIL", "repo_field": "Repo", "checked": true, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1", "want": 0, "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1"},
+    {"label": "Repo line is the fallback for an invalid Worktree", "verdict": "FAIL", "repo_field": "Repo", "invalid_worktree": true, "checked": true, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1", "want": 0, "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1"},
+    {"label": "citation beyond the file line count is denied", "verdict": "FAIL", "repo_field": "Worktree", "checked": true, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:999999", "want": 2, "needle": "exceeds", "git_spec": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:999999"},
+    {"label": "missing Checked against line is denied", "verdict": "FAIL", "repo_field": "Worktree", "checked": false, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/scope-gate.py:1", "want": 2, "needle": "Checked against", "git_spec": null},
+    {"label": "non-fix brief is unaffected", "verdict": "PASS", "repo_field": "Worktree", "checked": false, "citation": "skillsets/qa-enforcement/shared/scope-ledger/scripts/missing-at-sha.py:1", "want": 0, "git_spec": null}
   ],
   "cases": [
-    {
-      "label": "printf from the 2026-09-25 false positive",
-      "want": 0,
-      "command": "printf '%s\\n' \"- 15:40Z fleet value 720 h verified; a REAL undeclared bb thread tell from this session was DENIED, with P1-P3 listed\" >> {tmp}/plan.md"
-    },
-    {
-      "label": "echo that mentions a spawn",
-      "want": 0,
-      "command": "echo \"next: bb thread spawn --prompt x\""
-    },
-    {
-      "label": "grep for tells in a journal",
-      "want": 0,
-      "command": "grep -n \"bb thread tell\" {tmp}/journal.md"
-    },
-    {
-      "label": "git commit message naming a spawn",
-      "want": 0,
-      "command": "git commit -m \"gate denies bb thread spawn without serves\""
-    },
-    {
-      "label": "rg pattern with the dispatch words",
-      "want": 0,
-      "command": "rg 'bb thread (spawn|tell)' ~/.bb/thread-storage"
-    },
-    {
-      "label": "heredoc into a notes file that contains a dispatch line",
-      "want": 0,
-      "command": "cat <<'EOF' > {tmp}/notes.md\nbb thread tell thr_x don't forget\nEOF"
-    },
-    {
-      "label": "jq piped to grep for thread tell",
-      "want": 0,
-      "command": "jq -r .command {tmp}/log.json | grep \"bb thread tell\""
-    },
-    {
-      "label": "comment that mentions a dispatch",
-      "want": 0,
-      "command": "ls # then bb thread tell thr_x hi"
-    },
-    {
-      "label": "separator inside single quotes is data",
-      "want": 0,
-      "command": "echo 'done; bb thread tell thr_x hi' >> {tmp}/plan.md"
-    },
-    {
-      "label": "$(...) inside single quotes is not run",
-      "want": 0,
-      "command": "printf '%s\\n' '$(bb thread spawn --prompt x)'"
-    },
-    {
-      "label": "bb thread list is not a dispatch",
-      "want": 0,
-      "command": "bb thread list --parent-thread thr_x"
-    },
-    {
-      "label": "glued bare variable in automation verb word",
-      "want": 2,
-      "command": "bb automation$X run a1"
-    },
-    {
-      "label": "glued positional parameter in thread verb word",
-      "want": 2,
-      "command": "bb thread$1 tell thr_x hi"
-    },
-    {
-      "label": "bare variable in non-verb argument",
-      "want": 0,
-      "command": "bb thread show $ID"
-    },
-    {
-      "label": "bare variable in unrelated command",
-      "want": 0,
-      "command": "echo $PATH"
-    },
-    {
-      "label": "tell --message-file without serves",
-      "want": 2,
-      "command": "bb thread tell thr_x --message-file {nobrief}"
-    },
-    {
-      "label": "cd d && bb thread spawn without serves",
-      "want": 2,
-      "command": "cd /tmp && bb thread spawn --prompt x"
-    },
-    {
-      "label": "\"$BB_CLI\" thread tell without serves",
-      "want": 2,
-      "command": "\"$BB_CLI\" thread tell thr_x hi"
-    },
-    {
-      "label": "${BB_CLI} thread spawn without serves",
-      "want": 2,
-      "command": "${BB_CLI} thread spawn --prompt x"
-    },
-    {
-      "label": "sh -c 'bb thread tell ...' without serves",
-      "want": 2,
-      "command": "sh -c 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "bash -lc \"bb thread spawn ...\" without serves",
-      "want": 2,
-      "command": "bash -lc \"bb thread spawn --prompt x\""
-    },
-    {
-      "label": "env FOO=1 bb thread tell",
-      "want": 2,
-      "command": "env FOO=1 bb thread tell thr_x hi"
-    },
-    {
-      "label": "command bb thread message",
-      "want": 2,
-      "command": "command bb thread message thr_x hi"
-    },
-    {
-      "label": "exec bb thread tell",
-      "want": 2,
-      "command": "exec bb thread tell thr_x hi"
-    },
-    {
-      "label": "assignment then /usr/local/bin/bb thread create",
-      "want": 2,
-      "command": "FOO=1 /usr/local/bin/bb thread create --prompt x"
-    },
-    {
-      "label": "x=$(bb thread spawn ...)",
-      "want": 2,
-      "command": "x=$(bb thread spawn --prompt x) && echo $x"
-    },
-    {
-      "label": "backticks around a spawn",
-      "want": 2,
-      "command": "echo `bb thread spawn --prompt x`"
-    },
-    {
-      "label": "timeout 30 bb thread spawn",
-      "want": 2,
-      "command": "timeout 30 bb thread spawn --prompt x"
-    },
-    {
-      "label": "xargs -I{} bb thread tell",
-      "want": 2,
-      "command": "printf 'thr_a\\n' | xargs -I{} bb thread tell {} hi"
-    },
-    {
-      "label": "nice -n 5 bb thread tell",
-      "want": 2,
-      "command": "nice -n 5 bb thread tell thr_x hi"
-    },
-    {
-      "label": "sudo -u me bb thread spawn",
-      "want": 2,
-      "command": "sudo -u me bb thread spawn --prompt x"
-    },
-    {
-      "label": "stdbuf -oL bb thread tell",
-      "want": 2,
-      "command": "stdbuf -oL bb thread tell thr_x hi"
-    },
-    {
-      "label": "find -exec bb thread tell",
-      "want": 2,
-      "command": "find . -name x -exec bb thread tell thr_x hi \\;"
-    },
-    {
-      "label": "timeout 30 bb thread list is not a dispatch",
-      "want": 0,
-      "command": "timeout 30 bb thread list"
-    },
-    {
-      "label": "timeout 30 bb thread tell with serves",
-      "want": 0,
-      "command": "timeout 30 bb thread tell thr_x 'serves: P1 hi'"
-    },
-    {
-      "label": "true || bb thread tell",
-      "want": 2,
-      "command": "true || bb thread tell thr_x hi"
-    },
-    {
-      "label": "echo ok; bb thread tell on a new line",
-      "want": 2,
-      "command": "echo ok\nbb thread tell thr_x hi"
-    },
-    {
-      "label": "eval \"bb thread tell ...\"",
-      "want": 2,
-      "command": "eval \"bb thread tell thr_x hi\""
-    },
-    {
-      "label": "bb --json thread tell",
-      "want": 2,
-      "command": "bb --json thread tell thr_x hi"
-    },
-    {
-      "label": "serves in a sibling echo does not cover the tell",
-      "want": 2,
-      "command": "echo \"serves: P1\"; bb thread tell thr_x hi"
-    },
-    {
-      "label": "heredoc brief without serves",
-      "want": 2,
-      "command": "bb thread spawn --prompt-file - <<'EOF'\ndo the thing, don't ask\nEOF"
-    },
-    {
-      "label": "bash reading a heredoc script that tells",
-      "want": 2,
-      "command": "bash <<'EOF'\nbb thread tell thr_x hi\nEOF"
-    },
-    {
-      "label": "two tells, only the first serves",
-      "want": 2,
-      "command": "bb thread tell thr_a 'serves: P1 a' && bb thread tell thr_b 'b'"
-    },
-    {
-      "label": "heredoc brief with serves",
-      "want": 0,
-      "command": "bb thread spawn --prompt-file - <<'EOF'\nserves: P1\ndon't stop\nEOF"
-    },
-    {
-      "label": "$(cat <<EOF) brief with serves and an apostrophe",
-      "want": 0,
-      "command": "bb thread spawn --prompt \"$(cat <<'EOF'\nserves: P1\nit's (still) open\nEOF\n)\""
-    },
-    {
-      "label": "cd d && --prompt-file with a relative path: the hook cannot know the directory (r2b)",
-      "want": 2,
-      "command": "cd {tmp} && bb thread spawn --prompt-file brief.md"
-    },
-    {
-      "label": "tell --message-file with serves",
-      "want": 0,
-      "command": "bb thread tell thr_x --message-file {brief}"
-    },
-    {
-      "label": "tell \"$(cat brief)\" with serves",
-      "want": 0,
-      "command": "bb thread tell thr_x \"$(cat {brief})\""
-    },
-    {
-      "label": "tell < brief with serves",
-      "want": 0,
-      "command": "bb thread tell thr_x < {brief}"
-    },
-    {
-      "label": "sh -c tell with serves",
-      "want": 0,
-      "command": "sh -c 'bb thread tell thr_x \"serves: P1 hi\"'"
-    },
-    {
-      "label": "two tells, both serve",
-      "want": 0,
-      "command": "bb thread tell thr_a 'serves: P1 a' && bb thread tell thr_b 'serves: P1 b' 2>&1"
-    },
-    {
-      "label": "r1 D2/D3: case-folded command word (case-insensitive filesystem)",
-      "want": 2,
-      "command": "BB thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: mixed-case command word",
-      "want": 2,
-      "command": "Bb thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: BB_CLI with a default",
-      "want": 2,
-      "command": "\"${BB_CLI:-bb}\" thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: unquoted BB_CLI with a default",
-      "want": 2,
-      "command": "${BB_CLI:-bb} thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: command word from a substitution",
-      "want": 2,
-      "command": "$(printf bb) thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: command word from a variable",
-      "want": 2,
-      "command": "B=bb; $B thread tell thr_x hi"
-    },
-    {
-      "label": "r1 D2/D3: here-string into a shell",
-      "want": 2,
-      "command": "bash <<< 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "r1 D2/D3: env -S split string",
-      "want": 2,
-      "command": "env -S 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "r1 D2/D3: env -S attached",
-      "want": 2,
-      "command": "env -S\"bb thread tell thr_x hi\""
-    },
-    {
-      "label": "r1 D2/D3: process substitution read by a shell",
-      "want": 2,
-      "command": "bash <(echo 'bb thread tell thr_x hi')"
-    },
-    {
-      "label": "r1 D2/D3: process substitution sourced",
-      "want": 2,
-      "command": "source <(echo 'bb thread tell thr_x hi')"
-    },
-    {
-      "label": "r1 D2/D3: xargs runs bb with words from stdin",
-      "want": 2,
-      "command": "echo thread tell thr_x hi | xargs bb"
-    },
-    {
-      "label": "r1 D2/D3: xargs with options runs bb",
-      "want": 2,
-      "command": "ls | xargs -n 1 bb"
-    },
-    {
-      "label": "r1 D2/D3: thread fork with a prompt",
-      "want": 2,
-      "command": "bb thread fork thr_x --prompt \"refactor the sparkline\""
-    },
-    {
-      "label": "r1 D2/D3: thread queue create",
-      "want": 2,
-      "command": "bb thread queue create thr_x \"refactor the sparkline\""
-    },
-    {
-      "label": "r1 D2/D3: thread queue update",
-      "want": 2,
-      "command": "bb thread queue update thr_x msg_1 \"refactor the sparkline\""
-    },
-    {
-      "label": "r1 D2/D3: thread queue send",
-      "want": 2,
-      "command": "bb thread queue send thr_x msg_1"
-    },
-    {
-      "label": "r1 D2/D3: thread edit-message",
-      "want": 2,
-      "command": "bb thread edit-message thr_x --message \"refactor instead\""
-    },
-    {
-      "label": "r1 D2/D3: fleet group-create with a charter",
-      "want": 2,
-      "command": "bb fleet group-create g --charter \"refactor the sparkline\""
-    },
-    {
-      "label": "r1 D2/D3: fleet task-add",
-      "want": 2,
-      "command": "bb fleet task-add g \"refactor the sparkline\""
-    },
-    {
-      "label": "r1 D2/D3: fleet advise",
-      "want": 2,
-      "command": "bb fleet advise \"should we refactor the sparkline?\""
-    },
-    {
-      "label": "r1 D2/D3: global options before thread",
-      "want": 2,
-      "command": "bb --host h --profile p thread tell thr_x hi"
-    },
-    {
-      "label": "r1 control: xargs running echo, bb is an argument",
-      "want": 0,
-      "command": "ls | xargs -n1 echo bb"
-    },
-    {
-      "label": "r1 control: a quoted mention of BB thread tell",
-      "want": 0,
-      "command": "echo \"BB thread tell thr_x hi\""
-    },
-    {
-      "label": "r1 control: a variable command word with no dispatch verb",
-      "want": 0,
-      "command": "$EDITOR notes.md"
-    },
-    {
-      "label": "r1 control: process substitution that prints no dispatch",
-      "want": 0,
-      "command": "source <(printf 'export X=1')"
-    },
-    {
-      "label": "r1 control: fleet read verbs",
-      "want": 0,
-      "command": "bb fleet tasks g"
-    },
-    {
-      "label": "r1 control: queue read verbs",
-      "want": 0,
-      "command": "bb thread queue list thr_x"
-    },
-    {
-      "label": "r1 control: here-string to a non-shell",
-      "want": 0,
-      "command": "grep -c tell <<< 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "a variable the command sets, in --message-file (23:15Z miss)",
-      "want": 2,
-      "command": "D={tmp}; bb thread tell thr_x --message-file $D/brief.md"
-    },
-    {
-      "label": "a variable the command sets, in $(cat)",
-      "want": 2,
-      "command": "D={tmp} && bb thread tell thr_x \"$(cat $D/brief.md)\""
-    },
-    {
-      "label": "another name set by the command leaves a literal brief readable",
-      "want": 0,
-      "command": "X=1; bb thread tell thr_x --message-file {brief}"
-    },
-    {
-      "label": "xargs \"${BB_CLI:-bb}\" thread tell",
-      "want": 2,
-      "command": "printf 'thr_x also refactor it' | xargs \"${BB_CLI:-bb}\" thread tell"
-    },
-    {
-      "label": "timeout 5 \"${BB_CLI:-bb}\" thread tell",
-      "want": 2,
-      "command": "timeout 5 \"${BB_CLI:-bb}\" thread tell thr_x also refactor it"
-    },
-    {
-      "label": "cd d && --prompt-file with an absolute path",
-      "want": 0,
-      "command": "cd /tmp && bb thread spawn --prompt-file {brief}"
-    },
-    {
-      "label": "pushd d; --message-file with a relative path",
-      "want": 2,
-      "command": "pushd {tmp}; bb thread tell thr_x --message-file brief.md"
-    },
-    {
-      "label": "thread interactions answer --text without serves (r2b D6)",
-      "want": 2,
-      "command": "bb thread interactions answer int_1 thr_x --text q1=\"refactor the sparkline instead\""
-    },
-    {
-      "label": "thread interactions answer --text=... without serves",
-      "want": 2,
-      "command": "bb thread interactions answer int_1 thr_x --text=q1=refactor"
-    },
-    {
-      "label": "thread interactions answer --text with serves",
-      "want": 0,
-      "command": "bb thread interactions answer int_1 thr_x --text q1=\"serves: P1 use the second host\""
-    },
-    {
-      "label": "thread interactions answer --choice only (an offered option, no new text)",
-      "want": 0,
-      "command": "bb thread interactions answer int_1 thr_x --choice q1=yes"
-    },
-    {
-      "label": "thread interactions respond --value without serves (r2b D6)",
-      "want": 2,
-      "command": "bb thread interactions respond int_1 thr_x --value '{\"answer\":\"refactor the sparkline\"}'"
-    },
-    {
-      "label": "thread interactions respond --value with serves",
-      "want": 0,
-      "command": "bb thread interactions respond int_1 thr_x --value '{\"answer\":\"serves: P1 go\"}'"
-    },
-    {
-      "label": "thread interactions list (not a dispatch)",
-      "want": 0,
-      "command": "bb thread interactions list thr_x"
-    },
-    {
-      "label": "fleet member-add --concern without serves",
-      "want": 2,
-      "command": "bb fleet member-add g thr_x --name w --concern \"refactor the sparkline\""
-    },
-    {
-      "label": "fleet member-add --concern with serves",
-      "want": 0,
-      "command": "bb fleet member-add g thr_x --name w --concern \"serves: P1 the QA gates\""
-    },
-    {
-      "label": "fleet member-add without a concern (no text)",
-      "want": 0,
-      "command": "bb fleet member-add g thr_x --name w"
-    },
-    {
-      "label": "bb thread tell --help sends nothing",
-      "want": 0,
-      "command": "bb thread tell --help"
-    },
-    {
-      "label": "a -h after other words is not a bare help request: bb can take it as a value, and the tell runs (r2c)",
-      "want": 2,
-      "command": "bb thread tell thr_x also refactor it -h"
-    },
-    {
-      "label": "a message that mentions --help is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell thr_x \"see --help, then refactor\""
-    },
-    {
-      "label": "ANSI-C $'tell' without serves",
-      "want": 2,
-      "command": "bb thread $'tell' thr_x also refactor it"
-    },
-    {
-      "label": "ANSI-C $'\\x74ell' without serves",
-      "want": 2,
-      "command": "bb thread $'\\x74ell' thr_x also refactor it"
-    },
-    {
-      "label": "ANSI-C $'thread' $'tell' with serves",
-      "want": 0,
-      "command": "bb $'thread' $'tell' thr_x 'serves: P1 next'"
-    },
-    {
-      "label": "an ANSI-C string with an escaped quote before a real tell",
-      "want": 2,
-      "command": "echo $'it\\'s' && bb thread tell thr_x hi"
-    },
-    {
-      "label": "an ANSI-C escaped quote does not merge a sibling's serves line into the tell",
-      "want": 2,
-      "command": "echo $'a\\'b' 'serves: P1'; bb thread tell thr_x also refactor it"
-    },
-    {
-      "label": "automation create --prompt --target-thread without serves (r2c)",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"also refactor it\" --target-thread thr_x"
-    },
-    {
-      "label": "automation create --prompt, spawning, without serves (r2c)",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"also refactor it\" --provider claude --model m"
-    },
-    {
-      "label": "automation create --prompt=... without serves",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --prompt=also-refactor-it"
-    },
-    {
-      "label": "automation create --prompt with serves",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"serves: P1 next step\" --target-thread thr_x"
-    },
-    {
-      "label": "automation create --prompt naming a blocked purpose",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"serves: P2 the paperclip\""
-    },
-    {
-      "label": "automation update --prompt without serves (r2c)",
-      "want": 2,
-      "command": "bb automation update auto_plain --prompt \"also refactor it instead\""
-    },
-    {
-      "label": "automation update --prompt with serves",
-      "want": 0,
-      "command": "bb automation update auto_plain --prompt \"serves: P1 next step\""
-    },
-    {
-      "label": "automation update --name only (nothing fires)",
-      "want": 0,
-      "command": "bb automation update auto_plain --name renamed"
-    },
-    {
-      "label": "automation list (read-only)",
-      "want": 0,
-      "command": "bb automation list --project p"
-    },
-    {
-      "label": "automation show (read-only)",
-      "want": 0,
-      "command": "bb automation show auto_plain --project p"
-    },
-    {
-      "label": "automation pause",
-      "want": 0,
-      "command": "bb automation pause auto_plain --project p"
-    },
-    {
-      "label": "automation run --help (bare help)",
-      "want": 0,
-      "command": "bb automation run --help"
-    },
-    {
-      "label": "automation create inside sh -c without serves",
-      "want": 2,
-      "command": "sh -c 'bb automation create --name n --in 1m --prompt refactor'"
-    },
-    {
-      "label": "automation run of a stored prompt without serves",
-      "want": 2,
-      "command": "bb automation run auto_plain --project p"
-    },
-    {
-      "label": "automation run of a stored prompt with serves",
-      "want": 0,
-      "command": "bb automation run auto_serves --project p"
-    },
-    {
-      "label": "automation run of a stored prompt naming a blocked purpose",
-      "want": 2,
-      "command": "bb automation run auto_blocked"
-    },
-    {
-      "label": "automation run that cannot be read (fails closed)",
-      "want": 2,
-      "command": "bb automation run auto_missing"
-    },
-    {
-      "label": "automation run with no id",
-      "want": 2,
-      "command": "bb automation run --project p"
-    },
-    {
-      "label": "automation resume of a stored prompt without serves",
-      "want": 2,
-      "command": "bb automation resume auto_plain"
-    },
-    {
-      "label": "automation update --target-thread retargets a stored prompt without serves",
-      "want": 2,
-      "command": "bb automation update auto_plain --target-thread thr_y"
-    },
-    {
-      "label": "automation update --target-thread retargets a stored prompt with serves",
-      "want": 0,
-      "command": "bb automation update auto_serves --target-thread thr_y"
-    },
-    {
-      "label": "automation update --in reschedules a stored prompt without serves",
-      "want": 2,
-      "command": "bb automation update auto_plain --in 30s"
-    },
-    {
-      "label": "automation run of a stored shell script whose tell has no serves",
-      "want": 2,
-      "command": "bb automation run auto_script"
-    },
-    {
-      "label": "automation run of a stored shell script whose tell serves",
-      "want": 0,
-      "command": "bb automation run auto_script_ok"
-    },
-    {
-      "label": "automation run of a stored python script that dispatches",
-      "want": 2,
-      "command": "bb automation run auto_py"
-    },
-    {
-      "label": "automation run of a stored script that dispatches nothing",
-      "want": 0,
-      "command": "bb automation run auto_clean"
-    },
-    {
-      "label": "automation --script whose tell has no serves (r2c)",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x refactor\" --interpreter sh"
-    },
-    {
-      "label": "automation --script whose tell serves",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x 'serves: P1 next'\" "
-    },
-    {
-      "label": "automation --script: a sibling's serves line does not count",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script \"echo serves: P1; bb thread tell thr_x refactor\""
-    },
-    {
-      "label": "automation --script: serves in the automation's name does not count",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --name \"serves: P1\" --script \"bb thread tell thr_x refactor\""
-    },
-    {
-      "label": "automation --script that dispatches nothing",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script \"npm test\""
-    },
-    {
-      "label": "automation --script=... whose tell has no serves",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script='bb thread tell thr_x refactor'"
-    },
-    {
-      "label": "automation node --script that dispatches, no serves",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --interpreter node --script \"require('child_process').execSync('bb thread tell thr_x hi')\" "
-    },
-    {
-      "label": "automation node --script that dispatches, serves in its text",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --interpreter node --script \"// serves: P1\nrequire('child_process').execSync('bb thread tell thr_x hi')\" "
-    },
-    {
-      "label": "automation --script-file whose tell has no serves",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell.sh"
-    },
-    {
-      "label": "automation --script-file whose tell serves",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.sh"
-    },
-    {
-      "label": "automation --script-file that dispatches nothing",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-clean.sh"
-    },
-    {
-      "label": "automation --script-file .py that dispatches, no serves",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell.py"
-    },
-    {
-      "label": "automation --script-file .py that dispatches, serves in its text",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.py"
-    },
-    {
-      "label": "automation --script-file with --host: another machine's file (fails closed)",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.sh --host other"
-    },
-    {
-      "label": "automation --script-file relative, no cd",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --script-file auto-tell-ok.sh"
-    },
-    {
-      "label": "automation --script-file relative after cd",
-      "want": 2,
-      "command": "cd {tmp} && bb automation create --project p --name n --in 30s --script-file auto-tell-ok.sh"
-    },
-    {
-      "label": "automation --script-file missing (fails closed)",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-none.sh"
-    },
-    {
-      "label": "automation update --script-file whose tell has no serves",
-      "want": 2,
-      "command": "bb automation update auto_plain --script-file {tmp}/auto-tell.sh"
-    },
-    {
-      "label": "instructions set without serves (r2c)",
-      "want": 2,
-      "command": "bb instructions set also refactor everything"
-    },
-    {
-      "label": "instructions set with serves",
-      "want": 0,
-      "command": "bb instructions set 'serves: P1' keep the QA gates"
-    },
-    {
-      "label": "instructions clear (no text)",
-      "want": 0,
-      "command": "bb instructions clear"
-    },
-    {
-      "label": "instructions get (read-only)",
-      "want": 0,
-      "command": "bb instructions get"
-    },
-    {
-      "label": "instructions set --help (bare help)",
-      "want": 0,
-      "command": "bb instructions set --help"
-    },
-    {
-      "label": "--title -h is a value, not a help request (r2c)",
-      "want": 2,
-      "command": "bb thread spawn --prompt \"also refactor it\" --title -h"
-    },
-    {
-      "label": "--title --help is a value, not a help request (r2c)",
-      "want": 2,
-      "command": "bb thread spawn --prompt \"also refactor it\" --title --help"
-    },
-    {
-      "label": "-- -h is a positional, not a help request (r2c)",
-      "want": 2,
-      "command": "bb thread tell thr_x -- -h"
-    },
-    {
-      "label": "--priority -h on task-add is a value (r2c)",
-      "want": 2,
-      "command": "bb fleet task-add g \"also refactor it\" --priority -h"
-    },
-    {
-      "label": "bb thread spawn -h (bare help)",
-      "want": 0,
-      "command": "bb thread spawn -h"
-    },
-    {
-      "label": "timeout 5 bb thread tell --help (bare help after a command)",
-      "want": 0,
-      "command": "timeout 5 bb thread tell --help"
-    },
-    {
-      "label": "timeout 5 bb thread tell thr_x text -h is not bare",
-      "want": 2,
-      "command": "timeout 5 bb thread tell thr_x also refactor it -h"
-    },
-    {
-      "label": "automation --script: a relative brief inside runs later, from an unknown directory",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x --message-file brief.md\""
-    },
-    {
-      "label": "automation --prompt \"$(cat brief)\" with serves in the file",
-      "want": 0,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {brief})\""
-    },
-    {
-      "label": "automation --prompt \"$(cat brief)\" without serves in the file",
-      "want": 2,
-      "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {nobrief})\""
-    },
-    {
-      "label": "plugin run automations create --prompt without serves (r2d)",
-      "want": 2,
-      "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"also refactor it\""
-    },
-    {
-      "label": "plugin run automations create --prompt with serves",
-      "want": 0,
-      "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"serves: P1 next step\""
-    },
-    {
-      "label": "plugin run automation (the command name) create --prompt without serves",
-      "want": 2,
-      "command": "bb plugin run automation create --name n --in 1m --prompt refactor"
-    },
-    {
-      "label": "plugin run automations run of a stored prompt without serves",
-      "want": 2,
-      "command": "bb plugin run automations run auto_plain"
-    },
-    {
-      "label": "plugin run automations run of a stored prompt with serves",
-      "want": 0,
-      "command": "bb plugin run automations run auto_serves"
-    },
-    {
-      "label": "plugin run custom-instructions set without serves (r2d)",
-      "want": 2,
-      "command": "bb plugin run custom-instructions set also refactor everything"
-    },
-    {
-      "label": "plugin run fleet task-add without serves (r2d)",
-      "want": 2,
-      "command": "bb plugin run fleet task-add g \"also refactor it\""
-    },
-    {
-      "label": "plugin run fleet task-add with serves",
-      "want": 0,
-      "command": "bb plugin run fleet task-add g \"serves: P1 next step\""
-    },
-    {
-      "label": "plugin run automations list (read-only)",
-      "want": 0,
-      "command": "bb plugin run automations list --project p"
-    },
-    {
-      "label": "plugin config custom-instructions set without serves (r2d)",
-      "want": 2,
-      "command": "bb plugin config custom-instructions set instructions \"also refactor everything\""
-    },
-    {
-      "label": "plugin config custom-instructions set with serves",
-      "want": 0,
-      "command": "bb plugin config custom-instructions set instructions \"serves: P1 keep the QA gates\""
-    },
-    {
-      "label": "plugin config custom-instructions (show)",
-      "want": 0,
-      "command": "bb plugin config custom-instructions"
-    },
-    {
-      "label": "plugin config browser set (not agent text)",
-      "want": 0,
-      "command": "bb plugin config browser set viewportWidth 1280"
-    },
-    {
-      "label": "plugin list",
-      "want": 0,
-      "command": "bb plugin list --json"
-    },
-    {
-      "label": "automation update --env-json changes what a stored script sends",
-      "want": 2,
-      "command": "bb automation update auto_script --env-json '{\"MSG\":\"refactor\"}'"
-    },
-    {
-      "label": "r2d: a verb word glued to a substitution is a dispatch (automation)",
-      "want": 2,
-      "command": "bb automation$(echo) run a1"
-    },
-    {
-      "label": "r2d: a verb word glued to a substitution is a dispatch (thread)",
-      "want": 2,
-      "command": "bb thread$(true) tell thr_x hi"
-    },
-    {
-      "label": "r2d: a command word glued to a substitution is a dispatch",
-      "want": 2,
-      "command": "bb$(echo) thread tell thr_x hi"
-    },
-    {
-      "label": "r2d: a backtick-spelled verb is a dispatch",
-      "want": 2,
-      "command": "bb th`x`read tell thr_x hi"
-    },
-    {
-      "label": "r2d: a verb word glued to a parameter expansion is a dispatch",
-      "want": 2,
-      "command": "bb automation${X} run a1"
-    },
-    {
-      "label": "r2d: a glued verb serving P1 is allowed",
-      "want": 0,
-      "command": "bb thread$(true) tell thr_x 'serves: P1 hi'"
-    },
-    {
-      "label": "r2d: a glued command word serving P1 is allowed",
-      "want": 0,
-      "command": "bb$(echo) thread tell thr_x 'serves: P1 hi'"
-    },
-    {
-      "label": "r2d: an ordinary substitution argument is not a dispatch",
-      "want": 0,
-      "command": "echo \"$(date)\""
-    },
-    {
-      "label": "r2d-followup: a substitution word in the verb slot is a dispatch ($(echo) after the group)",
-      "want": 2,
-      "command": "bb thread $(echo) tell thr_x hi"
-    },
-    {
-      "label": "r2d-followup: a substitution word in the group slot is a dispatch",
-      "want": 2,
-      "command": "bb $(echo) thread tell thr_x hi"
-    },
-    {
-      "label": "r2d-followup: a variable in the verb slot is a dispatch",
-      "want": 2,
-      "command": "bb thread $V tell thr_x hi"
-    },
-    {
-      "label": "r2d-followup: a substitution word in the verb slot serving P1 is allowed",
-      "want": 0,
-      "command": "bb thread $(echo) tell thr_x 'serves: P1 hi'"
-    },
-    {
-      "label": "read-only verbs with substitutions after them are not dispatches (list)",
-      "want": 0,
-      "command": "bb thread list --json"
-    },
-    {
-      "label": "read-only verbs with substitutions after them are not dispatches (show $ID)",
-      "want": 0,
-      "command": "bb thread show $ID"
-    },
-    {
-      "label": "r2d-followup: a substitution as the plugin id of plugin run is a dispatch",
-      "want": 2,
-      "command": "bb plugin run $(echo) automations create --name n --in 1m --prompt hi"
-    },
-    {
-      "label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch",
-      "want": 2,
-      "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"
-    },
-    {
-      "label": "#27: plugin rpc call of a non-exempt method without serves",
-      "want": 2,
-      "command": "bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"
-    },
-    {
-      "label": "#27: plugin rpc call with options before the plugin and method",
-      "want": 2,
-      "command": "bb plugin rpc call --json --input-file {tmp}/in.json bb-account bb-account.v1.fetch"
-    },
-    {
-      "label": "#27: plugin rpc call of a method bb adds later is gated by default",
-      "want": 2,
-      "command": "bb plugin rpc call bb-account bb-account.v1.tellThread"
-    },
-    {
-      "label": "#27: plugin rpc call whose method is built at run time",
-      "want": 2,
-      "command": "bb plugin rpc call bb-account $(echo bb-account.v1.fetch)"
-    },
-    {
-      "label": "#27: plugin rpc call of a non-exempt method with serves",
-      "want": 0,
-      "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"
-    },
-    {
-      "label": "#27 r5: provider-usage getResource is gated (its collection path was not read)",
-      "want": 2,
-      "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"
-    },
-    {
-      "label": "#27: plugin rpc call of an exempt exact read",
-      "want": 0,
-      "command": "bb plugin rpc call bb-account bb-account.v1.status"
-    },
-    {
-      "label": "#27: plugin rpc list is a read",
-      "want": 0,
-      "command": "bb plugin rpc list --json"
-    },
-    {
-      "label": "#27 r3: run-time words before an exempt method can pick another (call $ARGS status)",
-      "want": 2,
-      "command": "bb plugin rpc call $ARGS bb-account.v1.status"
-    },
-    {
-      "label": "#27 r3: a run-time word after the method is a dispatch too",
-      "want": 2,
-      "command": "bb plugin rpc call bb-account bb-account.v1.status $X"
-    },
-    {
-      "label": "#27 r3: a run-time input file on an exempt read is a dispatch (fails closed)",
-      "want": 2,
-      "command": "bb plugin rpc call --input-file \"$F\" bb-account bb-account.v1.status"
-    },
-    {
-      "label": "#27 r3: run-time words with serves are allowed",
-      "want": 0,
-      "command": "SCOPE=\"serves: P1 account check\" bb plugin rpc call $ARGS bb-account.v1.status"
-    },
-    {
-      "label": "#27 r3: a literal exempt read with a literal input file stays allowed",
-      "want": 0,
-      "command": "bb plugin rpc call bb-account bb-account.v1.status --input-file {tmp}/in.json"
-    },
-    {
-      "label": "#27 r4: an unknown method in an exempt plugin's namespace is a dispatch",
-      "want": 2,
-      "command": "bb plugin rpc call provider-codex provider-usage.v1.tellThread --input-file {tmp}/in.json"
-    },
-    {
-      "label": "#27 r4: the same unknown method with serves is allowed",
-      "want": 0,
-      "command": "SCOPE=\"serves: P1 x\" bb plugin rpc call provider-codex provider-usage.v1.tellThread"
-    },
-    {
-      "label": "#27 r4: provider-usage listResources is an exempt read",
-      "want": 0,
-      "command": "bb plugin rpc call provider-codex provider-usage.v1.listResources"
-    },
-    {
-      "label": "#27 r6: an exempt method name served by an uninspected plugin is a dispatch",
-      "want": 2,
-      "command": "bb plugin rpc call uninspected-plugin bb-account.v1.status"
-    },
-    {
-      "label": "#27 r6: listResources under a plugin that was not read is a dispatch",
-      "want": 2,
-      "command": "bb plugin rpc call provider-pi provider-usage.v1.listResources"
-    },
-    {
-      "label": "#27 r6: the inspected provider-claude-code listResources stays an exempt read",
-      "want": 0,
-      "command": "bb plugin rpc call provider-claude-code provider-usage.v1.listResources"
-    },
-    {
-      "label": "help with 2>&1 is not a dispatch",
-      "want": 0,
-      "command": "bb thread spawn --help 2>&1 | grep prompt"
-    },
-    {
-      "label": "help redirected to a file is not a dispatch",
-      "want": 0,
-      "command": "bb thread tell --help > {tmp}/help.txt"
-    },
-    {
-      "label": "help with 2>/dev/null is not a dispatch",
-      "want": 0,
-      "command": "bb fleet advise --help 2>/dev/null"
-    },
-    {
-      "label": "a real tell with 2>&1 is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell thr_x \"also refactor it\" 2>&1"
-    },
-    {
-      "label": "help fed a here-string is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help <<< \"also refactor it\""
-    },
-    {
-      "label": "help fed stdin from a file is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help < {nobrief}"
-    },
-    {
-      "label": "help then a message after a redirection is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help 2>&1 thr_x \"also refactor it\""
-    },
-    {
-      "label": "#30 r1: help with stdin duplicated from fd 3 is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help 0>&3"
-    },
-    {
-      "label": "#30 r1: help with fd 3 redirected is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help 3>&1"
-    },
-    {
-      "label": "#30 r1: help with stdin from a duplicated fd (<&3) is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help <&3"
-    },
-    {
-      "label": "#30 r1: help with stdin read-write (<>) is still a dispatch",
-      "want": 2,
-      "command": "bb thread tell --help 0<> {nobrief}"
-    },
-    {
-      "label": "#30 r1: help with 1>&2 is not a dispatch",
-      "want": 0,
-      "command": "bb thread spawn --help 1>&2"
-    },
-    {
-      "label": "#30 r1: help appending stdout and stderr to a file is not a dispatch",
-      "want": 0,
-      "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"
-    },
-    {
-      "label": "#30 r1: help with &> file is not a dispatch",
-      "want": 0,
-      "command": "bb thread spawn --help &> {tmp}/h.txt"
-    },
-    {
-      "label": "#30 r2: help redirected into a process substitution that dispatches is denied",
-      "want": 2,
-      "command": "bb thread tell --help > >(bb thread tell thr_x \"also refactor it\")"
-    },
-    {
-      "label": "#30 r2: help redirected into a process substitution that only reads is allowed",
-      "want": 0,
-      "command": "bb thread spawn --help 2> >(cat)"
-    },
-    {
-      "label": "shell -c script after options: a shell option after -c: the script is the word after it",
-      "want": 2,
-      "command": "bash -c -e 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: -- after -c ends the options; the script follows it",
-      "want": 2,
-      "command": "sh -c -- 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: -x after -c, spawning",
-      "want": 2,
-      "command": "bash -c -x 'bb thread spawn --prompt x'"
-    },
-    {
-      "label": "shell -c script after options: a value option before -c (-o pipefail)",
-      "want": 2,
-      "command": "bash -o pipefail -c 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: zsh --emulate takes a value before -c",
-      "want": 2,
-      "command": "zsh --emulate sh -c 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: an option after -c with a brief line is allowed",
-      "want": 0,
-      "command": "bash -c -e 'bb thread tell thr_x \"serves: P1 hi\"'"
-    },
-    {
-      "label": "shell -c script after options: an o in a cluster takes the next word (-eo pipefail)",
-      "want": 2,
-      "command": "bash -eo pipefail -c 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: an o after c in a cluster takes the next word (Hermes r1)",
-      "want": 2,
-      "command": "bash -c -oc pipefail 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "shell -c script after options: zsh takes the rest of the cluster after o as its value",
-      "want": 2,
-      "command": "zsh -oshwordsplit -c 'bb thread tell thr_x hi'"
-    },
-    {
-      "label": "settings writing correct without serves",
-      "want": 2,
-      "command": "bb settings writing correct \"fix teh typo\""
-    },
-    {
-      "label": "settings writing correct serving open P1",
-      "want": 0,
-      "command": "bb settings writing correct \"serves: P1 fix teh typo\""
-    },
-    {
-      "label": "settings writing transcribe without serves",
-      "want": 2,
-      "command": "bb settings writing transcribe /tmp/voice.m4a"
-    },
-    {
-      "label": "settings writing transcribe serving open P1 in --context",
-      "want": 0,
-      "command": "bb settings writing transcribe /tmp/voice.m4a --context \"serves: P1 already typed\""
-    }
+    {"label": "printf from the 2026-09-25 false positive", "want": 0, "command": "printf '%s\\n' \"- 15:40Z fleet value 720 h verified; a REAL undeclared bb thread tell from this session was DENIED, with P1-P3 listed\" >> {tmp}/plan.md"},
+    {"label": "echo that mentions a spawn", "want": 0, "command": "echo \"next: bb thread spawn --prompt x\""},
+    {"label": "grep for tells in a journal", "want": 0, "command": "grep -n \"bb thread tell\" {tmp}/journal.md"},
+    {"label": "git commit message naming a spawn", "want": 0, "command": "git commit -m \"gate denies bb thread spawn without serves\""},
+    {"label": "rg pattern with the dispatch words", "want": 0, "command": "rg 'bb thread (spawn|tell)' ~/.bb/thread-storage"},
+    {"label": "heredoc into a notes file that contains a dispatch line", "want": 0, "command": "cat <<'EOF' > {tmp}/notes.md\nbb thread tell thr_x don't forget\nEOF"},
+    {"label": "jq piped to grep for thread tell", "want": 0, "command": "jq -r .command {tmp}/log.json | grep \"bb thread tell\""},
+    {"label": "comment that mentions a dispatch", "want": 0, "command": "ls # then bb thread tell thr_x hi"},
+    {"label": "separator inside single quotes is data", "want": 0, "command": "echo 'done; bb thread tell thr_x hi' >> {tmp}/plan.md"},
+    {"label": "$(...) inside single quotes is not run", "want": 0, "command": "printf '%s\\n' '$(bb thread spawn --prompt x)'"},
+    {"label": "bb thread list is not a dispatch", "want": 0, "command": "bb thread list --parent-thread thr_x"},
+    {"label": "glued bare variable in automation verb word", "want": 2, "command": "bb automation$X run a1"},
+    {"label": "glued positional parameter in thread verb word", "want": 2, "command": "bb thread$1 tell thr_x hi"},
+    {"label": "bare variable in non-verb argument", "want": 0, "command": "bb thread show $ID"},
+    {"label": "bare variable in unrelated command", "want": 0, "command": "echo $PATH"},
+    {"label": "tell --message-file without serves", "want": 2, "command": "bb thread tell thr_x --message-file {nobrief}"},
+    {"label": "cd d && bb thread spawn without serves", "want": 2, "command": "cd /tmp && bb thread spawn --prompt x"},
+    {"label": "\"$BB_CLI\" thread tell without serves", "want": 2, "command": "\"$BB_CLI\" thread tell thr_x hi"},
+    {"label": "${BB_CLI} thread spawn without serves", "want": 2, "command": "${BB_CLI} thread spawn --prompt x"},
+    {"label": "sh -c 'bb thread tell ...' without serves", "want": 2, "command": "sh -c 'bb thread tell thr_x hi'"},
+    {"label": "bash -lc \"bb thread spawn ...\" without serves", "want": 2, "command": "bash -lc \"bb thread spawn --prompt x\""},
+    {"label": "env FOO=1 bb thread tell", "want": 2, "command": "env FOO=1 bb thread tell thr_x hi"},
+    {"label": "command bb thread message", "want": 2, "command": "command bb thread message thr_x hi"},
+    {"label": "exec bb thread tell", "want": 2, "command": "exec bb thread tell thr_x hi"},
+    {"label": "assignment then /usr/local/bin/bb thread create", "want": 2, "command": "FOO=1 /usr/local/bin/bb thread create --prompt x"},
+    {"label": "x=$(bb thread spawn ...)", "want": 2, "command": "x=$(bb thread spawn --prompt x) && echo $x"},
+    {"label": "backticks around a spawn", "want": 2, "command": "echo `bb thread spawn --prompt x`"},
+    {"label": "timeout 30 bb thread spawn", "want": 2, "command": "timeout 30 bb thread spawn --prompt x"},
+    {"label": "xargs -I{} bb thread tell", "want": 2, "command": "printf 'thr_a\\n' | xargs -I{} bb thread tell {} hi"},
+    {"label": "nice -n 5 bb thread tell", "want": 2, "command": "nice -n 5 bb thread tell thr_x hi"},
+    {"label": "sudo -u me bb thread spawn", "want": 2, "command": "sudo -u me bb thread spawn --prompt x"},
+    {"label": "stdbuf -oL bb thread tell", "want": 2, "command": "stdbuf -oL bb thread tell thr_x hi"},
+    {"label": "find -exec bb thread tell", "want": 2, "command": "find . -name x -exec bb thread tell thr_x hi \\;"},
+    {"label": "timeout 30 bb thread list is not a dispatch", "want": 0, "command": "timeout 30 bb thread list"},
+    {"label": "timeout 30 bb thread tell with serves", "want": 0, "command": "timeout 30 bb thread tell thr_x 'serves: P1 hi'"},
+    {"label": "true || bb thread tell", "want": 2, "command": "true || bb thread tell thr_x hi"},
+    {"label": "echo ok; bb thread tell on a new line", "want": 2, "command": "echo ok\nbb thread tell thr_x hi"},
+    {"label": "eval \"bb thread tell ...\"", "want": 2, "command": "eval \"bb thread tell thr_x hi\""},
+    {"label": "bb --json thread tell", "want": 2, "command": "bb --json thread tell thr_x hi"},
+    {"label": "serves in a sibling echo does not cover the tell", "want": 2, "command": "echo \"serves: P1\"; bb thread tell thr_x hi"},
+    {"label": "heredoc brief without serves", "want": 2, "command": "bb thread spawn --prompt-file - <<'EOF'\ndo the thing, don't ask\nEOF"},
+    {"label": "bash reading a heredoc script that tells", "want": 2, "command": "bash <<'EOF'\nbb thread tell thr_x hi\nEOF"},
+    {"label": "two tells, only the first serves", "want": 2, "command": "bb thread tell thr_a 'serves: P1 a' && bb thread tell thr_b 'b'"},
+    {"label": "heredoc brief with serves", "want": 0, "command": "bb thread spawn --prompt-file - <<'EOF'\nserves: P1\ndon't stop\nEOF"},
+    {"label": "$(cat <<EOF) brief with serves and an apostrophe", "want": 0, "command": "bb thread spawn --prompt \"$(cat <<'EOF'\nserves: P1\nit's (still) open\nEOF\n)\""},
+    {"label": "cd d && --prompt-file with a relative path: the hook cannot know the directory (r2b)", "want": 2, "command": "cd {tmp} && bb thread spawn --prompt-file brief.md"},
+    {"label": "tell --message-file with serves", "want": 0, "command": "bb thread tell thr_x --message-file {brief}"},
+    {"label": "tell \"$(cat brief)\" with serves", "want": 0, "command": "bb thread tell thr_x \"$(cat {brief})\""},
+    {"label": "tell < brief with serves", "want": 0, "command": "bb thread tell thr_x < {brief}"},
+    {"label": "sh -c tell with serves", "want": 0, "command": "sh -c 'bb thread tell thr_x \"serves: P1 hi\"'"},
+    {"label": "two tells, both serve", "want": 0, "command": "bb thread tell thr_a 'serves: P1 a' && bb thread tell thr_b 'serves: P1 b' 2>&1"},
+    {"label": "r1 D2/D3: case-folded command word (case-insensitive filesystem)", "want": 2, "command": "BB thread tell thr_x hi"},
+    {"label": "r1 D2/D3: mixed-case command word", "want": 2, "command": "Bb thread tell thr_x hi"},
+    {"label": "r1 D2/D3: BB_CLI with a default", "want": 2, "command": "\"${BB_CLI:-bb}\" thread tell thr_x hi"},
+    {"label": "r1 D2/D3: unquoted BB_CLI with a default", "want": 2, "command": "${BB_CLI:-bb} thread tell thr_x hi"},
+    {"label": "r1 D2/D3: command word from a substitution", "want": 2, "command": "$(printf bb) thread tell thr_x hi"},
+    {"label": "r1 D2/D3: command word from a variable", "want": 2, "command": "B=bb; $B thread tell thr_x hi"},
+    {"label": "r1 D2/D3: here-string into a shell", "want": 2, "command": "bash <<< 'bb thread tell thr_x hi'"},
+    {"label": "r1 D2/D3: env -S split string", "want": 2, "command": "env -S 'bb thread tell thr_x hi'"},
+    {"label": "r1 D2/D3: env -S attached", "want": 2, "command": "env -S\"bb thread tell thr_x hi\""},
+    {"label": "r1 D2/D3: process substitution read by a shell", "want": 2, "command": "bash <(echo 'bb thread tell thr_x hi')"},
+    {"label": "r1 D2/D3: process substitution sourced", "want": 2, "command": "source <(echo 'bb thread tell thr_x hi')"},
+    {"label": "r1 D2/D3: xargs runs bb with words from stdin", "want": 2, "command": "echo thread tell thr_x hi | xargs bb"},
+    {"label": "r1 D2/D3: xargs with options runs bb", "want": 2, "command": "ls | xargs -n 1 bb"},
+    {"label": "r1 D2/D3: thread fork with a prompt", "want": 2, "command": "bb thread fork thr_x --prompt \"refactor the sparkline\""},
+    {"label": "r1 D2/D3: thread queue create", "want": 2, "command": "bb thread queue create thr_x \"refactor the sparkline\""},
+    {"label": "r1 D2/D3: thread queue update", "want": 2, "command": "bb thread queue update thr_x msg_1 \"refactor the sparkline\""},
+    {"label": "r1 D2/D3: thread queue send", "want": 2, "command": "bb thread queue send thr_x msg_1"},
+    {"label": "r1 D2/D3: thread edit-message", "want": 2, "command": "bb thread edit-message thr_x --message \"refactor instead\""},
+    {"label": "r1 D2/D3: fleet group-create with a charter", "want": 2, "command": "bb fleet group-create g --charter \"refactor the sparkline\""},
+    {"label": "r1 D2/D3: fleet task-add", "want": 2, "command": "bb fleet task-add g \"refactor the sparkline\""},
+    {"label": "r1 D2/D3: fleet advise", "want": 2, "command": "bb fleet advise \"should we refactor the sparkline?\""},
+    {"label": "r1 D2/D3: global options before thread", "want": 2, "command": "bb --host h --profile p thread tell thr_x hi"},
+    {"label": "r1 control: xargs running echo, bb is an argument", "want": 0, "command": "ls | xargs -n1 echo bb"},
+    {"label": "r1 control: a quoted mention of BB thread tell", "want": 0, "command": "echo \"BB thread tell thr_x hi\""},
+    {"label": "r1 control: a variable command word with no dispatch verb", "want": 0, "command": "$EDITOR notes.md"},
+    {"label": "r1 control: process substitution that prints no dispatch", "want": 0, "command": "source <(printf 'export X=1')"},
+    {"label": "r1 control: fleet read verbs", "want": 0, "command": "bb fleet tasks g"},
+    {"label": "r1 control: queue read verbs", "want": 0, "command": "bb thread queue list thr_x"},
+    {"label": "r1 control: here-string to a non-shell", "want": 0, "command": "grep -c tell <<< 'bb thread tell thr_x hi'"},
+    {"label": "a variable the command sets, in --message-file (23:15Z miss)", "want": 2, "command": "D={tmp}; bb thread tell thr_x --message-file $D/brief.md"},
+    {"label": "a variable the command sets, in $(cat)", "want": 2, "command": "D={tmp} && bb thread tell thr_x \"$(cat $D/brief.md)\""},
+    {"label": "another name set by the command leaves a literal brief readable", "want": 0, "command": "X=1; bb thread tell thr_x --message-file {brief}"},
+    {"label": "xargs \"${BB_CLI:-bb}\" thread tell", "want": 2, "command": "printf 'thr_x also refactor it' | xargs \"${BB_CLI:-bb}\" thread tell"},
+    {"label": "timeout 5 \"${BB_CLI:-bb}\" thread tell", "want": 2, "command": "timeout 5 \"${BB_CLI:-bb}\" thread tell thr_x also refactor it"},
+    {"label": "cd d && --prompt-file with an absolute path", "want": 0, "command": "cd /tmp && bb thread spawn --prompt-file {brief}"},
+    {"label": "pushd d; --message-file with a relative path", "want": 2, "command": "pushd {tmp}; bb thread tell thr_x --message-file brief.md"},
+    {"label": "thread interactions answer --text without serves (r2b D6)", "want": 2, "command": "bb thread interactions answer int_1 thr_x --text q1=\"refactor the sparkline instead\""},
+    {"label": "thread interactions answer --text=... without serves", "want": 2, "command": "bb thread interactions answer int_1 thr_x --text=q1=refactor"},
+    {"label": "thread interactions answer --text with serves", "want": 0, "command": "bb thread interactions answer int_1 thr_x --text q1=\"serves: P1 use the second host\""},
+    {"label": "thread interactions answer --choice only (an offered option, no new text)", "want": 0, "command": "bb thread interactions answer int_1 thr_x --choice q1=yes"},
+    {"label": "thread interactions respond --value without serves (r2b D6)", "want": 2, "command": "bb thread interactions respond int_1 thr_x --value '{\"answer\":\"refactor the sparkline\"}'"},
+    {"label": "thread interactions respond --value with serves", "want": 0, "command": "bb thread interactions respond int_1 thr_x --value '{\"answer\":\"serves: P1 go\"}'"},
+    {"label": "thread interactions list (not a dispatch)", "want": 0, "command": "bb thread interactions list thr_x"},
+    {"label": "fleet member-add --concern without serves", "want": 2, "command": "bb fleet member-add g thr_x --name w --concern \"refactor the sparkline\""},
+    {"label": "fleet member-add --concern with serves", "want": 0, "command": "bb fleet member-add g thr_x --name w --concern \"serves: P1 the QA gates\""},
+    {"label": "fleet member-add without a concern (no text)", "want": 0, "command": "bb fleet member-add g thr_x --name w"},
+    {"label": "bb thread tell --help sends nothing", "want": 0, "command": "bb thread tell --help"},
+    {"label": "a -h after other words is not a bare help request: bb can take it as a value, and the tell runs (r2c)", "want": 2, "command": "bb thread tell thr_x also refactor it -h"},
+    {"label": "a message that mentions --help is still a dispatch", "want": 2, "command": "bb thread tell thr_x \"see --help, then refactor\""},
+    {"label": "ANSI-C $'tell' without serves", "want": 2, "command": "bb thread $'tell' thr_x also refactor it"},
+    {"label": "ANSI-C $'\\x74ell' without serves", "want": 2, "command": "bb thread $'\\x74ell' thr_x also refactor it"},
+    {"label": "ANSI-C $'thread' $'tell' with serves", "want": 0, "command": "bb $'thread' $'tell' thr_x 'serves: P1 next'"},
+    {"label": "an ANSI-C string with an escaped quote before a real tell", "want": 2, "command": "echo $'it\\'s' && bb thread tell thr_x hi"},
+    {"label": "an ANSI-C escaped quote does not merge a sibling's serves line into the tell", "want": 2, "command": "echo $'a\\'b' 'serves: P1'; bb thread tell thr_x also refactor it"},
+    {"label": "automation create --prompt --target-thread without serves (r2c)", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"also refactor it\" --target-thread thr_x"},
+    {"label": "automation create --prompt, spawning, without serves (r2c)", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"also refactor it\" --provider claude --model m"},
+    {"label": "automation create --prompt=... without serves", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt=also-refactor-it"},
+    {"label": "automation create --prompt with serves", "want": 0, "command": "bb automation create --project p --name n --in 30s --prompt \"serves: P1 next step\" --target-thread thr_x"},
+    {"label": "automation create --prompt naming a blocked purpose", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"serves: P2 the paperclip\""},
+    {"label": "automation update --prompt without serves (r2c)", "want": 2, "command": "bb automation update auto_plain --prompt \"also refactor it instead\""},
+    {"label": "automation update --prompt with serves", "want": 0, "command": "bb automation update auto_plain --prompt \"serves: P1 next step\""},
+    {"label": "automation update --name only (nothing fires)", "want": 0, "command": "bb automation update auto_plain --name renamed"},
+    {"label": "automation list (read-only)", "want": 0, "command": "bb automation list --project p"},
+    {"label": "automation show (read-only)", "want": 0, "command": "bb automation show auto_plain --project p"},
+    {"label": "automation pause", "want": 0, "command": "bb automation pause auto_plain --project p"},
+    {"label": "automation run --help (bare help)", "want": 0, "command": "bb automation run --help"},
+    {"label": "automation create inside sh -c without serves", "want": 2, "command": "sh -c 'bb automation create --name n --in 1m --prompt refactor'"},
+    {"label": "automation run of a stored prompt without serves", "want": 2, "command": "bb automation run auto_plain --project p"},
+    {"label": "automation run of a stored prompt with serves", "want": 0, "command": "bb automation run auto_serves --project p"},
+    {"label": "automation run of a stored prompt naming a blocked purpose", "want": 2, "command": "bb automation run auto_blocked"},
+    {"label": "automation run that cannot be read (fails closed)", "want": 2, "command": "bb automation run auto_missing"},
+    {"label": "automation run with no id", "want": 2, "command": "bb automation run --project p"},
+    {"label": "automation resume of a stored prompt without serves", "want": 2, "command": "bb automation resume auto_plain"},
+    {"label": "automation update --target-thread retargets a stored prompt without serves", "want": 2, "command": "bb automation update auto_plain --target-thread thr_y"},
+    {"label": "automation update --target-thread retargets a stored prompt with serves", "want": 0, "command": "bb automation update auto_serves --target-thread thr_y"},
+    {"label": "automation update --in reschedules a stored prompt without serves", "want": 2, "command": "bb automation update auto_plain --in 30s"},
+    {"label": "automation run of a stored shell script whose tell has no serves", "want": 2, "command": "bb automation run auto_script"},
+    {"label": "automation run of a stored shell script whose tell serves", "want": 0, "command": "bb automation run auto_script_ok"},
+    {"label": "automation run of a stored python script that dispatches", "want": 2, "command": "bb automation run auto_py"},
+    {"label": "automation run of a stored script that dispatches nothing", "want": 0, "command": "bb automation run auto_clean"},
+    {"label": "automation --script whose tell has no serves (r2c)", "want": 2, "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x refactor\" --interpreter sh"},
+    {"label": "automation --script whose tell serves", "want": 0, "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x 'serves: P1 next'\" "},
+    {"label": "automation --script: a sibling's serves line does not count", "want": 2, "command": "bb automation create --project p --name n --in 30s --script \"echo serves: P1; bb thread tell thr_x refactor\""},
+    {"label": "automation --script: serves in the automation's name does not count", "want": 2, "command": "bb automation create --project p --name n --in 30s --name \"serves: P1\" --script \"bb thread tell thr_x refactor\""},
+    {"label": "automation --script that dispatches nothing", "want": 0, "command": "bb automation create --project p --name n --in 30s --script \"npm test\""},
+    {"label": "automation --script=... whose tell has no serves", "want": 2, "command": "bb automation create --project p --name n --in 30s --script='bb thread tell thr_x refactor'"},
+    {"label": "automation node --script that dispatches, no serves", "want": 2, "command": "bb automation create --project p --name n --in 30s --interpreter node --script \"require('child_process').execSync('bb thread tell thr_x hi')\" "},
+    {"label": "automation node --script that dispatches, serves in its text", "want": 0, "command": "bb automation create --project p --name n --in 30s --interpreter node --script \"// serves: P1\nrequire('child_process').execSync('bb thread tell thr_x hi')\" "},
+    {"label": "automation --script-file whose tell has no serves", "want": 2, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell.sh"},
+    {"label": "automation --script-file whose tell serves", "want": 0, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.sh"},
+    {"label": "automation --script-file that dispatches nothing", "want": 0, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-clean.sh"},
+    {"label": "automation --script-file .py that dispatches, no serves", "want": 2, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell.py"},
+    {"label": "automation --script-file .py that dispatches, serves in its text", "want": 0, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.py"},
+    {"label": "automation --script-file with --host: another machine's file (fails closed)", "want": 2, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-tell-ok.sh --host other"},
+    {"label": "automation --script-file relative, no cd", "want": 0, "command": "bb automation create --project p --name n --in 30s --script-file auto-tell-ok.sh"},
+    {"label": "automation --script-file relative after cd", "want": 2, "command": "cd {tmp} && bb automation create --project p --name n --in 30s --script-file auto-tell-ok.sh"},
+    {"label": "automation --script-file missing (fails closed)", "want": 2, "command": "bb automation create --project p --name n --in 30s --script-file {tmp}/auto-none.sh"},
+    {"label": "automation update --script-file whose tell has no serves", "want": 2, "command": "bb automation update auto_plain --script-file {tmp}/auto-tell.sh"},
+    {"label": "instructions set without serves (r2c)", "want": 2, "command": "bb instructions set also refactor everything"},
+    {"label": "instructions set with serves", "want": 0, "command": "bb instructions set 'serves: P1' keep the QA gates"},
+    {"label": "instructions clear (no text)", "want": 0, "command": "bb instructions clear"},
+    {"label": "instructions get (read-only)", "want": 0, "command": "bb instructions get"},
+    {"label": "instructions set --help (bare help)", "want": 0, "command": "bb instructions set --help"},
+    {"label": "--title -h is a value, not a help request (r2c)", "want": 2, "command": "bb thread spawn --prompt \"also refactor it\" --title -h"},
+    {"label": "--title --help is a value, not a help request (r2c)", "want": 2, "command": "bb thread spawn --prompt \"also refactor it\" --title --help"},
+    {"label": "-- -h is a positional, not a help request (r2c)", "want": 2, "command": "bb thread tell thr_x -- -h"},
+    {"label": "--priority -h on task-add is a value (r2c)", "want": 2, "command": "bb fleet task-add g \"also refactor it\" --priority -h"},
+    {"label": "bb thread spawn -h (bare help)", "want": 0, "command": "bb thread spawn -h"},
+    {"label": "timeout 5 bb thread tell --help (bare help after a command)", "want": 0, "command": "timeout 5 bb thread tell --help"},
+    {"label": "timeout 5 bb thread tell thr_x text -h is not bare", "want": 2, "command": "timeout 5 bb thread tell thr_x also refactor it -h"},
+    {"label": "automation --script: a relative brief inside runs later, from an unknown directory", "want": 2, "command": "bb automation create --project p --name n --in 30s --script \"bb thread tell thr_x --message-file brief.md\""},
+    {"label": "automation --prompt \"$(cat brief)\" with serves in the file", "want": 0, "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {brief})\""},
+    {"label": "automation --prompt \"$(cat brief)\" without serves in the file", "want": 2, "command": "bb automation create --project p --name n --in 30s --prompt \"$(cat {nobrief})\""},
+    {"label": "plugin run automations create --prompt without serves (r2d)", "want": 2, "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"also refactor it\""},
+    {"label": "plugin run automations create --prompt with serves", "want": 0, "command": "bb plugin run automations create --project p --name n --in 30s --prompt \"serves: P1 next step\""},
+    {"label": "plugin run automation (the command name) create --prompt without serves", "want": 2, "command": "bb plugin run automation create --name n --in 1m --prompt refactor"},
+    {"label": "plugin run automations run of a stored prompt without serves", "want": 2, "command": "bb plugin run automations run auto_plain"},
+    {"label": "plugin run automations run of a stored prompt with serves", "want": 0, "command": "bb plugin run automations run auto_serves"},
+    {"label": "plugin run custom-instructions set without serves (r2d)", "want": 2, "command": "bb plugin run custom-instructions set also refactor everything"},
+    {"label": "plugin run fleet task-add without serves (r2d)", "want": 2, "command": "bb plugin run fleet task-add g \"also refactor it\""},
+    {"label": "plugin run fleet task-add with serves", "want": 0, "command": "bb plugin run fleet task-add g \"serves: P1 next step\""},
+    {"label": "plugin run automations list (read-only)", "want": 0, "command": "bb plugin run automations list --project p"},
+    {"label": "plugin config custom-instructions set without serves (r2d)", "want": 2, "command": "bb plugin config custom-instructions set instructions \"also refactor everything\""},
+    {"label": "plugin config custom-instructions set with serves", "want": 0, "command": "bb plugin config custom-instructions set instructions \"serves: P1 keep the QA gates\""},
+    {"label": "plugin config custom-instructions (show)", "want": 0, "command": "bb plugin config custom-instructions"},
+    {"label": "plugin config browser set (not agent text)", "want": 0, "command": "bb plugin config browser set viewportWidth 1280"},
+    {"label": "plugin list", "want": 0, "command": "bb plugin list --json"},
+    {"label": "automation update --env-json changes what a stored script sends", "want": 2, "command": "bb automation update auto_script --env-json '{\"MSG\":\"refactor\"}'"},
+    {"label": "r2d: a verb word glued to a substitution is a dispatch (automation)", "want": 2, "command": "bb automation$(echo) run a1"},
+    {"label": "r2d: a verb word glued to a substitution is a dispatch (thread)", "want": 2, "command": "bb thread$(true) tell thr_x hi"},
+    {"label": "r2d: a command word glued to a substitution is a dispatch", "want": 2, "command": "bb$(echo) thread tell thr_x hi"},
+    {"label": "r2d: a backtick-spelled verb is a dispatch", "want": 2, "command": "bb th`x`read tell thr_x hi"},
+    {"label": "r2d: a verb word glued to a parameter expansion is a dispatch", "want": 2, "command": "bb automation${X} run a1"},
+    {"label": "r2d: a glued verb serving P1 is allowed", "want": 0, "command": "bb thread$(true) tell thr_x 'serves: P1 hi'"},
+    {"label": "r2d: a glued command word serving P1 is allowed", "want": 0, "command": "bb$(echo) thread tell thr_x 'serves: P1 hi'"},
+    {"label": "r2d: an ordinary substitution argument is not a dispatch", "want": 0, "command": "echo \"$(date)\""},
+    {"label": "r2d-followup: a substitution word in the verb slot is a dispatch ($(echo) after the group)", "want": 2, "command": "bb thread $(echo) tell thr_x hi"},
+    {"label": "r2d-followup: a substitution word in the group slot is a dispatch", "want": 2, "command": "bb $(echo) thread tell thr_x hi"},
+    {"label": "r2d-followup: a variable in the verb slot is a dispatch", "want": 2, "command": "bb thread $V tell thr_x hi"},
+    {"label": "r2d-followup: a substitution word in the verb slot serving P1 is allowed", "want": 0, "command": "bb thread $(echo) tell thr_x 'serves: P1 hi'"},
+    {"label": "read-only verbs with substitutions after them are not dispatches (list)", "want": 0, "command": "bb thread list --json"},
+    {"label": "read-only verbs with substitutions after them are not dispatches (show $ID)", "want": 0, "command": "bb thread show $ID"},
+    {"label": "r2d-followup: a substitution as the plugin id of plugin run is a dispatch", "want": 2, "command": "bb plugin run $(echo) automations create --name n --in 1m --prompt hi"},
+    {"label": "r2d-followup: a substitution as the plugin sub-verb is a dispatch", "want": 2, "command": "bb plugin $(echo) run automations create --name n --in 1m --prompt hi"},
+    {"label": "#27: plugin rpc call of a non-exempt method without serves", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call with options before the plugin and method", "want": 2, "command": "bb plugin rpc call --json --input-file {tmp}/in.json bb-account bb-account.v1.fetch"},
+    {"label": "#27: plugin rpc call of a method bb adds later is gated by default", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.tellThread"},
+    {"label": "#27: plugin rpc call whose method is built at run time", "want": 2, "command": "bb plugin rpc call bb-account $(echo bb-account.v1.fetch)"},
+    {"label": "#27: plugin rpc call of a non-exempt method with serves", "want": 0, "command": "SCOPE=\"serves: P1 hosted completion\" bb plugin rpc call bb-account bb-account.v1.fetch --input-file {tmp}/in.json"},
+    {"label": "#27 r5: provider-usage getResource is gated (its collection path was not read)", "want": 2, "command": "bb plugin rpc call provider-codex provider-usage.v1.getResource --input-file {tmp}/in.json"},
+    {"label": "#27: plugin rpc call of an exempt exact read", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status"},
+    {"label": "#27: plugin rpc list is a read", "want": 0, "command": "bb plugin rpc list --json"},
+    {"label": "#27 r3: run-time words before an exempt method can pick another (call $ARGS status)", "want": 2, "command": "bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a run-time word after the method is a dispatch too", "want": 2, "command": "bb plugin rpc call bb-account bb-account.v1.status $X"},
+    {"label": "#27 r3: a run-time input file on an exempt read is a dispatch (fails closed)", "want": 2, "command": "bb plugin rpc call --input-file \"$F\" bb-account bb-account.v1.status"},
+    {"label": "#27 r3: run-time words with serves are allowed", "want": 0, "command": "SCOPE=\"serves: P1 account check\" bb plugin rpc call $ARGS bb-account.v1.status"},
+    {"label": "#27 r3: a literal exempt read with a literal input file stays allowed", "want": 0, "command": "bb plugin rpc call bb-account bb-account.v1.status --input-file {tmp}/in.json"},
+    {"label": "#27 r4: an unknown method in an exempt plugin's namespace is a dispatch", "want": 2, "command": "bb plugin rpc call provider-codex provider-usage.v1.tellThread --input-file {tmp}/in.json"},
+    {"label": "#27 r4: the same unknown method with serves is allowed", "want": 0, "command": "SCOPE=\"serves: P1 x\" bb plugin rpc call provider-codex provider-usage.v1.tellThread"},
+    {"label": "#27 r4: provider-usage listResources is an exempt read", "want": 0, "command": "bb plugin rpc call provider-codex provider-usage.v1.listResources"},
+    {"label": "#27 r6: an exempt method name served by an uninspected plugin is a dispatch", "want": 2, "command": "bb plugin rpc call uninspected-plugin bb-account.v1.status"},
+    {"label": "#27 r6: listResources under a plugin that was not read is a dispatch", "want": 2, "command": "bb plugin rpc call provider-pi provider-usage.v1.listResources"},
+    {"label": "#27 r6: the inspected provider-claude-code listResources stays an exempt read", "want": 0, "command": "bb plugin rpc call provider-claude-code provider-usage.v1.listResources"},
+    {"label": "help with 2>&1 is not a dispatch", "want": 0, "command": "bb thread spawn --help 2>&1 | grep prompt"},
+    {"label": "help redirected to a file is not a dispatch", "want": 0, "command": "bb thread tell --help > {tmp}/help.txt"},
+    {"label": "help with 2>/dev/null is not a dispatch", "want": 0, "command": "bb fleet advise --help 2>/dev/null"},
+    {"label": "a real tell with 2>&1 is still a dispatch", "want": 2, "command": "bb thread tell thr_x \"also refactor it\" 2>&1"},
+    {"label": "help fed a here-string is still a dispatch", "want": 2, "command": "bb thread tell --help <<< \"also refactor it\""},
+    {"label": "help fed stdin from a file is still a dispatch", "want": 2, "command": "bb thread tell --help < {nobrief}"},
+    {"label": "help then a message after a redirection is still a dispatch", "want": 2, "command": "bb thread tell --help 2>&1 thr_x \"also refactor it\""},
+    {"label": "#30 r1: help with stdin duplicated from fd 3 is still a dispatch", "want": 2, "command": "bb thread tell --help 0>&3"},
+    {"label": "#30 r1: help with fd 3 redirected is still a dispatch", "want": 2, "command": "bb thread tell --help 3>&1"},
+    {"label": "#30 r1: help with stdin from a duplicated fd (<&3) is still a dispatch", "want": 2, "command": "bb thread tell --help <&3"},
+    {"label": "#30 r1: help with stdin read-write (<>) is still a dispatch", "want": 2, "command": "bb thread tell --help 0<> {nobrief}"},
+    {"label": "#30 r1: help with 1>&2 is not a dispatch", "want": 0, "command": "bb thread spawn --help 1>&2"},
+    {"label": "#30 r1: help appending stdout and stderr to a file is not a dispatch", "want": 0, "command": "bb thread spawn --help >> {tmp}/h.txt 2>&1"},
+    {"label": "#30 r1: help with &> file is not a dispatch", "want": 0, "command": "bb thread spawn --help &> {tmp}/h.txt"},
+    {"label": "#30 r2: help redirected into a process substitution that dispatches is denied", "want": 2, "command": "bb thread tell --help > >(bb thread tell thr_x \"also refactor it\")"},
+    {"label": "#30 r2: help redirected into a process substitution that only reads is allowed", "want": 0, "command": "bb thread spawn --help 2> >(cat)"},
+    {"label": "shell -c script after options: a shell option after -c: the script is the word after it", "want": 2, "command": "bash -c -e 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: -- after -c ends the options; the script follows it", "want": 2, "command": "sh -c -- 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: -x after -c, spawning", "want": 2, "command": "bash -c -x 'bb thread spawn --prompt x'"},
+    {"label": "shell -c script after options: a value option before -c (-o pipefail)", "want": 2, "command": "bash -o pipefail -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: zsh --emulate takes a value before -c", "want": 2, "command": "zsh --emulate sh -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: an option after -c with a brief line is allowed", "want": 0, "command": "bash -c -e 'bb thread tell thr_x \"serves: P1 hi\"'"},
+    {"label": "shell -c script after options: an o in a cluster takes the next word (-eo pipefail)", "want": 2, "command": "bash -eo pipefail -c 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: an o after c in a cluster takes the next word (Hermes r1)", "want": 2, "command": "bash -c -oc pipefail 'bb thread tell thr_x hi'"},
+    {"label": "shell -c script after options: zsh takes the rest of the cluster after o as its value", "want": 2, "command": "zsh -oshwordsplit -c 'bb thread tell thr_x hi'"},
+    {"label": "settings writing correct without serves", "want": 2, "command": "bb settings writing correct \"fix teh typo\""},
+    {"label": "settings writing correct serving open P1", "want": 0, "command": "bb settings writing correct \"serves: P1 fix teh typo\""},
+    {"label": "settings writing transcribe without serves", "want": 2, "command": "bb settings writing transcribe /tmp/voice.m4a"},
+    {"label": "settings writing transcribe serving open P1 in --context", "want": 0, "command": "bb settings writing transcribe /tmp/voice.m4a --context \"serves: P1 already typed\""}
   ]
 }

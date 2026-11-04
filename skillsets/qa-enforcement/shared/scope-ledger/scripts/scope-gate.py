@@ -1421,18 +1421,25 @@ def loose_tools(tools):
     return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
 
 
-def plugin_tools(bb="bb", roots=None):
-    """{tool: plugin} for every agent tool an enabled bb plugin registers,
-    read from the plugin's source at any depth (`bb plugin list --json` gives
-    rootDir; `roots` {id: dir} replaces it in tests)."""
+def plugin_tools_from_bb(bb="bb"):
+    """Return ({tool: plugin}, error). On success error is None; tools may be empty."""
     import subprocess
-    if roots is not None:
-        return _swept(roots)
     try:
-        listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True,
-                                            timeout=60).stdout)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return {}
+        p = subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, "timed out"
+    except OSError as e:
+        return None, str(e)
+    out = (p.stdout or "").strip()
+    err = (p.stderr or "").strip()
+    if p.returncode != 0:
+        detail = err or out or f"exit {p.returncode}"
+        return None, detail
+    try:
+        listing = json.loads(out or "null")
+    except ValueError as e:
+        return None, f"invalid JSON from bb plugin list: {e}"
     roots = {}
 
     def walk(o):
@@ -1445,7 +1452,17 @@ def plugin_tools(bb="bb", roots=None):
             for v in o:
                 walk(v)
     walk(listing)
-    return _swept(roots)
+    return _swept(roots), None
+
+
+def plugin_tools(bb="bb", roots=None):
+    """{tool: plugin} for every agent tool an enabled bb plugin registers,
+    read from the plugin's source at any depth (`bb plugin list --json` gives
+    rootDir; `roots` {id: dir} replaces it in tests)."""
+    if roots is not None:
+        return _swept(roots)
+    tools, err = plugin_tools_from_bb(bb)
+    return tools if err is None else {}
 
 
 def _swept(roots):
@@ -1591,25 +1608,31 @@ HELP_PROBE_VERBS = frozenset({"thread queue create", "thread interactions answer
 
 
 def help_probe_gaps(carries, bb="bb"):
-    """Verbs the integration selftest probes. Missing from `carries` because bb
-    has no such command is not a parser gap; missing while help exists is."""
+    """Verbs the integration selftest probes. Only bb's explicit unknown-command
+    answer counts as absent; timeouts and other failures are errors."""
     import subprocess
     unseen = HELP_PROBE_VERBS - carries
-    parser_gaps, absent = [], []
+    parser_gaps, absent, errors = [], [], []
     for verb in sorted(unseen):
         path = verb.split()
         try:
             p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=60,
                                stdin=subprocess.DEVNULL)
-            out = (p.stdout or "") + (p.stderr or "")
-        except (OSError, subprocess.SubprocessError):
-            absent.append(verb)
+        except subprocess.TimeoutExpired:
+            errors.append(f"{verb}: timed out")
             continue
-        if p.returncode != 0 or re.search(r"unknown command", out, re.I):
+        except OSError as e:
+            errors.append(f"{verb}: {e}")
+            continue
+        out = (p.stdout or "") + (p.stderr or "")
+        if re.search(r"unknown command", out, re.I):
             absent.append(verb)
+        elif p.returncode != 0:
+            detail = out.strip() or f"exit {p.returncode}"
+            errors.append(f"{verb}: {detail}")
         else:
             parser_gaps.append(verb)
-    return parser_gaps, absent
+    return parser_gaps, absent, errors
 
 
 def selftest():
@@ -2221,9 +2244,12 @@ def selftest():
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
         # bb removed `thread draft` (2026-09-30); its gating stays for older builds, but it can't be a probe.
-        parser_gaps, absent = help_probe_gaps(carries)
-        failed += bool(parser_gaps)
-        if parser_gaps:
+        parser_gaps, absent, probe_errors = help_probe_gaps(carries)
+        failed += bool(parser_gaps) or bool(probe_errors)
+        if probe_errors:
+            print("FAIL the help scan reaches nested and plugin groups and --text/--value/--script: "
+                  + "; ".join(probe_errors))
+        elif parser_gaps:
             print(f"FAIL the help scan reaches nested and plugin groups and --text/--value/--script"
                   f": not found {', '.join(parser_gaps)}")
         elif absent:
@@ -2244,8 +2270,11 @@ def selftest():
         print(f"{'ok  ' if handlers is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
               f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
               f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
-        tools = plugin_tools()
-        if not tools:
+        tools, tools_err = plugin_tools_from_bb()
+        if tools_err is not None:
+            failed += True
+            print(f"FAIL every registered agent tool is gated or exempt: plugin listing unavailable ({tools_err})")
+        elif not tools:
             print("ok   every registered agent tool is gated or exempt (none registered)")
         else:
             loose = loose_tools(tools)

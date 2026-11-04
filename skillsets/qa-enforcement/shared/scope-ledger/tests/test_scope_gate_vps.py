@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -57,7 +58,8 @@ sys.exit(1)
 """.replace("{py}", sys.executable)
             )
             fake.chmod(0o755)
-            gaps, absent = self.sg.help_probe_gaps(carries, bb=str(fake))
+            gaps, absent, errors = self.sg.help_probe_gaps(carries, bb=str(fake))
+        self.assertEqual(errors, [])
         self.assertEqual(gaps, [])
         self.assertEqual(
             set(absent),
@@ -71,6 +73,32 @@ sys.exit(1)
                 "thread queue create",
             },
         )
+
+    def test_help_probe_timeout_is_fail_not_absent(self):
+        carries = self.sg.HELP_PROBE_VERBS - {"automation create"}
+
+        def fake_run(cmd, **kwargs):
+            if cmd[1:4] == ["automation", "create", "--help"]:
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 60))
+            return subprocess.CompletedProcess(cmd, 1, "", "error: unknown command 'automation'\n")
+
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
+            gaps, absent, errors = self.sg.help_probe_gaps(carries, bb="bb")
+        self.assertEqual(gaps, [])
+        self.assertNotIn("automation create", absent)
+        self.assertTrue(any("automation create" in e and "timed out" in e for e in errors))
+
+    def test_plugin_tools_empty_listing_ok_error_fails(self):
+        ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Error: HTTP 401: Unauthorized")
+        with mock.patch.object(subprocess, "run", return_value=ok):
+            tools, err = self.sg.plugin_tools_from_bb("bb")
+        self.assertIsNone(err)
+        self.assertEqual(tools, {})
+        with mock.patch.object(subprocess, "run", return_value=bad):
+            tools, err = self.sg.plugin_tools_from_bb("bb")
+        self.assertIsNone(tools)
+        self.assertIn("401", err)
 
     def test_loose_tools_empty_registry_passes(self):
         self.assertEqual(self.sg.loose_tools({}), [])
