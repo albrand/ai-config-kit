@@ -158,6 +158,8 @@ class ContextHygiene(unittest.TestCase):
             "cat <<'EOF' > f.md\nNever use pgrep -f\nEOF",
             "cat > AGENTS.md <<EOF\n- Never use pkill or pgrep -f; a safety-hook block is final.\nEOF",
             "tee x <<-EOF\n\tpgrep -f y\n\tEOF",
+            "S=/tmp; cat >> $S/n.md <<'EOF'\nthe hook blocks killall bb and pkill -f bb\nEOF",
+            "cat > /tmp/b.md <<EOF\nplain text about killall bb\nEOF",
         )
         blocked = (
             "bash <<'EOF'\npgrep -f bb\nEOF",
@@ -183,6 +185,19 @@ class ContextHygiene(unittest.TestCase):
         elapsed = time.monotonic() - t0
         self.assertLess(elapsed, 8.0)
         self.assertFalse(v["block"], cmd[:48])
+
+    def test_top_level_case_scan_many_case_stays_fast_at_200k(self):
+        import time
+
+        pk = "p" + "kill"
+        n = 200_000
+        k = n // 22
+        cmd = ("case x in y) :;; esac; " * k) + f"case x in x) {pk} node;; esac"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0)
+        self.assertTrue(v["block"], cmd[:48])
 
     def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
         # echo x + backslash-newline + pgrep: joined echo args (main parity).
@@ -1357,6 +1372,79 @@ pgrep -f bb',
         allowed = (
             "printf '%s\\n' 'a\n" + pk + " node is banned\nb'",
             'echo "$(printf \'%s\' \'a $( ' + pk + " b')\"",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_lifecycle_case_unreachable_arm_reachability(self):
+        pk = "p" + "kill"
+        allowed = (
+            f"case x in z) {pk} node;; esac",
+            f"case x in x) true;; z) {pk} node;; esac",
+            f"x=$(case x in z) {pk} node;; esac)",
+            f"case x in z) true ;& y) {pk} node;; esac",
+            f"case x in 'z') {pk} node;; esac",
+        )
+        blocked = (
+            "shopt -s nocasematch; case x in X) "
+            + pk
+            + " node;; esac",
+            'shopt -s nocasematch; echo "$(case x in X) '
+            + pk
+            + ' node;; esac)"',
+            "shopt -s extglob\ncase x in @(x|y)) "
+            + pk
+            + " node;; esac",
+            'shopt -s extglob\necho "$(case x in @(x|y)) '
+            + pk
+            + ' node;; esac)"',
+            "shopt -s extglob\ncase x in !(z)) " + pk + " node;; esac",
+            f"case x in x) true ;& z) {pk} node;; esac",
+            f'case "$1" in z) {pk} node;; esac',
+            f"case $v in z) {pk} node;; esac",
+            f"case x in *) {pk} node;; esac",
+            f"case x in [xy]) {pk} node;; esac",
+            f"case x in z|x) {pk} node;; esac",
+            f'case "x" in x) {pk} node;; esac',
+            f'echo "$(case x in x\'\') {pk} node;; esac)"',
+            f"case x in 'x') {pk} node;; esac",
+            f'case x in x"") {pk} node;; esac',
+            f"case 'x' in x) {pk} node;; esac",
+            f'case "x\\q" in \'x\\q\') {pk} node;; esac',
+            f'echo "$(case "x\\q" in \'x\\q\') {pk} node;; esac)"',
+            f"case x in '*') {pk} node;; esac",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                self.assertTrue(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
+    def test_lifecycle_blocks_pkill_reached_by_case_fallthrough(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"case x in x) true ;& y) {pk} node;; esac",
+            f"case x in x) true ;;& x) {pk} node;; esac",
+            f'echo "$(case x in x) true ;& y) {pk} node;; esac)"',
+        )
+        allowed = (
+            f"case x in x) true ;& y) echo '{pk} node';; esac",
+            f"case x in x) true ;;& y) printf '%s' {pk};; esac",
+            f'echo "$(case x in x) true ;;& z) {pk} node;; esac)"',
+            "case x in x) echo '; pkill node ;&';; esac",
         )
         for cmd in blocked:
             with self.subTest(blocked=cmd[:70]):

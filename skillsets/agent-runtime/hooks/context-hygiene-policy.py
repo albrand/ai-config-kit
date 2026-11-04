@@ -244,6 +244,14 @@ PGREP_F_DENY = (
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
 PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
+_PGREP_RE_CASE = re.compile(r"case\b", re.I)
+_PGREP_RE_ESAC = re.compile(r"esac\b", re.I)
+_PGREP_RE_IN = re.compile(r"in\b", re.I)
+_PGREP_RE_ONE_WORD = re.compile(r"[^\s\"';|&]+")
+_PGREP_LEADING_ASSIGN = re.compile(
+    r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+)
+_PGREP_LEADING_ASSIGN_WS = re.compile(r"(\w+)=(?=\s)")
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
@@ -2273,7 +2281,7 @@ def _pgrep_mask_line_hash_comments(text):
 
 
 def _pgrep_mask_lifecycle_comments_linear(text):
-    if "#" not in text and "$(" not in text and "`" not in text:
+    if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
         return text
     sq = _pgrep_single_quote_spans(text)
     close_at = _pgrep_subst_close_at_map(text)
@@ -2284,6 +2292,26 @@ def _pgrep_mask_lifecycle_comments_linear(text):
     subst_stack = []
     subst_openers = []
     case_stack = []
+    case_top = _PgrepSubstCaseState()
+
+    def _case_state_active():
+        if subst_depth > 0 and case_stack:
+            return case_stack[-1]
+        if subst_depth == 0 and case_top.phase == 2:
+            return case_top
+        return None
+
+    def _emit_char(ch):
+        cs = _case_state_active()
+        if (
+            cs is not None
+            and cs.phase == 2
+            and not cs.in_pattern
+            and cs.body_mask_kill
+            and ch not in " \t\n"
+        ):
+            ch = " "
+        out.append(ch)
 
     def _mask_hash_run():
         nonlocal i
@@ -2293,7 +2321,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             closes_after = _pgrep_subst_hash_closes_after_newline(
                 text, i, opener, close_at, n
             )
-        use_newline = "\n" in text[i:] and (subst_depth == 0 or closes_after)
+        use_newline = text.find("\n", i) != -1 and (subst_depth == 0 or closes_after)
         if use_newline and subst_depth > 0 and _pgrep_hash_paren_before_newline_has_separator(
             text, i, n
         ):
@@ -2305,10 +2333,11 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             return
         close_depth = subst_depth
         cs = case_stack[-1] if case_stack else None
+        if cs is None and subst_depth == 0 and case_top.phase == 2:
+            cs = case_top
         while i < n:
             if text[i] == ")" and subst_depth == close_depth:
-                if cs is not None and _pgrep_subst_case_close_paren_is_pattern(cs):
-                    out.append("\n")
+                if cs is not None and _pgrep_subst_case_append_pattern_close(out, cs, text, i):
                     i += 1
                     continue
                 return
@@ -2340,11 +2369,48 @@ def _pgrep_mask_lifecycle_comments_linear(text):
 
     while i < n:
         if subst_depth == 0:
-            skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
-            if skip is not None:
-                out.append(text[i:skip])
-                i = skip
+            if not (case_top.phase == 2 and case_top.in_pattern):
+                skip, sq_idx = _pgrep_sq_skip_past(sq, i, sq_idx)
+                if skip is not None:
+                    out.append(text[i:skip])
+                    i = skip
+                    continue
+            if case_top.phase == 2 and case_top.in_pattern and text[i] == "'":
+                out.append(text[i])
+                i += 1
+                while i < n and text[i] != "'":
+                    out.append(text[i])
+                    i += 1
+                if i < n:
+                    out.append(text[i])
+                    i += 1
                 continue
+            if case_top.phase == 2 and case_top.in_pattern and text[i] == '"':
+                out.append(text[i])
+                i += 1
+                while i < n and text[i] != '"':
+                    if text[i] == "\\" and i + 1 < n:
+                        out.append(text[i : i + 2])
+                        i += 2
+                        continue
+                    out.append(text[i])
+                    i += 1
+                if i < n:
+                    out.append(text[i])
+                    i += 1
+                continue
+            if not dq:
+                ni = _pgrep_subst_case_unquoted_step(text, i, n, case_top)
+                if ni is not None:
+                    out.append(text[i:ni])
+                    i = ni
+                    continue
+                if case_top.phase == 2 and text[i] == "(":
+                    _pgrep_subst_case_open_paren(case_top)
+                if case_top.phase == 2 and text[i] == ")":
+                    if _pgrep_subst_case_append_pattern_close(out, case_top, text, i):
+                        i += 1
+                        continue
         if subst_depth > 0:
             if not sub_sq and not sub_dq and not sub_dsq:
                 if text[i] == "\\" and i + 1 < n:
@@ -2419,8 +2485,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 i += 1
                 continue
             if text[i] == ")":
-                if _pgrep_subst_case_close_paren_is_pattern(cs):
-                    out.append("\n")
+                if _pgrep_subst_case_append_pattern_close(out, cs, text, i):
                     i += 1
                     continue
                 out.append(text[i])
@@ -2443,7 +2508,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
                 _push_subst_frame(close_on_backtick=True, opener_i=i)
                 i += 1
                 continue
-            out.append(text[i])
+            _emit_char(text[i])
             i += 1
             continue
         if dq:
@@ -2499,13 +2564,13 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             _push_subst_frame(close_on_backtick=True, opener_i=i)
             i += 1
             continue
-        out.append(text[i])
+        _emit_char(text[i])
         i += 1
     return "".join(out)
 
 def _pgrep_mask_lifecycle_comments(text):
     try:
-        if "#" not in text and "$(" not in text and "`" not in text:
+        if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
             return text
         spans = _pgrep_heredoc_body_spans(text)
         if not spans:
@@ -2542,6 +2607,7 @@ def _pgrep_single_quote_literal_regions(text):
     subst_depth = 0
     sub_dq = sub_sq = sub_dsq = False
     sub_sq_open = None
+    case_stack = []
     while i < n:
         if subst_depth > 0:
             if sub_dsq:
@@ -2601,14 +2667,31 @@ def _pgrep_single_quote_literal_regions(text):
                 i += 1
                 continue
             if text.startswith("$", i) and i + 1 < n and text[i + 1] == "(":
+                case_stack.append(_PgrepSubstCaseState())
                 subst_depth += 1
                 i += 2
                 continue
+            cs = case_stack[-1] if case_stack else None
+            if cs is not None:
+                ni = _pgrep_subst_case_unquoted_step(text, i, n, cs)
+                if ni is not None:
+                    i = ni
+                    continue
+                if text[i] == "(":
+                    _pgrep_subst_case_open_paren(cs)
+                    i += 1
+                    continue
             if text[i] == ")":
+                if cs is not None and _pgrep_subst_case_close_paren_is_pattern(cs):
+                    i += 1
+                    continue
                 subst_depth -= 1
+                if case_stack:
+                    case_stack.pop()
                 i += 1
                 continue
             if text[i] == "`":
+                case_stack.append(_PgrepSubstCaseState())
                 subst_depth += 1
                 i += 1
                 continue
@@ -2626,12 +2709,14 @@ def _pgrep_single_quote_literal_regions(text):
                 subst_depth = 1
                 sub_dq = sub_sq = sub_dsq = False
                 sub_sq_open = None
+                case_stack.append(_PgrepSubstCaseState())
                 i += 2
                 continue
             if text[i] == "`":
                 subst_depth = 1
                 sub_dq = sub_sq = sub_dsq = False
                 sub_sq_open = None
+                case_stack.append(_PgrepSubstCaseState())
                 i += 1
                 continue
             i += 1
@@ -2653,12 +2738,14 @@ def _pgrep_single_quote_literal_regions(text):
             subst_depth = 1
             sub_dq = sub_sq = sub_dsq = False
             sub_sq_open = None
+            case_stack.append(_PgrepSubstCaseState())
             i += 2
             continue
         if text[i] == "`":
             subst_depth = 1
             sub_dq = sub_sq = sub_dsq = False
             sub_sq_open = None
+            case_stack.append(_PgrepSubstCaseState())
             i += 1
             continue
         i += 1
@@ -2970,7 +3057,7 @@ def _pgrep_subst_hash_closes_after_newline(text, hash_i, opener, close_at, n):
 
 def _pgrep_subst_close_at_map(text):
     """One forward scan: map each ``$(`` / backtick opener index to its closer (if any)."""
-    if "#" not in text and "$(" not in text and "`" not in text:
+    if "#" not in text and "$(" not in text and "`" not in text and not re.search(r"\bcase\b", text, re.I):
         return {}
     sq = _pgrep_single_quote_spans(text)
     close_at = {}
@@ -3361,13 +3448,13 @@ def _pgrep_skip_leading_assignments(text, i, limit):
         i = _pgrep_skip_space(text, i)
         if i >= limit:
             return i
-        m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:limit])
+        m = _PGREP_LEADING_ASSIGN.match(text, i, limit)
         if m:
-            i += m.end()
+            i = m.end()
             continue
-        m = re.match(r"(\w+)=(?=\s)", text[i:limit])
+        m = _PGREP_LEADING_ASSIGN_WS.match(text, i, limit)
         if m:
-            i += m.end()
+            i = m.end()
             continue
         break
     return i
@@ -3829,24 +3916,267 @@ def _pgrep_skip_case_header(text, i):
     n = len(text)
     while i < n:
         i = _pgrep_skip_space(text, i)
-        if re.match(r"in\b", text[i:], re.I):
+        if _PGREP_RE_IN.match(text, i):
             return _pgrep_skip_space(text, i + 2)
         i = _pgrep_skip_one_word(text, i, n)
     return i
 
 
+def _pgrep_case_token_may_match(token):
+    if not token:
+        return True
+    if "$" in token or "`" in token:
+        return True
+    if any(c in token for c in "*?["):
+        return True
+    return False
+
+
+def _pgrep_case_unquote_token(token):
+    """Bash quote removal for case words/patterns; (False, None) if the arm may match."""
+    if _pgrep_case_token_may_match(token):
+        return False, None
+    i, n = 0, len(token)
+    out = []
+    while i < n:
+        c = token[i]
+        if c == "'":
+            i += 1
+            while i < n and token[i] != "'":
+                out.append(token[i])
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if c == '"':
+            i += 1
+            while i < n and token[i] != '"':
+                if token[i] == "\\" and i + 1 < n:
+                    nxt = token[i + 1]
+                    if nxt in '$"`\\':
+                        out.append(nxt)
+                        i += 2
+                        continue
+                    if nxt == "\n":
+                        i += 2
+                        continue
+                    out.append("\\")
+                    out.append(nxt)
+                    i += 2
+                    continue
+                if token[i] in "$`":
+                    return False, None
+                out.append(token[i])
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(token[i + 1])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return True, "".join(out)
+
+
+def _pgrep_case_word_span(text, case_end, n):
+    i = _pgrep_skip_space(text, case_end)
+    w0 = i
+    while i < n:
+        i = _pgrep_skip_space(text, i)
+        if _PGREP_RE_IN.match(text, i):
+            break
+        if text[i] == "'":
+            i += 1
+            while i < n and text[i] != "'":
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if text[i] == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if text[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        j = i
+        while j < n and not text[j].isspace():
+            j += 1
+        i = j
+    return w0, i
+
+
+def _pgrep_case_word_literal(text, start, end):
+    w = text[start:end]
+    if not w:
+        return False, None
+    ok, lit = _pgrep_case_unquote_token(w)
+    if not ok:
+        return False, None
+    return True, lit
+
+
+def _pgrep_case_pattern_alt_unwrap(alt):
+    alt = alt.strip()
+    while len(alt) >= 2 and alt[0] == "(" and alt[-1] == ")":
+        inner = alt[1:-1].strip()
+        if "|" in inner:
+            break
+        alt = inner
+    return alt
+
+
+def _pgrep_case_pattern_alt_plain(alt):
+    alt = _pgrep_case_pattern_alt_unwrap(alt)
+    if not alt:
+        return False, None
+    ok, lit = _pgrep_case_unquote_token(alt)
+    if not ok:
+        return False, None
+    return True, lit
+
+
+_PGREP_CASE_LITERAL_CHARS = frozenset(
+    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@\-"
+)
+
+
+def _pgrep_case_literal_only_after_quotes(text):
+    return all(c in _PGREP_CASE_LITERAL_CHARS for c in text)
+
+
+def _pgrep_case_alt_raw_allowlist_ok(raw_alt):
+    if any(c in raw_alt for c in "()~{}"):
+        return False
+    i = 0
+    n = len(raw_alt)
+    while i < n:
+        if raw_alt[i] == "@" and i + 1 < n and raw_alt[i + 1] == "(":
+            return False
+        i += 1
+    return True
+
+
+def _pgrep_case_split_pattern_alts(pattern):
+    alts = []
+    i, n, depth = 0, len(pattern), 0
+    start = 0
+    while i < n:
+        c = pattern[i]
+        if c in "'\"":
+            q = c
+            i += 1
+            while i < n and pattern[i] != q:
+                if pattern[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                i += 1
+            if i < n:
+                i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth:
+                depth -= 1
+        elif c == "|" and depth == 0:
+            alts.append(pattern[start:i])
+            start = i + 1
+        i += 1
+    alts.append(pattern[start:])
+    return alts
+
+
+def _pgrep_case_arm_statically_unreachable(state, pattern_text):
+    if not state.word_plain or state.word_lit is None:
+        return False
+    if state.word_lit == "":
+        return False
+    if not _pgrep_case_literal_only_after_quotes(state.word_lit):
+        return False
+    for alt in _pgrep_case_split_pattern_alts(pattern_text):
+        if not _pgrep_case_alt_raw_allowlist_ok(alt):
+            return False
+        ok, lit = _pgrep_case_unquote_token(_pgrep_case_pattern_alt_unwrap(alt))
+        if not ok:
+            return False
+        if not _pgrep_case_literal_only_after_quotes(lit):
+            return False
+        if lit.casefold() == state.word_lit.casefold():
+            return False
+    return True
+
+
+def _pgrep_subst_case_finish_pattern(state, text, close_i):
+    inner = text[state.pat_start:close_i]
+    if (
+        close_i < len(text)
+        and text[close_i] == ")"
+        and inner.count("(") > inner.count(")")
+    ):
+        pat = inner + ")"
+    else:
+        pat = inner
+    unreachable = _pgrep_case_arm_statically_unreachable(state, pat)
+    state.arm_body_reachable = state.fallthrough_next or not unreachable
+    state.body_mask_kill = not state.arm_body_reachable
+    state.fallthrough_next = False
+
+
+def _pgrep_subst_case_append_pattern_close(out, state, text, close_i):
+    if not _pgrep_subst_case_close_paren_is_pattern(state, text, close_i):
+        return False
+    if state.in_pattern:
+        out.append(")")
+        return True
+    if state.arm_body_reachable:
+        out.append("\n")
+    else:
+        out.append(")")
+    return True
+
+
 class _PgrepSubstCaseState:
-    __slots__ = ("phase", "in_pattern", "pat_paren")
+    __slots__ = (
+        "phase",
+        "in_pattern",
+        "pat_paren",
+        "word_plain",
+        "word_lit",
+        "pat_start",
+        "fallthrough_next",
+        "arm_body_reachable",
+        "body_mask_kill",
+    )
 
     def __init__(self):
         self.phase = 0
         self.in_pattern = False
         self.pat_paren = 0
+        self.word_plain = False
+        self.word_lit = None
+        self.pat_start = 0
+        self.fallthrough_next = False
+        self.arm_body_reachable = False
+        self.body_mask_kill = False
 
     def reset(self):
         self.phase = 0
         self.in_pattern = False
         self.pat_paren = 0
+        self.word_plain = False
+        self.word_lit = None
+        self.pat_start = 0
+        self.fallthrough_next = False
+        self.arm_body_reachable = False
 
 
 def _pgrep_shell_word_start(text, i):
@@ -3856,10 +4186,24 @@ def _pgrep_shell_word_start(text, i):
 def _pgrep_subst_case_try_enter(text, i, n, state):
     if state.phase != 0:
         return i
-    m = re.match(r"case\b", text[i:], re.I)
+    m = _PGREP_RE_CASE.match(text, i)
     if not m or not _pgrep_shell_word_start(text, i):
         return i
-    ni = _pgrep_skip_case_header(text, i + m.end())
+    p = m.end()
+    w0, in_i = _pgrep_case_word_span(text, p, n)
+    w1 = in_i
+    while w1 > w0 and text[w1 - 1].isspace():
+        w1 -= 1
+    if w1 <= w0 or in_i >= n or not _PGREP_RE_IN.match(text, in_i):
+        return i
+    ni = _pgrep_skip_space(text, in_i + 2)
+    wp, wl = _pgrep_case_word_literal(text, w0, w1)
+    state.word_plain = wp
+    state.word_lit = wl
+    state.pat_start = ni
+    state.fallthrough_next = False
+    state.arm_body_reachable = False
+    state.body_mask_kill = False
     state.phase = 2
     state.in_pattern = True
     state.pat_paren = 0
@@ -3869,13 +4213,28 @@ def _pgrep_subst_case_try_enter(text, i, n, state):
 def _pgrep_subst_case_advance(text, i, n, state):
     if state.phase != 2:
         return i
-    m = re.match(r"esac\b", text[i:], re.I)
+    m = _PGREP_RE_ESAC.match(text, i)
     if m:
         state.reset()
-        return i + m.end()
-    if text.startswith(";;", i):
+        return m.end()
+    if text.startswith(";;&", i):
+        state.fallthrough_next = False
         state.in_pattern = True
         state.pat_paren = 0
+        state.pat_start = _pgrep_skip_space(text, i + 3)
+        return i + 3
+    if text.startswith(";;", i):
+        state.fallthrough_next = False
+        state.in_pattern = True
+        state.pat_paren = 0
+        state.pat_start = _pgrep_skip_space(text, i + 2)
+        return i + 2
+    if text.startswith(";&", i):
+        if state.arm_body_reachable:
+            state.fallthrough_next = True
+        state.in_pattern = True
+        state.pat_paren = 0
+        state.pat_start = _pgrep_skip_space(text, i + 2)
         return i + 2
     return i
 
@@ -3885,19 +4244,30 @@ def _pgrep_subst_case_open_paren(state):
         state.pat_paren += 1
 
 
-def _pgrep_subst_case_close_paren_is_pattern(state):
+def _pgrep_subst_case_close_paren_is_pattern(state, text=None, close_i=None):
     if state.phase != 2 or not state.in_pattern:
         return False
     if state.pat_paren > 0:
         state.pat_paren -= 1
-        return True
+        if state.pat_paren > 0:
+            return True
+    if text is not None and close_i is not None:
+        inner = text[state.pat_start:close_i]
+        if (
+            "(" in inner
+            and close_i + 1 < len(text)
+            and text[close_i + 1] == ")"
+        ):
+            return True
     state.in_pattern = False
+    if text is not None and close_i is not None:
+        _pgrep_subst_case_finish_pattern(state, text, close_i)
     return True
 
 
 def _pgrep_subst_case_unquoted_step(text, i, n, state):
     if state.phase == 0:
-        if text[i : i + 1].lower() != "c" or not re.match(r"case\b", text[i:], re.I):
+        if text[i : i + 1].lower() != "c" or not _PGREP_RE_CASE.match(text, i):
             return None
         if not _pgrep_shell_word_start(text, i):
             return None
@@ -4029,8 +4399,8 @@ def _pgrep_skip_one_word(text, i, limit):
         while j < limit and text[j] != "'":
             j += 1
         return j + 1 if j < limit else limit
-    m = re.match(r"[^\s\"';|&]+", text[i:limit])
-    return i + m.end() if m else i + 1
+    m = _PGREP_RE_ONE_WORD.match(text, i, limit)
+    return m.end() if m else i + 1
 
 
 def _pgrep_skip_dash_options(text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags):
@@ -4985,12 +5355,12 @@ def _pgrep_unquote_assign_value(val):
 
 
 def _pgrep_assignment_at(text, i, limit):
-    m = _PGREP_ASSIGNMENT.match(text[i:limit])
+    m = _PGREP_ASSIGNMENT.match(text, i, limit)
     if not m:
         return None
     name = m.group(1)
-    val = text[i + len(name) + 1 : i + m.end()]
-    return name, val, i + m.end()
+    val = text[i + len(name) + 1 : m.end()]
+    return name, val, m.end()
 
 
 def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):
@@ -5329,11 +5699,17 @@ def bb_lifecycle_guard(raw):
             "runtime that fork-stage.sh installs bb from, offline and checksum-verified. Without "
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
-    lifecycle_block = kills_bb_pid(text)
+    lifecycle_scan = cmd if isinstance(cmd, str) and cmd else text
+    if isinstance(cmd, str) and "<<" in cmd:
+        head = cmd.split("<<", 1)[0]
+        if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
+            tail = _pgrep_tail_after_first_heredoc(cmd)
+            lifecycle_scan = head + ("\n" + tail if tail else "")
+    lifecycle_block = kills_bb_pid(lifecycle_scan)
     if not lifecycle_block:
-        lifecycle_block = any(rx.search(text) for rx in BB_LIFECYCLE[:-1])
+        lifecycle_block = any(rx.search(lifecycle_scan) for rx in BB_LIFECYCLE[:-1])
     if not lifecycle_block:
-        lifecycle_block = _pgrep_lifecycle_pkill_match(text)
+        lifecycle_block = _pgrep_lifecycle_pkill_match(lifecycle_scan)
     if lifecycle_block:
         verdict(True,
             "[bb-lifecycle] Quitting, killing or replacing /Applications/bb.app kills every "
