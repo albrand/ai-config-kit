@@ -3677,7 +3677,31 @@ def _pgrep_heredoc_opener_line_pipes_to_shell(text, after_delim, line_end):
     return False
 
 
+_PGREP_HEREDOC_BODIES_CACHE = {}
+
+
+def _pgrep_clear_heredoc_bodies_cache():
+    _PGREP_HEREDOC_BODIES_CACHE.clear()
+
+
+def _pgrep_heredoc_bodies_for_text(text):
+    cached = _PGREP_HEREDOC_BODIES_CACHE.get(text)
+    if cached is not None:
+        return cached
+    cached = _pgrep_collect_heredoc_bodies(text)
+    if len(_PGREP_HEREDOC_BODIES_CACHE) > 16:
+        _PGREP_HEREDOC_BODIES_CACHE.clear()
+    _PGREP_HEREDOC_BODIES_CACHE[text] = cached
+    return cached
+
+
 def _pgrep_iter_heredoc_bodies(text):
+    for item in _pgrep_heredoc_bodies_for_text(text):
+        yield item
+
+
+def _pgrep_collect_heredoc_bodies(text):
+    bodies = []
     n = len(text)
     i = 0
     sq = dq = False
@@ -3749,7 +3773,7 @@ def _pgrep_iter_heredoc_bodies(text):
                 body_start = n
                 body_end = n
                 if body_start < body_end:
-                    yield body_start, body_end, executable, stdin_prog, literal
+                    bodies.append((body_start, body_end, executable, stdin_prog, literal))
                 break
             body_start = line_end + 1
             k = body_start
@@ -3764,17 +3788,18 @@ def _pgrep_iter_heredoc_bodies(text):
                 if cmp_line == delim:
                     body_end = k
                     if body_start < body_end:
-                        yield body_start, body_end, executable, stdin_prog, literal
+                        bodies.append((body_start, body_end, executable, stdin_prog, literal))
                     i = line_term + 1 if line_term < n else n
+                    cmd_start = _pgrep_skip_space(text, i)
                     break
                 k = line_term + 1 if line_term < n else n
             else:
                 if body_start < n:
-                    yield body_start, n, executable, stdin_prog, literal
+                    bodies.append((body_start, n, executable, stdin_prog, literal))
                 break
             continue
         i += 1
-
+    return bodies
 
 def _pgrep_iter_simple_command_spans(text):
     cache = getattr(_pgrep_iter_simple_command_spans, "_cache", None)
@@ -5592,6 +5617,7 @@ def pgrep_segment_uses_flag_var(segment, flag_vars):
     return False
 
 def pgrep_full_match(text, cmd=None):
+    _pgrep_clear_heredoc_bodies_cache()
     if _pgrep_fail_closed_after_shell_fault(text, cmd=cmd):
         return True
     shell = cmd if isinstance(cmd, str) and cmd.strip() else text
