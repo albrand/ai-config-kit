@@ -9,9 +9,7 @@ import sys
 from pathlib import Path
 
 MODE_FILE = os.environ.get("SPAWN_ROUTE_MODE_FILE", os.path.expanduser("~/.agent-hooks/spawn-route.mode"))
-LOG_FILE = os.environ.get(
-    "SPAWN_ROUTE_LOG", os.path.join(os.path.expanduser("~"), ".agent-hooks", "spawn-route.log")
-)
+LOG_FILE = os.environ.get("SPAWN_ROUTE_LOG", os.path.expanduser("~/projects/bb-fork-tools/spawn-route.log"))
 # body-3d: owner 2026-10-18 — tissue/organ/body-part/animation work runs on Claude.
 LANES = {"architecture", "security", "auth", "authentication", "data-loss", "migration", "release", "final-review", "body-3d", "creative"}
 
