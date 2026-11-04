@@ -1512,15 +1512,13 @@ pgrep -f bb',
         import time
 
         n = 600
-        cmd = "".join("python3 - <<'EOF'
-print(%d)
-EOF
-" % i for i in range(n))
+        cmd = "".join("python3 - <<'EOF'\nprint(%d)\nEOF\n" % i for i in range(n))
         start = time.monotonic()
         v = verdict(bash(cmd + "pkill node"), env={"CONTEXT_HYGIENE": "off"})
         elapsed = time.monotonic() - start
         self.assertTrue(v["block"], cmd[:80])
         self.assertLess(elapsed, 2.0, f"many-heredoc scan took {elapsed:.2f}s")
+
 
 if __name__ == "__main__":
     unittest.main()
