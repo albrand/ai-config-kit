@@ -5325,15 +5325,32 @@ def _pgrep_process_command_substitutions(text, inner_fn):
 _PGREP_SUBST_EXPAND_MAX = 64
 
 
-def _pgrep_blank_nonexecutable_heredoc_bodies(text):
-    chars = list(text)
+
+
+def _pgrep_text_outside_nonexecutable_heredoc_bodies(text):
+    parts = []
+    pos = 0
     for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
         if executable or stdin_prog:
             continue
-        for k in range(body_start, body_end):
-            if chars[k] != "\n":
-                chars[k] = " "
-    return "".join(chars)
+        parts.append(text[pos:body_start])
+        pos = body_end
+    parts.append(text[pos:])
+    return "".join(parts)
+
+def _pgrep_blank_nonexecutable_heredoc_bodies(text):
+    parts = []
+    pos = 0
+    for body_start, body_end, executable, stdin_prog, literal in _pgrep_iter_heredoc_bodies(text):
+        if executable or stdin_prog:
+            continue
+        parts.append(text[pos:body_start])
+        body = text[body_start:body_end]
+        if body:
+            parts.append(re.sub(r"[^\n]", " ", body))
+        pos = body_end
+    parts.append(text[pos:])
+    return "".join(parts)
 
 
 
@@ -5727,7 +5744,7 @@ def bb_lifecycle_guard(raw):
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
     shell_for_lifecycle = cmd if isinstance(cmd, str) and cmd.strip() else text
-    lifecycle_scan = _pgrep_blank_nonexecutable_heredoc_bodies(shell_for_lifecycle)
+    lifecycle_scan = _pgrep_text_outside_nonexecutable_heredoc_bodies(shell_for_lifecycle)
     lifecycle_block = kills_bb_pid(lifecycle_scan)
     if not lifecycle_block:
         lifecycle_block = any(rx.search(lifecycle_scan) for rx in BB_LIFECYCLE[:-1])
