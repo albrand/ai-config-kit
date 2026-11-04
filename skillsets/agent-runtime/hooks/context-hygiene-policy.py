@@ -3944,7 +3944,16 @@ def _pgrep_case_unquote_token(token):
             i += 1
             while i < n and token[i] != '"':
                 if token[i] == "\\" and i + 1 < n:
-                    out.append(token[i + 1])
+                    nxt = token[i + 1]
+                    if nxt in '$"`\\':
+                        out.append(nxt)
+                        i += 2
+                        continue
+                    if nxt == "\n":
+                        i += 2
+                        continue
+                    out.append("\\")
+                    out.append(nxt)
                     i += 2
                     continue
                 if token[i] in "$`":

@@ -1393,6 +1393,8 @@ pgrep -f bb',
             f"case x in 'x') {pk} node;; esac",
             f'case x in x"") {pk} node;; esac',
             f"case 'x' in x) {pk} node;; esac",
+            f'case "x\\q" in \'x\\q\') {pk} node;; esac',
+            f'echo "$(case "x\\q" in \'x\\q\') {pk} node;; esac)"',
             f"case x in '*') {pk} node;; esac",
         )
         for cmd in allowed:
