@@ -1392,9 +1392,15 @@ pgrep -f bb',
             f"x=$(case x in z) {pk} node;; esac)",
             f"case x in z) true ;& y) {pk} node;; esac",
             f"case x in 'z') {pk} node;; esac",
-            f"case x in \\\\x) {pk} node;; esac",
         )
         blocked = (
+            "shopt -s extglob\ncase x in @(x|y)) "
+            + pk
+            + " node;; esac",
+            'shopt -s extglob\necho "$(case x in @(x|y)) '
+            + pk
+            + ' node;; esac)"',
+            "shopt -s extglob\ncase x in !(z)) " + pk + " node;; esac",
             f"case x in x) true ;& z) {pk} node;; esac",
             f'case "$1" in z) {pk} node;; esac',
             f"case $v in z) {pk} node;; esac",

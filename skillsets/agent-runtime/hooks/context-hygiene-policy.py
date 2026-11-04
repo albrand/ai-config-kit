@@ -4044,6 +4044,27 @@ def _pgrep_case_pattern_alt_plain(alt):
     return True, lit
 
 
+_PGREP_CASE_LITERAL_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.,:/=+%@-"
+)
+
+
+def _pgrep_case_literal_only_after_quotes(text):
+    return all(c in _PGREP_CASE_LITERAL_CHARS for c in text)
+
+
+def _pgrep_case_alt_raw_allowlist_ok(raw_alt):
+    if any(c in raw_alt for c in "()~{}"):
+        return False
+    i = 0
+    n = len(raw_alt)
+    while i < n:
+        if raw_alt[i] == "@" and i + 1 < n and raw_alt[i + 1] == "(":
+            return False
+        i += 1
+    return True
+
+
 def _pgrep_case_split_pattern_alts(pattern):
     alts = []
     i, n, depth = 0, len(pattern), 0
@@ -4077,9 +4098,17 @@ def _pgrep_case_split_pattern_alts(pattern):
 def _pgrep_case_arm_statically_unreachable(state, pattern_text):
     if not state.word_plain or state.word_lit is None:
         return False
+    if state.word_lit == "":
+        return False
+    if not _pgrep_case_literal_only_after_quotes(state.word_lit):
+        return False
     for alt in _pgrep_case_split_pattern_alts(pattern_text):
-        plain, lit = _pgrep_case_pattern_alt_plain(alt)
-        if not plain:
+        if not _pgrep_case_alt_raw_allowlist_ok(alt):
+            return False
+        ok, lit = _pgrep_case_unquote_token(_pgrep_case_pattern_alt_unwrap(alt))
+        if not ok:
+            return False
+        if not _pgrep_case_literal_only_after_quotes(lit):
             return False
         if lit == state.word_lit:
             return False
@@ -4221,6 +4250,14 @@ def _pgrep_subst_case_close_paren_is_pattern(state, text=None, close_i=None):
     if state.pat_paren > 0:
         state.pat_paren -= 1
         if state.pat_paren > 0:
+            return True
+    if text is not None and close_i is not None:
+        inner = text[state.pat_start:close_i]
+        if (
+            "(" in inner
+            and close_i + 1 < len(text)
+            and text[close_i + 1] == ")"
+        ):
             return True
     state.in_pattern = False
     if text is not None and close_i is not None:
