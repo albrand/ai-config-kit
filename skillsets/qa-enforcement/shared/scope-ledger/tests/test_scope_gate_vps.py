@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,7 +87,32 @@ sys.exit(1)
             gaps, absent, errors = self.sg.help_probe_gaps(carries, bb="bb")
         self.assertEqual(gaps, [])
         self.assertNotIn("automation create", absent)
-        self.assertTrue(any("automation create" in e and "timed out" in e for e in errors))
+        self.assertTrue(any("automation create" in e and "help probe timed out" in e for e in errors))
+
+    def test_help_probe_gaps_shared_budget_wall_clock(self):
+        carries = self.sg.HELP_PROBE_VERBS - {"automation create"}
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "slow-help-bb"
+            fake.write_text(
+                f"""#!{{py}}
+import sys, time
+if len(sys.argv) >= 4 and sys.argv[1:4] == ["automation", "create", "--help"]:
+    time.sleep(16)
+    sys.exit(0)
+sys.stderr.write("error: unknown command 'probe'\\n")
+sys.exit(1)
+""".replace("{py}", sys.executable)
+            )
+            fake.chmod(0o755)
+            t0 = time.monotonic()
+            gaps, absent, errors = self.sg.help_probe_gaps(carries, bb=str(fake))
+            elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 12.0, f"help_probe_gaps took {elapsed:.2f}s")
+        self.assertNotIn("automation create", absent)
+        self.assertTrue(
+            any("automation create" in e and "help probe timed out" in e for e in errors),
+            errors,
+        )
 
     def test_plugin_tools_empty_listing_ok_error_fails(self):
         ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")

@@ -1605,6 +1605,7 @@ def bb_text_verbs(bb="bb"):
 
 HELP_PROBE_VERBS = frozenset({"thread queue create", "thread interactions answer", "thread interactions respond",
                               "automation create", "automation update", "instructions set", "notify send"})
+HELP_PROBE_BUDGET_S = 10.0
 
 
 def help_probe_gaps(carries, bb="bb"):
@@ -1613,13 +1614,18 @@ def help_probe_gaps(carries, bb="bb"):
     import subprocess
     unseen = HELP_PROBE_VERBS - carries
     parser_gaps, absent, errors = [], [], []
+    deadline = time.monotonic() + HELP_PROBE_BUDGET_S
     for verb in sorted(unseen):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            errors.append(f"{verb}: help probe timed out")
+            continue
         path = verb.split()
         try:
-            p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=60,
+            p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=remaining,
                                stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
-            errors.append(f"{verb}: timed out")
+            errors.append(f"{verb}: help probe timed out")
             continue
         except OSError as e:
             errors.append(f"{verb}: {e}")
