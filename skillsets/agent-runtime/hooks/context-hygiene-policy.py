@@ -244,6 +244,14 @@ PGREP_F_DENY = (
 )
 PGREP_WORD = re.compile(r'\bpgrep\b')
 PGREP_VAR_INVOKE = re.compile(r'["\']?\$\{(\w+)\}|["\']?\$(\w+)\b')
+_PGREP_RE_CASE = re.compile(r"case\b", re.I)
+_PGREP_RE_ESAC = re.compile(r"esac\b", re.I)
+_PGREP_RE_IN = re.compile(r"in\b", re.I)
+_PGREP_RE_ONE_WORD = re.compile(r"[^\s\"';|&]+")
+_PGREP_LEADING_ASSIGN = re.compile(
+    r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+)
+_PGREP_LEADING_ASSIGN_WS = re.compile(r"(\w+)=(?=\s)")
 # fork-stage.sh repairs the bb Electron runtime only from this cache. A session
 # freeing disk on 2026-10-28 ran `rm -rf ~/Library/Caches/electron/*` and the
 # next install (i31) refused; 2026-10-20 had the same cause. Deleting the whole
@@ -2313,7 +2321,7 @@ def _pgrep_mask_lifecycle_comments_linear(text):
             closes_after = _pgrep_subst_hash_closes_after_newline(
                 text, i, opener, close_at, n
             )
-        use_newline = "\n" in text[i:] and (subst_depth == 0 or closes_after)
+        use_newline = text.find("\n", i) != -1 and (subst_depth == 0 or closes_after)
         if use_newline and subst_depth > 0 and _pgrep_hash_paren_before_newline_has_separator(
             text, i, n
         ):
@@ -3440,13 +3448,13 @@ def _pgrep_skip_leading_assignments(text, i, limit):
         i = _pgrep_skip_space(text, i)
         if i >= limit:
             return i
-        m = re.match(r"(\w+)=(?:[^\s\"';|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')", text[i:limit])
+        m = _PGREP_LEADING_ASSIGN.match(text, i, limit)
         if m:
-            i += m.end()
+            i = m.end()
             continue
-        m = re.match(r"(\w+)=(?=\s)", text[i:limit])
+        m = _PGREP_LEADING_ASSIGN_WS.match(text, i, limit)
         if m:
-            i += m.end()
+            i = m.end()
             continue
         break
     return i
@@ -3908,7 +3916,7 @@ def _pgrep_skip_case_header(text, i):
     n = len(text)
     while i < n:
         i = _pgrep_skip_space(text, i)
-        if re.match(r"in\b", text[i:], re.I):
+        if _PGREP_RE_IN.match(text, i):
             return _pgrep_skip_space(text, i + 2)
         i = _pgrep_skip_one_word(text, i, n)
     return i
@@ -3977,7 +3985,7 @@ def _pgrep_case_word_span(text, case_end, n):
     w0 = i
     while i < n:
         i = _pgrep_skip_space(text, i)
-        if re.match(r"in\b", text[i:], re.I):
+        if _PGREP_RE_IN.match(text, i):
             break
         if text[i] == "'":
             i += 1
@@ -4149,15 +4157,15 @@ def _pgrep_shell_word_start(text, i):
 def _pgrep_subst_case_try_enter(text, i, n, state):
     if state.phase != 0:
         return i
-    m = re.match(r"case\b", text[i:], re.I)
+    m = _PGREP_RE_CASE.match(text, i)
     if not m or not _pgrep_shell_word_start(text, i):
         return i
-    p = i + m.end()
+    p = m.end()
     w0, in_i = _pgrep_case_word_span(text, p, n)
     w1 = in_i
     while w1 > w0 and text[w1 - 1].isspace():
         w1 -= 1
-    if w1 <= w0 or in_i >= n or not re.match(r"in\b", text[in_i:], re.I):
+    if w1 <= w0 or in_i >= n or not _PGREP_RE_IN.match(text, in_i):
         return i
     ni = _pgrep_skip_space(text, in_i + 2)
     wp, wl = _pgrep_case_word_literal(text, w0, w1)
@@ -4176,10 +4184,10 @@ def _pgrep_subst_case_try_enter(text, i, n, state):
 def _pgrep_subst_case_advance(text, i, n, state):
     if state.phase != 2:
         return i
-    m = re.match(r"esac\b", text[i:], re.I)
+    m = _PGREP_RE_ESAC.match(text, i)
     if m:
         state.reset()
-        return i + m.end()
+        return m.end()
     if text.startswith(";;&", i):
         state.fallthrough_next = False
         state.in_pattern = True
@@ -4222,7 +4230,7 @@ def _pgrep_subst_case_close_paren_is_pattern(state, text=None, close_i=None):
 
 def _pgrep_subst_case_unquoted_step(text, i, n, state):
     if state.phase == 0:
-        if text[i : i + 1].lower() != "c" or not re.match(r"case\b", text[i:], re.I):
+        if text[i : i + 1].lower() != "c" or not _PGREP_RE_CASE.match(text, i):
             return None
         if not _pgrep_shell_word_start(text, i):
             return None
@@ -4354,8 +4362,8 @@ def _pgrep_skip_one_word(text, i, limit):
         while j < limit and text[j] != "'":
             j += 1
         return j + 1 if j < limit else limit
-    m = re.match(r"[^\s\"';|&]+", text[i:limit])
-    return i + m.end() if m else i + 1
+    m = _PGREP_RE_ONE_WORD.match(text, i, limit)
+    return m.end() if m else i + 1
 
 
 def _pgrep_skip_dash_options(text, i, limit, short_with_arg, short_flags, long_with_arg, long_flags):
@@ -5310,12 +5318,12 @@ def _pgrep_unquote_assign_value(val):
 
 
 def _pgrep_assignment_at(text, i, limit):
-    m = _PGREP_ASSIGNMENT.match(text[i:limit])
+    m = _PGREP_ASSIGNMENT.match(text, i, limit)
     if not m:
         return None
     name = m.group(1)
-    val = text[i + len(name) + 1 : i + m.end()]
-    return name, val, i + m.end()
+    val = text[i + len(name) + 1 : m.end()]
+    return name, val, m.end()
 
 
 def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):

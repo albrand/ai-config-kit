@@ -186,6 +186,19 @@ class ContextHygiene(unittest.TestCase):
         self.assertLess(elapsed, 8.0)
         self.assertFalse(v["block"], cmd[:48])
 
+    def test_top_level_case_scan_many_case_stays_fast_at_200k(self):
+        import time
+
+        pk = "p" + "kill"
+        n = 200_000
+        k = n // 22
+        cmd = ("case x in y) :;; esac; " * k) + f"case x in x) {pk} node;; esac"
+        t0 = time.monotonic()
+        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0)
+        self.assertTrue(v["block"], cmd[:48])
+
     def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
         # echo x + backslash-newline + pgrep: joined echo args (main parity).
         data_hd = "cat > f.md <<'EOF'\nline \\\\\nno pgrep -f here\nEOF"
