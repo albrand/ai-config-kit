@@ -1,4 +1,5 @@
 """Coordinator-mode: negated/solo user prompts must not block direct edits."""
+import importlib.util
 import json
 import os
 import subprocess
@@ -8,18 +9,22 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+KIT = ROOT.parents[2]
 HOOK = ROOT / "coordinator-mode.py"
 REPO = "/repo"
 README = f"{REPO}/README.md"
 
-HERMES_SOLO = (
-    "Don't orchestrate this; edit the README directly to explain the current hooks.",
-    "Fix the issue with agents in the README directly; do not delegate.",
+CLASSIFY_ROWS = (
+    ("Don't orchestrate this; edit the README directly to explain the current hooks.", False),
+    ("Fix the issue with agents in the README directly; do not delegate.", False),
+    ("orchestrate this and spawn children", True),
+    ("please coordinate children for this", True),
+    ("orchestrate this; don't spawn more than 3 children", True),
+    ("be the coordinator; do not delegate the security review, keep it on Claude", True),
+    ("spawn children for the frontend; no need to delegate the migration", True),
+    ("use subagents for research, but skip the children for the final review", True),
 )
-COORDINATOR = (
-    "orchestrate this and spawn children",
-    "please coordinate children for this",
-)
+MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {
     "tool_name": "write",
     "tool_input": {"file_path": README},
@@ -27,12 +32,24 @@ WRITE = {
 }
 
 
+def load_classify_from_source(source):
+    spec = importlib.util.spec_from_file_location("coordinator_mode_under_test", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.classify
+
+
 class CoordinatorModeNegationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.home = self.temp.name
-        self.session = "coord-negation-test"
+        self.classify = load_classify_from_source(HOOK)
+
+    def fresh_session(self):
+        self.session = f"coord-neg-{next(self._session_counter)}"
+
+    _session_counter = iter(range(1000))
 
     def run_hook(self, kind, payload):
         body = {**payload, "session_id": self.session}
@@ -54,19 +71,42 @@ class CoordinatorModeNegationTests(unittest.TestCase):
         return json.loads(path.read_text()).get("mode", "")
 
     def prompt_then_write(self, prompt):
+        self.fresh_session()
         self.run_hook("prompt", {"prompt": prompt})
         return self.run_hook("pretool", WRITE)
 
-    def test_hermes_solo_prompts_allow_readme_write(self):
-        for prompt in HERMES_SOLO:
+    def test_classify_table_eight_rows(self):
+        for prompt, want_coord in CLASSIFY_ROWS:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_main_regression_rows_still_classify_as_coordinator(self):
+        main_src = subprocess.check_output(
+            ["git", "show", "41e86403:skillsets/qa-enforcement/hooks/coordinator-mode.py"],
+            cwd=KIT,
+            text=True,
+        )
+        path = Path(self.temp.name) / "main-coordinator-mode.py"
+        path.write_text(main_src)
+        classify_main = load_classify_from_source(path)
+        for prompt, want_coord in MAIN_REGRESSION:
+            with self.subTest(prompt=prompt[:56]):
+                got = classify_main(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_solo_prompts_allow_readme_write(self):
+        for prompt, want_coord in CLASSIFY_ROWS[:2]:
             with self.subTest(prompt=prompt[:48]):
+                self.assertFalse(want_coord)
                 out = self.prompt_then_write(prompt)
                 self.assertFalse(out.get("block"), out)
                 self.assertNotEqual(self.state_mode(), "coordinator")
 
     def test_coordinator_prompts_block_readme_write(self):
-        for prompt in COORDINATOR:
-            with self.subTest(prompt=prompt):
+        for prompt, want_coord in CLASSIFY_ROWS[2:]:
+            with self.subTest(prompt=prompt[:48]):
+                self.assertTrue(want_coord)
                 out = self.prompt_then_write(prompt)
                 self.assertTrue(out.get("block"), out)
                 self.assertEqual(self.state_mode(), "coordinator")

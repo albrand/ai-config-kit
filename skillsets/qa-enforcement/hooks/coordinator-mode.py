@@ -48,14 +48,32 @@ EVENTS = os.path.join(HOME, ".agent-hooks", "coordinator-events.jsonl")
 # coordinator and blocked). A marker quoted mid-sentence still does not count;
 # completion notices arrive as later prompts, which classify() ignores.
 CHILD_MARK = re.compile(r"^\s*\[child of (?:@thread:|thr_)", re.I | re.M)
-SOLO = re.compile(
-    r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
-    r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
-    r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|"
-    r"no need to (delegate|orchestrat\w*)|solo mode|work solo)\b", re.I)
 # Intent to BE the coordinator or to USE children -- not a mention of the words.
 # "fix the fleet plugin" or "coordinate with design" must not lock a thread.
 _AGENTS = r"(?:multiple |several |many |some |the |parallel |more |other )?(?:child(?:ren)?(?: agents?| threads?)?|sub-?agents?|agents|workers|members|lanes)"
+SOLO = re.compile(
+    r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
+    r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
+    r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
+NEGATION_STRIP = (
+    re.compile(r"don'?t orchestrate(?:\s+\w+){0,2}", re.I),
+    re.compile(r"do not orchestrate(?:\s+\w+){0,2}", re.I),
+    re.compile(r"don'?t spawn[^.;,]*", re.I),
+    re.compile(r"do not spawn[^.;,]*", re.I),
+    re.compile(r"don'?t delegate[^.;,]*", re.I),
+    re.compile(r"do not delegate[^.;,]*", re.I),
+    re.compile(r"no need to (?:delegate|orchestrat\w*)[^.;,]*", re.I),
+    re.compile(r"skip (?:the )?children[^.;,]*", re.I),
+    re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)[^.;,]*", re.I),
+)
+STRONG_COORD = re.compile(
+    r"\borchestrate\b|(?:be|act as|become|you are|you're|as|work as|run as)\s+(?:the\s+)?(?:orchestrator|coordinator|master(?: thread)?|lead agent)"
+    r"|(?:spawn|launch|coordinate|create|dispatch|delegate to|split (?:it |this |the work )?(?:across|between|among)|use)\s+"
+    + _AGENTS
+    + r"|fan[- ]?out|subagents swarm allowed|divide (?:and|&) conquer",
+    re.I,
+)
+WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
 COORD = re.compile(
     r"\b(?:(?:be|act as|become|you are|you're|as|work as|run as) (?:the |an |a |my |our )?(?:orchestrator|coordinator|master(?: thread)?|lead agent)"
     r"|orchestrate(?! (?:plugin|skill|tool)s?\b)"
@@ -115,15 +133,34 @@ def event(sid, kind, **kw):
         pass
 
 
+def strip_negated_spans(prompt):
+    text = prompt
+    for pat in NEGATION_STRIP:
+        text = pat.sub(" ", text)
+    return text
+
+
+def wants_coordinator(prompt):
+    """True when a positive coordinator ask remains after negated spans are removed."""
+    stripped = strip_negated_spans(prompt)
+    if STRONG_COORD.search(stripped):
+        return True
+    if WEAK_WITH_AGENTS.search(stripped):
+        if re.search(r"do not delegate|don'?t delegate|\bdirectly\b", prompt, re.I):
+            return False
+        return True
+    return bool(COORD.search(stripped))
+
+
 def classify(prompt, first):
     if first and CHILD_MARK.search(prompt):
         return "child"
-    # Negated or solo instructions in the same prompt beat coordinator triggers
-    # ("don't orchestrate", "do not delegate", "with agents" alone is not an ask).
+    if wants_coordinator(prompt):
+        return "coordinator"
+    if re.search(r"don'?t orchestrate|do not orchestrate", prompt, re.I):
+        return "solo"
     if SOLO.search(prompt):
         return "solo"
-    if COORD.search(prompt):
-        return "coordinator"
     return ""
 
 
