@@ -158,6 +158,8 @@ class ContextHygiene(unittest.TestCase):
             "cat <<'EOF' > f.md\nNever use pgrep -f\nEOF",
             "cat > AGENTS.md <<EOF\n- Never use pkill or pgrep -f; a safety-hook block is final.\nEOF",
             "tee x <<-EOF\n\tpgrep -f y\n\tEOF",
+            "S=/tmp; cat >> $S/n.md <<'EOF'\nthe hook blocks killall bb and pkill -f bb\nEOF",
+            "cat > /tmp/b.md <<EOF\nplain text about killall bb\nEOF",
         )
         blocked = (
             "bash <<'EOF'\npgrep -f bb\nEOF",

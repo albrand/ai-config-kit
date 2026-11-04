@@ -5646,6 +5646,11 @@ def bb_lifecycle_guard(raw):
             "them the next bb install refuses. Free disk elsewhere: pnpm store prune, node-gyp, "
             "pip or Homebrew caches, ~/.cache, or merged worktrees.")
     lifecycle_scan = cmd if isinstance(cmd, str) and cmd else text
+    if isinstance(cmd, str) and "<<" in cmd:
+        head = cmd.split("<<", 1)[0]
+        if any(rx.search(re.split(r"&&|\|\||;", head)[-1]) for rx in HEREDOC_EXEMPT):
+            tail = _pgrep_tail_after_first_heredoc(cmd)
+            lifecycle_scan = head + ("\n" + tail if tail else "")
     lifecycle_block = kills_bb_pid(lifecycle_scan)
     if not lifecycle_block:
         lifecycle_block = any(rx.search(lifecycle_scan) for rx in BB_LIFECYCLE[:-1])
