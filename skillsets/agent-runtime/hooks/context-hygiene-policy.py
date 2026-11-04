@@ -2891,6 +2891,15 @@ def _pgrep_lifecycle_var_and_nested_exec_pkill(text, cmd_start, cmd_end, binds, 
     return False
 
 
+
+def _pgrep_lifecycle_subst_inner_blocks(inner):
+    if re.search(r"\b(?:bash|sh|zsh|dash|ksh|eval)\b", inner, re.I):
+        return True
+    masked = _pgrep_mask_lifecycle_comments(inner)
+    launch = _pgrep_skip_assignments_and_wrappers(masked, 0, len(masked))
+    tail = masked[launch:].lstrip()
+    return bool(re.match(r"(?:\S+/)*pkill\b", tail, re.I))
+
 def _pgrep_lifecycle_pkill_match(text, _depth=0):
     if _depth > _PGREP_FRAGMENT_MAX_DEPTH:
         return False
@@ -2936,12 +2945,16 @@ def _pgrep_lifecycle_pkill_match(text, _depth=0):
     for inner in _pgrep_each_dollar_paren(text):
         if not re.search(r"\bpkill\b", inner, re.I):
             continue
+        if not _pgrep_lifecycle_subst_inner_blocks(inner):
+            continue
         if _pgrep_lifecycle_pkill_match(
             _pgrep_mask_lifecycle_comments(inner), _depth + 1
         ):
             return True
     for inner in _pgrep_each_backtick(text):
         if not re.search(r"\bpkill\b", inner, re.I):
+            continue
+        if not _pgrep_lifecycle_subst_inner_blocks(inner):
             continue
         if _pgrep_lifecycle_pkill_match(
             _pgrep_mask_lifecycle_comments(inner), _depth + 1
