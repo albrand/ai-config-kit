@@ -51,7 +51,8 @@ CHILD_MARK = re.compile(r"^\s*\[child of (?:@thread:|thr_)", re.I | re.M)
 SOLO = re.compile(
     r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
     r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
-    r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
+    r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|"
+    r"no need to (delegate|orchestrat\w*)|solo mode|work solo)\b", re.I)
 # Intent to BE the coordinator or to USE children -- not a mention of the words.
 # "fix the fleet plugin" or "coordinate with design" must not lock a thread.
 _AGENTS = r"(?:multiple |several |many |some |the |parallel |more |other )?(?:child(?:ren)?(?: agents?| threads?)?|sub-?agents?|agents|workers|members|lanes)"
@@ -117,12 +118,12 @@ def event(sid, kind, **kw):
 def classify(prompt, first):
     if first and CHILD_MARK.search(prompt):
         return "child"
-    # an explicit role ask beats an incidental "don't spawn"; the user clears
-    # coordinator mode with a separate "do it yourself"
-    if COORD.search(prompt):
-        return "coordinator"
+    # Negated or solo instructions in the same prompt beat coordinator triggers
+    # ("don't orchestrate", "do not delegate", "with agents" alone is not an ask).
     if SOLO.search(prompt):
         return "solo"
+    if COORD.search(prompt):
+        return "coordinator"
     return ""
 
 
