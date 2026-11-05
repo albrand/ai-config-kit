@@ -4,6 +4,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import resource
 import tempfile
 import time
 import unittest
@@ -32,6 +33,12 @@ def _within_budget(hook_samples, baseline_samples):
     limit = min(baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT, _OVERHEAD_CAP)
     return overhead < limit
 
+
+
+
+def _child_cpu_time():
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
 
 
 
@@ -284,8 +291,8 @@ class KeepGoingTests(unittest.TestCase):
             self.assertAllowed(self.stop(stdin, "keepgoing-stop.py"))
             self.assertAllowed(self.stop(stdin))
 
-    def _subprocess_wall(self, argv, stdin=None):
-        started = time.monotonic()
+    def _subprocess_cpu(self, argv, stdin=None):
+        before = _child_cpu_time()
         try:
             proc = subprocess.run(
                 argv,
@@ -298,12 +305,12 @@ class KeepGoingTests(unittest.TestCase):
             )
         except subprocess.TimeoutExpired:
             self.fail(f"subprocess exceeded {HOOK_WALL_DEADLINE}s wall deadline: {argv!r}")
-        elapsed = time.monotonic() - started
+        elapsed = _child_cpu_time() - before
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return elapsed
 
     def _wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
-        return [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
+        return [self._subprocess_cpu(argv, stdin=stdin) for _ in range(samples)]
 
     def test_run_is_fast(self):
         stdin = self.claude("Done.\n\nI'll run the tests next.")

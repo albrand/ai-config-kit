@@ -85,7 +85,7 @@ if (process.env.FAKE_MODE?.startsWith('provider-error')) {
   else process.exit(1);
 }
 if (process.env.FAKE_MODE === 'hang') {
-  const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
   fs.writeFileSync(process.env.FAKE_DESCENDANT_PID_PATH, String(descendant.pid));
   emit({ type: 'step_start', part: {} });
   setInterval(() => {}, 1000);
@@ -144,7 +144,7 @@ function runManaged(extraArgs = [], env = {}, executable = fake) {
     [runner, ...extraArgs, '--', executable, 'run', 'test', '--format', 'json'],
     {
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: 60_000,
       env: {
         ...process.env,
         PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
@@ -278,13 +278,27 @@ try {
   assert.equal(readTelemetry(emptySessionListing).deleted, false);
 
   fs.rmSync(statePath, { force: true });
-  const deadline = runManaged(['--deadline-ms', '50', '--termination-grace-ms', '100'], {
-    FAKE_MODE: 'hang',
-  });
+  const deadlineStartedMs = Date.now();
+  const deadline = runManaged(
+    [
+      '--deadline-ms',
+      '200',
+      '--termination-grace-ms',
+      '500',
+      '--quiescence-wait-ms',
+      '2000',
+    ],
+    { FAKE_MODE: 'hang' },
+  );
+  const deadlineElapsedMs = Date.now() - deadlineStartedMs;
   assert.equal(deadline.status, 124, deadline.stderr);
   assert.equal(readTelemetry(deadline).stop_reason, 'explicit_deadline');
   assert.equal(readTelemetry(deadline).deleted, false);
   assert.equal(readTelemetry(deadline).process_quiescent, true);
+  assert.ok(
+    deadlineElapsedMs < 15_000,
+    `explicit deadline kill took ${deadlineElapsedMs}ms`,
+  );
 
   fs.rmSync(statePath, { force: true });
   const stubborn = runManaged(

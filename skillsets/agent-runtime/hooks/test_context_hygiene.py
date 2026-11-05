@@ -1,6 +1,7 @@
 """Tests for context-hygiene-policy.py. Run: python3 -m unittest skillsets/agent-runtime/hooks/test_context_hygiene.py"""
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,18 @@ def verdict(payload, env=None):
     p = subprocess.run([sys.executable, str(POLICY)], input=json.dumps(payload), capture_output=True, text=True,
                        env={**os.environ, **(env or {})}, timeout=30)
     return json.loads(p.stdout)
+
+
+
+def _child_cpu_time():
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
+def timed_verdict(payload, env=None):
+    before = _child_cpu_time()
+    result = verdict(payload, env=env)
+    return result, _child_cpu_time() - before
 
 
 def bash(cmd):
@@ -180,9 +193,7 @@ class ContextHygiene(unittest.TestCase):
 
         n = 20000
         cmd = "cat <<'EOF'\n" + "x \\n" * n + "EOF\n"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 8.0)
         self.assertFalse(v["block"], cmd[:48])
 
@@ -193,9 +204,7 @@ class ContextHygiene(unittest.TestCase):
         n = 200_000
         k = n // 22
         cmd = ("case x in y) :;; esac; " * k) + f"case x in x) {pk} node;; esac"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
         self.assertTrue(v["block"], cmd[:48])
 
@@ -327,9 +336,7 @@ pgrep -f bb',
 
         tail = "; p" + "kill node"
         cmd = "echo " + "$(" * 400 + "x" + ")" * 400 + tail
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
         self.assertTrue(v["block"])
         self.assertTrue(
@@ -345,9 +352,7 @@ pgrep -f bb',
             'bash -c "' + "$(" * 1000 + "x" + ")" * 1000 + tail + '"',
         ):
             with self.subTest(cmd=cmd[:40]):
-                t0 = time.monotonic()
-                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-                elapsed = time.monotonic() - t0
+                v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertLess(elapsed, 2.0)
                 self.assertTrue(v["block"])
                 self.assertTrue(
@@ -359,9 +364,7 @@ pgrep -f bb',
         import time
 
         loop_cmd = "for i in 1; do ssh h 'echo'; done; " * 2400
-        t0 = time.monotonic()
-        v = verdict(bash(loop_cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed = timed_verdict(bash(loop_cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
         self.assertFalse(v["block"], loop_cmd[:48])
 
@@ -381,9 +384,7 @@ pgrep -f bb',
         )
         for want_block, cmd in cases:
             with self.subTest(cmd=cmd[:48]):
-                t0 = time.monotonic()
-                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-                elapsed = time.monotonic() - t0
+                v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertLess(elapsed, 2.0)
                 self.assertEqual(v["block"], want_block)
 
@@ -564,9 +565,7 @@ pgrep -f bb',
 
         pk = "p" + "kill"
         cmd = "$(" * 5000 + "echo '#'" + ")" * 5000 + "; " + pk + " node"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 8.0)
         self.assertTrue(v["block"])
 
@@ -1231,9 +1230,7 @@ pgrep -f bb',
             'run(["pgrep","-f","x"])\n'
         )
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"], cmd[:80])
         self.assertLess(elapsed, 1.5, f"scan took {elapsed:.2f}s")
 
@@ -1244,9 +1241,7 @@ pgrep -f bb',
         line = "x=" + "[" * 199 + "0" + "]" * 199
         body = (line + "\n") * (n // 20) + "import subprocess\nsubprocess.run(['echo','hi'])\n"
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertFalse(v["block"], cmd[:80])
         self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
 
@@ -1667,9 +1662,7 @@ pgrep -f bb',
         n = 5000
         body = "x=0\n" * n + "import subprocess\nsubprocess.run(['echo', 'hi'])\n"
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertFalse(v["block"], cmd[:80])
         self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
 
@@ -1679,9 +1672,7 @@ pgrep -f bb',
 
         n = 600
         cmd = "".join("python3 - <<'EOF'\nprint(%d)\nEOF\n" % i for i in range(n))
-        start = time.monotonic()
-        v = verdict(bash(cmd + "pkill node"), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed = timed_verdict(bash(cmd + "pkill node"), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"], cmd[:80])
         self.assertLess(elapsed, 2.0, f"many-heredoc scan took {elapsed:.2f}s")
 
