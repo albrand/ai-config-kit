@@ -1564,6 +1564,29 @@ pgrep -f bb',
                 )
 
 
+
+    def test_lifecycle_prefix_assignment_does_not_persist(self):
+        pk = "p" + "kill"
+        allowed = (
+            f'CMD="echo safe"; CMD="{pk} node" $CMD',
+            f'CMD="{pk} node" true; $CMD',
+            f'CMD="echo safe"; CMD="{pk} node" env; $CMD',
+        )
+        blocked = (
+            f'CMD="{pk} node"; X=1 $CMD',
+            f'A=1 CMD="{pk} node"; $CMD',
+            f'CMD="{pk} node"; CMD=ls true; $CMD',
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+
     def test_lifecycle_static_unset_glue_conditions(self):
         pk = "p" + "kill"
         allowed = (

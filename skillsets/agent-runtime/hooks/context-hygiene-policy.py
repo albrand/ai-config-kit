@@ -2914,6 +2914,7 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
     if subshell:
         return
     i = _pgrep_after_command_leaders(text, cmd_start)
+    pending = []
     while i < cmd_end:
         i = _pgrep_skip_space(text, i)
         if i >= cmd_end:
@@ -2921,42 +2922,49 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
         asn = _pgrep_assignment_at(text, i, cmd_end)
         if asn:
             name, val, nxt = asn
-            into[name] = _pgrep_unquote_assign_value(val)
+            pending.append((name, _pgrep_unquote_assign_value(val)))
             i = nxt
             continue
         me = re.match(r"(\w+)=$", text[i:cmd_end])
         if me:
-            into[me.group(1)] = ""
+            pending.append((me.group(1), ""))
             i += me.end()
             continue
-        ws = i
-        we = _pgrep_skip_one_word(text, i, cmd_end)
-        if ws >= we:
-            break
-        base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
-        if base == "unset":
-            if apply_unset:
-                _pgrep_lifecycle_apply_unset_words(text, we, cmd_end, into)
-            return
-        if base in _PGREP_LIFECYCLE_DECL_WORDS:
-            i = we
-            while i < cmd_end:
-                i = _pgrep_skip_space(text, i)
-                if i >= cmd_end:
-                    break
-                asn = _pgrep_assignment_at(text, i, cmd_end)
-                if asn:
-                    name, val, nxt = asn
-                    into[name] = _pgrep_unquote_assign_value(val)
-                    i = nxt
-                    continue
-                ws2 = i
-                we2 = _pgrep_skip_one_word(text, i, cmd_end)
-                if ws2 >= we2:
-                    break
-                i = we2
-            return
         break
+    if i >= cmd_end:
+        for name, val in pending:
+            into[name] = val
+        return
+    i = _pgrep_skip_space(text, i)
+    ws = i
+    we = _pgrep_skip_one_word(text, i, cmd_end)
+    if ws >= we:
+        return
+    base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+    if base == "unset":
+        if apply_unset:
+            _pgrep_lifecycle_apply_unset_words(text, we, cmd_end, into)
+        return
+    if base in _PGREP_LIFECYCLE_DECL_WORDS:
+        i = we
+        while i < cmd_end:
+            i = _pgrep_skip_space(text, i)
+            if i >= cmd_end:
+                break
+            asn = _pgrep_assignment_at(text, i, cmd_end)
+            if asn:
+                name, val, nxt = asn
+                into[name] = _pgrep_unquote_assign_value(val)
+                i = nxt
+                continue
+            ws2 = i
+            we2 = _pgrep_skip_one_word(text, i, cmd_end)
+            if ws2 >= we2:
+                break
+            i = we2
+        return
+    # Prefix assignments before a command word are temporary in bash.
+    return
 
 
 def _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, into):
