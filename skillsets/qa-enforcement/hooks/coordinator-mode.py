@@ -32,6 +32,7 @@ coordinator-report.py reads to show whether sessions actually delegate.
 
 Output: JSON {"block": bool, "reason": str, "context": str}. FAILS OPEN.
 """
+import bisect
 import json
 import os
 import re
@@ -48,13 +49,125 @@ EVENTS = os.path.join(HOME, ".agent-hooks", "coordinator-events.jsonl")
 # coordinator and blocked). A marker quoted mid-sentence still does not count;
 # completion notices arrive as later prompts, which classify() ignores.
 CHILD_MARK = re.compile(r"^\s*\[child of (?:@thread:|thr_)", re.I | re.M)
+# Intent to BE the coordinator or to USE children -- not a mention of the words.
+# "fix the fleet plugin" or "coordinate with design" must not lock a thread.
+_AGENTS = r"(?:multiple |several |many |some |the |parallel |more |other )?(?:child(?:ren)?(?: agents?| threads?)?|sub-?agents?|agents|workers|members|lanes)"
 SOLO = re.compile(
     r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
     r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
     r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
-# Intent to BE the coordinator or to USE children -- not a mention of the words.
-# "fix the fleet plugin" or "coordinate with design" must not lock a thread.
-_AGENTS = r"(?:multiple |several |many |some |the |parallel |more |other )?(?:child(?:ren)?(?: agents?| threads?)?|sub-?agents?|agents|workers|members|lanes)"
+# Stop a negated span at punctuation or a whole-word clause joiner (linear scan).
+# Negation stripping runs only on the first N characters; beyond that, COORD/SOLO use the raw prompt.
+NEGATION_ANALYSIS_LIMIT = 20000
+CLAUSE_BOUNDARY = re.compile(r"[.;,]|\b(?:and|but|then|so|or)\b", re.I)
+_JOINERS = frozenset({"and", "but", "then", "so", "or"})
+NEGATION_STARTERS = (
+    (re.compile(r"don'?t orchestrate\b", re.I), "orchestrate"),
+    (re.compile(r"do not orchestrate\b", re.I), "orchestrate"),
+    (re.compile(r"don'?t spawn\b", re.I), "clause"),
+    (re.compile(r"do not spawn\b", re.I), "clause"),
+    (re.compile(r"don'?t delegate\b", re.I), "clause"),
+    (re.compile(r"do not delegate\b", re.I), "clause"),
+    (re.compile(r"no need to (?:delegate|orchestrat\w*)\b", re.I), "clause"),
+    (re.compile(r"skip (?:the )?children\b", re.I), "clause"),
+    (re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)\b", re.I), "clause"),
+)
+
+
+def negation_analysis_view(prompt):
+    if len(prompt) <= NEGATION_ANALYSIS_LIMIT:
+        return prompt, ""
+    return prompt[:NEGATION_ANALYSIS_LIMIT], prompt[NEGATION_ANALYSIS_LIMIT:]
+
+
+def negation_masked_view(prompt):
+    prefix, suffix = negation_analysis_view(prompt)
+    if not prefix:
+        return prompt
+    return mask_for_negation(prefix) + suffix
+
+
+def orchestrate_negation_end(text, start, boundaries):
+    i = start
+    for _ in range(2):
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            break
+        word = re.match(r"\w+", text[i:], re.I)
+        if not word:
+            break
+        if word.group(0).lower() in _JOINERS:
+            break
+        i += word.end()
+    j = bisect.bisect_left(boundaries, start)
+    boundary_end = boundaries[j] if j < len(boundaries) else len(text)
+    return min(i, boundary_end)
+
+
+def negation_raw_end(text, start, head_end, kind, boundaries):
+    if kind == "orchestrate":
+        return orchestrate_negation_end(text, head_end, boundaries)
+    j = bisect.bisect_left(boundaries, head_end)
+    return boundaries[j] if j < len(boundaries) else len(text)
+
+
+def negation_removal_end_index(text, start, raw_end, coord_starts):
+    span = text[start:raw_end]
+    floor = negation_floor(span)
+    search_from = start + floor
+    idx = bisect.bisect_left(coord_starts, search_from)
+    if idx < len(coord_starts) and coord_starts[idx] < raw_end:
+        return coord_starts[idx] - start
+    return raw_end - start
+
+
+def merge_blank_intervals(intervals):
+    if not intervals:
+        return []
+    intervals = sorted(intervals)
+    merged = [list(intervals[0])]
+    for a, b in intervals[1:]:
+        if a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [tuple(x) for x in merged]
+
+
+def apply_blank_intervals(text, intervals):
+    if not intervals:
+        return text
+    parts = []
+    pos = 0
+    for a, b in intervals:
+        parts.append(text[pos:a])
+        parts.append(" " * (b - a))
+        pos = b
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
+def strip_negated_spans_once(prefix):
+    if not prefix:
+        return prefix
+    masked = mask_for_negation(prefix)
+    boundaries = sorted(m.start() for m in CLAUSE_BOUNDARY.finditer(masked))
+    coord_starts = sorted(m.start() for m in COORD.finditer(masked))
+    blanks = []
+    for pat, kind in NEGATION_STARTERS:
+        for m in pat.finditer(masked):
+            start = m.start()
+            raw_end = negation_raw_end(masked, start, m.end(), kind, boundaries)
+            rem = negation_removal_end_index(masked, start, raw_end, coord_starts)
+            if rem > 0:
+                blanks.append((start, start + rem))
+    return apply_blank_intervals(prefix, merge_blank_intervals(blanks))
+WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
+BLANKET_DELEGATE = re.compile(
+    r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)",
+    re.I,
+)
 COORD = re.compile(
     r"\b(?:(?:be|act as|become|you are|you're|as|work as|run as) (?:the |an |a |my |our )?(?:orchestrator|coordinator|master(?: thread)?|lead agent)"
     r"|orchestrate(?! (?:plugin|skill|tool)s?\b)"
@@ -114,14 +227,105 @@ def event(sid, kind, **kw):
         pass
 
 
+def mask_for_negation(text):
+    """Replace quoted spans with spaces; offsets stay aligned for negation scans only."""
+    out = list(text)
+    i, n = 0, len(text)
+
+    def blank(start, end):
+        for k in range(start, end):
+            out[k] = " "
+
+    while i < n:
+        ch = text[i]
+        if ch == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    break
+                j += 1
+            else:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == "\u201c":
+            j = text.find("\u201d", i + 1)
+            if j == -1:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == "'" and (i == 0 or text[i - 1].isspace()):
+            j = i + 1
+            while j < n:
+                if text[j] == "'" and (j + 1 == n or text[j + 1].isspace() or text[j + 1] in ".,;!"):
+                    break
+                j += 1
+            else:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        i += 1
+    return "".join(out)
+
+
+def negation_floor(span):
+    head = re.match(
+        r"(?:(?:don'?t|do not)\s+(?:orchestrate|spawn|delegate)|"
+        r"no need to (?:delegate|orchestrat\w*)|"
+        r"skip (?:the )?children|"
+        r"don'?t use (?:the )?(?:children|child agents|sub-?agents))\b",
+        span,
+        re.I,
+    )
+    return head.end() if head else 0
+
+
+def strip_negated_spans(prompt):
+    prefix, suffix = negation_analysis_view(prompt)
+    return strip_negated_spans_once(prefix) + suffix
+
+
+def wants_coordinator(prompt):
+    """True when COORD still matches after negated spans are removed."""
+    stripped = strip_negated_spans(prompt)
+    if not COORD.search(stripped):
+        return False
+    masked = negation_masked_view(prompt)
+    if WEAK_WITH_AGENTS.search(stripped) and BLANKET_DELEGATE.search(masked):
+        without_weak = apply_blank_intervals(
+            stripped,
+            [(m.start(), m.end()) for m in WEAK_WITH_AGENTS.finditer(stripped)],
+        )
+        return bool(COORD.search(without_weak))
+    return True
+
+
 def classify(prompt, first):
     if first and CHILD_MARK.search(prompt):
         return "child"
-    # an explicit role ask beats an incidental "don't spawn"; the user clears
-    # coordinator mode with a separate "do it yourself"
-    if COORD.search(prompt):
+    if wants_coordinator(prompt):
         return "coordinator"
-    if SOLO.search(prompt):
+    masked = negation_masked_view(prompt)
+    if re.search(r"don'?t orchestrate|do not orchestrate", masked, re.I):
+        return "solo"
+    if SOLO.search(masked):
         return "solo"
     return ""
 
