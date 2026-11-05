@@ -10,6 +10,8 @@ import { jira } from '../lib/boards/jira.mjs';
 import { azureBoards } from '../lib/boards/azure-boards.mjs';
 import { linear } from '../lib/boards/linear.mjs';
 import { github } from '../lib/boards/github.mjs';
+import artifactSchema from '../lib/artifact-schema.v1.json' with { type: 'json' };
+import { recomputeTrustedVerdict } from '../lib/publish-payload.mjs';
 
 const kit = resolve(import.meta.dirname, '..');
 
@@ -124,6 +126,44 @@ test('no board links still plan and judge base regressions without any board wri
     assert.equal(publication.verdict.overall, 'BLOCKED', 'no-link policy remains a gate blocker while regressions are judged');
     assert.ok(publication.verdict.rows.some(row => row.scenarioId === baseOnly[0].id && row.scope === 'regression'));
     assert.deepEqual(posted, [], 'empty write targets never produce a board request');
+  }
+});
+
+test('no-link planner and recompute artifacts match the published schemas', async () => {
+  const validate = (schema, value, root = artifactSchema) => {
+    if (schema.$ref) return validate(schema.$ref.split('/').slice(2).reduce((node, key) => node[key], root), value, root);
+    const errors = [];
+    const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+    if (schema.type && !(Array.isArray(schema.type) ? schema.type : [schema.type]).includes(type) && !(schema.type === 'integer' && Number.isInteger(value))) errors.push('type');
+    if (schema.const !== undefined && value !== schema.const) errors.push('const');
+    if (schema.enum && !schema.enum.includes(value)) errors.push('enum');
+    if (schema.pattern && (typeof value !== 'string' || !(new RegExp(schema.pattern)).test(value))) errors.push('pattern');
+    if (type === 'object') {
+      for (const key of schema.required ?? []) if (!(key in value)) errors.push(`required:${key}`);
+      for (const [key, entry] of Object.entries(value)) {
+        if (!schema.properties?.[key]) { if (schema.additionalProperties === false) errors.push(`additional:${key}`); }
+        else errors.push(...validate(schema.properties[key], entry, root));
+      }
+    }
+    if (type === 'array') for (const item of value) errors.push(...validate(schema.items ?? {}, item, root));
+    return errors;
+  };
+  const base = [{ id: 'QAS-WI-999-01', workItemId: 'WI-999', kind: 'automated', surface: 'api' }];
+  const commit = 'f'.repeat(40);
+  for (const crossRepo of [[{ id: 'otherrepo/service#12', repository: 'otherrepo/service', number: '12' }], []]) {
+    const associations = resolveBoardAssociations([], crossRepo.map(item => ({ ...item, crossRepo: true })));
+    const scope = buildAssociatedScenarioScope(associations.linked.map(item => ({ id: item.id, revision: '0', relation: 'linked' })), [], base);
+    const plan = { kind: 'plan', schemaVersion: 1, baseSha: 'a'.repeat(40), headSha: commit, ...scope, namedNotLinked: [], crossRepo: associations.crossRepo, policyReasons: ['no linked work item'], createdAt: '2026-11-05T12:00:00Z' };
+    const run = { kind: 'run', schemaVersion: 1, planHash: `sha256:${createHash('sha256').update(JSON.stringify(plan)).digest('hex')}`, commitSha: commit, compiled: true, discoveredIds: [base[0].id], results: [{ scenarioId: base[0].id, status: 'passed', executed: true }] };
+    const verdict = recomputeTrustedVerdict(plan, base, run);
+    assert.deepEqual(validate(artifactSchema.$defs.plan, plan), [], 'plan conforms to artifact schema');
+    assert.deepEqual(validate(artifactSchema.$defs.verdict, verdict), [], 'verdict conforms to artifact schema');
+    assert.equal(verdict.overall, 'BLOCKED');
+    assert.deepEqual(verdict.gateReasons, ['no linked work item']);
+    assert.ok(verdict.rows.some(row => row.scenarioId === base[0].id && row.scope === 'regression'));
+    const writes = [];
+    await publishFromEvidence({ comment: async (...args) => writes.push(args) }, { metadata: { kind: 'qa-publish-artifact', schemaVersion: 1, commit, runId: 'schema-case' }, plan, scenarios: base, run, artifactUrl: 'https://ci.example/no-links' });
+    assert.deepEqual(writes, [], 'empty association set produces no board writes');
   }
 });
 

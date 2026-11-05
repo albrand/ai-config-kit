@@ -4,32 +4,7 @@ All files use JSON Schema draft 2020-12 semantics. Store each artifact with its 
 
 ## Artifact contracts
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/qa-artifacts/v1.schema.json",
-  "oneOf": [
-    {"$ref":"#/$defs/workItem"}, {"$ref":"#/$defs/scenarioSet"},
-    {"$ref":"#/$defs/approval"}, {"$ref":"#/$defs/plan"},
-    {"$ref":"#/$defs/run"}, {"$ref":"#/$defs/verdict"}
-  ],
-  "$defs": {
-    "scenario": {"type":"object","additionalProperties":false,"required":["id","criterionIds","kind","surface","mandatory","title","steps","expected"],"properties":{
-      "id":{"type":"string","pattern":"^QAS-[A-Za-z0-9_-]+-[0-9]{2,}$"},
-      "criterionIds":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^AC-[A-Za-z0-9_-]+$"}},
-      "kind":{"enum":["automated","manual","awaiting"]},"surface":{"enum":["api","browser"]},"mandatory":{"type":"boolean"},
-      "title":{"type":"string","minLength":1},"steps":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}},"expected":{"type":"string","minLength":1},
-      "owner":{"type":"string","minLength":1},"reason":{"type":"string","minLength":1},"procedure":{"type":"string","minLength":1},"revisitDate":{"type":"string","format":"date"}
-    },"allOf":[{"if":{"properties":{"kind":{"const":"manual"}}},"then":{"required":["owner","reason","procedure"]}},{"if":{"properties":{"kind":{"const":"awaiting"}}},"then":{"required":["owner","reason","revisitDate"]}}]},
-    "workItem":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","id","revision","title","criteria","capturedAt"],"properties":{"kind":{"const":"work-item"},"schemaVersion":{"const":1},"id":{"type":"string","minLength":1},"revision":{"type":["string","integer"]},"title":{"type":"string"},"description":{"type":"string"},"criteria":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","text"],"properties":{"id":{"type":"string","pattern":"^AC-"},"text":{"type":"string","minLength":1}}}},"capturedAt":{"type":"string","format":"date-time"},"sourceUrl":{"type":"string","format":"uri"}}},
-    "scenarioSet":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","workItemId","workItemRevision","scenarios"],"properties":{"kind":{"const":"scenario-set"},"schemaVersion":{"const":1},"workItemId":{"type":"string"},"workItemRevision":{"type":["string","integer"]},"scenarios":{"type":"array","items":{"$ref":"#/$defs/scenario"}},"contentHash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"}}},
-    "approval":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","scenarioSetHash","decision","reviewId","reviewedAt"],"properties":{"kind":{"const":"approval"},"schemaVersion":{"const":1},"scenarioSetHash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"decision":{"enum":["approved","changes-requested","rejected"]},"reviewId":{"type":"string"},"reviewedAt":{"type":"string","format":"date-time"},"reviewerRole":{"type":"string"},"notes":{"type":"string"}}},
-    "plan":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","baseSha","headSha","items","scenarioIds","regressionIds","scenarioWorkItems"],"properties":{"kind":{"const":"plan"},"schemaVersion":{"const":1},"baseSha":{"type":"string","pattern":"^[a-f0-9]{40}$"},"headSha":{"type":"string","pattern":"^[a-f0-9]{40}$"},"items":{"description":"Only board-associated work items that are eligible for comments or attachments","type":"array","items":{"type":"object","required":["id","revision","relation","scenarioIds"],"properties":{"id":{"type":"string"},"revision":{"type":["string","integer"]},"relation":{"enum":["linked"]},"scenarioIds":{"type":"array","uniqueItems":true,"items":{"type":"string"}}}}},"scenarioIds":{"description":"All current scenarios and all scenarios from the base revision, independent of write-target association","type":"array","uniqueItems":true,"items":{"type":"string"}},"regressionIds":{"description":"Every scenario in the base scenario set","type":"array","uniqueItems":true,"items":{"type":"string"}},"scenarioWorkItems":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["scenarioId","workItem"],"properties":{"scenarioId":{"type":"string"},"workItem":{"type":"string"}}}},"namedNotLinked":{"type":"array","items":{"type":"string"}},"crossRepo":{"type":"array","items":{"type":"object","required":["id","repository","number"],"properties":{"id":{"type":"string"},"repository":{"type":"string"},"number":{"type":"string"},"url":{"type":"string","format":"uri"}}}},"createdAt":{"type":"string","format":"date-time"}}},
-    "run":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","planHash","commitSha","runner","results"],"properties":{"kind":{"const":"run"},"schemaVersion":{"const":1},"planHash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"commitSha":{"type":"string","pattern":"^[a-f0-9]{40}$"},"runner":{"type":"string"},"compiled":{"type":"boolean"},"discoveredIds":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"results":{"type":"array","items":{"type":"object","required":["scenarioId","status","executed"],"properties":{"scenarioId":{"type":"string"},"status":{"enum":["passed","failed","skipped","not-run"]},"executed":{"type":"boolean"},"durationMs":{"type":"number","minimum":0},"screenshot":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}}}}},"processExitCode":{"type":"integer"},"sourceArtifacts":{"type":"array","items":{"type":"string"}}}},
-    "verdict":{"type":"object","additionalProperties":false,"required":["kind","schemaVersion","planHash","runHash","rows","overall"],"properties":{"kind":{"const":"verdict"},"schemaVersion":{"const":1},"planHash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"runHash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"overall":{"enum":["PASS","FAIL","BLOCKED"]},"rows":{"type":"array","items":{"type":"object","required":["scenarioId","verdict","reason","blocking"],"properties":{"scenarioId":{"type":"string"},"verdict":{"enum":["VERIFIED","FAILED","BLOCKED","NOT_APPLICABLE","DRAFT_PASSED"]},"reason":{"type":"string"},"blocking":{"type":"boolean"},"screenshot":{"type":"string"},"notRunReason":{"type":"string"},"workItem":{"type":"string"},"scope":{"enum":["linked","related","regression"]},"linkedItems":{"type":"array","items":{"type":"string"}},"surface":{"enum":["api","browser"]},"executed":{"type":"boolean"}}}},"createdAt":{"type":"string","format":"date-time"}}}
-  }
-}
-```
+The executable JSON Schema is [`artifact-schema.v1.json`](../templates/qa-kit/lib/artifact-schema.v1.json); tests load this same file so the reference and runtime contract cannot drift.
 
 ## Complete examples
 
@@ -54,7 +29,7 @@ All files use JSON Schema draft 2020-12 semantics. Store each artifact with its 
 ### `plan/v1`
 
 ```json
-{"kind":"plan","schemaVersion":1,"baseSha":"0123456789abcdef0123456789abcdef01234567","headSha":"abcdef0123456789abcdef0123456789abcdef01","items":[{"id":"WI-123","revision":"17","relation":"linked","scenarioIds":["QAS-WI-123-01"]}],"scenarioIds":["QAS-WI-123-01","QAS-WI-100-01"],"regressionIds":["QAS-WI-100-01"],"scenarioWorkItems":[{"scenarioId":"QAS-WI-123-01","workItem":"WI-123"},{"scenarioId":"QAS-WI-100-01","workItem":"WI-100"}],"namedNotLinked":["WI-999"],"crossRepo":[],"createdAt":"2026-11-05T12:10:00Z"}
+{"kind":"plan","schemaVersion":1,"baseSha":"0123456789abcdef0123456789abcdef01234567","headSha":"abcdef0123456789abcdef0123456789abcdef01","items":[{"id":"WI-123","revision":"17","relation":"linked","scenarioIds":["QAS-WI-123-01"]}],"scenarioIds":["QAS-WI-123-01","QAS-WI-100-01"],"regressionIds":["QAS-WI-100-01"],"scenarioWorkItems":[{"scenarioId":"QAS-WI-123-01","workItem":"WI-123"},{"scenarioId":"QAS-WI-100-01","workItem":"WI-100"}],"namedNotLinked":["WI-999"],"crossRepo":[],"policyReasons":[],"createdAt":"2026-11-05T12:10:00Z"}
 ```
 
 ### `run/v1`
@@ -66,7 +41,7 @@ All files use JSON Schema draft 2020-12 semantics. Store each artifact with its 
 ### `verdict/v1`
 
 ```json
-{"kind":"verdict","schemaVersion":1,"planHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","runHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","overall":"PASS","rows":[{"scenarioId":"QAS-WI-123-01","verdict":"VERIFIED","reason":"Executed and passed on planned SHA","blocking":false}],"createdAt":"2026-11-05T12:11:00Z"}
+{"kind":"verdict","schemaVersion":1,"planHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","runHash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","commitSha":"abcdef0123456789abcdef0123456789abcdef01","overall":"PASS","gateReasons":[],"rows":[{"scenarioId":"QAS-WI-123-01","verdict":"VERIFIED","reason":"Executed and passed on planned SHA","blocking":false}],"createdAt":"2026-11-05T12:11:00Z"}
 ```
 
 IDs are immutable; never recycle deleted IDs. Regression membership is computed from the base scenario set, never head-side status edits. Requirement snapshots and reports must not include personal names or secrets.
