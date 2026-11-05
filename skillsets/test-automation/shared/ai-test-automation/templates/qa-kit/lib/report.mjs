@@ -1,0 +1,3 @@
+const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+export function markdown(rows){return ['| Scenario | Verdict | Reason | Screenshot |','|---|---|---|---|',...rows.map(x=>`| ${String(x.id).replaceAll('|','\\|')} | ${String(x.verdict).replaceAll('|','\\|')} | ${String(x.reason).replaceAll('|','\\|')} | ${String(x.screenshot??'').replaceAll('|','\\|')} |`)].join('\n');}
+export function html(rows){return `<table><tr><th>Scenario</th><th>Verdict</th><th>Reason</th><th>Screenshot</th></tr>${rows.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.verdict)}</td><td>${esc(x.reason)}</td><td>${esc(x.screenshot)}</td></tr>`).join('')}</table>`;}

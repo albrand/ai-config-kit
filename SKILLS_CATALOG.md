@@ -48,6 +48,8 @@ Default policy: prefer AI-only skills. Add scripts, validators, or executable he
 
 ## Shared Skillsets
 
+| `skillsets/test-automation/` | Set up AI-assisted test automation, QA gates, Allure reporting, scenarios from tickets, or board integration | Stepwise adoption workflow, board/CI/Allure references, and dependency-free Node starter kit |
+
 Use shared skillsets when a workflow is broader than one global skill and needs tool-specific entrypoints, shared references, or install instructions.
 
 | Skillset | Use When | Expected Output |

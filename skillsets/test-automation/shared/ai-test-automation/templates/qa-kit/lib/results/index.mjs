@@ -1,0 +1,1 @@
+export function parseResults(rows) { return rows.map(x=>({scenario_id:x.scenario_id ?? x.labels?.find(l=>l.name==='scenario_id')?.value,status:x.status,executed:x.status==='passed'||x.status==='failed',screenshot:x.screenshot})); }

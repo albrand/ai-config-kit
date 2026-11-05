@@ -1,0 +1,1 @@
+{"schemaVersion":1,"board":"github","boardUrl":"https://api.github.com","repo":"acme-qa/project","boardTokenEnv":"QA_BOARD_TOKEN","dryRun":true,"scenarioFile":"scenarios.json","resultsFile":"results.json","base":"origin/main"}
