@@ -65,14 +65,20 @@ test('quick-start commands match the example config and enforce changed-scenario
     writeFileSync(runFile, JSON.stringify(evidence([{ scenarioId: changedCase.id }, { scenarioId: newCase.id }])));
     const pass = invoke(judgeArgs); assert.equal(pass.status, 0, pass.stderr);
     assert.ok(JSON.parse(pass.stdout).rows.every(row => row.verdict === 'VERIFIED'));
-    for (const bad of [
-      evidence([{ scenarioId: changedCase.id }]),
-      evidence([{ scenarioId: changedCase.id, status: 'skipped', executed: false }, { scenarioId: newCase.id }]),
-      evidence([{ scenarioId: changedCase.id, status: 'failed' }, { scenarioId: newCase.id }])
+    for (const { run, expected } of [
+      { run: evidence([{ scenarioId: changedCase.id }]), expected: [[changedCase.id, 'VERIFIED', false], [newCase.id, 'BLOCKED', true]] },
+      { run: evidence([{ scenarioId: changedCase.id, status: 'skipped', executed: false }, { scenarioId: newCase.id }]), expected: [[changedCase.id, 'BLOCKED', true], [newCase.id, 'VERIFIED', false]] },
+      { run: evidence([{ scenarioId: changedCase.id, status: 'failed' }, { scenarioId: newCase.id }]), expected: [[changedCase.id, 'FAILED', true], [newCase.id, 'VERIFIED', false]] }
     ]) {
-      writeFileSync(runFile, JSON.stringify(bad));
+      writeFileSync(runFile, JSON.stringify(run));
       const judged = invoke(judgeArgs); assert.notEqual(judged.status, 0, 'judge must reject incomplete, skipped, or failed run evidence');
-      assert.ok(JSON.parse(judged.stdout).rows.some(row => ['BLOCKED', 'FAILED'].includes(row.verdict)));
+      const verdictRows = JSON.parse(judged.stdout).rows;
+      assert.deepEqual(verdictRows.map(row => [row.scenarioId, row.verdict, row.blocking]), expected);
+      const changed = verdictRows.find(row => row.scenarioId === changedCase.id);
+      if (run.results.find(row => row.scenarioId === changedCase.id)?.status === 'failed') {
+        assert.equal(changed.verdict, 'FAILED');
+        assert.equal(changed.blocking, true);
+      }
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
