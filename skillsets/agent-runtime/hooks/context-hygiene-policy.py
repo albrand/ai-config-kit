@@ -2793,18 +2793,98 @@ def _pgrep_lifecycle_var_ref_name(word):
     return m.group(1) or m.group(2)
 
 
-def _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, into):
+_PGREP_LIFECYCLE_DECL_WORDS = frozenset(
+    ("export", "readonly", "declare", "typeset", "local")
+)
+
+
+def _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start):
+    if prev_end is None or prev_end >= cmd_start:
+        return False
+    glue = text[prev_end:cmd_start]
+    return "&&" in glue or "||" in glue
+
+
+def _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end):
+    i = _pgrep_skip_space(text, _pgrep_after_command_leaders(text, cmd_start))
+    return i < cmd_end and text[i] == "("
+
+
+def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
+    while i < cmd_end:
+        i = _pgrep_skip_space(text, i)
+        if i >= cmd_end:
+            break
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if ws >= we:
+            break
+        w = _pgrep_bare_word(text[ws:we])
+        if w.startswith("-") and w in ("-v", "-f", "-n"):
+            i = we
+            continue
+        if w.startswith("-"):
+            i = we
+            continue
+        into.pop(w, None)
+        i = we
+
+
+def _pgrep_lifecycle_mutate_bindings_in_command(
+    text, cmd_start, cmd_end, into, *, conditional=False, subshell=False
+):
+    if subshell:
+        return
     i = _pgrep_after_command_leaders(text, cmd_start)
     while i < cmd_end:
         i = _pgrep_skip_space(text, i)
         if i >= cmd_end:
             break
         asn = _pgrep_assignment_at(text, i, cmd_end)
-        if not asn:
+        if asn:
+            name, val, nxt = asn
+            into[name] = _pgrep_unquote_assign_value(val)
+            i = nxt
+            continue
+        me = re.match(r"(\w+)=$", text[i:cmd_end])
+        if me:
+            into[me.group(1)] = ""
+            i += me.end()
+            continue
+        ws = i
+        we = _pgrep_skip_one_word(text, i, cmd_end)
+        if ws >= we:
             break
-        name, val, nxt = asn
-        into[name] = _pgrep_unquote_assign_value(val)
-        i = nxt
+        base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+        if base == "unset":
+            if not conditional:
+                _pgrep_lifecycle_apply_unset_words(text, we, cmd_end, into)
+            return
+        if base in _PGREP_LIFECYCLE_DECL_WORDS:
+            i = we
+            while i < cmd_end:
+                i = _pgrep_skip_space(text, i)
+                if i >= cmd_end:
+                    break
+                asn = _pgrep_assignment_at(text, i, cmd_end)
+                if asn:
+                    name, val, nxt = asn
+                    into[name] = _pgrep_unquote_assign_value(val)
+                    i = nxt
+                    continue
+                ws2 = i
+                we2 = _pgrep_skip_one_word(text, i, cmd_end)
+                if ws2 >= we2:
+                    break
+                i = we2
+            return
+        break
+
+
+def _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, into):
+    _pgrep_lifecycle_mutate_bindings_in_command(
+        text, cmd_start, cmd_end, into, conditional=False, subshell=False
+    )
 
 
 def _pgrep_lifecycle_expand_var_segment(segment, binds):
@@ -2818,10 +2898,16 @@ def _pgrep_lifecycle_expand_var_segment(segment, binds):
 
 def _pgrep_lifecycle_bindings_for_pos(text, pos):
     binds = {}
+    prev_end = None
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         if pos < cmd_start:
             break
-        _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, binds)
+        cond = _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start)
+        sub = _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end)
+        _pgrep_lifecycle_mutate_bindings_in_command(
+            text, cmd_start, cmd_end, binds, conditional=cond, subshell=sub
+        )
+        prev_end = cmd_end
         if pos < cmd_end:
             break
     return binds
@@ -2912,8 +2998,14 @@ def _pgrep_lifecycle_pkill_match(text, _depth=0):
     ):
         return True
     carry = {}
+    prev_end = None
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
-        _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, carry)
+        cond = _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start)
+        sub = _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end)
+        _pgrep_lifecycle_mutate_bindings_in_command(
+            text, cmd_start, cmd_end, carry, conditional=cond, subshell=sub
+        )
+        prev_end = cmd_end
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
             if _pgrep_lifecycle_pkill_word_match(

@@ -1537,6 +1537,32 @@ pgrep -f bb',
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
 
+    def test_lifecycle_var_binding_cleared_by_unset_and_reassign(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"CMD='{pk} node'; unset OTHER; $CMD",
+            f"CMD='{pk} node'; (unset CMD); $CMD",
+            f"CMD='{pk} node'; [ x ] && unset CMD; $CMD",
+        )
+        allowed = (
+            f"CMD='{pk} node'; unset CMD; $CMD",
+            f"CMD='{pk} node'; unset -v CMD; $CMD",
+            f"CMD='{pk} node'; unset A CMD B; $CMD",
+            f"CMD='{pk} node'; CMD=ls; $CMD",
+            f"CMD='{pk} node'; CMD=; $CMD",
+            f"CMD='{pk} node'; export CMD=ls; $CMD",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[bb-lifecycle]"), v["reason"][:40])
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
         pk = "p" + "kill"
         allowed = (
