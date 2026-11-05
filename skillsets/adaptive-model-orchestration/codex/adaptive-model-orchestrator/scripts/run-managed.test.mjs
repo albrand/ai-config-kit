@@ -138,13 +138,40 @@ const database = spawnSync('python3', [
 ], { encoding: 'utf8' });
 assert.equal(database.status, 0, database.stderr?.toString());
 
-function runManaged(extraArgs = [], env = {}, executable = fake) {
-  return spawnSync(
+const DEFAULT_SPAWN_TIMEOUT_MS = 60_000;
+const EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS = 15_000;
+
+function assertExplicitDeadlineHarness(result, startedMs) {
+  const elapsedMs = result.spawnElapsedMs ?? Date.now() - startedMs;
+  if (result.error?.code === 'ETIMEDOUT' || result.status === null) {
+    throw new Error(
+      `explicit-deadline harness exceeded ${EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS}ms spawn cap (elapsed ${elapsedMs}ms)`,
+    );
+  }
+  assert.equal(result.status, 124, result.stderr);
+  assert.equal(readTelemetry(result).stop_reason, 'explicit_deadline');
+  assert.equal(readTelemetry(result).deleted, false);
+  assert.equal(readTelemetry(result).process_quiescent, true);
+  assert.ok(
+    elapsedMs < EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS,
+    `explicit deadline kill took ${elapsedMs}ms`,
+  );
+}
+
+function runManaged(
+  extraArgs = [],
+  env = {},
+  executable = fake,
+  { timeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = {},
+) {
+  const spawnStartedMs = Date.now();
+  const result = spawnSync(
     process.execPath,
     [runner, ...extraArgs, '--', executable, 'run', 'test', '--format', 'json'],
     {
       encoding: 'utf8',
-      timeout: 60_000,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
       env: {
         ...process.env,
         PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
@@ -157,6 +184,8 @@ function runManaged(extraArgs = [], env = {}, executable = fake) {
       },
     },
   );
+  result.spawnElapsedMs = Date.now() - spawnStartedMs;
+  return result;
 }
 
 function readTelemetry(result) {
@@ -289,16 +318,10 @@ try {
       '2000',
     ],
     { FAKE_MODE: 'hang' },
+    fake,
+    { timeoutMs: EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS },
   );
-  const deadlineElapsedMs = Date.now() - deadlineStartedMs;
-  assert.equal(deadline.status, 124, deadline.stderr);
-  assert.equal(readTelemetry(deadline).stop_reason, 'explicit_deadline');
-  assert.equal(readTelemetry(deadline).deleted, false);
-  assert.equal(readTelemetry(deadline).process_quiescent, true);
-  assert.ok(
-    deadlineElapsedMs < 15_000,
-    `explicit deadline kill took ${deadlineElapsedMs}ms`,
-  );
+  assertExplicitDeadlineHarness(deadline, deadlineStartedMs);
 
   fs.rmSync(statePath, { force: true });
   const stubborn = runManaged(
