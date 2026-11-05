@@ -39,6 +39,17 @@ WITH_AGENTS_COORDINATOR = (
     ("work with agents in parallel and merge directly", True),
     ("Fix the issue with agents in the README directly.", True),
 )
+DELEGATE_SUPPRESSION = (
+    ("Work with agents on the migration; do not delegate the final review to them.", True),
+    ("Fix the issue with agents in the README directly; do not delegate.", False),
+    ("work with agents in parallel and merge directly", True),
+    ("Fix the issue with agents in the README; don't delegate", False),
+    ("Fix the issue with agents in the README directly; do not delegate this.", False),
+    ("Fix the issue with agents in the docs, do not delegate anything", False),
+)
+SCOPED_COORDINATOR_WRITE = (
+    "Work with agents on the migration; do not delegate the final review to them.",
+)
 MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {
     "tool_name": "write",
@@ -117,6 +128,17 @@ class CoordinatorModeNegationTests(unittest.TestCase):
                 out = self.prompt_then_write(prompt)
                 self.assertTrue(out.get("block"), out)
                 self.assertEqual(self.state_mode(), "coordinator")
+
+    def test_blanket_delegate_negation_suppresses_weak_with_agents(self):
+        for prompt, want_coord in DELEGATE_SUPPRESSION:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_scoped_do_not_delegate_still_blocks_readme_write(self):
+        out = self.prompt_then_write(SCOPED_COORDINATOR_WRITE)
+        self.assertTrue(out.get("block"), out)
+        self.assertEqual(self.state_mode(), "coordinator")
 
     def test_main_regression_rows_still_classify_as_coordinator(self):
         main_src = subprocess.check_output(

@@ -175,7 +175,7 @@ def wants_coordinator(prompt):
     if not COORD.search(stripped):
         return False
     if WEAK_WITH_AGENTS.search(stripped) and re.search(
-            r"do not delegate|don'?t delegate", prompt, re.I):
+            r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)", prompt, re.I):
         without_weak = re.sub(r"\bwith\s+" + _AGENTS, " ", stripped, flags=re.I)
         return bool(COORD.search(without_weak))
     return True
