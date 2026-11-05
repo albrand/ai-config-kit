@@ -19,6 +19,7 @@ concept quickly.
 | Install the Codex skill index/router | [Import The Skill Library Router](#import-the-skill-library-router), then `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` |
 | Install the UX design agent | [Import The UX Design Agent Skillset](#import-the-ux-design-agent-skillset), then `UX_DESIGN_AGENT_IMPORT_PROMPT.md` |
 | Search local UI/UX design intelligence | `skillsets/ux-design-intelligence/`, then invoke `$ui-ux-pro-max` |
+| Set up AI-assisted test automation with a board-backed QA gate and Allure | `skillsets/test-automation/shared/ai-test-automation/SKILL.md` |
 | Understand instruction precedence | [Core Mental Model](#core-mental-model), then `FRAMEWORK_MANIFEST.md` |
 | Understand anti-bias and causal-overfitting controls | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |

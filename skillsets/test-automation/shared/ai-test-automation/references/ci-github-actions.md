@@ -1,0 +1,32 @@
+# GitHub Actions integration
+
+Use `templates/qa-kit/ci/github-actions.yml` and `templates/qa-kit/ci/github-publisher.yml` together. The app gate uses `pull_request_target`, so privileged planning logic is loaded from the base branch; every checkout of the PR head is explicit and read-only. The first workflow may process PR-controlled files but never gets board-write credentials. The `workflow_run` publisher runs trusted QA code, downloads the plan and raw runner results as separate artifacts, recomputes verdicts, and only then posts. Configure `QA_BOARD_WRITE_TOKEN` and `QA_READ_TOKEN` only for trusted publisher/planning code; never put either in a job that checks out the PR head or installs PR dependencies. GitHub Actions draft PRs may be suppressed by workflow conditions or repository policy; test a ready-for-review PR explicitly.
+
+## App repository PR workflow
+
+1. `plan`: check out only the trusted QA authority, read PR metadata from the event payload, and resolve linked work items using a read-only board token. Supply base/head commit ids and the QA-owned base scenario snapshot; do not checkout the app head in this job. Upload a versioned plan and the QA authority snapshot.
+2. `test`: checkout the PR head with `persist-credentials: false`, download the QA authority artifact, overlay QA-authoritative scenarios/tests, report ignored branch copies, and run the complete suite. Give the process `contents: read` only; do not pass board, upload, deployment or write tokens. Upload runner JSON/XML, TRX, Allure results and screenshots even on failure.
+3. `judge`: always runs after test; compare plan scope with compile/discovery/execution evidence and base membership. Write one row for each linked/related/regression scenario, including skipped and not-run reasons. The job exits nonzero for FAILED/BLOCKED.
+4. `report`: checkout the PR head with `persist-credentials: false`, use `npm ci --ignore-scripts`, and render Allure with read-only permissions. Upload Allure assets only; never copy a verdict or work-item mapping into this PR-controlled artifact. Do not post from this workflow.
+5. The `workflow_run` publisher checks out only the QA repository default branch. It downloads the trusted plan and raw runner results as separate artifacts, plus Allure assets as display-only data. It recomputes the verdict with `publish-evidence`, verifies run/plan/head binding and every scenario/work-item pair, then posts with a narrowly scoped board token. It never consumes a verdict from the Allure/report artifact. Missing/malformed input, an unplanned row, absent token, failed attachment or unconfirmed board receipt blocks publication. Keep the board token in this publisher workflow's protected environment/repository secret only.
+6. Protect the app default branch: require this workflow's stable check name, require branches current, block merge when failing, and require PR review. Do not assume draft PRs start the required check.
+
+### Trust boundary and residual risk
+
+The judge and publisher execute QA-owned code from the protected default branch. The publisher re-hashes the trusted plan and requires the runner's `planHash` and commit to match it. PR jobs can produce raw runner results, so malicious test code can spoof pass/fail for scenarios already in scope. Those results cannot add a scenario/work-item mapping: an out-of-plan pair is rejected before any board comment, and an in-plan forged verdict is discarded in favor of recomputing from raw results.
+
+## QA repository PR workflow
+
+Install a second workflow inside the QA-owned repo. Trigger `pull_request` for changes under scenario, test, schema, parser, gate and board paths. Checkout with full history and `persist-credentials: false`, install Node 22 (no dependencies required for the kit), compile the changed test projects, discover their scenario IDs, execute changed/new automated scenarios, parse native result files and run `check-scenarios --base origin/<target>`. Reject static evidence, comments/strings/dead code, `#if false`, skipped tests, mismatched IDs, and manual/awaiting entries missing the same required fields enforced by the app gate. `manual` / `awaiting` exceptions require review by the QA owner role. Require the workflow check and CODEOWNERS review on `qa/**`; app developers must not have write permission to the QA source.
+
+## Release stages and tiers
+
+Carry one candidate SHA and linked-work-item set unchanged through protected GitHub Environments `DEV` → `STAGING` → `PROD`. Require approval on STAGING/PROD as policy dictates; run deployment smoke after DEV, full release tier after STAGING, and production sanity after PROD. Release promotion depends on green PR plan/test/judge/report and names the same SHA in every stage.
+
+- Pre-push tier: changed work-item scenarios + relevant fast component tests, run locally before publishing a branch.
+- PR tier: all linked and related scenarios + full base regression set + API/browser smoke, token-free.
+- Release tier: rerun candidate suite against deployed DEV/STAGING/PROD endpoints, capture screenshots/Allure and verify ticket/report links.
+
+Set repository Settings → Rules → Rulesets (or Branches → Branch protection rules) for the default/release branches. Add the workflow's exact check name as required, require PRs and approvals, disable force pushes/deletions, require status checks before merge, and check “Require branches to be up to date.” In Settings → Environments, create DEV, STAGING, PROD and attach environment secrets only to deploy/report jobs that need them. Protect the QA repository with a separate required QA check and CODEOWNERS.
+
+The starter template uses example repository names and placeholder scripts. Replace those values before enabling `--apply`; request payloads are covered offline by unit tests.
