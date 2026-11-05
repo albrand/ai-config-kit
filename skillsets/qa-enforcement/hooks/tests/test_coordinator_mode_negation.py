@@ -35,6 +35,10 @@ CLAUSE_COORDINATOR = (
     ("don't spawn more than 2 children although you should orchestrate the rollout", True),
     ("do not delegate anything until you are the orchestrator for the release", True),
 )
+WITH_AGENTS_COORDINATOR = (
+    ("work with agents in parallel and merge directly", True),
+    ("Fix the issue with agents in the README directly.", True),
+)
 MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {
     "tool_name": "write",
@@ -104,6 +108,15 @@ class CoordinatorModeNegationTests(unittest.TestCase):
             with self.subTest(prompt=prompt[:56]):
                 got = self.classify(prompt, False)
                 self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_with_agents_parallel_work_is_coordinator(self):
+        for prompt, want_coord in WITH_AGENTS_COORDINATOR:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+                out = self.prompt_then_write(prompt)
+                self.assertTrue(out.get("block"), out)
+                self.assertEqual(self.state_mode(), "coordinator")
 
     def test_main_regression_rows_still_classify_as_coordinator(self):
         main_src = subprocess.check_output(
