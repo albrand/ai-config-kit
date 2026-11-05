@@ -2888,7 +2888,15 @@ def _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end):
     return i < cmd_end and text[i] == "("
 
 
+def _pgrep_lifecycle_resolve_assign_value(val, into):
+    ref = _pgrep_lifecycle_var_ref_name(val)
+    if ref is not None and ref in into:
+        return into[ref]
+    return _pgrep_unquote_assign_value(val)
+
+
 def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
+    function_only = False
     while i < cmd_end:
         i = _pgrep_skip_space(text, i)
         if i >= cmd_end:
@@ -2898,13 +2906,21 @@ def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
         if ws >= we:
             break
         w = _pgrep_bare_word(text[ws:we])
-        if w.startswith("-") and w in ("-v", "-f", "-n"):
+        if w.startswith("-") and not w.startswith("--"):
+            opts = w[1:]
+            has_f = "f" in opts
+            has_v = "v" in opts
+            if has_f and not has_v:
+                function_only = True
+            elif has_v or (not has_f and opts in ("n",)):
+                function_only = False
             i = we
             continue
         if w.startswith("-"):
             i = we
             continue
-        into.pop(w, None)
+        if not function_only:
+            into.pop(w, None)
         i = we
 
 
@@ -2922,7 +2938,7 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
         asn = _pgrep_assignment_at(text, i, cmd_end)
         if asn:
             name, val, nxt = asn
-            pending.append((name, _pgrep_unquote_assign_value(val)))
+            pending.append((name, _pgrep_lifecycle_resolve_assign_value(val, into)))
             i = nxt
             continue
         me = re.match(r"(\w+)=$", text[i:cmd_end])
@@ -2954,7 +2970,7 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
             asn = _pgrep_assignment_at(text, i, cmd_end)
             if asn:
                 name, val, nxt = asn
-                into[name] = _pgrep_unquote_assign_value(val)
+                into[name] = _pgrep_lifecycle_resolve_assign_value(val, into)
                 i = nxt
                 continue
             ws2 = i
@@ -5756,6 +5772,17 @@ def _pgrep_apply_var_binding(name, val, binary, script, flag_vars):
     binary.discard(name)
     script.discard(name)
     flag_vars.discard(name)
+    ref = _pgrep_lifecycle_var_ref_name(val)
+    if ref is not None:
+        if ref in script:
+            script.add(name)
+            return
+        if ref in binary:
+            binary.add(name)
+            return
+        if ref in flag_vars:
+            flag_vars.add(name)
+            return
     raw = _pgrep_unquote_assign_value(val)
     folded = pgrep_obfuscation_fold(raw).strip()
     if re.match(r"^(-f|--full)$", folded):
