@@ -318,6 +318,7 @@
           "type": "array",
           "items": {
             "type": "object",
+            "additionalProperties": false,
             "required": [
               "id",
               "revision",
@@ -353,8 +354,7 @@
                   "type": "string"
                 }
               }
-            },
-            "additionalProperties": false
+            }
           }
         },
         "scenarioIds": {
@@ -519,7 +519,8 @@
                   "type": "string"
                 }
               }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "processExitCode": {
