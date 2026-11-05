@@ -77,7 +77,9 @@ CONDITIONAL_VERBS = {"thread interactions answer": ("--text",), "thread interact
                      "automation update": ("--prompt", "--script", "--script-file",
                                            "--target-thread", "--cron", "--at", "--in", "--env-json"),
                      "automation run": None, "automation resume": None,
-                     "instructions set": None}
+                     "instructions set": None,
+                     "settings writing correct": None,
+                     "settings writing transcribe": None}
 GROUPS = ("thread", "fleet", "automation", "instructions")
 # `bb plugin run <plugin id> ...` is the explicit form of `bb <command> ...`
 # (review r2d): the plugin ids of the gated plugin groups.
@@ -799,6 +801,12 @@ def _dispatch_verb(rest):
                 target = _rpc_call_target(tail)
                 if target is not None and not rpc_exempt(*target):
                     return "plugin rpc call"
+            return None
+        if a == "settings" and j + 2 < len(rest) and rest[j + 1] == "writing":
+            verb = f"settings writing {rest[j + 2]}"
+            if verb in CONDITIONAL_VERBS and (CONDITIONAL_VERBS[verb] is None
+                                                or _flagged(rest[j + 3:], CONDITIONAL_VERBS[verb])):
+                return verb
             return None
         if a in GROUPS:
             nxt = rest[j + 1] if j + 1 < len(rest) else ""

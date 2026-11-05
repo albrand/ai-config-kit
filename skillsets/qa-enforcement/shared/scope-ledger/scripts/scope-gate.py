@@ -144,7 +144,8 @@ HOOK_HARD_S = 10.0
 COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
                              r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
                              r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
-                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|plugin.{0,20}rpc.{0,20}call', re.I)
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|'
+                             r'settings.{0,20}writing.{0,20}(correct|transcribe)|plugin.{0,20}rpc.{0,20}call', re.I)
 SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
 SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
 
@@ -1350,6 +1351,7 @@ VERB_EXEMPT = {
     "fleet hermes": "a claim sent to the reviewer, not work for a thread",
     "terminal send": "types into a terminal session (a shell), not a thread's conversation",
     "notify send": "a desktop notice to the person, not work for an agent",
+    "push-notifications send": "a push notice to the person, not work for an agent",
     "terminal notify": "raises terminal attention for the person (title/body), not work for an agent",
     "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
     "thread log": "read-only: its --message <seq> names a message to print, not text sent to a thread",
@@ -1419,18 +1421,68 @@ def loose_tools(tools):
     return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
 
 
-def plugin_tools(bb="bb", roots=None):
-    """{tool: plugin} for every agent tool an enabled bb plugin registers,
-    read from the plugin's source at any depth (`bb plugin list --json` gives
-    rootDir; `roots` {id: dir} replaces it in tests)."""
+def _allowed_plugin_object_listing(listing):
+    """Allowlist for bb plugin list objects: plugins array plus optional ok:true only."""
+    if not isinstance(listing, dict):
+        return "invalid plugin listing: expected object"
+    extra = sorted(set(listing) - {"plugins", "ok"})
+    if extra:
+        return "invalid plugin listing: unexpected keys " + ", ".join(extra)
+    if "plugins" not in listing:
+        return "invalid plugin listing: missing plugins array"
+    if not isinstance(listing["plugins"], list):
+        return "invalid plugin listing: plugins is not an array"
+    if "ok" in listing and listing["ok"] is not True:
+        return f"invalid plugin listing: ok is {listing['ok']!r}"
+    return None
+
+
+def _positively_empty_plugin_listing(listing):
+    if listing == []:
+        return True
+    if isinstance(listing, dict) and _allowed_plugin_object_listing(listing) is None and not listing["plugins"]:
+        return True
+    return False
+
+
+def _valid_plugin_listing_shape(listing):
+    """Return an error string when the JSON is not a readable plugin registry listing."""
+    if isinstance(listing, list):
+        if not listing:
+            return None
+        if all(isinstance(x, dict) for x in listing):
+            return None
+        return "invalid plugin listing: expected array of plugin objects"
+    if isinstance(listing, dict):
+        return _allowed_plugin_object_listing(listing)
+    kind = "null" if listing is None else type(listing).__name__
+    return f"invalid plugin listing: expected array or object, got {kind}"
+
+
+def plugin_tools_from_bb(bb="bb"):
+    """Return ({tool: plugin}, error). On success error is None; tools may be empty."""
     import subprocess
-    if roots is not None:
-        return _swept(roots)
     try:
-        listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True,
-                                            timeout=60).stdout)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return {}
+        p = subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, "timed out"
+    except OSError as e:
+        return None, str(e)
+    out = (p.stdout or "").strip()
+    err = (p.stderr or "").strip()
+    if p.returncode != 0:
+        detail = err or out or f"exit {p.returncode}"
+        return None, detail
+    if not out:
+        return None, "empty output from bb plugin list"
+    try:
+        listing = json.loads(out)
+    except ValueError as e:
+        return None, f"invalid JSON from bb plugin list: {e}"
+    shape_err = _valid_plugin_listing_shape(listing)
+    if shape_err:
+        return None, shape_err
     roots = {}
 
     def walk(o):
@@ -1443,7 +1495,19 @@ def plugin_tools(bb="bb", roots=None):
             for v in o:
                 walk(v)
     walk(listing)
-    return _swept(roots)
+    if not roots and not _positively_empty_plugin_listing(listing):
+        return None, "plugin listing yielded no enabled plugins"
+    return _swept(roots), None
+
+
+def plugin_tools(bb="bb", roots=None):
+    """{tool: plugin} for every agent tool an enabled bb plugin registers,
+    read from the plugin's source at any depth (`bb plugin list --json` gives
+    rootDir; `roots` {id: dir} replaces it in tests)."""
+    if roots is not None:
+        return _swept(roots)
+    tools, err = plugin_tools_from_bb(bb)
+    return tools if err is None else {}
 
 
 def _swept(roots):
@@ -1582,6 +1646,44 @@ def bb_text_verbs(bb="bb"):
             break
         level = list(dict.fromkeys(nxt))
     return carries
+
+
+HELP_PROBE_VERBS = frozenset({"thread queue create", "thread interactions answer", "thread interactions respond",
+                              "automation create", "automation update", "instructions set", "notify send"})
+HELP_PROBE_BUDGET_S = 10.0
+
+
+def help_probe_gaps(carries, bb="bb"):
+    """Verbs the integration selftest probes. Only bb's explicit unknown-command
+    answer counts as absent; timeouts and other failures are errors."""
+    import subprocess
+    unseen = HELP_PROBE_VERBS - carries
+    parser_gaps, absent, errors = [], [], []
+    deadline = time.monotonic() + HELP_PROBE_BUDGET_S
+    for verb in sorted(unseen):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            errors.append(f"{verb}: help probe timed out")
+            continue
+        path = verb.split()
+        try:
+            p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=remaining,
+                               stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            errors.append(f"{verb}: help probe timed out")
+            continue
+        except OSError as e:
+            errors.append(f"{verb}: {e}")
+            continue
+        out = (p.stdout or "") + (p.stderr or "")
+        if re.search(r"unknown command", out, re.I):
+            absent.append(verb)
+        elif p.returncode != 0:
+            detail = out.strip() or f"exit {p.returncode}"
+            errors.append(f"{verb}: {detail}")
+        else:
+            parser_gaps.append(verb)
+    return parser_gaps, absent, errors
 
 
 def selftest():
@@ -2193,11 +2295,19 @@ def selftest():
         # The scan itself reaches nested groups and free-text flags (review
         # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
         # bb removed `thread draft` (2026-09-30); its gating stays for older builds, but it can't be a probe.
-        unseen = sorted({"thread queue create", "thread interactions answer", "thread interactions respond",
-                         "automation create", "automation update", "instructions set", "notify send"} - carries)
-        failed += bool(unseen)
-        print(f"{'ok  ' if not unseen else 'FAIL'} the help scan reaches nested and plugin groups and --text/--value/--script"
-              f"{': not found ' + ', '.join(unseen) if unseen else ''}")
+        parser_gaps, absent, probe_errors = help_probe_gaps(carries)
+        failed += bool(parser_gaps) or bool(probe_errors)
+        if probe_errors:
+            print("FAIL the help scan reaches nested and plugin groups and --text/--value/--script: "
+                  + "; ".join(probe_errors))
+        elif parser_gaps:
+            print(f"FAIL the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f": not found {', '.join(parser_gaps)}")
+        elif absent:
+            print(f"ok   the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f" (not present in this bb: {', '.join(absent)})")
+        else:
+            print("ok   the help scan reaches nested and plugin groups and --text/--value/--script")
         # Every agent tool an enabled plugin registers is gated or exempt with
         # its reason (review r2b D6: task, advise and context tools were neither).
         # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
@@ -2211,12 +2321,18 @@ def selftest():
         print(f"{'ok  ' if handlers is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
               f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
               f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
-        tools = plugin_tools()
-        loose = loose_tools(tools)
-        failed += bool(loose) or not tools
-        print(f"{'ok  ' if tools and not loose else 'FAIL'} every registered agent tool is gated or exempt "
-              f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
-              f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
+        tools, tools_err = plugin_tools_from_bb()
+        if tools_err is not None:
+            failed += True
+            print(f"FAIL every registered agent tool is gated or exempt: plugin listing unavailable ({tools_err})")
+        elif not tools:
+            print("ok   every registered agent tool is gated or exempt (none registered)")
+        else:
+            loose = loose_tools(tools)
+            failed += bool(loose)
+            print(f"{'ok  ' if not loose else 'FAIL'} every registered agent tool is gated or exempt "
+                  f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
+                  f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
     else:
         print("skip bb verb coverage: no bb on PATH")
     # gap-map nudge: shown after GAP_MAP_DISPATCHES passed dispatches, once, never with a map
