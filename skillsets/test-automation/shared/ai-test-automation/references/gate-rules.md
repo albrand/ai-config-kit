@@ -21,7 +21,7 @@
 
 ## Scope and evidence rules
 
-- The plan includes all linked work, configured related/delivered work and the regression set computed from the base. Never derive regression membership from a head-side list.
+- The plan keeps board write targets separate from gate scope. Only work items returned by `linkedItemsForChange(change)` may receive writes; every current scenario and every base scenario remains in `scenarioIds`, and every base scenario remains in `regressionIds` even when its work item is not linked to this change. Never derive regression membership from a head-side list or narrow it to currently associated tickets.
 - Every in-scope scenario appears exactly once in the report, including no-result scenarios. Each row includes item, linked/related/regression scope, ID, verdict, reason, screenshot cell and not-run reason where relevant.
 - Publish Allure assets as display-only data. The trusted publisher recomputes verdicts with `publish-evidence --plan <trusted-plan> --results <raw-run> --apply --receipt-output`; it does not accept verdict files from a PR report job. The final report marks every row BLOCKED unless every in-scope work item has a positive post receipt; `--posted` is not an accepted substitute.
 - The test process gets no board, artifact-write or deployment secrets. An upstream checkout token is scoped to the checkout action with persisted credentials disabled.

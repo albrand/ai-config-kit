@@ -13,9 +13,16 @@ const planPairs = plan => {
   }
   return pairs;
 };
+const trustedScenarioPairs = plan => {
+  const pairs = planPairs(plan);
+  for (const item of plan?.scenarioWorkItems ?? []) {
+    if (text(String(item.workItem ?? ''), 160) && text(String(item.scenarioId ?? ''), 160)) pairs.add(`${item.scenarioId}\u0000${item.workItem}`);
+  }
+  return pairs;
+};
 
 function scopeErrors(verdict, plan) {
-  const pairs = planPairs(plan);
+  const pairs = trustedScenarioPairs(plan);
   const errors = [];
   for (const [index, row] of (verdict?.rows ?? []).entries()) {
     if (!pairs.has(`${row.scenarioId}\u0000${row.workItem}`)) errors.push(`row ${index} is outside trusted plan`);
@@ -31,7 +38,7 @@ export function recomputeTrustedVerdict(plan, scenarios, run) {
   if (run.planHash !== planHash) throw new Error('runner evidence is not bound to the trusted plan');
   if (run.commitSha !== plan.headSha) throw new Error('runner evidence commit does not match the trusted plan');
   const pairs = planPairs(plan);
-  const allowedById = new Set([...pairs].map(pair => pair.split('\u0000')[0]));
+  const allowedById = new Set([...(plan.scenarioIds ?? []), ...[...pairs].map(pair => pair.split('\u0000')[0])]);
   const scoped = (scenarios ?? []).filter(scenario => allowedById.has(scenario.id));
   const rows = judge(scoped, run, plan.regressionIds ?? [], plan).map(({ id, ...row }) => ({ scenarioId: id, ...row }));
   const overall = rows.some(row => row.verdict === 'FAILED') ? 'FAIL' : rows.some(row => row.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS';
@@ -80,7 +87,11 @@ export async function publishFromEvidence(adapter, { metadata, plan, scenarios, 
   }
   if (!text(artifactUrl, 2000) || !/^https:\/\//.test(artifactUrl)) throw new Error('publisher requires a trusted HTTPS artifact URL');
   const grouped = new Map();
-  for (const row of verdict.rows) grouped.set(row.workItem, [...(grouped.get(row.workItem) ?? []), row]);
+  const writePairs = planPairs(plan);
+  for (const row of verdict.rows) {
+    if (!writePairs.has(`${row.scenarioId}\u0000${row.workItem}`)) continue;
+    grouped.set(row.workItem, [...(grouped.get(row.workItem) ?? []), row]);
+  }
   if (!grouped.size) throw new Error('trusted verdict has no planned work items to report');
   const receipts = [];
   for (const [item, rows] of grouped) {

@@ -84,7 +84,7 @@ try {
     if (typeof adapter.linkedItemsForChange !== 'function') throw new Error(`board adapter ${cfg.board} does not implement linkedItemsForChange(change)`);
     const association = resolveBoardAssociations(hints, await adapter.linkedItemsForChange(change));
     const linked = association.linked.map(item => item.id);
-    if (!linked.length) throw new Error(`plan found no board-associated work items; named but not linked: ${association.namedNotLinked.join(', ') || '(none)'}`);
+    if (!linked.length) throw new Error(`plan found no board-associated work items; named but not linked: ${association.namedNotLinked.join(', ') || '(none)'}; cross-repository references: ${association.crossRepo.map(item => item.id).join(', ') || '(none)'}`);
     const workItems = [];
     for (const id of linked) {
       const response = await adapter.read(id);
@@ -93,7 +93,7 @@ try {
       workItems.push({ id, revision, relation: 'linked' });
     }
     const scope = buildAssociatedScenarioScope(workItems, current, old);
-    const plan = { kind: 'plan', schemaVersion: 1, baseSha, headSha, ...scope, namedNotLinked: association.namedNotLinked, createdAt: new Date().toISOString() };
+    const plan = { kind: 'plan', schemaVersion: 1, baseSha, headSha, ...scope, namedNotLinked: association.namedNotLinked, crossRepo: association.crossRepo, createdAt: new Date().toISOString() };
     if (last('output')) writeJson(last('output'), plan);
     console.log(JSON.stringify(plan, null, 2));
   } else if (command === 'validate-publish-payload') {

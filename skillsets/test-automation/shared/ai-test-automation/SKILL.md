@@ -77,7 +77,7 @@ A new or changed automated scenario is stored only after compile + discover + ex
 
 ## 6. Build the gate
 
-Split gate into plan/test/judge/report. Plan includes linked items, related delivered items and regression members from the base. Test overlays QA-owned tests over branch copies and reports ignored copies; it gets no board, artifact-write or deployment secret. Judge evaluates every in-scope scenario and records result, reason, source evidence, screenshot or not-run reason. Missing executed evidence, screenshot, token, upload confirmation or attachment blocks.
+Split gate into plan/test/judge/report. The planner gets write targets only from `linkedItemsForChange(change)` on the board/forge; title, body, branch and `--item` values are hints only. Keep all current scenarios and every base regression in gate scope, even when their tickets are not associated with this change. Those scenarios cannot create board writes unless their item is independently associated. Test overlays QA-owned tests over branch copies and reports ignored copies; it gets no board, artifact-write or deployment secret. Judge evaluates every in-scope scenario and records result, reason, source evidence, screenshot or not-run reason. Missing executed evidence, screenshot, token, upload confirmation or attachment blocks.
 
 - Create versioned plan/run/verdict JSON, authoritative overlay, token-free test step and report artifact.
 - Check: use fixtures to confirm one row per planned ID including deleted base IDs; skipped → BLOCKED; failed → FAILED; missing browser screenshot/token/upload receipt/attachment → BLOCKED. Expected: judge exit 1 for each blocker.

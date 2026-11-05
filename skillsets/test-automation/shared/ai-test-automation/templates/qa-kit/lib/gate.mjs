@@ -5,13 +5,13 @@ export function judge(scenarios, results, baseIds = [], plan = {}) {
   results = Array.isArray(results) ? results : (results.results ?? []);
   const byId = new Map(scenarios.map(s => [s.id, s]));
   const scope = new Map();
+  const scenarioWorkItems = new Map((plan.scenarioWorkItems ?? []).map(item => [item.scenarioId, item.workItem]));
   for (const item of plan.items ?? []) {
-    const relation = item.relation ?? 'linked';
-    for (const scenarioId of item.scenarioIds ?? []) scope.set(scenarioId, { workItem: item.id, scope: relation, linkedItems: item.linkedItems ?? [] });
+    for (const scenarioId of item.scenarioIds ?? []) scope.set(scenarioId, { workItem: item.id, scope: baseIds.includes(scenarioId) ? 'regression' : (item.relation ?? 'linked'), linkedItems: item.linkedItems ?? [] });
   }
-  for (const id of plan.scenarioIds ?? []) if (!scope.has(id)) scope.set(id, { scope: baseIds.includes(id) ? 'regression' : 'linked' });
+  for (const id of plan.scenarioIds ?? []) if (!scope.has(id)) scope.set(id, { workItem: scenarioWorkItems.get(id) ?? '', scope: baseIds.includes(id) ? 'regression' : 'linked' });
   for (const id of baseIds) if (!scope.has(id)) scope.set(id, { scope: 'regression' });
-  for (const id of scope.keys()) if (!byId.has(id)) byId.set(id, { id, kind: 'automated', surface: 'api', deleted: baseIds.includes(id) });
+  for (const id of scope.keys()) if (!byId.has(id)) byId.set(id, { id, workItemId: scope.get(id)?.workItem ?? scenarioWorkItems.get(id) ?? '', kind: 'automated', surface: 'api', deleted: baseIds.includes(id) });
   for (const id of baseIds) if (!byId.has(id)) byId.set(id, { id, kind: 'automated', surface: 'api', deleted: true });
 
   return [...byId.values()].map(s => {
