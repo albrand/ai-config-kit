@@ -11,6 +11,13 @@ export function linear(config) {
     return Boolean(signature && Buffer.byteLength(signature) === Buffer.byteLength(expected) && timingSafeEqual(Buffer.from(signature), Buffer.from(expected)));
   };
   return {
+    linkedItemsForChange: async change => {
+      if (!change?.url) throw new Error('Linear association lookup requires the canonical pull request URL');
+      const result = await gql('query IssuesLinkedToChange($url: String!) { attachmentsForURL(url: $url) { nodes { issue { id identifier } } } }', { url: change.url });
+      const errors = result.data?.errors;
+      if (errors?.length) throw new Error(`Linear PR association lookup failed: ${errors.map(error => error.message).join('; ')}`);
+      return result.data?.data?.attachmentsForURL?.nodes?.map(node => ({ id: String(node.issue?.identifier ?? node.issue?.id ?? '') })).filter(item => item.id) ?? [];
+    },
     read: identifier => gql('query WorkItem($id: String!) { issue(id: $id) { id identifier title description url updatedAt state { id name } team { id key } } }', { id: identifier }),
     comment: async (id, body, marker) => {
       if (!dryRun) {

@@ -10,6 +10,7 @@ import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
 import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
 import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
+import { buildAssociatedScenarioScope, extractWorkItemHints, resolveBoardAssociations } from '../lib/associations.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -46,48 +47,53 @@ try {
     const head = last('head', process.env.GITHUB_SHA ?? git('rev-parse', 'HEAD'));
     const baseSha = /^[a-f0-9]{40}$/i.test(base) ? base : git('rev-parse', `${base}^{commit}`);
     const headSha = /^[a-f0-9]{40}$/i.test(head) ? head : git('rev-parse', `${head}^{commit}`);
-    let linked = args.item ?? [];
-    if (!linked.length) {
-      if (process.env.SYSTEM_PULLREQUEST_PULLREQUESTID && process.env.SYSTEM_ACCESSTOKEN) {
-        const collection = process.env.SYSTEM_COLLECTIONURI;
-        const project = encodeURIComponent(process.env.SYSTEM_TEAMPROJECT ?? '');
-        const repo = encodeURIComponent(process.env.BUILD_REPOSITORY_ID ?? '');
-        const endpoint = `${collection}${project}/_apis/git/repositories/${repo}/pullRequests/${process.env.SYSTEM_PULLREQUEST_PULLREQUESTID}/workitems?api-version=7.1`;
-        const response = await fetch(endpoint, { headers: { authorization: `Bearer ${process.env.SYSTEM_ACCESSTOKEN}`, accept: 'application/json' } });
-        if (!response.ok) throw new Error(`Azure PR work-item lookup failed: HTTP ${response.status}`);
-        const data = await response.json();
-        linked = (data.value ?? []).map(item => String(item.id));
-      }
+    const eventPath = process.env.GITHUB_EVENT_PATH && existsSync(process.env.GITHUB_EVENT_PATH) ? process.env.GITHUB_EVENT_PATH : null;
+    const event = eventPath ? json(eventPath) : {};
+    const pullRequest = event.pull_request ?? {};
+    const linkedText = last('linked-text') ? readFileSync(last('linked-text'), 'utf8') : '';
+    let freeText = linkedText;
+    if (last('linked-text')) {
+      try { const parsed = JSON.parse(linkedText); freeText = `${parsed.title ?? ''}\n${parsed.body ?? ''}\n${parsed.branch ?? ''}`; } catch { /* plain text is also a hint source */ }
     }
-    if (!linked.length) {
-      const sourceText = last('linked-text') ? readFileSync(last('linked-text'), 'utf8') : (process.env.GITHUB_EVENT_PATH && existsSync(process.env.GITHUB_EVENT_PATH) ? readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8') : '');
-      let searchable = sourceText;
-      try { const event = JSON.parse(sourceText); searchable = `${event.pull_request?.title ?? ''}\n${event.pull_request?.body ?? ''}\n${event.inputs?.work_items ?? ''}`; } catch { /* caller supplied plain text */ }
-      const pattern = new RegExp(cfg.workItemPattern ?? '\\b[A-Z][A-Z0-9]+-\\d+\\b', 'g');
-      linked = [...new Set(searchable.match(pattern) ?? [])];
-    }
-    if (!linked.length) throw new Error('plan found no linked work-item IDs; pass --item repeatedly or provide a PR event body');
+    const hints = [...new Set([
+      ...(args.item ?? []), ...(args.related ?? []), ...(args.delivered ?? []),
+      ...extractWorkItemHints([pullRequest.title, pullRequest.body, pullRequest.head?.ref, event.inputs?.work_items, freeText, process.env.SYSTEM_PULLREQUEST_SOURCEBRANCH], cfg.workItemPattern)
+    ])];
+    const change = {
+      id: String(last('pull-request') || pullRequest.number || process.env.SYSTEM_PULLREQUEST_PULLREQUESTID || ''),
+      number: last('pull-request') || pullRequest.number,
+      pullRequestId: last('pull-request') || process.env.SYSTEM_PULLREQUEST_PULLREQUESTID,
+      url: last('change-url') || pullRequest.html_url || pullRequest.url || process.env.SYSTEM_PULLREQUEST_PULLREQUESTURI,
+      owner: last('change-owner') || event.repository?.owner?.login,
+      repositoryName: last('change-repository') || event.repository?.name,
+      project: last('change-project') || process.env.SYSTEM_TEAMPROJECT,
+      repositoryId: last('change-repository-id') || process.env.BUILD_REPOSITORY_ID,
+      organizationUrl: last('organization-url') || process.env.SYSTEM_COLLECTIONURI,
+      branch: pullRequest.head?.ref ?? process.env.SYSTEM_PULLREQUEST_SOURCEBRANCH,
+      title: pullRequest.title,
+      hints
+    };
     const scenarioPath = last('file', config().scenarioFile ?? 'qa/scenarios.json');
     const current = scenariosFrom(last('scenarios', scenarioPath));
     const oldDocument = last('base-scenarios') ? json(last('base-scenarios')) : JSON.parse(execFileSync('git', ['show', `${base}:${scenarioPath}`], { encoding: 'utf8' }));
     const old = unwrap(oldDocument).map(scenario => ({ ...scenario, ...(scenario.workItemId || !oldDocument.workItemId ? {} : { workItemId: oldDocument.workItemId }) }));
-    const oldIds = new Set(old.map(s => s.id));
-    const scenarioIds = [...new Set([...current.map(s => s.id), ...old.map(s => s.id)])];
-    const related = [...(args.related ?? []), ...(args.delivered ?? [])];
     const token = cfg.boardReadTokenEnv ? process.env[cfg.boardReadTokenEnv] : (cfg.boardTokenEnv ? process.env[cfg.boardTokenEnv] : undefined);
     const authorization = cfg.boardAuthorizationEnv ? process.env[cfg.boardAuthorizationEnv] : undefined;
     if (!token && !authorization) throw new Error(`plan requires read-only board credentials via ${cfg.boardTokenEnv ?? cfg.boardAuthorizationEnv ?? 'board auth config'}`);
     const adapter = boardAdapter(cfg.board, { baseUrl: cfg.boardUrl, repo: cfg.repo, token, authorization, dryRun: false });
+    if (typeof adapter.linkedItemsForChange !== 'function') throw new Error(`board adapter ${cfg.board} does not implement linkedItemsForChange(change)`);
+    const association = resolveBoardAssociations(hints, await adapter.linkedItemsForChange(change));
+    const linked = association.linked.map(item => item.id);
+    if (!linked.length) throw new Error(`plan found no board-associated work items; named but not linked: ${association.namedNotLinked.join(', ') || '(none)'}`);
     const workItems = [];
-    for (const [id, relation] of [...linked.map(id => [id, 'linked']), ...related.map(id => [id, 'related'])]) {
+    for (const id of linked) {
       const response = await adapter.read(id);
       const data = response.data;
       const revision = data?.rev ?? data?.fields?.updated ?? data?.updatedAt ?? data?.updated_at ?? data?.data?.issue?.updatedAt ?? args.revision?.at(-1) ?? 'unknown';
-      workItems.push({ id, revision, relation });
+      workItems.push({ id, revision, relation: 'linked' });
     }
-    const plan = { kind: 'plan', schemaVersion: 1, baseSha, headSha, items: workItems.map(item => ({ ...item, scenarioIds: current.filter(s => s.workItemId === item.id || s.id.startsWith(`QAS-${item.id}-`)).map(s => s.id), linkedItems: linked.filter(id => id !== item.id) })), scenarioIds, createdAt: new Date().toISOString() };
-    plan.items.push(...old.map(s => ({ id: s.workItemId ?? s.id.split('-').slice(1, -1).join('-'), revision: 'base', relation: 'regression', scenarioIds: [s.id] })));
-    plan.regressionIds = [...oldIds];
+    const scope = buildAssociatedScenarioScope(workItems, current, old);
+    const plan = { kind: 'plan', schemaVersion: 1, baseSha, headSha, ...scope, namedNotLinked: association.namedNotLinked, createdAt: new Date().toISOString() };
     if (last('output')) writeJson(last('output'), plan);
     console.log(JSON.stringify(plan, null, 2));
   } else if (command === 'validate-publish-payload') {

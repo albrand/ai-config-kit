@@ -14,6 +14,7 @@
 The starter modules are in `templates/qa-kit/lib/boards/`. Keep this interface asynchronous and return `{dryRun, request}` or a response receipt. `revision` is an opaque ETag/revision captured by `read`.
 
 ```js
+linkedItemsForChange(change) // only IDs the board/forge confirms are linked to this exact PR/commit
 read(workItemId, { revision? })
 comment(workItemId, markdown, marker) // marker includes item + commit + content hash
 attach(workItemId, { filename, contentType, contentBase64 } | { url, title })
@@ -24,6 +25,8 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 
 `attach` may be a board comment containing an already uploaded artifact URL when the board has no upload API. Return `confirmed: true` only after the API confirms the association. `transition` must compare revision where supported. Avoid logging auth headers or full binary bodies.
 
+The planner calls `linkedItemsForChange(change)` with the canonical change URL, forge/repository identity, PR number, source branch, and optional `hints` extracted from PR title, body, branch, or explicit CLI input. The method returns only IDs confirmed by the board/forge API. Hints never become plan entries by themselves. The plan records unmatched hints in `namedNotLinked`; they are diagnostic only and are never sent to `comment`, `attach`, or `transition`. Every provider must fail closed when required association evidence is unavailable.
+
 ## Jira Cloud (REST v3)
 
 - Auth: OAuth 2.0 (3LO) bearer token for integrations, or basic auth from account email + API token for a controlled bot. Example secrets: `JIRA_EMAIL`, `JIRA_API_TOKEN`; construct `Authorization: Basic base64(email:token)` in the caller. Grant least scopes for issue read/write, comments, attachments, and transitions. Never put tokens in JSON.
@@ -32,6 +35,7 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 - Attach: `POST /rest/api/3/issue/{issueIdOrKey}/attachments`, multipart field `file`; header `X-Atlassian-Token: no-check`. Capture returned attachment id and filename.
 - Transition: `GET /rest/api/3/issue/{id}/transitions`, then `POST` to the same path with `{ "transition": { "id":"<available-transition-id>" } }`. Do not send a state name where an ID is required.
 - Link PR/artifact: `POST /rest/api/3/issue/{id}/remotelink` body `{ "object": { "url":"https://…", "title":"QA report" } }`; include PR URL and candidate SHA in the title/summary.
+- PR association: for each candidate key in `change.hints`, `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`; include the issue only if an `object.url` exactly equals the canonical `change.url`. A title/body key is only a candidate; a missing remote link excludes it.
 - Webhook: Jira Cloud delivery does not provide a universal built-in shared-secret signature on every webhook configuration. Put a trusted gateway in front that verifies an HMAC-SHA256 header such as `X-QA-Signature: sha256=<hex>` over the exact raw body; reject missing/invalid signatures before queueing. Use constant-time comparison.
 - Rate/retry: honor `Retry-After` on 429 and Jira rate-limit headers; retry safe reads only, and reconcile write timeouts by reading comments/remote links for the complete marker.
 
@@ -43,6 +47,7 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 - Attach: upload bytes with `POST .../_apis/wit/attachments?fileName={encoded-name}&api-version=7.1` and binary content type; use returned `url`. Then PATCH the work item with `[{"op":"test","path":"/rev","value":N},{"op":"add","path":"/relations/-","value":{"rel":"AttachedFile","url":"<upload-url>","attributes":{"comment":"QA evidence"}}}]`. Both upload and relation must confirm.
 - Transition/move: PATCH work item with revision test plus `add /fields/System.State` and configured state. Board-column placement can also depend on `System.BoardColumn` and `System.BoardLane`; only write those fields if the process supports them and policy permits it.
 - Link PR: PATCH work item with revision test plus `add /relations/-` value `{ "rel":"Hyperlink", "url":"<PR URL>", "attributes":{"comment":"PR <sha>"} }`. Azure Repos linking can use an ArtifactLink only when you provide the correct artifact URI; use Hyperlink for portable external PR URLs.
+- PR association: `GET https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repositoryId}/pullRequests/{pullRequestId}/workitems?api-version=7.1` with the trusted read token; returned work-item refs are the only planned items. The pipeline supplies organization, project, repository, and PR identity from Azure system variables. No title/body regex fallback is permitted.
 - Webhook: Service Hooks are authenticated by configured basic/shared secret or secured ingress depending on service; where the delivery does not sign the body, terminate it at an ingress that enforces a shared HMAC-SHA256 signature header over raw bytes. Verify before enqueueing and deduplicate delivery IDs.
 - Rate/retry: honor 429 and `Retry-After`; Azure may also return 503 during throttling. Retry only reads/idempotent updates; after an uncertain PATCH, read the revision and verify the marker/field before retrying.
 
@@ -54,6 +59,7 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 - Attach: `attachmentLinkURL(input:{issueId:$id,url:$url,title:$title})`; upload artifact to CI storage first and require `success:true` plus returned attachment URL/ID.
 - Transition/move: `issueUpdate(id:$id,input:{stateId:$stateId})`; obtain valid workflow state IDs from `workflowStates` for the issue's team. Linear has issue workflow states rather than a generic project column mutation.
 - Link PR: use the same `attachmentLinkURL` mutation with PR URL and title containing commit SHA.
+- PR association: `POST https://api.linear.app/graphql` with `{ "query":"query($url:String!){attachmentsForURL(url:$url){nodes{issue{id identifier}}}}", "variables":{"url":"<canonical PR URL>"} }`; only returned issue identifiers are eligible for the plan. The URL must match the PR URL, not text copied into a description.
 - Webhook: configure the Linear webhook signing secret; validate the provider HMAC-SHA256 signature header over the exact raw payload with constant-time comparison and reject invalid requests.
 - Rate/retry: inspect GraphQL errors and HTTP 429; honor `Retry-After`. A 200 response can contain GraphQL errors, so require `errors` absent and mutation `success:true`. Do not retry mutation timeouts until querying for the marker/attachment.
 
@@ -65,12 +71,13 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 - Attach: GitHub Issues has no general binary-attachment upload endpoint. Upload report/screenshots as an Actions artifact or approved object store, verify its URL, then `POST` an issue comment with a Markdown link. Do not use undocumented browser upload endpoints.
 - Transition: `PATCH /repos/{owner}/{repo}/issues/{issue_number}`, JSON `{ "state":"open"|"closed", "state_reason":"completed"|"not_planned" }`. For project column move, GraphQL mutation `updateProjectV2ItemFieldValue(input:{projectId,itemId,fieldId,value:{singleSelectOptionId}})`; resolve all IDs through GraphQL first.
 - Link PR: if issue and PR share a repository, include `Fixes #N` in PR body for native linkage; otherwise post a comment with the PR URL and SHA, or use Projects v2 relationship fields where configured.
+- PR association: use trusted GraphQL `repository(owner:$owner,name:$name){pullRequest(number:$number){closingIssuesReferences(first:100){nodes{number title url}}}}`. Use those returned issue numbers, not regex matches from title/body. GitHub-reported closing references count as linked issues; without that API association, a named item is excluded.
 - Webhook: verify `X-Hub-Signature-256` as `sha256=<hex>` = HMAC-SHA256(secret, exact raw body) using constant-time comparison. Also deduplicate `X-GitHub-Delivery` and validate the event type/repository.
 - Rate/retry: inspect `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After`, and secondary-limit responses; pause until reset. Retry safe GET only. For write timeout, search for full content marker before retry.
 
 ## Adding another board
 
-1. Create `lib/boards/<name>.mjs` exporting `<name>(config)` with all six methods above; also add `moveProjectItem` only if the board has a distinct column model.
+1. Create `lib/boards/<name>.mjs` exporting `<name>(config)` with `linkedItemsForChange(change)` and every operation above; also add `moveProjectItem` only if the board has a distinct column model.
 2. Map each field to the board's immutable ID and revision model. Record exact HTTP method, URL, request headers, body, response receipt, auth scopes and rate limits in a reference page.
 3. Dry-run returns a sanitized `{ dryRun:true, request:{ method,url,headers,body } }` and performs zero fetches. Apply mode uses injected `fetchImpl` so tests can capture requests without network.
 4. Sign and verify webhooks from raw bytes; use constant-time signature checks, delivery deduplication and event allowlists.
@@ -78,3 +85,4 @@ verifyEvent({ rawBody: Buffer, signature, secret, headers }) // boolean; constan
 6. Handle pagination and `Retry-After`; retry no more than three times and never blindly retry uncertain mutations.
 7. Add offline tests for every request method/body, auth header redaction, dry-run no-send, --apply fetch, stale revision, rate-limit, duplicate marker, failed upload and invalid webhook signature.
 8. Register the adapter in `lib/boards/index.mjs`, add config validation and document its environment variables. Keep dry-run the default until an operator reviews captured requests.
+9. Implement `linkedItemsForChange(change)` as a read against the authoritative board/forge association record. Define the canonical PR/commit identity and exact-match rule, handle paging, reject partial/error responses, and return only confirmed work-item IDs. Accept title/body/branch IDs only as candidate hints for providers that require a per-item link lookup; expose unmatched hints as `namedNotLinked` and never let that list reach a write operation.

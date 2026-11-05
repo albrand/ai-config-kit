@@ -6,6 +6,16 @@ export function jira(config) {
   const request = createAdapter({ ...config, headers: { 'x-atlassian-token': 'no-check' } });
   const root = id => `/rest/api/3/issue/${encodeURIComponent(id)}`;
   return {
+    linkedItemsForChange: async change => {
+      if (!change?.url) throw new Error('Jira association lookup requires the canonical pull request URL');
+      const confirmed = [];
+      for (const id of change.hints ?? []) {
+        const response = await request({ method: 'GET', path: `${root(id)}/remotelink` });
+        const links = Array.isArray(response.data) ? response.data : response.data?.values ?? [];
+        if (links.some(link => link.object?.url === change.url || link.url === change.url)) confirmed.push({ id: String(id) });
+      }
+      return confirmed;
+    },
     read: id => request({ method: 'GET', path: `${root(id)}?fields=summary,status,issuetype,updated,project,issuelinks,customfield_10020` }),
     comment: async (id, body, marker) => {
       const path = `${root(id)}/comment`;

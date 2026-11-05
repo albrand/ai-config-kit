@@ -7,7 +7,15 @@ export function github(config) {
   const request = createAdapter({ ...config, headers: { 'x-github-api-version': '2022-11-28', ...config.headers } });
   const issue = number => `/repos/${config.repo}/issues/${encodeURIComponent(number)}`;
   const gql = (query, variables) => request({ method: 'POST', path: '/graphql', body: { query, variables } });
+  const [owner, name] = config.repo.split('/');
   return {
+    linkedItemsForChange: async change => {
+      if (!change?.number) throw new Error('GitHub association lookup requires a pull request number');
+      const result = await gql('query LinkedIssues($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { closingIssuesReferences(first: 100) { nodes { number title url } } } } }', { owner: change.owner ?? owner, name: change.repositoryName ?? name, number: Number(change.number) });
+      const errors = result.data?.errors;
+      if (errors?.length) throw new Error(`GitHub linked issue lookup failed: ${errors.map(error => error.message).join('; ')}`);
+      return result.data?.data?.repository?.pullRequest?.closingIssuesReferences?.nodes?.map(item => ({ id: String(item.number), title: item.title, url: item.url })) ?? [];
+    },
     read: number => request({ method: 'GET', path: `${issue(number)}?per_page=100` }),
     comment: async (number, body, marker) => {
       const path = `${issue(number)}/comments?per_page=100`;

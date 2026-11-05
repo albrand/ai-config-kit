@@ -6,6 +6,17 @@ export function azureBoards(config) {
   const request = createAdapter(config);
   const item = id => `/_apis/wit/workitems/${encodeURIComponent(id)}`;
   return {
+    linkedItemsForChange: async change => {
+      if (!change?.pullRequestId || !change?.project || !change?.repositoryId || !change?.organizationUrl) throw new Error('Azure association lookup requires organizationUrl, project, repositoryId and pullRequestId');
+      const origin = new URL(config.baseUrl).origin;
+      if (new URL(change.organizationUrl).origin !== origin) throw new Error('Azure change organization must match the configured board origin');
+      const project = encodeURIComponent(change.project);
+      const repository = encodeURIComponent(change.repositoryId);
+      const pr = encodeURIComponent(change.pullRequestId);
+      const path = `/${encodeURIComponent(new URL(change.organizationUrl).pathname.split('/').filter(Boolean)[0] ?? '')}/${project}/_apis/git/repositories/${repository}/pullRequests/${pr}/workitems?api-version=7.1`;
+      const result = await request({ method: 'GET', path });
+      return (result.data?.value ?? []).map(ref => ({ id: String(ref.id ?? ref.url?.split('/').at(-1) ?? '') })).filter(item => item.id);
+    },
     read: id => request({ method: 'GET', path: `${item(id)}?$expand=relations&api-version=7.1` }),
     comment: async (id, body, marker) => {
       const path = `${item(id)}/comments?format=markdown&api-version=7.1-preview.4`;

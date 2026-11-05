@@ -12,7 +12,15 @@ on:
         type: boolean
         default: false
       work_items:
-        description: Comma-separated linked work-item IDs for a release run
+        description: Candidate work-item hints; only board-associated items enter the plan
+        required: false
+        type: string
+      pull_request:
+        description: Existing PR number for a manually queued release association lookup
+        required: false
+        type: string
+      change_url:
+        description: Canonical PR URL for a manually queued release association lookup
         required: false
         type: string
 permissions:
@@ -31,9 +39,9 @@ jobs:
         with: { repository: acme-qa/qa-authority, path: qa-authority, ref: main, token: ${{ secrets.QA_READ_TOKEN }}, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - name: Resolve linked and delivered work items plus merge-base regressions
+      - name: Resolve board-associated work items and base regressions; text IDs are hints only
         id: plan
-        run: node qa-authority/qa/bin/qa.mjs plan --config qa-authority/qa/qa.config.json --base-scenarios qa-authority/qa/base-scenarios.json --scenarios qa-authority/qa/scenarios.json --base "${{ github.event.pull_request.base.sha || 'origin/main' }}" --head "${{ github.event.pull_request.head.sha || github.sha }}" --output qa-plan.json
+        run: node qa-authority/qa/bin/qa.mjs plan --config qa-authority/qa/qa.config.json --base-scenarios qa-authority/qa/base-scenarios.json --scenarios qa-authority/qa/scenarios.json --base "${{ github.event.pull_request.base.sha || 'origin/main' }}" --head "${{ github.event.pull_request.head.sha || github.sha }}" --pull-request "${{ inputs.pull_request }}" --change-url "${{ inputs.change_url }}" --output qa-plan.json
         env: { QA_BOARD_READ_TOKEN: ${{ secrets.QA_BOARD_READ_TOKEN }} }
       - uses: actions/upload-artifact@v4
         with: { name: qa-plan, path: qa-plan.json, if-no-files-found: error }
