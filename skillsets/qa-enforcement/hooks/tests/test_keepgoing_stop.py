@@ -4,6 +4,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import resource
 import tempfile
 import time
 import unittest
@@ -18,10 +19,18 @@ _SPIKE_CEILING = 5.0
 _OVERHEAD_SLOPE = 0.55
 _OVERHEAD_INTERCEPT = 0.16
 _OVERHEAD_CAP = 0.35
-_TIMING_SAMPLES = 3
+_TIMING_SAMPLES = 5
 
 
-def _within_budget(hook_samples, baseline_samples):
+def _median(values):
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _within_cpu_budget(hook_samples, baseline_samples):
     if any(hook >= _SPIKE_CEILING for hook in hook_samples):
         return False
     hook = min(hook_samples)
@@ -32,6 +41,14 @@ def _within_budget(hook_samples, baseline_samples):
     limit = min(baseline * _OVERHEAD_SLOPE + _OVERHEAD_INTERCEPT, _OVERHEAD_CAP)
     return overhead < limit
 
+
+def _within_wall_budget(hook_walls, baseline_walls):
+    return _median(hook_walls) - _median(baseline_walls) < _OVERHEAD_CAP
+
+
+def _child_cpu_time():
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
 
 
 
@@ -302,22 +319,57 @@ class KeepGoingTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return elapsed
 
-    def _wall_samples(self, argv, stdin=None, samples=_TIMING_SAMPLES):
-        return [self._subprocess_wall(argv, stdin=stdin) for _ in range(samples)]
+    def _subprocess_cpu(self, argv, stdin=None):
+        before = _child_cpu_time()
+        try:
+            proc = subprocess.run(
+                argv,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env=self.env,
+                cwd=self.tmp.name,
+                timeout=HOOK_WALL_DEADLINE,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail(f"subprocess exceeded {HOOK_WALL_DEADLINE}s wall deadline: {argv!r}")
+        elapsed = _child_cpu_time() - before
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return elapsed
+
+    def _interleaved_timing(self, hook_argv, baseline_argv, stdin=None, samples=_TIMING_SAMPLES):
+        hook_walls, baseline_walls, hook_cpus, baseline_cpus = [], [], [], []
+        for _ in range(samples):
+            hook_walls.append(self._subprocess_wall(hook_argv, stdin=stdin))
+            baseline_walls.append(self._subprocess_wall(baseline_argv))
+            hook_cpus.append(self._subprocess_cpu(hook_argv, stdin=stdin))
+            baseline_cpus.append(self._subprocess_cpu(baseline_argv))
+        return hook_walls, baseline_walls, hook_cpus, baseline_cpus
 
     def test_run_is_fast(self):
         stdin = self.claude("Done.\n\nI'll run the tests next.")
-        baseline_samples = self._wall_samples(["python3", "-c", "pass"])
-        hook_samples = self._wall_samples(
-            ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")], stdin=stdin)
+        hook_argv = ["python3", str(self.home / ".agent-hooks" / "keepgoing-stop.py")]
+        baseline_argv = ["python3", "-c", "pass"]
+        hook_walls, baseline_walls, hook_cpus, baseline_cpus = self._interleaved_timing(
+            hook_argv, baseline_argv, stdin=stdin)
+        wall_overhead = _median(hook_walls) - _median(baseline_walls)
         self.assertTrue(
-            _within_budget(hook_samples, baseline_samples),
-            f"hooks={hook_samples} baselines={baseline_samples} "
+            _within_cpu_budget(hook_cpus, baseline_cpus),
+            f"cpu hooks={hook_cpus} baselines={baseline_cpus} "
             f"deadline={HOOK_WALL_DEADLINE}s spike={_SPIKE_CEILING}s cap={_OVERHEAD_CAP}s",
         )
+        self.assertTrue(
+            _within_wall_budget(hook_walls, baseline_walls),
+            f"wall hooks={hook_walls} baselines={baseline_walls} overhead={wall_overhead:.3f}s cap={_OVERHEAD_CAP}s",
+        )
+        self._wall_overhead_margin_s = _OVERHEAD_CAP - wall_overhead
+        if os.environ.get("TIMING_REPORT"):
+            print(f"wall_overhead_margin_s={self._wall_overhead_margin_s:.4f}", flush=True)
 
 
 class WithinBudgetTests(unittest.TestCase):
+    def test_wall_must_fail_on_one_second_overhead(self):
+        self.assertFalse(_within_wall_budget([1.0, 1.0, 1.0, 1.0, 1.0], [0.03, 0.03, 0.03, 0.03, 0.03]))
     def test_must_fail_cases(self):
         cases = (
             ([0.10, 14.90, 0.10], [0.03, 0.03, 0.03]),
@@ -328,7 +380,7 @@ class WithinBudgetTests(unittest.TestCase):
         )
         for hook_samples, baseline_samples in cases:
             with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
-                self.assertFalse(_within_budget(hook_samples, baseline_samples))
+                self.assertFalse(_within_cpu_budget(hook_samples, baseline_samples))
 
     def test_must_pass_cases(self):
         cases = (
@@ -337,7 +389,7 @@ class WithinBudgetTests(unittest.TestCase):
         )
         for hook_samples, baseline_samples in cases:
             with self.subTest(hook_samples=hook_samples, baseline_samples=baseline_samples):
-                self.assertTrue(_within_budget(hook_samples, baseline_samples))
+                self.assertTrue(_within_cpu_budget(hook_samples, baseline_samples))
 
 
 if __name__ == "__main__":

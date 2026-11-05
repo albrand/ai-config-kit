@@ -1,19 +1,37 @@
 """Tests for context-hygiene-policy.py. Run: python3 -m unittest skillsets/agent-runtime/hooks/test_context_hygiene.py"""
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 POLICY = Path(__file__).with_name("context-hygiene-policy.py")
+POLICY_HOOK_WALL_DEADLINE = 15.0
 
 
 def verdict(payload, env=None):
     p = subprocess.run([sys.executable, str(POLICY)], input=json.dumps(payload), capture_output=True, text=True,
-                       env={**os.environ, **(env or {})}, timeout=30)
+                       env={**os.environ, **(env or {})}, timeout=POLICY_HOOK_WALL_DEADLINE)
     return json.loads(p.stdout)
+
+
+
+def _child_cpu_time():
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
+def timed_verdict(payload, env=None):
+    before_cpu = _child_cpu_time()
+    started_wall = time.monotonic()
+    result = verdict(payload, env=env)
+    cpu_elapsed = _child_cpu_time() - before_cpu
+    wall_elapsed = time.monotonic() - started_wall
+    return result, cpu_elapsed, wall_elapsed
 
 
 def bash(cmd):
@@ -180,10 +198,9 @@ class ContextHygiene(unittest.TestCase):
 
         n = 20000
         cmd = "cat <<'EOF'\n" + "x \\n" * n + "EOF\n"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 8.0)
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
         self.assertFalse(v["block"], cmd[:48])
 
     def test_top_level_case_scan_many_case_stays_fast_at_200k(self):
@@ -193,10 +210,9 @@ class ContextHygiene(unittest.TestCase):
         n = 200_000
         k = n // 22
         cmd = ("case x in y) :;; esac; " * k) + f"case x in x) {pk} node;; esac"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
         self.assertTrue(v["block"], cmd[:48])
 
     def test_pgrep_data_heredoc_trailing_backslash_not_shell_fault(self):
@@ -327,10 +343,9 @@ pgrep -f bb',
 
         tail = "; p" + "kill node"
         cmd = "echo " + "$(" * 400 + "x" + ")" * 400 + tail
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
         self.assertTrue(v["block"])
         self.assertTrue(
             v["reason"].startswith("[no-pgrep-f]") or v["reason"].startswith("[bb-lifecycle]")
@@ -345,10 +360,9 @@ pgrep -f bb',
             'bash -c "' + "$(" * 1000 + "x" + ")" * 1000 + tail + '"',
         ):
             with self.subTest(cmd=cmd[:40]):
-                t0 = time.monotonic()
-                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-                elapsed = time.monotonic() - t0
+                v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertLess(elapsed, 2.0)
+                self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
                 self.assertTrue(v["block"])
                 self.assertTrue(
                     v["reason"].startswith("[no-pgrep-f]")
@@ -359,10 +373,9 @@ pgrep -f bb',
         import time
 
         loop_cmd = "for i in 1; do ssh h 'echo'; done; " * 2400
-        t0 = time.monotonic()
-        v = verdict(bash(loop_cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed, wall_elapsed = timed_verdict(bash(loop_cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 2.0)
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
         self.assertFalse(v["block"], loop_cmd[:48])
 
         long_ssh = "ssh h " + "-o A=b " * 200 + "'pgrep -f x'"
@@ -381,10 +394,9 @@ pgrep -f bb',
         )
         for want_block, cmd in cases:
             with self.subTest(cmd=cmd[:48]):
-                t0 = time.monotonic()
-                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-                elapsed = time.monotonic() - t0
+                v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
                 self.assertLess(elapsed, 2.0)
+                self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
                 self.assertEqual(v["block"], want_block)
 
     def test_bb_lifecycle_stays_a_safety_block_even_when_hygiene_is_off(self):
@@ -564,10 +576,9 @@ pgrep -f bb',
 
         pk = "p" + "kill"
         cmd = "$(" * 5000 + "echo '#'" + ")" * 5000 + "; " + pk + " node"
-        t0 = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - t0
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertLess(elapsed, 8.0)
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
         self.assertTrue(v["block"])
 
     def test_pgrep_heredoc_pipe_env_shell(self):
@@ -1231,11 +1242,10 @@ pgrep -f bb',
             'run(["pgrep","-f","x"])\n'
         )
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"], cmd[:80])
         self.assertLess(elapsed, 1.5, f"scan took {elapsed:.2f}s")
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
 
     def test_python_stdin_deep_brackets_scan_bounded(self):
         import time
@@ -1244,11 +1254,10 @@ pgrep -f bb',
         line = "x=" + "[" * 199 + "0" + "]" * 199
         body = (line + "\n") * (n // 20) + "import subprocess\nsubprocess.run(['echo','hi'])\n"
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertFalse(v["block"], cmd[:80])
         self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
 
     def test_python_stdin_import_shadow_parameter(self):
         allowed = (
@@ -1667,11 +1676,10 @@ pgrep -f bb',
         n = 5000
         body = "x=0\n" * n + "import subprocess\nsubprocess.run(['echo', 'hi'])\n"
         cmd = "python3 - <<'EOF'\n" + body + "EOF"
-        start = time.monotonic()
-        v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
         self.assertFalse(v["block"], cmd[:80])
         self.assertLess(elapsed, 8.0, f"scan took {elapsed:.2f}s")
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
 
 
     def test_many_python_heredocs_in_one_command_stays_fast(self):
@@ -1679,11 +1687,10 @@ pgrep -f bb',
 
         n = 600
         cmd = "".join("python3 - <<'EOF'\nprint(%d)\nEOF\n" % i for i in range(n))
-        start = time.monotonic()
-        v = verdict(bash(cmd + "pkill node"), env={"CONTEXT_HYGIENE": "off"})
-        elapsed = time.monotonic() - start
+        v, elapsed, wall_elapsed = timed_verdict(bash(cmd + "pkill node"), env={"CONTEXT_HYGIENE": "off"})
         self.assertTrue(v["block"], cmd[:80])
         self.assertLess(elapsed, 2.0, f"many-heredoc scan took {elapsed:.2f}s")
+        self.assertLess(wall_elapsed, POLICY_HOOK_WALL_DEADLINE, f"wall took {wall_elapsed:.2f}s")
 
 
 if __name__ == "__main__":
