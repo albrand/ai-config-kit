@@ -1577,6 +1577,7 @@ pgrep -f bb',
             f"CMD='{pk} node'; X=$CMD; unset CMD; $X",
         )
         allowed = (
+            f"CMD='safe'; X='{pk} node'; unset CMD -f X; $X",
             f"CMD='{pk} node'; unset -- -f CMD; $CMD",
             f"CMD='{pk} node'; unset CMD -f; $CMD",
             "CMD=ls; X=$CMD; $X",

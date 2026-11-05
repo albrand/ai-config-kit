@@ -2896,7 +2896,7 @@ def _pgrep_lifecycle_resolve_assign_value(val, into):
 
 
 def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
-    dashdash = False
+    option_phase = True
     vflag = False
     fflag = False
     while i < cmd_end:
@@ -2908,20 +2908,19 @@ def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
         if ws >= we:
             break
         w = _pgrep_bare_word(text[ws:we])
-        if w == "--" and not dashdash:
-            dashdash = True
-            i = we
-            continue
-        if not dashdash and len(w) >= 2 and w[0] == "-" and w != "-":
-            for opt in w[1:]:
-                if opt == "v":
-                    vflag = True
-                elif opt == "f":
-                    fflag = True
-                elif opt == "n":
-                    pass
-            i = we
-            continue
+        if option_phase:
+            if w == "--":
+                option_phase = False
+                i = we
+                continue
+            if len(w) >= 2 and w[0] == "-" and w != "-":
+                for opt in w[1:]:
+                    if opt == "v":
+                        vflag = True
+                    elif opt == "f":
+                        fflag = True
+                i = we
+                continue
         pop_var = True
         if fflag and not vflag:
             pop_var = False
@@ -2929,8 +2928,7 @@ def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
             pop_var = False
         if pop_var:
             into.pop(w, None)
-        vflag = False
-        fflag = False
+        option_phase = False
         i = we
 
 
