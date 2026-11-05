@@ -1565,6 +1565,35 @@ pgrep -f bb',
 
 
 
+    def test_lifecycle_unset_f_and_copied_binding_gaps(self):
+        pk = "p" + "kill"
+        blocked = (
+            f"CMD='{pk} node'; unset -f CMD; $CMD",
+            f"CMD='{pk} node'; unset -f -- CMD; $CMD",
+            f"CMD='{pk} node'; unset -v -f CMD; $CMD",
+            f"CMD='{pk} node'; unset -f -v CMD; $CMD",
+            f"CMD='{pk} node'; unset -fv CMD; $CMD",
+            f"CMD='{pk} node'; unset -vf CMD; $CMD",
+            f"CMD='{pk} node'; X=$CMD; unset CMD; $X",
+        )
+        allowed = (
+            f"CMD='safe'; X='{pk} node'; unset CMD -f X; $X",
+            f"CMD='{pk} node'; unset -- -f CMD; $CMD",
+            f"CMD='{pk} node'; unset CMD -f; $CMD",
+            "CMD=ls; X=$CMD; $X",
+            f"CMD='{pk} node'; X=$CMD; X=ls; $X",
+        )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
+                self.assertTrue(v["reason"].startswith("[bb-lifecycle]"), v["reason"][:40])
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+
     def test_lifecycle_prefix_assignment_does_not_persist(self):
         pk = "p" + "kill"
         allowed = (
