@@ -41,8 +41,9 @@ export function recomputeTrustedVerdict(plan, scenarios, run) {
   const allowedById = new Set([...(plan.scenarioIds ?? []), ...[...pairs].map(pair => pair.split('\u0000')[0])]);
   const scoped = (scenarios ?? []).filter(scenario => allowedById.has(scenario.id));
   const rows = judge(scoped, run, plan.regressionIds ?? [], plan).map(({ id, ...row }) => ({ scenarioId: id, ...row }));
-  const overall = rows.some(row => row.verdict === 'FAILED') ? 'FAIL' : rows.some(row => row.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS';
-  return { kind: 'verdict', schemaVersion: 1, planHash, runHash: digest(run), commitSha: plan.headSha, overall, rows };
+  const gateReasons = (plan.policyReasons ?? []).filter(reason => text(reason, 1000));
+  const overall = rows.some(row => row.verdict === 'FAILED') ? 'FAIL' : rows.some(row => row.verdict === 'BLOCKED') || gateReasons.length ? 'BLOCKED' : 'PASS';
+  return { kind: 'verdict', schemaVersion: 1, planHash, runHash: digest(run), commitSha: plan.headSha, overall, gateReasons, rows };
 }
 
 /** Validate a publisher payload against trusted plan membership and trusted run identity. */
@@ -71,7 +72,9 @@ export function validatePublishPayload(metadata, verdict, plan, expected = {}) {
   const rows = verdict?.rows ?? [];
   const hasFailure = rows.some(row => row.verdict === 'FAILED');
   const hasBlock = rows.some(row => row.verdict === 'BLOCKED');
-  const expectedOverall = hasFailure ? 'FAIL' : hasBlock ? 'BLOCKED' : 'PASS';
+  const gateReasons = verdict?.gateReasons ?? [];
+  if (!Array.isArray(gateReasons) || gateReasons.length > 100 || gateReasons.some(reason => !text(reason, 1000))) errors.push('invalid gate reasons');
+  const expectedOverall = hasFailure ? 'FAIL' : hasBlock || gateReasons.length ? 'BLOCKED' : 'PASS';
   if (verdict?.overall !== expectedOverall) errors.push('overall verdict does not match scenario rows');
   return { ok: errors.length === 0, errors };
 }
@@ -92,7 +95,6 @@ export async function publishFromEvidence(adapter, { metadata, plan, scenarios, 
     if (!writePairs.has(`${row.scenarioId}\u0000${row.workItem}`)) continue;
     grouped.set(row.workItem, [...(grouped.get(row.workItem) ?? []), row]);
   }
-  if (!grouped.size) throw new Error('trusted verdict has no planned work items to report');
   const receipts = [];
   for (const [item, rows] of grouped) {
     const body = `QA verdict ${verdict.overall} for ${metadata.commit}\nArtifact: ${artifactUrl}\n\n${rows.map(row => `${row.scenarioId}: ${row.verdict} — ${row.reason}`).join('\n')}`;

@@ -89,6 +89,44 @@ test('unrelated base regressions remain in the gate without becoming board write
   assert.deepEqual(adapter.posted.map(comment => comment.item), ['WI-123'], 'regression evaluation cannot create an unassociated ticket write target');
 });
 
+test('no board links still plan and judge base regressions without any board writes', async () => {
+  const planner = readFileSync(resolve(kit, 'bin/qa.mjs'), 'utf8');
+  assert.doesNotMatch(planner, /if\s*\(!linked\.length\)\s*throw/, 'empty associations must not abort planning before regressions are included');
+
+  const baseOnly = [{ id: 'QAS-WI-999-01', workItemId: 'WI-999', kind: 'automated', surface: 'api' }];
+  for (const association of [
+    { linked: [], crossRepo: [{ id: 'otherrepo/service#12' }] },
+    { linked: [], crossRepo: [] }
+  ]) {
+    const scope = buildAssociatedScenarioScope(association.linked, [], baseOnly);
+    const plan = { kind: 'plan', schemaVersion: 1, headSha: 'd'.repeat(40), ...scope, crossRepo: association.crossRepo, policyReasons: ['no linked work item'] };
+    assert.deepEqual(plan.items, [], 'no associated items means no board write targets');
+    assert.deepEqual(plan.scenarioIds, ['QAS-WI-999-01']);
+    assert.deepEqual(plan.regressionIds, ['QAS-WI-999-01']);
+
+    const rows = judge(baseOnly, [{ scenarioId: baseOnly[0].id, status: 'passed', executed: true }], plan.regressionIds, plan);
+    assert.equal(rows.find(row => row.id === baseOnly[0].id)?.verdict, 'VERIFIED', 'base-only regression is judged');
+    assert.equal(rows.find(row => row.id === baseOnly[0].id)?.scope, 'regression');
+
+    const posted = [];
+    const adapter = { comment: async (item, body) => { posted.push({ item, body }); return { status: 201 }; } };
+    const commit = 'e'.repeat(40);
+    const boundPlan = { ...plan, headSha: commit };
+    const planHash = `sha256:${createHash('sha256').update(JSON.stringify(boundPlan)).digest('hex')}`;
+    const publication = await publishFromEvidence(adapter, {
+      metadata: { kind: 'qa-publish-artifact', schemaVersion: 1, commit, runId: 'no-links' },
+      plan: boundPlan,
+      scenarios: baseOnly,
+      run: { kind: 'run', schemaVersion: 1, planHash, commitSha: commit, compiled: true, discoveredIds: [baseOnly[0].id], results: [{ scenarioId: baseOnly[0].id, status: 'passed', executed: true }] },
+      artifactUrl: 'https://ci.example/no-links'
+    });
+    assert.deepEqual(publication.verdict.gateReasons, ['no linked work item']);
+    assert.equal(publication.verdict.overall, 'BLOCKED', 'no-link policy remains a gate blocker while regressions are judged');
+    assert.ok(publication.verdict.rows.some(row => row.scenarioId === baseOnly[0].id && row.scope === 'regression'));
+    assert.deepEqual(posted, [], 'empty write targets never produce a board request');
+  }
+});
+
 const response = payload => ({ ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify(payload) });
 const fakeFetch = payload => {
   const calls = [];
