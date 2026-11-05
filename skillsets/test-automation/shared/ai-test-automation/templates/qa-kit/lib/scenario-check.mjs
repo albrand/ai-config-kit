@@ -29,6 +29,6 @@ export function validateScenario(s){
  if(s.kind==='automated'&&!(s.evidence?.compiled&&s.evidence?.discovered&&s.evidence?.executed))return {ok:false,reason:'automated scenario requires compiled, discovered and executed evidence'};
  return {ok:true,reason:'valid'};
 }
-export function scenarioCheck(head,base){const previous=new Map(base.map(x=>[x.id,x]));return head.filter(x=>!previous.has(x.id)||JSON.stringify(stable(x))!==JSON.stringify(stable(previous.get(x.id)))).map(x=>({id:x.id,changed:previous.has(x.id),...validateScenario(x)}));}
+export function scenarioCheck(head,base){const previous=new Map(base.map(x=>[x.id,x]));const current=new Set(head.map(x=>x.id));const changed=head.filter(x=>!previous.has(x.id)||JSON.stringify(stable(x))!==JSON.stringify(stable(previous.get(x.id)))).map(x=>({id:x.id,changed:previous.has(x.id),...validateScenario(x)}));for(const id of previous.keys())if(!current.has(id))changed.push({id,changed:true,ok:false,reason:'scenario removed; retain as an explicit reviewed disposition'});return changed;}
 export function sourcePrecheck(source){const code=tokenize(source);return !/#\s*if\s+false\b|\b(?:Skip|skip)\s*=|\b(?:test|it|describe)\s*\.\s*skip\s*\(/.test(code);}
 export function sourceFilePrecheck(file){return sourcePrecheck(readFileSync(file,'utf8'));}
