@@ -1,0 +1,26 @@
+trigger: none
+pr: none
+resources:
+  pipelines:
+  - pipeline: appGate
+    source: app-authoritative-qa-gate
+    trigger: true
+variables:
+  nodeVersion: '22.x'
+stages:
+- stage: TrustedPublish
+  jobs:
+  - job: validate_and_publish
+    steps:
+    - checkout: self
+      persistCredentials: false
+    - download: appGate
+      artifact: qa-report-pending-$(resources.pipeline.appGate.sourceVersion)
+    - task: NodeTool@0
+      inputs: { versionSpec: '$(nodeVersion)' }
+    - script: node qa/bin/qa.mjs validate-publish-payload --metadata "$(Pipeline.Workspace)/appGate/qa-report-pending-$(resources.pipeline.appGate.sourceVersion)/metadata.json" --verdict "$(Pipeline.Workspace)/appGate/qa-report-pending-$(resources.pipeline.appGate.sourceVersion)/verdict.json" --expected-commit "$(resources.pipeline.appGate.sourceVersion)"
+      displayName: Validate untrusted artifact data
+    - script: node qa/bin/qa.mjs board report --config qa/qa.config.json --verdict "$(Pipeline.Workspace)/appGate/qa-report-pending-$(resources.pipeline.appGate.sourceVersion)/verdict.json" --artifact "$(resources.pipeline.appGate.runURI)" --commit "$(resources.pipeline.appGate.sourceVersion)" --apply --receipt-output board-receipt.json
+      displayName: Publish idempotent board report from trusted QA code
+      env:
+        QA_BOARD_WRITE_TOKEN: $(QA_BOARD_WRITE_TOKEN)

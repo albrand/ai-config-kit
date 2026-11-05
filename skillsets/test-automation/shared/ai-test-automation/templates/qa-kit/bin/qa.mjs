@@ -9,6 +9,7 @@ import { boardAdapter } from '../lib/boards/index.mjs';
 import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
 import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
+import { validatePublishPayload } from '../lib/publish-payload.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -89,6 +90,15 @@ try {
     plan.regressionIds = [...oldIds];
     if (last('output')) writeJson(last('output'), plan);
     console.log(JSON.stringify(plan, null, 2));
+  } else if (command === 'validate-publish-payload') {
+    const metadata = json(last('metadata', 'metadata.json'));
+    const verdict = json(last('verdict', 'verdict.json'));
+    const result = validatePublishPayload(metadata, verdict);
+    const expectedCommit = last('expected-commit');
+    if (expectedCommit && metadata.commit !== expectedCommit) result.errors.push('artifact commit does not match trusted workflow metadata');
+    result.ok = result.errors.length === 0;
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exitCode = 1;
   } else if (command === 'judge') {
     const scenarios = scenariosFrom(last('scenarios', config().scenarioFile ?? 'qa/scenarios.json'));
     const results = readResults(last('results', 'results.json'));
@@ -130,6 +140,8 @@ try {
     if (!action) throw new Error('board requires operation and work-item id');
     if (action === 'report') {
       const verdict = json(last('verdict'));
+      const valid = validatePublishPayload({ kind: 'qa-publish-artifact', schemaVersion: 1, commit: last('commit', process.env.GITHUB_SHA ?? ''), runId: last('run-id', process.env.GITHUB_RUN_ID ?? 'local') }, verdict);
+      if (!valid.ok) throw new Error(`refusing to publish invalid verdict: ${valid.errors.join('; ')}`);
       const artifact = last('artifact');
       if (!artifact) throw new Error('board report requires --artifact URL confirmed by the artifact publisher');
       const grouped = new Map();

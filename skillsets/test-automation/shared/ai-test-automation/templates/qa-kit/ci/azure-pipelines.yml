@@ -19,38 +19,35 @@ stages:
   jobs:
   - job: plan
     steps:
-    - checkout: self
-      fetchDepth: 0
     - checkout: qaAuthority # declare a repository resource; authorize it on first run
     - task: NodeTool@0
       inputs: { versionSpec: '$(nodeVersion)' }
     - bash: |
-        target_branch="${SYSTEM_PULLREQUEST_TARGETBRANCH#refs/heads/}"
-        git fetch origin "+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
-        node qaAuthority/qa/bin/qa.mjs plan --config qaAuthority/qa/qa.config.json --scenarios qaAuthority/qa/scenarios.json --base-scenarios qaAuthority/qa/base-scenarios.json --base "origin/${target_branch}" --head "$(Build.SourceVersion)" --output qa-plan.json
+        node qaAuthority/qa/bin/qa.mjs plan --config qaAuthority/qa/qa.config.json --scenarios qaAuthority/qa/scenarios.json --base-scenarios qaAuthority/qa/base-scenarios.json --base "$(System.PullRequest.TargetCommitId)" --head "$(Build.SourceVersion)" --output qa-plan.json
       displayName: Plan linked/delivered tickets and base regressions
       env:
         QA_BOARD_READ_TOKEN: $(QA_BOARD_READ_TOKEN)
         SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-        SYSTEM_PULLREQUEST_TARGETBRANCH: $(System.PullRequest.TargetBranch)
     - publish: qa-plan.json
       artifact: qa-plan
+    - publish: qaAuthority/qa
+      artifact: qa-authority
 - stage: Test
   dependsOn: Plan
   jobs:
   - job: token_free_tests
-    variables:
-      QA_BOARD_TOKEN: ''
     steps:
     - download: current
       artifact: qa-plan
     - checkout: self
-    - checkout: qaAuthority
+      persistCredentials: false
+    - download: current
+      artifact: qa-authority
     - task: NodeTool@0
       inputs: { versionSpec: '$(nodeVersion)' }
-    - script: node qaAuthority/qa/bin/qa.mjs install-authoritative --source qaAuthority/qa --target . --config qaAuthority/qa/qa.config.json
+    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" install-authoritative --source "$(Pipeline.Workspace)/qa-authority" --target . --config "$(Pipeline.Workspace)/qa-authority/qa.config.json"
       displayName: Overlay QA-owned tests and list ignored branch copies
-    - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --output qa-results/run-v1.json --no-network-writes
+    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" test --config "$(Pipeline.Workspace)/qa-authority/qa.config.json" --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --output qa-results/run-v1.json --no-network-writes
       displayName: Run authoritative suite without secrets
     - publish: qa-results
       artifact: qa-run-results
@@ -65,6 +62,7 @@ stages:
   - job: verdict
     steps:
     - checkout: qaAuthority
+      persistCredentials: false
     - download: current
       artifact: qa-plan
     - download: current
@@ -81,32 +79,19 @@ stages:
   - job: report
     steps:
     - checkout: self
-    - checkout: qaAuthority
+      persistCredentials: false
     - download: current
       artifact: qa-verdict
     - download: current
       artifact: allure-results
-    - script: npm ci
-      displayName: Install locked application reporting tools
+    - script: npm ci --ignore-scripts
+      displayName: Install locked application reporting tools without lifecycle scripts
     - script: npx allure generate --config ./allurerc.mjs
       displayName: Generate Allure 3 single-file report
-    - script: node qaAuthority/qa/bin/qa.mjs report --config qaAuthority/qa/qa.config.json --verdict "$(Pipeline.Workspace)/qa-verdict/verdict.json" --output report-pending --allow-pending
-      displayName: Generate pending report for work-item publication
-    - script: cp -R allure-report report-pending/allure-report
-      displayName: Include Allure artifact
+    - script: mkdir -p report-pending && cp "$(Pipeline.Workspace)/qa-verdict/verdict.json" report-pending/verdict.json && cp -R allure-report report-pending/allure-report && printf '{"schemaVersion":1,"kind":"qa-publish-artifact","commit":"%s","runId":"%s"}\n' "$(Build.SourceVersion)" "$(Build.BuildId)" > report-pending/metadata.json
+      displayName: Assemble data-only report payload
     - publish: report-pending
       artifact: qa-report-pending-$(Build.SourceVersion)
-    - script: node qaAuthority/qa/bin/qa.mjs board report --config qaAuthority/qa/qa.config.json --verdict "$(Pipeline.Workspace)/qa-verdict/verdict.json" --artifact "$QA_REPORT_URL" --commit "$(Build.SourceVersion)" --apply --receipt-output board-receipt.json
-      displayName: Capture confirmed work-item report receipts
-      env:
-        QA_BOARD_WRITE_TOKEN: $(QA_BOARD_WRITE_TOKEN)
-        QA_REPORT_URL: $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=artifacts
-    - script: node qaAuthority/qa/bin/qa.mjs report --config qaAuthority/qa/qa.config.json --verdict "$(Pipeline.Workspace)/qa-verdict/verdict.json" --post-receipt board-receipt.json --output report
-      displayName: Render final report from confirmed board receipts
-    - script: cp -R allure-report report/allure-report
-      displayName: Include Allure artifact
-    - publish: report
-      artifact: qa-report-$(Build.SourceVersion)
 - stage: DEV
   dependsOn: [Test, Judge, Report]
   condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))

@@ -1,5 +1,7 @@
 name: authoritative-qa-gate
 on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -19,14 +21,12 @@ permissions:
   actions: read
 jobs:
   plan:
-    if: github.repository != 'acme-qa/qa-authority' && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    if: github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
     permissions: { contents: read, pull-requests: read, actions: read }
     runs-on: ubuntu-latest
     outputs:
       planned: ${{ steps.plan.outputs.planned }}
     steps:
-      - uses: actions/checkout@v4
-        with: { repository: ${{ github.repository }}, ref: ${{ github.event.pull_request.head.sha || github.sha }}, fetch-depth: 0 }
       - uses: actions/checkout@v4
         with: { repository: acme-qa/qa-authority, path: qa-authority, ref: main, token: ${{ secrets.QA_READ_TOKEN }}, persist-credentials: false }
       - uses: actions/setup-node@v4
@@ -37,6 +37,8 @@ jobs:
         env: { QA_BOARD_READ_TOKEN: ${{ secrets.QA_BOARD_READ_TOKEN }} }
       - uses: actions/upload-artifact@v4
         with: { name: qa-plan, path: qa-plan.json, if-no-files-found: error }
+      - uses: actions/upload-artifact@v4
+        with: { name: qa-authority, path: qa-authority/qa/**, if-no-files-found: error }
   test:
     needs: plan
     runs-on: ubuntu-latest
@@ -45,9 +47,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: qa-plan, path: qa-plan }
       - uses: actions/checkout@v4
-        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }} }
-      - uses: actions/checkout@v4
-        with: { repository: acme-qa/qa-authority, path: qa-authority, ref: main, token: ${{ secrets.QA_READ_TOKEN }}, persist-credentials: false }
+        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }}, persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with: { name: qa-authority, path: qa-authority/qa }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Replace branch copies with QA authority
@@ -64,7 +66,7 @@ jobs:
             allure-results/**
           if-no-files-found: error
   judge:
-    if: always() && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
     needs: [plan, test]
     runs-on: ubuntu-latest
     permissions: { contents: read }
@@ -83,39 +85,27 @@ jobs:
         if: always()
         with: { name: qa-verdict, path: verdict.json, if-no-files-found: error }
   report:
-    if: always() && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
     needs: [judge]
     runs-on: ubuntu-latest
-    permissions: { contents: read, issues: write, pull-requests: write }
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }} }
-      - uses: actions/checkout@v4
-        with: { repository: acme-qa/qa-authority, path: qa-authority, ref: main, token: ${{ secrets.QA_READ_TOKEN }}, persist-credentials: false }
+        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }}, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: actions/download-artifact@v4
         with: { name: qa-verdict, path: qa-verdict }
       - uses: actions/download-artifact@v4
         with: { name: qa-run-results, path: qa-run-results }
-      - name: Install locked application tooling
-        run: npm ci
+      - name: Install locked application tooling without lifecycle scripts
+        run: npm ci --ignore-scripts
       - name: Generate Allure 3 single-file report
         run: npx allure generate --config ./allurerc.mjs
-      - name: Generate pending report for work-item publication
-        run: node qa-authority/qa/bin/qa.mjs report --config qa-authority/qa/qa.config.json --verdict qa-verdict/verdict.json --output report-pending --allow-pending
-      - run: cp -R allure-report report-pending/allure-report
+      - name: Assemble data-only report payload
+        run: mkdir -p report-pending && cp qa-verdict/verdict.json report-pending/verdict.json && cp -R allure-report report-pending/allure-report && printf '{"schemaVersion":1,"kind":"qa-publish-artifact","commit":"%s","runId":"%s"}\n' "${{ github.event.pull_request.head.sha || github.sha }}" "${GITHUB_RUN_ID}" > report-pending/metadata.json
       - uses: actions/upload-artifact@v4
-        id: publish
-        with: { name: qa-report-pending-${{ github.sha }}, path: report-pending/**, if-no-files-found: error, retention-days: 30 }
-      - name: Post idempotent work item summary after artifact confirmation
-        env: { QA_BOARD_WRITE_TOKEN: ${{ secrets.QA_BOARD_WRITE_TOKEN }}, ARTIFACT_URL: ${{ steps.publish.outputs.artifact-url }}, COMMIT_SHA: ${{ github.sha }} }
-        run: node qa-authority/qa/bin/qa.mjs board report --config qa-authority/qa/qa.config.json --verdict qa-verdict/verdict.json --artifact "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --receipt-output board-receipt.json --apply --commit "$COMMIT_SHA"
-      - name: Render final report from confirmed board receipts
-        run: node qa-authority/qa/bin/qa.mjs report --config qa-authority/qa/qa.config.json --verdict qa-verdict/verdict.json --post-receipt board-receipt.json --output report
-      - run: cp -R allure-report report/allure-report
-      - uses: actions/upload-artifact@v4
-        with: { name: qa-report-${{ github.sha }}, path: report/**, if-no-files-found: error, retention-days: 30 }
+        with: { name: qa-report-${{ github.event.pull_request.head.sha || github.sha }}, path: report-pending/**, if-no-files-found: error, retention-days: 30 }
   # Put this workflow in the QA-owned repository too. Protect qa/** with CODEOWNERS and require this check.
   qa-repository-pr:
     if: github.repository == 'acme-qa/qa-authority' && github.event_name == 'pull_request'
@@ -123,7 +113,7 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Compile, discover and execute changed scenarios

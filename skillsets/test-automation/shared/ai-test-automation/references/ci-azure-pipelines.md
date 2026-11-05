@@ -1,15 +1,16 @@
 # Azure Pipelines integration
 
-Start with `templates/qa-kit/ci/azure-pipelines.yml` and adapt its `resources.repositories`, service connections, actual test invocation, artifact URL capture and deployment scripts. A first cross-repository checkout usually pauses for repository authorization: authorize the QA repository explicitly before relying on its files. Never place board credentials in the token-free test stage.
+Use `templates/qa-kit/ci/azure-pipelines.yml` with `templates/qa-kit/ci/azure-publisher-pipeline.yml`. Store the app-gate YAML or its required `extends` template in a protected QA-owned repository/ref, and configure the branch validation to require that trusted definition; a PR must not be able to edit the YAML that receives secrets. The app gate publishes a data-only report artifact; a separate QA-owned pipeline is triggered on completion, downloads that artifact, validates its schema/commit identity, then posts using the board-write token. Never map `System.AccessToken`, a board secret, or a persisted checkout credential into a job that checks out app PR code or installs its dependencies. The plan job checks out only trusted QA code and may use read-only board access to resolve work items. A first cross-repository QA checkout usually pauses for repository authorization: authorize that resource explicitly before relying on it.
 
 ## Application PR pipeline
 
 1. Declare the QA repository as a protected repository resource pinned to its default branch, with read-only pipeline permission. Verify the first pipeline run is authorized.
 2. Plan linked and delivered work items and base regressions; publish the plan artifact.
-3. In a separate job, checkout the PR head plus QA authority, overwrite branch copies, print ignored paths, and run the full suite with board/upload secrets unset. Publish runner output, screenshots and Allure results even after failure.
+3. In a separate job, checkout the PR head with `persistCredentials: false`, download the QA authority snapshot from the trusted plan job, overwrite branch copies, print ignored paths, and run the full suite with board/upload secrets unset. Publish runner output, screenshots and Allure results even after failure.
 4. Always run `judge` against the merge base. It emits all linked, related and regression rows, including skips and not-run reasons. A missing screenshot, artifact confirmation or upload confirmation is BLOCKED.
-5. Publish Markdown/HTML and single-file Allure as an access-controlled pipeline artifact. Only after success, run a separate board-report stage with a scoped variable group; post with an item+commit+content hash marker and verify the API receipt. A report that was not posted remains BLOCKED.
-6. In Project Settings → Repositories → Policies, add a Build validation policy for the app target branch; set it required, automatic, and apply to the intended paths. Add required reviewer policies. Do not use a draft PR as proof that build validation runs.
+5. The unprivileged report job checks out app PR code with `persistCredentials: false`, uses `npm ci --ignore-scripts` when application reporting tools are needed, and publishes a data-only verdict/metadata/report artifact. It has no board token and does not post.
+6. In the QA-owned pipeline, configure a pipeline-completion resource for the app gate. The publisher checks out only QA's protected default branch, downloads the app artifact as data, validates versioned schema and expected commit, then posts with a scoped variable group. Never execute artifact files. Use a marker containing item, commit and content hash and verify the API receipt; missing artifact, token or confirmed receipt blocks publication.
+7. In Project Settings → Repositories → Policies, add a Build validation policy for the app target branch; set it required, automatic, and apply to the intended paths. Add required reviewer policies. Do not use a draft PR as proof that build validation runs.
 
 ## QA repository validation
 

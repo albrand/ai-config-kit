@@ -1,0 +1,40 @@
+name: trusted-qa-publisher
+on:
+  workflow_run:
+    workflows: [authoritative-qa-gate]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: acme-qa/qa-authority
+          ref: main
+          path: qa-authority
+          token: ${{ secrets.QA_READ_TOKEN }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: qa-report-${{ github.event.workflow_run.head_sha }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: publisher-input
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate untrusted artifact data
+        run: node qa-authority/qa/bin/qa.mjs validate-publish-payload --metadata publisher-input/metadata.json --verdict publisher-input/verdict.json --expected-commit "${{ github.event.workflow_run.head_sha }}"
+      - name: Publish idempotent board report from trusted QA code
+        env:
+          QA_BOARD_WRITE_TOKEN: ${{ secrets.QA_BOARD_WRITE_TOKEN }}
+          PUBLISH_ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
+        run: node qa-authority/qa/bin/qa.mjs board report --config qa-authority/qa/qa.config.json --verdict publisher-input/verdict.json --artifact "$PUBLISH_ARTIFACT_URL" --receipt-output board-receipt.json --apply --commit "${{ github.event.workflow_run.head_sha }}"
