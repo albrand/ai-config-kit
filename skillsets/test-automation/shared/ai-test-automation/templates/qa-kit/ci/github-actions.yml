@@ -56,17 +56,21 @@ jobs:
         run: node qa-authority/qa/bin/qa.mjs install-authoritative --source qa-authority/qa --target . --config qa-authority/qa/qa.config.json
       - name: Run without board or publishing secrets
         env: { CI: 'true' }
-        run: node qa-authority/qa/bin/qa.mjs test --config qa-authority/qa/qa.config.json --plan qa-plan/qa-plan.json --output qa-results/run-v1.json --no-network-writes
+        run: node qa-authority/qa/bin/qa.mjs test --config qa-authority/qa/qa.config.json --plan qa-plan/qa-plan.json --commit "${{ github.event.pull_request.head.sha || github.sha }}" --output qa-results/run-v1.json --no-network-writes
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: qa-run-results
-          path: |
-            qa-results/**
-            allure-results/**
+          path: qa-results/run-v1.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-results
+          path: allure-results/**
           if-no-files-found: error
   judge:
-    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
     needs: [plan, test]
     runs-on: ubuntu-latest
     permissions: { contents: read }
@@ -85,7 +89,7 @@ jobs:
         if: always()
         with: { name: qa-verdict, path: verdict.json, if-no-files-found: error }
   report:
-    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
     needs: [judge]
     runs-on: ubuntu-latest
     permissions: { contents: read }
@@ -95,15 +99,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: actions/download-artifact@v4
-        with: { name: qa-verdict, path: qa-verdict }
-      - uses: actions/download-artifact@v4
-        with: { name: qa-run-results, path: qa-run-results }
+        with: { name: allure-results, path: allure-results }
       - name: Install locked application tooling without lifecycle scripts
         run: npm ci --ignore-scripts
       - name: Generate Allure 3 single-file report
         run: npx allure generate --config ./allurerc.mjs
       - name: Assemble data-only report payload
-        run: mkdir -p report-pending && cp qa-verdict/verdict.json report-pending/verdict.json && cp -R allure-report report-pending/allure-report && printf '{"schemaVersion":1,"kind":"qa-publish-artifact","commit":"%s","runId":"%s"}\n' "${{ github.event.pull_request.head.sha || github.sha }}" "${GITHUB_RUN_ID}" > report-pending/metadata.json
+        run: mkdir -p report-pending && cp -R allure-report report-pending/allure-report
       - uses: actions/upload-artifact@v4
         with: { name: qa-report-${{ github.event.pull_request.head.sha || github.sha }}, path: report-pending/**, if-no-files-found: error, retention-days: 30 }
   # Put this workflow in the QA-owned repository too. Protect qa/** with CODEOWNERS and require this check.

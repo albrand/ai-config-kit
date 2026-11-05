@@ -47,7 +47,7 @@ stages:
       inputs: { versionSpec: '$(nodeVersion)' }
     - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" install-authoritative --source "$(Pipeline.Workspace)/qa-authority" --target . --config "$(Pipeline.Workspace)/qa-authority/qa.config.json"
       displayName: Overlay QA-owned tests and list ignored branch copies
-    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" test --config "$(Pipeline.Workspace)/qa-authority/qa.config.json" --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --output qa-results/run-v1.json --no-network-writes
+    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" test --config "$(Pipeline.Workspace)/qa-authority/qa.config.json" --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --commit "$(Build.SourceVersion)" --output qa-results/run-v1.json --no-network-writes
       displayName: Run authoritative suite without secrets
     - publish: qa-results
       artifact: qa-run-results
@@ -81,15 +81,13 @@ stages:
     - checkout: self
       persistCredentials: false
     - download: current
-      artifact: qa-verdict
-    - download: current
       artifact: allure-results
     - script: npm ci --ignore-scripts
       displayName: Install locked application reporting tools without lifecycle scripts
     - script: npx allure generate --config ./allurerc.mjs
       displayName: Generate Allure 3 single-file report
-    - script: mkdir -p report-pending && cp "$(Pipeline.Workspace)/qa-verdict/verdict.json" report-pending/verdict.json && cp -R allure-report report-pending/allure-report && printf '{"schemaVersion":1,"kind":"qa-publish-artifact","commit":"%s","runId":"%s"}\n' "$(Build.SourceVersion)" "$(Build.BuildId)" > report-pending/metadata.json
-      displayName: Assemble data-only report payload
+    - script: mkdir -p report-pending && cp -R allure-report report-pending/allure-report
+      displayName: Assemble Allure-only report artifact; verdict remains in trusted QA code
     - publish: report-pending
       artifact: qa-report-pending-$(Build.SourceVersion)
 - stage: DEV

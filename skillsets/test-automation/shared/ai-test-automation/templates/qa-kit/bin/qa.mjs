@@ -9,7 +9,7 @@ import { boardAdapter } from '../lib/boards/index.mjs';
 import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
 import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
-import { validatePublishPayload } from '../lib/publish-payload.mjs';
+import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -93,7 +93,8 @@ try {
   } else if (command === 'validate-publish-payload') {
     const metadata = json(last('metadata', 'metadata.json'));
     const verdict = json(last('verdict', 'verdict.json'));
-    const result = validatePublishPayload(metadata, verdict);
+    const plan = json(last('plan', 'plan.json'));
+    const result = validatePublishPayload(metadata, verdict, plan);
     const expectedCommit = last('expected-commit');
     if (expectedCommit && metadata.commit !== expectedCommit) result.errors.push('artifact commit does not match trusted workflow metadata');
     result.ok = result.errors.length === 0;
@@ -107,7 +108,9 @@ try {
     const baseIds = [...new Set([...(last('base-ids') ? json(last('base-ids')) : baseScenarios.map(s => s.id)), ...(plan.regressionIds ?? [])])];
     const rows = judge(scenarios, results, baseIds, plan);
     const runDoc = Array.isArray(results) ? { results } : results;
-    const output = { kind: 'verdict', schemaVersion: 1, planHash: plan.planHash ?? digest(plan), runHash: digest(runDoc), overall: rows.some(r => r.verdict === 'FAILED') ? 'FAIL' : rows.some(r => r.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS', rows: rows.map(({ id, ...row }) => ({ scenarioId: id, ...row })), createdAt: new Date().toISOString() };
+    const output = last('plan')
+      ? recomputeTrustedVerdict(plan, scenarios, results)
+      : { kind: 'verdict', schemaVersion: 1, planHash: plan.planHash ?? digest(plan), runHash: digest(runDoc), overall: rows.some(r => r.verdict === 'FAILED') ? 'FAIL' : rows.some(r => r.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS', rows: rows.map(({ id, ...row }) => ({ scenarioId: id, ...row })) };
     console.log(JSON.stringify(output, null, 2));
     if (last('output')) writeJson(last('output'), output);
     if (output.overall !== 'PASS') process.exitCode = 1;
@@ -139,24 +142,7 @@ try {
     const [action, id, ...values] = args._;
     if (!action) throw new Error('board requires operation and work-item id');
     if (action === 'report') {
-      const verdict = json(last('verdict'));
-      const valid = validatePublishPayload({ kind: 'qa-publish-artifact', schemaVersion: 1, commit: last('commit', process.env.GITHUB_SHA ?? ''), runId: last('run-id', process.env.GITHUB_RUN_ID ?? 'local') }, verdict);
-      if (!valid.ok) throw new Error(`refusing to publish invalid verdict: ${valid.errors.join('; ')}`);
-      const artifact = last('artifact');
-      if (!artifact) throw new Error('board report requires --artifact URL confirmed by the artifact publisher');
-      const grouped = new Map();
-      for (const row of verdict.rows ?? []) if (row.workItem) grouped.set(row.workItem, [...(grouped.get(row.workItem) ?? []), row]);
-      if (!grouped.size) throw new Error('verdict has no work-item IDs to report');
-      const receipts = [];
-      for (const [item, rows] of grouped) {
-        const body = `QA verdict ${verdict.overall} for ${last('commit', process.env.GITHUB_SHA ?? 'local')}\nArtifact: ${artifact}\n\n${rows.map(row => `${row.scenarioId}: ${row.verdict} — ${row.reason}`).join('\n')}`;
-        const marker = reportMarker(item, last('commit', process.env.GITHUB_SHA ?? 'local'), body);
-        const result = await adapter.comment(item, body, marker);
-        receipts.push({ workItem: item, marker, confirmed: Boolean(apply && (result.duplicate || (result.status >= 200 && result.status < 300))), status: result.status, duplicate: Boolean(result.duplicate), request: redactedRequest(result) });
-      }
-      console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', receipts }, null, 2));
-      if (last('receipt-output')) writeJson(last('receipt-output'), { schemaVersion: 1, kind: 'board-post-receipt', receipts });
-      if (apply && receipts.some(receipt => !receipt.confirmed)) process.exitCode = 1;
+      throw new Error('board report no longer accepts verdict artifacts; use publish-evidence with trusted plan and raw runner results');
     } else {
       if (!id) throw new Error('board requires operation and work-item id');
       const body = values.join(' ');
@@ -174,6 +160,25 @@ try {
       if (safe.request?.headers?.authorization) safe.request.headers.authorization = '[redacted]';
       console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', result: safe }, null, 2));
     }
+  } else if (command === 'publish-evidence') {
+    const cfg = config();
+    const apply = args.apply === true;
+    const tokenName = cfg.boardTokenEnv ?? 'QA_BOARD_TOKEN';
+    const token = process.env[tokenName];
+    const authorization = cfg.boardAuthorizationEnv ? process.env[cfg.boardAuthorizationEnv] : undefined;
+    if (apply && !token && !authorization) throw new Error(`board token missing from ${tokenName}`);
+    const metadata = json(last('metadata', 'metadata.json'));
+    const plan = json(last('plan', 'plan.json'));
+    const scenarios = scenariosFrom(last('scenarios', cfg.scenarioFile ?? 'qa/scenarios.json'));
+    const run = readResults(last('results', 'run-v1.json'));
+    const adapter = boardAdapter(cfg.board, { baseUrl: cfg.boardUrl, repo: cfg.repo, token, authorization, dryRun: !apply });
+    const result = await publishFromEvidence(adapter, {
+      metadata, plan, scenarios, run, artifactUrl: last('artifact'),
+      expectedCommit: last('expected-commit'), expectedRunId: last('expected-run-id')
+    });
+    console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', ...result }, null, 2));
+    if (last('receipt-output')) writeJson(last('receipt-output'), { schemaVersion: 1, kind: 'board-post-receipt', receipts: result.receipts });
+    if (apply && result.receipts.some(receipt => !receipt.confirmed)) process.exitCode = 1;
   } else if (command === 'install-authoritative') {
     const source = last('source'); const target = last('target', '.');
     if (!source) throw new Error('install-authoritative requires --source');
@@ -226,13 +231,13 @@ try {
     else if (format === 'allure') results = parseAllureResults(readdirSync(resultPath).filter(name => name.endsWith('-result.json')).map(name => json(resolve(resultPath, name))));
     else throw new Error(`unsupported resultFormat: ${format}`);
     const planPath = last('plan');
-    const run = { kind: 'run', schemaVersion: 1, planHash: last('plan-hash', planPath && existsSync(planPath) ? digest(json(planPath)) : `sha256:${'0'.repeat(64)}`), commitSha: process.env.GITHUB_SHA ?? process.env.BUILD_SOURCEVERSION ?? git('rev-parse', 'HEAD'), runner: cfg.runner ?? format, compiled: true, discoveredIds, results: results.map(row => ({ ...row, scenarioId: row.scenario_id ?? row.scenarioId, scenario_id: undefined })), processExitCode: execution.status, sourceArtifacts: [resultPath] };
+    const run = { kind: 'run', schemaVersion: 1, planHash: last('plan-hash', planPath && existsSync(planPath) ? digest(json(planPath)) : `sha256:${'0'.repeat(64)}`), commitSha: last('commit', process.env.GITHUB_HEAD_SHA ?? process.env.GITHUB_SHA ?? process.env.BUILD_SOURCEVERSION ?? git('rev-parse', 'HEAD')), runner: cfg.runner ?? format, compiled: true, discoveredIds, results: results.map(row => ({ ...row, scenarioId: row.scenario_id ?? row.scenarioId, scenario_id: undefined })), processExitCode: execution.status, sourceArtifacts: [resultPath] };
     const output = last('output', cfg.resultsFile ?? 'run-v1.json');
     writeJson(output, run);
     console.log(JSON.stringify({ run: output, compiled: true, discoveredIds: discoveredIds.length, results: results.length, testExitCode: execution.status }, null, 2));
     if (execution.status !== 0) process.exitCode = execution.status;
   } else {
-    console.error('usage: qa.mjs plan|judge|report|board|install-authoritative|check-scenarios|test');
+    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test');
     process.exitCode = 2;
   }
 } catch (error) {

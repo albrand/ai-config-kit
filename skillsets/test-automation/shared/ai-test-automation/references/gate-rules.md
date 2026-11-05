@@ -23,7 +23,7 @@
 
 - The plan includes all linked work, configured related/delivered work and the regression set computed from the base. Never derive regression membership from a head-side list.
 - Every in-scope scenario appears exactly once in the report, including no-result scenarios. Each row includes item, linked/related/regression scope, ID, verdict, reason, screenshot cell and not-run reason where relevant.
-- Render a pending report with `--allow-pending`, publish it, post item summaries with `board report --apply --receipt-output`, then render the final report with `report --post-receipt`. The final report marks every row BLOCKED unless every in-scope work item has a positive post receipt; `--posted` is not an accepted substitute.
+- Publish Allure assets as display-only data. The trusted publisher recomputes verdicts with `publish-evidence --plan <trusted-plan> --results <raw-run> --apply --receipt-output`; it does not accept verdict files from a PR report job. The final report marks every row BLOCKED unless every in-scope work item has a positive post receipt; `--posted` is not an accepted substitute.
 - The test process gets no board, artifact-write or deployment secrets. An upstream checkout token is scoped to the checkout action with persisted credentials disabled.
 - QA-owned definitions/tests overlay branch copies before execution. The report names every ignored branch path.
 - Storage validation and gate validation use the same exception validators and fixtures.

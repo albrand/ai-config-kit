@@ -24,17 +24,34 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: qa-report-${{ github.event.workflow_run.head_sha }}
+          name: qa-plan
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: publisher-input
+          path: publisher-input/plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: qa-run-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: publisher-input/results
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qa-report-*
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: publisher-input/report
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate untrusted artifact data
-        run: node qa-authority/qa/bin/qa.mjs validate-publish-payload --metadata publisher-input/metadata.json --verdict publisher-input/verdict.json --expected-commit "${{ github.event.workflow_run.head_sha }}"
-      - name: Publish idempotent board report from trusted QA code
+      - name: Build trusted run identity
+        env:
+          PLAN_FILE: publisher-input/plan/qa-plan.json
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node -e 'const fs=require("node:fs");const plan=JSON.parse(fs.readFileSync(process.env.PLAN_FILE,"utf8"));fs.writeFileSync("publisher-input/metadata.json",JSON.stringify({kind:"qa-publish-artifact",schemaVersion:1,commit:plan.headSha,runId:process.env.EXPECTED_RUN_ID})+"\n")'
+      - name: Recompute and publish from the trusted plan and raw runner evidence
         env:
           QA_BOARD_WRITE_TOKEN: ${{ secrets.QA_BOARD_WRITE_TOKEN }}
           PUBLISH_ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
-        run: node qa-authority/qa/bin/qa.mjs board report --config qa-authority/qa/qa.config.json --verdict publisher-input/verdict.json --artifact "$PUBLISH_ARTIFACT_URL" --receipt-output board-receipt.json --apply --commit "${{ github.event.workflow_run.head_sha }}"
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node qa-authority/qa/bin/qa.mjs publish-evidence --config qa-authority/qa/qa.config.json --plan publisher-input/plan/qa-plan.json --scenarios qa-authority/qa/scenarios.json --results publisher-input/results/run-v1.json --metadata publisher-input/metadata.json --artifact "$PUBLISH_ARTIFACT_URL" --expected-run-id "$EXPECTED_RUN_ID" --receipt-output board-receipt.json --apply
