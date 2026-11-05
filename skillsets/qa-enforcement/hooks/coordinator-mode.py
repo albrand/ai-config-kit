@@ -32,6 +32,7 @@ coordinator-report.py reads to show whether sessions actually delegate.
 
 Output: JSON {"block": bool, "reason": str, "context": str}. FAILS OPEN.
 """
+import bisect
 import json
 import os
 import re
@@ -56,6 +57,8 @@ SOLO = re.compile(
     r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
     r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
 # Stop a negated span at punctuation or a whole-word clause joiner (linear scan).
+# Negation stripping runs only on the first N characters; beyond that, COORD/SOLO use the raw prompt.
+NEGATION_ANALYSIS_LIMIT = 20000
 CLAUSE_BOUNDARY = re.compile(r"[.;,]|\b(?:and|but|then|so|or)\b", re.I)
 _JOINERS = frozenset({"and", "but", "then", "so", "or"})
 NEGATION_STARTERS = (
@@ -71,12 +74,20 @@ NEGATION_STARTERS = (
 )
 
 
-def negation_clause_end(text, start):
-    hit = CLAUSE_BOUNDARY.search(text, start)
-    return hit.start() if hit else len(text)
+def negation_analysis_view(prompt):
+    if len(prompt) <= NEGATION_ANALYSIS_LIMIT:
+        return prompt, ""
+    return prompt[:NEGATION_ANALYSIS_LIMIT], prompt[NEGATION_ANALYSIS_LIMIT:]
 
 
-def orchestrate_negation_end(text, start):
+def negation_masked_view(prompt):
+    prefix, suffix = negation_analysis_view(prompt)
+    if not prefix:
+        return prompt
+    return mask_for_negation(prefix) + suffix
+
+
+def orchestrate_negation_end(text, start, boundaries):
     i = start
     for _ in range(2):
         while i < len(text) and text[i].isspace():
@@ -89,20 +100,69 @@ def orchestrate_negation_end(text, start):
         if word.group(0).lower() in _JOINERS:
             break
         i += word.end()
-    return i
+    j = bisect.bisect_left(boundaries, start)
+    boundary_end = boundaries[j] if j < len(boundaries) else len(text)
+    return min(i, boundary_end)
 
 
-def negation_match_span(masked):
-    best = None
+def negation_raw_end(text, start, head_end, kind, boundaries):
+    if kind == "orchestrate":
+        return orchestrate_negation_end(text, head_end, boundaries)
+    j = bisect.bisect_left(boundaries, head_end)
+    return boundaries[j] if j < len(boundaries) else len(text)
+
+
+def negation_removal_end_index(text, start, raw_end, coord_starts):
+    span = text[start:raw_end]
+    floor = negation_floor(span)
+    search_from = start + floor
+    idx = bisect.bisect_left(coord_starts, search_from)
+    if idx < len(coord_starts) and coord_starts[idx] < raw_end:
+        return coord_starts[idx] - start
+    return raw_end - start
+
+
+def merge_blank_intervals(intervals):
+    if not intervals:
+        return []
+    intervals = sorted(intervals)
+    merged = [list(intervals[0])]
+    for a, b in intervals[1:]:
+        if a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [tuple(x) for x in merged]
+
+
+def apply_blank_intervals(text, intervals):
+    if not intervals:
+        return text
+    parts = []
+    pos = 0
+    for a, b in intervals:
+        parts.append(text[pos:a])
+        parts.append(" " * (b - a))
+        pos = b
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
+def strip_negated_spans_once(prefix):
+    if not prefix:
+        return prefix
+    masked = mask_for_negation(prefix)
+    boundaries = sorted(m.start() for m in CLAUSE_BOUNDARY.finditer(masked))
+    coord_starts = sorted(m.start() for m in COORD.finditer(masked))
+    blanks = []
     for pat, kind in NEGATION_STARTERS:
-        m = pat.search(masked)
-        if not m:
-            continue
-        end = orchestrate_negation_end(masked, m.end()) if kind == "orchestrate" else negation_clause_end(masked, m.end())
-        span = (m.start(), end)
-        if best is None or span[0] < best[0]:
-            best = span
-    return best
+        for m in pat.finditer(masked):
+            start = m.start()
+            raw_end = negation_raw_end(masked, start, m.end(), kind, boundaries)
+            rem = negation_removal_end_index(masked, start, raw_end, coord_starts)
+            if rem > 0:
+                blanks.append((start, start + rem))
+    return apply_blank_intervals(prefix, merge_blank_intervals(blanks))
 WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
 BLANKET_DELEGATE = re.compile(
     r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)",
@@ -237,29 +297,9 @@ def negation_floor(span):
     return head.end() if head else 0
 
 
-def negation_removal_end(span):
-    """How much of a negation match may be removed without swallowing a COORD hit."""
-    floor = negation_floor(span)
-    hit = COORD.search(span, floor)
-    if hit:
-        return hit.start()
-    return len(span)
-
-
 def strip_negated_spans(prompt):
-    text = prompt
-    while True:
-        masked = mask_for_negation(text)
-        span = negation_match_span(masked)
-        if not span:
-            break
-        start, end = span
-        span_text = text[start:end]
-        remove_end = negation_removal_end(span_text)
-        if remove_end <= 0:
-            break
-        text = text[:start] + (" " * remove_end) + text[start + remove_end :]
-    return text
+    prefix, suffix = negation_analysis_view(prompt)
+    return strip_negated_spans_once(prefix) + suffix
 
 
 def wants_coordinator(prompt):
@@ -267,9 +307,12 @@ def wants_coordinator(prompt):
     stripped = strip_negated_spans(prompt)
     if not COORD.search(stripped):
         return False
-    masked = mask_for_negation(prompt)
+    masked = negation_masked_view(prompt)
     if WEAK_WITH_AGENTS.search(stripped) and BLANKET_DELEGATE.search(masked):
-        without_weak = re.sub(r"\bwith\s+" + _AGENTS, " ", stripped, flags=re.I)
+        without_weak = apply_blank_intervals(
+            stripped,
+            [(m.start(), m.end()) for m in WEAK_WITH_AGENTS.finditer(stripped)],
+        )
         return bool(COORD.search(without_weak))
     return True
 
@@ -279,7 +322,7 @@ def classify(prompt, first):
         return "child"
     if wants_coordinator(prompt):
         return "coordinator"
-    masked = mask_for_negation(prompt)
+    masked = negation_masked_view(prompt)
     if re.search(r"don'?t orchestrate|do not orchestrate", masked, re.I):
         return "solo"
     if SOLO.search(masked):
