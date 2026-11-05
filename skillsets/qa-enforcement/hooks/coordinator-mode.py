@@ -69,6 +69,10 @@ NEGATION_STRIP = (
     re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)" + _NEG_TAIL, re.I),
 )
 WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
+BLANKET_DELEGATE = re.compile(
+    r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)",
+    re.I,
+)
 COORD = re.compile(
     r"\b(?:(?:be|act as|become|you are|you're|as|work as|run as) (?:the |an |a |my |our )?(?:orchestrator|coordinator|master(?: thread)?|lead agent)"
     r"|orchestrate(?! (?:plugin|skill|tool)s?\b)"
@@ -128,6 +132,64 @@ def event(sid, kind, **kw):
         pass
 
 
+def mask_for_negation(text):
+    """Replace quoted spans with spaces; offsets stay aligned for negation scans only."""
+    out = list(text)
+    i, n = 0, len(text)
+
+    def blank(start, end):
+        for k in range(start, end):
+            out[k] = " "
+
+    while i < n:
+        ch = text[i]
+        if ch == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    break
+                j += 1
+            else:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == "\u201c":
+            j = text.find("\u201d", i + 1)
+            if j == -1:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        if ch == "'" and (i == 0 or text[i - 1].isspace()):
+            j = i + 1
+            while j < n:
+                if text[j] == "'" and (j + 1 == n or text[j + 1].isspace() or text[j + 1] in ".,;!"):
+                    break
+                j += 1
+            else:
+                i += 1
+                continue
+            blank(i, j + 1)
+            i = j + 1
+            continue
+        i += 1
+    return "".join(out)
+
+
 def negation_floor(span):
     head = re.match(
         r"(?:(?:don'?t|do not)\s+(?:orchestrate|spawn|delegate)|"
@@ -153,11 +215,12 @@ def strip_negated_spans(prompt):
     text = prompt
     while True:
         removed = False
+        masked = mask_for_negation(text)
         for pat in NEGATION_STRIP:
-            m = pat.search(text)
+            m = pat.search(masked)
             if not m:
                 continue
-            span = m.group(0)
+            span = text[m.start() : m.end()]
             end = negation_removal_end(span)
             if end <= 0:
                 continue
@@ -174,8 +237,8 @@ def wants_coordinator(prompt):
     stripped = strip_negated_spans(prompt)
     if not COORD.search(stripped):
         return False
-    if WEAK_WITH_AGENTS.search(stripped) and re.search(
-            r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)", prompt, re.I):
+    masked = mask_for_negation(prompt)
+    if WEAK_WITH_AGENTS.search(stripped) and BLANKET_DELEGATE.search(masked):
         without_weak = re.sub(r"\bwith\s+" + _AGENTS, " ", stripped, flags=re.I)
         return bool(COORD.search(without_weak))
     return True
@@ -186,9 +249,10 @@ def classify(prompt, first):
         return "child"
     if wants_coordinator(prompt):
         return "coordinator"
-    if re.search(r"don'?t orchestrate|do not orchestrate", prompt, re.I):
+    masked = mask_for_negation(prompt)
+    if re.search(r"don'?t orchestrate|do not orchestrate", masked, re.I):
         return "solo"
-    if SOLO.search(prompt):
+    if SOLO.search(masked):
         return "solo"
     return ""
 

@@ -50,6 +50,17 @@ DELEGATE_SUPPRESSION = (
 SCOPED_COORDINATOR_WRITE = (
     "Work with agents on the migration; do not delegate the final review to them.",
 )
+HERMES_QUOTED_DELEGATE = (
+    'Work with agents on the migration; add the README sentence "do not delegate anything."',
+    "Work with agents on the migration; add the README sentence \u201cdo not delegate anything.\u201d",
+    "Work with agents on the migration; add the README sentence `do not delegate anything.`",
+)
+QUOTE_MASK_ROWS = (
+    ("Fix the issue with agents in the README directly; do not delegate.", False),
+    ("orchestrate this; don't spawn more than 3 children, it's fine", True),
+    ("Don't orchestrate this; it's a README edit", False),
+)
+QUOTE_ORCHESTRATE_SENTENCE = 'Add the sentence "orchestrate this" to the README'
 MAIN_REGRESSION = CLASSIFY_ROWS[4:]
 WRITE = {
     "tool_name": "write",
@@ -139,6 +150,33 @@ class CoordinatorModeNegationTests(unittest.TestCase):
         out = self.prompt_then_write(SCOPED_COORDINATOR_WRITE)
         self.assertTrue(out.get("block"), out)
         self.assertEqual(self.state_mode(), "coordinator")
+
+    def test_quoted_do_not_delegate_in_sentence_is_coordinator(self):
+        for prompt in HERMES_QUOTED_DELEGATE:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got, "coordinator", (got, prompt))
+                out = self.prompt_then_write(prompt)
+                self.assertTrue(out.get("block"), out)
+
+    def test_quote_masking_rows(self):
+        for prompt, want_coord in QUOTE_MASK_ROWS:
+            with self.subTest(prompt=prompt[:56]):
+                got = self.classify(prompt, False)
+                self.assertEqual(got == "coordinator", want_coord, (got, prompt))
+
+    def test_quoted_orchestrate_sentence_matches_main(self):
+        main_src = subprocess.check_output(
+            ["git", "show", "41e86403:skillsets/qa-enforcement/hooks/coordinator-mode.py"],
+            cwd=KIT,
+            text=True,
+        )
+        path = Path(self.temp.name) / "main-coordinator-mode.py"
+        path.write_text(main_src)
+        classify_main = load_classify_from_source(path)
+        want = classify_main(QUOTE_ORCHESTRATE_SENTENCE, False)
+        got = self.classify(QUOTE_ORCHESTRATE_SENTENCE, False)
+        self.assertEqual(got, want, (got, want))
 
     def test_main_regression_rows_still_classify_as_coordinator(self):
         main_src = subprocess.check_output(
