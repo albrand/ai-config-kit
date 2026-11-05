@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { buildAssociatedScenarioScope, resolveBoardAssociations } from '../lib/associations.mjs';
+import { buildAssociatedScenarioScope, buildPlan, resolveBoardAssociations } from '../lib/associations.mjs';
 import { publishFromEvidence } from '../lib/publish-payload.mjs';
 import { judge } from '../lib/gate.mjs';
 import { jira } from '../lib/boards/jira.mjs';
@@ -130,14 +130,23 @@ test('no board links still plan and judge base regressions without any board wri
 });
 
 test('no-link planner and recompute artifacts match the published schemas', async () => {
+  const supported = new Set(['$schema','$id','oneOf','$ref','$defs','type','additionalProperties','required','properties','const','enum','pattern','format','minLength','minItems','uniqueItems','items','allOf','if','then','description']);
   const validate = (schema, value, root = artifactSchema) => {
+    for (const key of Object.keys(schema)) if (!supported.has(key)) throw new Error(`unsupported JSON Schema keyword: ${key}`);
     if (schema.$ref) return validate(schema.$ref.split('/').slice(2).reduce((node, key) => node[key], root), value, root);
     const errors = [];
     const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
-    if (schema.type && !(Array.isArray(schema.type) ? schema.type : [schema.type]).includes(type) && !(schema.type === 'integer' && Number.isInteger(value))) errors.push('type');
+    const expectedTypes = schema.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : [];
+    if (expectedTypes.length && !expectedTypes.includes(type) && !(expectedTypes.includes('integer') && typeof value === 'number' && Number.isInteger(value))) errors.push('type');
     if (schema.const !== undefined && value !== schema.const) errors.push('const');
     if (schema.enum && !schema.enum.includes(value)) errors.push('enum');
     if (schema.pattern && (typeof value !== 'string' || !(new RegExp(schema.pattern)).test(value))) errors.push('pattern');
+    if (schema.minLength !== undefined && value.length < schema.minLength) errors.push('minLength');
+    if (schema.minItems !== undefined && value.length < schema.minItems) errors.push('minItems');
+    if (schema.uniqueItems && new Set(value.map(item => JSON.stringify(item))).size !== value.length) errors.push('uniqueItems');
+    if (schema.format === 'uri' && (typeof value !== 'string' || !/^https?:\/\//.test(value))) errors.push('format:uri');
+    if (schema.format === 'date-time' && (typeof value !== 'string' || Number.isNaN(Date.parse(value)))) errors.push('format:date-time');
+    if (schema.format === 'date' && (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))) errors.push('format:date');
     if (type === 'object') {
       for (const key of schema.required ?? []) if (!(key in value)) errors.push(`required:${key}`);
       for (const [key, entry] of Object.entries(value)) {
@@ -146,24 +155,51 @@ test('no-link planner and recompute artifacts match the published schemas', asyn
       }
     }
     if (type === 'array') for (const item of value) errors.push(...validate(schema.items ?? {}, item, root));
+    for (const child of schema.allOf ?? []) errors.push(...validate(child, value, root));
+    if (schema.if && validate(schema.if, value, root).length === 0 && schema.then) errors.push(...validate(schema.then, value, root));
+    if (schema.oneOf) {
+      const valid = schema.oneOf.filter(option => validate(option, value, root).length === 0).length;
+      if (valid !== 1) errors.push('oneOf');
+    }
     return errors;
   };
+  const itemSchema = artifactSchema.$defs.plan.properties.items.items;
+  const crossRepoSchema = artifactSchema.$defs.plan.properties.crossRepo.items;
+  const rowSchema = artifactSchema.$defs.verdict.properties.rows.items;
+  assert.equal(itemSchema.additionalProperties, false, 'plan item schema is closed');
+  assert.ok(itemSchema.properties.linkedItems, 'planner linkedItems field is specified');
+  assert.equal(crossRepoSchema.additionalProperties, false, 'cross-repository association schema is closed');
+  assert.equal(rowSchema.additionalProperties, false, 'verdict row schema is closed');
   const base = [{ id: 'QAS-WI-999-01', workItemId: 'WI-999', kind: 'automated', surface: 'api' }];
   const commit = 'f'.repeat(40);
-  for (const crossRepo of [[{ id: 'otherrepo/service#12', repository: 'otherrepo/service', number: '12' }], []]) {
-    const associations = resolveBoardAssociations([], crossRepo.map(item => ({ ...item, crossRepo: true })));
-    const scope = buildAssociatedScenarioScope(associations.linked.map(item => ({ id: item.id, revision: '0', relation: 'linked' })), [], base);
-    const plan = { kind: 'plan', schemaVersion: 1, baseSha: 'a'.repeat(40), headSha: commit, ...scope, namedNotLinked: [], crossRepo: associations.crossRepo, policyReasons: ['no linked work item'], createdAt: '2026-11-05T12:00:00Z' };
+  const current = [{ id: 'QAS-WI-123-01', workItemId: 'WI-123', kind: 'automated', surface: 'api' }];
+  const cases = [
+    { name: 'linked', associated: [{ id: 'WI-123' }, { id: 'WI-456' }], current, base: [], read: async id => ({ rev: id === 'WI-123' ? 17 : 'r2' }) },
+    { name: 'cross-repo-only', associated: [{ id: 'otherrepo/service#12', repository: 'otherrepo/service', number: '12', url: 'https://github.com/otherrepo/service/issues/12', crossRepo: true }], current: [], base, read: async () => { throw new Error('cross-repo refs are not read targets'); } },
+    { name: 'no-links', associated: [], current: [], base, read: async () => { throw new Error('no associated items to read'); } }
+  ];
+  for (const scenario of cases) {
+    const associations = resolveBoardAssociations([], scenario.associated);
+    const plan = await buildPlan({ association: associations, currentScenarios: scenario.current, baseScenarios: scenario.base, baseSha: 'a'.repeat(40), headSha: commit, readWorkItem: scenario.read, createdAt: '2026-11-05T12:00:00Z' });
     const run = { kind: 'run', schemaVersion: 1, planHash: `sha256:${createHash('sha256').update(JSON.stringify(plan)).digest('hex')}`, commitSha: commit, compiled: true, discoveredIds: [base[0].id], results: [{ scenarioId: base[0].id, status: 'passed', executed: true }] };
-    const verdict = recomputeTrustedVerdict(plan, base, run);
-    assert.deepEqual(validate(artifactSchema.$defs.plan, plan), [], 'plan conforms to artifact schema');
-    assert.deepEqual(validate(artifactSchema.$defs.verdict, verdict), [], 'verdict conforms to artifact schema');
-    assert.equal(verdict.overall, 'BLOCKED');
-    assert.deepEqual(verdict.gateReasons, ['no linked work item']);
-    assert.ok(verdict.rows.some(row => row.scenarioId === base[0].id && row.scope === 'regression'));
+    const scenarios = [...scenario.current, ...scenario.base];
+    run.discoveredIds = scenarios.map(item => item.id);
+    run.results = scenarios.map(item => ({ scenarioId: item.id, status: 'passed', executed: true }));
+    const verdict = recomputeTrustedVerdict(plan, scenarios, run);
+    assert.deepEqual(validate(artifactSchema.$defs.plan, plan), [], `${scenario.name}: planner plan conforms to schema`);
+    assert.deepEqual(validate(artifactSchema.$defs.verdict, verdict), [], `${scenario.name}: recomputed verdict conforms to schema`);
+    if (scenario.name === 'linked') {
+      assert.equal(plan.items[0].revision, 17, 'numeric board revisions remain numeric');
+      assert.deepEqual(plan.items[0].linkedItems, ['WI-456']);
+      assert.equal(verdict.overall, 'PASS');
+    } else {
+      assert.equal(verdict.overall, 'BLOCKED');
+      assert.deepEqual(verdict.gateReasons, ['no linked work item']);
+      assert.ok(verdict.rows.some(row => row.scenarioId === base[0].id && row.scope === 'regression'));
+    }
     const writes = [];
-    await publishFromEvidence({ comment: async (...args) => writes.push(args) }, { metadata: { kind: 'qa-publish-artifact', schemaVersion: 1, commit, runId: 'schema-case' }, plan, scenarios: base, run, artifactUrl: 'https://ci.example/no-links' });
-    assert.deepEqual(writes, [], 'empty association set produces no board writes');
+    await publishFromEvidence({ comment: async (...args) => writes.push(args) }, { metadata: { kind: 'qa-publish-artifact', schemaVersion: 1, commit, runId: `schema-${scenario.name}` }, plan, scenarios, run, artifactUrl: 'https://ci.example/schema-case' });
+    assert.equal(writes.length, scenario.name === 'linked' ? 1 : 0, `${scenario.name}: only associated items are write targets`);
   }
 });
 

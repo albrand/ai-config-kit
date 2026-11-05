@@ -345,8 +345,16 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "linkedItems": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
               }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "scenarioIds": {
@@ -412,8 +420,15 @@
               "url": {
                 "type": "string",
                 "format": "uri"
+              },
+              "crossRepo": {
+                "type": "boolean"
+              },
+              "title": {
+                "type": "string"
               }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "createdAt": {
@@ -613,7 +628,8 @@
               "executed": {
                 "type": "boolean"
               }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "createdAt": {

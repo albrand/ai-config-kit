@@ -10,7 +10,7 @@ import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
 import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
 import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
-import { buildAssociatedScenarioScope, extractWorkItemHints, resolveBoardAssociations } from '../lib/associations.mjs';
+import { buildPlan, extractWorkItemHints, resolveBoardAssociations } from '../lib/associations.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -83,17 +83,10 @@ try {
     const adapter = boardAdapter(cfg.board, { baseUrl: cfg.boardUrl, repo: cfg.repo, token, authorization, dryRun: false });
     if (typeof adapter.linkedItemsForChange !== 'function') throw new Error(`board adapter ${cfg.board} does not implement linkedItemsForChange(change)`);
     const association = resolveBoardAssociations(hints, await adapter.linkedItemsForChange(change));
-    const linked = association.linked.map(item => item.id);
-    const policyReasons = linked.length ? [] : ['no linked work item'];
-    const workItems = [];
-    for (const id of linked) {
+    const plan = await buildPlan({ association, currentScenarios: current, baseScenarios: old, baseSha, headSha, readWorkItem: async id => {
       const response = await adapter.read(id);
-      const data = response.data;
-      const revision = data?.rev ?? data?.fields?.updated ?? data?.updatedAt ?? data?.updated_at ?? data?.data?.issue?.updatedAt ?? args.revision?.at(-1) ?? 'unknown';
-      workItems.push({ id, revision, relation: 'linked' });
-    }
-    const scope = buildAssociatedScenarioScope(workItems, current, old);
-    const plan = { kind: 'plan', schemaVersion: 1, baseSha, headSha, ...scope, namedNotLinked: association.namedNotLinked, crossRepo: association.crossRepo, policyReasons, createdAt: new Date().toISOString() };
+      return { ...response.data, revision: args.revision?.at(-1) };
+    } });
     if (last('output')) writeJson(last('output'), plan);
     console.log(JSON.stringify(plan, null, 2));
   } else if (command === 'validate-publish-payload') {

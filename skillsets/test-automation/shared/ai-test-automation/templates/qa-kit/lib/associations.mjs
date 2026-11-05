@@ -43,3 +43,13 @@ export function buildAssociatedScenarioScope(linkedItems, currentScenarios, base
     })).values()]
   };
 }
+
+export async function buildPlan({ association, currentScenarios, baseScenarios, baseSha, headSha, readWorkItem, createdAt = new Date().toISOString() }) {
+  const workItems = [];
+  for (const item of association.linked) {
+    const data = await readWorkItem(item.id);
+    workItems.push({ id: item.id, revision: data?.rev ?? data?.fields?.updated ?? data?.updatedAt ?? data?.updated_at ?? data?.revision ?? 'unknown', relation: 'linked' });
+  }
+  const scope = buildAssociatedScenarioScope(workItems, currentScenarios, baseScenarios);
+  return { kind: 'plan', schemaVersion: 1, baseSha, headSha, ...scope, namedNotLinked: association.namedNotLinked, crossRepo: association.crossRepo, policyReasons: workItems.length ? [] : ['no linked work item'], createdAt };
+}
