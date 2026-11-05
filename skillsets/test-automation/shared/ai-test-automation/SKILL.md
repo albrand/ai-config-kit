@@ -11,8 +11,8 @@ Use this skill to build a QA-owned scenario system whose source of truth stays s
 
 1. Copy `templates/qa-kit/` into a QA-owned repository as `qa/`; `cd qa`; copy `qa.config.example.json` to `qa.config.json`.
 2. Fill `board`, `boardUrl`, `repo` if applicable, `boardTokenEnv`, `base`, `scenarioFile`, `resultsFile`, `authoritativePaths`, and `testCommand`. Put the token only in a CI secret named by `boardTokenEnv`.
-3. Preview a board read: `node bin/qa.mjs board read WI-123 --config qa.config.json --dry-run`. Expected: JSON `mode: "dry-run"`, GET URL and request shape; no `fetch` call is made and no credential value is printed.
-4. Add a starter scenario set and executed run evidence, then run `node bin/qa.mjs check-scenarios --head scenarios.json --base origin/main --file scenarios.json --results run-v1.json`. Expected: JSON rows for new/changed/deleted IDs; exit 0 only when every changed automated case compiled, was discovered and executed, and exception records are valid.
+3. Preview a board read using the selected board's native ID format: GitHub Issues `12`, Jira or Linear `ABC-123`, Azure Boards `123`. With the supplied example config (`board: "github"`), run `node bin/qa.mjs board read 12 --config qa.config.json --dry-run`. Expected: JSON `mode: "dry-run"`, GET URL and request shape; no `fetch` call is made and no credential value is printed.
+4. Add a starter scenario set and executed run evidence, then run `node bin/qa.mjs check-scenarios --head scenarios.json --base origin/main --file qa/scenarios.json --results run-v1.json`. The `--file` path is relative to the Git repository root. Expected: JSON rows for new/changed/deleted IDs; exit 0 only when every changed automated case compiled, was discovered and executed, and exception records are valid.
 5. Run `node bin/qa.mjs judge --scenarios scenarios.json --results run-v1.json --base-scenarios base-scenarios.json`. Expected: one verdict row per head/base scenario; any missing/skipped/failed evidence exits nonzero.
 6. Copy and adapt `ci/github-actions.yml` or `ci/azure-pipelines.yml`, wire the app PR gate and QA-repo validation, and make both checks required. Run the negative probes in phase 10 before enabling writes.
 
@@ -48,7 +48,7 @@ Prefer a separate QA repository. Otherwise protect `qa/**` using CODEOWNERS and 
 Choose `jira`, `azure`, `linear` or `github`; otherwise implement the interface in `references/board-adapters.md`. Implement read with revision, comment, attach, transition/move, PR link and signed webhook validation. Prefer MCP for interactive human reads; use REST/GraphQL with an explicit service identity for reproducible CI. Keep all writes dry-run unless `--apply` is passed. Use an item + commit + normalized-content-hash marker for comments and bounded retries.
 
 - Create `qa.config.json`, `lib/boards/<board>.mjs`, webhook verifier and request fixtures. Reference exact auth/env names in `references/board-adapters.md`.
-- Check: `node --test test/*.test.mjs` → adapter request-shape tests pass with zero live requests; `node bin/qa.mjs board read WI-123 --dry-run` → request printed, mode dry-run, no authorization secret visible.
+- Check: `node --test test/*.test.mjs` → adapter request-shape tests pass with zero live requests; `node bin/qa.mjs board read 12 --dry-run` for the example GitHub config (or the selected board's native ID format above) → request printed, mode dry-run, no authorization secret visible.
 - Prevents: stale updates, duplicate comments, accidental writes and spoofed events.
 
 ## 3. Define and refine scenarios
