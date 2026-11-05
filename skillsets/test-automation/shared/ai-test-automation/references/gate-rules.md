@@ -1,11 +1,37 @@
-# Gate rules
+# Gate verdicts and blocking rules
 
-| Evidence | Verdict | Blocks? |
-|---|---|---|
-| Passed executed automated test | VERIFIED | no |
-| Failed executed test | FAILED | yes |
-| Missing or invalid required evidence | BLOCKED | yes |
-| Approved manual/awaiting exception with required fields | NOT_APPLICABLE | policy-dependent |
-| Draft scenario | DRAFT_PASSED | no merge approval implied |
+| Condition | Verdict | Blocking | Required explanation/evidence |
+|---|---|---:|---|
+| Automated scenario compiled, discovered, executed and passed; ID matches plan | VERIFIED | no | Runner result ID, outcome and execution record |
+| Executed automated test failed | FAILED | yes | Native failure/result reference |
+| Test was skipped, not discovered, not executed, or has only source text | BLOCKED | yes | Explicit skip/not-run reason |
+| Missing compile or discovery evidence for new/changed stored scenario | BLOCKED | yes | Missing stage name |
+| Required scenario was deleted from head but existed at base | BLOCKED | yes | `base scenario removed from head`; reviewed disposition required |
+| New/changed scenario passed all evidence and approval rules | VERIFIED | no | Scenario content hash, run and approval reference |
+| Valid reviewed manual exception | NOT_APPLICABLE | no | Owner, procedure and reason |
+| Valid reviewed awaiting exception | NOT_APPLICABLE | no | Owner, reason and revisit date |
+| Manual/awaiting record missing required fields or approval | BLOCKED | yes | Missing fields/approval |
+| Draft scenario with explicit human approval pending | DRAFT_PASSED | no merge approval implied | Draft marker and reviewer state |
+| Executed browser scenario lacks screenshot attachment | BLOCKED | yes | Screenshot missing |
+| Artifact token missing, upload failed, URL absent or receipt unconfirmed | BLOCKED | yes | Attachment failure reason |
+| Board report/link post has no positive API receipt | BLOCKED | yes | Report not posted |
+| Invalid webhook signature, stale revision, or failed transition | BLOCKED | yes | Reject and do not move item |
+| Branch copied acceptance test differs from QA authority | Branch copy ignored | n/a | Log the ignored path and run authoritative copy |
+| Report-only edit changes the verdict table | BLOCKED | yes | Canonical reference-judge comparison must be byte-identical |
 
-New scenarios need compile + discovery + execution evidence. Skipped tests are not executed. Regression membership is computed from base scenario set, not head. Every in-scope row appears with a result/reason. Executed browser scenario requires screenshot; attachment failure blocks. Test job receives no secrets and installs QA-owned tests over branch copies. Report-only changes preserve verdict bytes.
+## Scope and evidence rules
+
+- The plan includes all linked work, configured related/delivered work and the regression set computed from the base. Never derive regression membership from a head-side list.
+- Every in-scope scenario appears exactly once in the report, including no-result scenarios. Each row includes item, linked/related/regression scope, ID, verdict, reason, screenshot cell and not-run reason where relevant.
+- Render a pending report with `--allow-pending`, publish it, post item summaries with `board report --apply --receipt-output`, then render the final report with `report --post-receipt`. The final report marks every row BLOCKED unless every in-scope work item has a positive post receipt; `--posted` is not an accepted substitute.
+- The test process gets no board, artifact-write or deployment secrets. An upstream checkout token is scoped to the checkout action with persisted credentials disabled.
+- QA-owned definitions/tests overlay branch copies before execution. The report names every ignored branch path.
+- Storage validation and gate validation use the same exception validators and fixtures.
+- A successful upload means the provider returned a durable URL/ID and the board relation/comment write returned success. A prepared request is not confirmation.
+- Verdict bytes are deterministic from plan + run evidence; report formatting, posting and presentation do not mutate verdict decisions.
+- Attachments are required to pass when the scenario surface is browser and it executed. A screenshot URL is checked for presence and upload confirmation; raw bytes remain in protected artifact storage.
+- Any required row with FAILED or BLOCKED makes the aggregate non-green; a skipped/not-run test never becomes VERIFIED.
+
+## Reference judge
+
+Keep one golden verdict fixture and run both the ordinary judge and report-only path against it. Compare canonical JSON bytes after key ordering. The fixture includes base regression, deleted scenario, manual, awaiting, skipped, failed browser without screenshot, missing token, failed upload, and successful attachment. A reporting-only change must preserve exact verdict bytes; if it does not, fail the gate and review a deliberate rule change separately.
