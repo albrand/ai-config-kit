@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -177,6 +178,14 @@ class CoordinatorModeNegationTests(unittest.TestCase):
         want = classify_main(QUOTE_ORCHESTRATE_SENTENCE, False)
         got = self.classify(QUOTE_ORCHESTRATE_SENTENCE, False)
         self.assertEqual(got, want, (got, want))
+
+    def test_long_whitespace_after_do_not_delegate_is_fast_and_solo(self):
+        prompt = "do not delegate " + (" " * 30000) + "x"
+        start = time.perf_counter()
+        got = self.classify(prompt, False)
+        elapsed = time.perf_counter() - start
+        self.assertLess(elapsed, 1.0, f"classify took {elapsed:.2f}s")
+        self.assertEqual(got, "solo")
 
     def test_main_regression_rows_still_classify_as_coordinator(self):
         main_src = subprocess.check_output(

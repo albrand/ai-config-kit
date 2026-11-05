@@ -55,19 +55,54 @@ SOLO = re.compile(
     r"\b((?<!don't )(?<!dont )(?<!do not )(?<!never )do (it|this|everything) (yourself|alone|directly)|(?<!not )by yourself|"
     r"(no|without|don'?t use|do not use|skip) (the )?(children|child agents|sub-?agents|delegat\w*|orchestrat\w*)|"
     r"don'?t (delegate|orchestrate|spawn)|do not (delegate|orchestrate|spawn)|solo mode|work solo)\b", re.I)
-# Stop a negated span at punctuation or a clause joiner so a later positive ask stays.
-_NEG_TAIL = r"(?:(?!\s+(?:and|but|then|so|or)\b)[^.;,])*"
-NEGATION_STRIP = (
-    re.compile(r"don'?t orchestrate(?:\s+(?!(?:and|but|then|so|or)\b)\w+){0,2}", re.I),
-    re.compile(r"do not orchestrate(?:\s+(?!(?:and|but|then|so|or)\b)\w+){0,2}", re.I),
-    re.compile(r"don'?t spawn" + _NEG_TAIL, re.I),
-    re.compile(r"do not spawn" + _NEG_TAIL, re.I),
-    re.compile(r"don'?t delegate" + _NEG_TAIL, re.I),
-    re.compile(r"do not delegate" + _NEG_TAIL, re.I),
-    re.compile(r"no need to (?:delegate|orchestrat\w*)" + _NEG_TAIL, re.I),
-    re.compile(r"skip (?:the )?children" + _NEG_TAIL, re.I),
-    re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)" + _NEG_TAIL, re.I),
+# Stop a negated span at punctuation or a whole-word clause joiner (linear scan).
+CLAUSE_BOUNDARY = re.compile(r"[.;,]|\b(?:and|but|then|so|or)\b", re.I)
+_JOINERS = frozenset({"and", "but", "then", "so", "or"})
+NEGATION_STARTERS = (
+    (re.compile(r"don'?t orchestrate\b", re.I), "orchestrate"),
+    (re.compile(r"do not orchestrate\b", re.I), "orchestrate"),
+    (re.compile(r"don'?t spawn\b", re.I), "clause"),
+    (re.compile(r"do not spawn\b", re.I), "clause"),
+    (re.compile(r"don'?t delegate\b", re.I), "clause"),
+    (re.compile(r"do not delegate\b", re.I), "clause"),
+    (re.compile(r"no need to (?:delegate|orchestrat\w*)\b", re.I), "clause"),
+    (re.compile(r"skip (?:the )?children\b", re.I), "clause"),
+    (re.compile(r"don'?t use (?:the )?(?:children|child agents|sub-?agents)\b", re.I), "clause"),
 )
+
+
+def negation_clause_end(text, start):
+    hit = CLAUSE_BOUNDARY.search(text, start)
+    return hit.start() if hit else len(text)
+
+
+def orchestrate_negation_end(text, start):
+    i = start
+    for _ in range(2):
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            break
+        word = re.match(r"\w+", text[i:], re.I)
+        if not word:
+            break
+        if word.group(0).lower() in _JOINERS:
+            break
+        i += word.end()
+    return i
+
+
+def negation_match_span(masked):
+    best = None
+    for pat, kind in NEGATION_STARTERS:
+        m = pat.search(masked)
+        if not m:
+            continue
+        end = orchestrate_negation_end(masked, m.end()) if kind == "orchestrate" else negation_clause_end(masked, m.end())
+        span = (m.start(), end)
+        if best is None or span[0] < best[0]:
+            best = span
+    return best
 WEAK_WITH_AGENTS = re.compile(r"\bwith\s+" + _AGENTS, re.I)
 BLANKET_DELEGATE = re.compile(
     r"(?:do not|don'?t) delegate(?:\s+(?:this|it|that|anything|everything|any of (?:this|it)))?\s*(?:[.;,!]|$)",
@@ -214,21 +249,16 @@ def negation_removal_end(span):
 def strip_negated_spans(prompt):
     text = prompt
     while True:
-        removed = False
         masked = mask_for_negation(text)
-        for pat in NEGATION_STRIP:
-            m = pat.search(masked)
-            if not m:
-                continue
-            span = text[m.start() : m.end()]
-            end = negation_removal_end(span)
-            if end <= 0:
-                continue
-            text = text[: m.start()] + (" " * end) + text[m.start() + end :]
-            removed = True
+        span = negation_match_span(masked)
+        if not span:
             break
-        if not removed:
+        start, end = span
+        span_text = text[start:end]
+        remove_end = negation_removal_end(span_text)
+        if remove_end <= 0:
             break
+        text = text[:start] + (" " * remove_end) + text[start + remove_end :]
     return text
 
 
