@@ -51,12 +51,15 @@ test('quick-start commands match the example config and enforce changed-scenario
     assert.deepEqual(rows.map(row => [row.id, row.ok]), [[changedCase.id, true], [newCase.id, true]]);
     for (const bad of [
       evidence([{ scenarioId: changedCase.id }]),
-      evidence([{ scenarioId: changedCase.id, status: 'skipped', executed: false }, { scenarioId: newCase.id }]),
-      evidence([{ scenarioId: changedCase.id, status: 'failed' }, { scenarioId: newCase.id }])
+      evidence([{ scenarioId: changedCase.id, status: 'skipped', executed: false }, { scenarioId: newCase.id }])
     ]) {
       writeFileSync(runFile, JSON.stringify(bad));
-      assert.notEqual(invoke(checkArgs).status, 0, 'missing, skipped, and failed evidence must block scenario storage');
+      assert.notEqual(invoke(checkArgs).status, 0, 'missing or skipped evidence must block scenario storage');
     }
+    writeFileSync(runFile, JSON.stringify(evidence([{ scenarioId: changedCase.id, status: 'failed' }, { scenarioId: newCase.id }])));
+    const executedFailure = invoke(checkArgs);
+    assert.equal(executedFailure.status, 0, executedFailure.stderr);
+    assert.deepEqual(JSON.parse(executedFailure.stdout).map(row => [row.id, row.ok]), [[changedCase.id, true], [newCase.id, true]], 'failed but executed tests may be stored as scenarios');
 
     const judgeArgs = [...parsedCommands[2], '--base-scenarios', 'base-scenarios.json'];
     writeFileSync(runFile, JSON.stringify(evidence([{ scenarioId: changedCase.id }, { scenarioId: newCase.id }])));

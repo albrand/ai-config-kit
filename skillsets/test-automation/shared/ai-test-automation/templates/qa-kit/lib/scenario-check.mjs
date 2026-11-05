@@ -39,7 +39,7 @@ export function validateScenario(s,run){
  if(s.kind==='automated'){
   const result=run?.results?.find(x=>(x.scenarioId??x.scenario_id)===s.id);
   const discovered=run?.discoveredIds?.includes(s.id)??run?.results?.some(x=>(x.scenarioId??x.scenario_id)===s.id);
-  if(!(run?.compiled===true&&discovered&&result?.executed===true&&result.status==='passed'))return {ok:false,reason:'automated scenario requires compiled, discovered and passing executed run evidence'};
+  if(!(run?.compiled===true&&discovered&&result?.executed===true&&['passed','failed'].includes(result.status)))return {ok:false,reason:'automated scenario requires compiled, discovered and executed run evidence'};
  }
  return {ok:true,reason:'valid'};
 }
