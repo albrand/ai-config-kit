@@ -121,7 +121,7 @@ sys.exit(1)
 
     def test_plugin_tools_empty_listing_ok_error_fails(self):
         bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Error: HTTP 401: Unauthorized")
-        for empty in ("[]", '{"plugins": []}'):
+        for empty in ("[]", '{"plugins": []}', '{"ok": true, "plugins": []}'):
             with self.subTest(empty=empty):
                 tools, err = self._plugin_list_mock(empty)
                 self.assertIsNone(err, err)
@@ -134,7 +134,7 @@ sys.exit(1)
     def test_plugin_tools_error_object_in_stdout_fails(self):
         tools, err = self._plugin_list_mock('{"error":"HTTP 401: Unauthorized"}')
         self.assertIsNone(tools)
-        self.assertIn("401", err)
+        self.assertIn("invalid plugin listing", err)
 
     def test_plugin_tools_vps_error_envelope_fails(self):
         stdout = json.dumps(
@@ -142,12 +142,63 @@ sys.exit(1)
         )
         tools, err = self._plugin_list_mock(stdout)
         self.assertIsNone(tools)
-        self.assertIn("401", err)
+        self.assertIn("invalid plugin listing", err)
 
     def test_plugin_tools_empty_object_listing_fails(self):
         tools, err = self._plugin_list_mock("{}")
         self.assertIsNone(tools)
-        self.assertIn("empty object", err)
+        self.assertIn("invalid plugin listing", err)
+
+    def test_plugin_tools_ok_false_empty_plugins_fails(self):
+        tools, err = self._plugin_list_mock('{"ok": false, "plugins": []}')
+        self.assertIsNone(tools)
+        self.assertIn("ok is False", err)
+
+    def test_plugin_tools_ok_string_false_empty_plugins_fails(self):
+        tools, err = self._plugin_list_mock('{"ok": "false", "plugins": []}')
+        self.assertIsNone(tools)
+        self.assertIn("ok is 'false'", err)
+
+    def test_plugin_tools_ok_false_nonempty_plugins_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "demo-plugin"
+            root.mkdir()
+            (root / "register.ts").write_text('bb.agents.registerTool({name: "AskUserQuestion"});')
+            listing = json.dumps(
+                {
+                    "ok": False,
+                    "plugins": [{"id": "demo-plugin", "enabled": True, "rootDir": str(root)}],
+                }
+            )
+            tools, err = self._plugin_list_mock(listing)
+        self.assertIsNone(tools)
+        self.assertIn("ok is False", err)
+
+    def test_plugin_tools_extra_keys_on_empty_plugins_fails(self):
+        tools, err = self._plugin_list_mock('{"plugins": [], "error": null, "warning": "x"}')
+        self.assertIsNone(tools)
+        self.assertIn("unexpected keys", err)
+
+    def test_plugin_tools_mac_shaped_listing_with_tools_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "demo-plugin"
+            root.mkdir()
+            (root / "register.ts").write_text('bb.agents.registerTool({name: "AskUserQuestion"});')
+            listing = json.dumps(
+                {
+                    "plugins": [
+                        {
+                            "id": "demo-plugin",
+                            "enabled": True,
+                            "rootDir": str(root),
+                            "cliCommand": {"name": "demo"},
+                        }
+                    ]
+                }
+            )
+            tools, err = self._plugin_list_mock(listing)
+        self.assertIsNone(err, err)
+        self.assertIn("AskUserQuestion", tools)
 
     def test_plugin_tools_null_listing_fails_selftest_registry_check(self):
         tools, err = self._plugin_list_mock("null")

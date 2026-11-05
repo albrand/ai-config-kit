@@ -1421,33 +1421,26 @@ def loose_tools(tools):
     return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
 
 
-def _plugin_listing_failure_message(listing):
-    """Top-level error fields in bb plugin list JSON; None if not an error envelope."""
+def _allowed_plugin_object_listing(listing):
+    """Allowlist for bb plugin list objects: plugins array plus optional ok:true only."""
     if not isinstance(listing, dict):
-        return None
-    if "error" in listing:
-        err = listing["error"]
-        if isinstance(err, str):
-            return err
-        if isinstance(err, dict):
-            msg = err.get("message")
-            if msg:
-                return str(msg)
-            code = err.get("code")
-            if code:
-                return str(code)
-        return str(err)
-    for key in ("message", "status"):
-        val = listing.get(key)
-        if val not in (None, "", False):
-            return str(val)
+        return "invalid plugin listing: expected object"
+    extra = sorted(set(listing) - {"plugins", "ok"})
+    if extra:
+        return "invalid plugin listing: unexpected keys " + ", ".join(extra)
+    if "plugins" not in listing:
+        return "invalid plugin listing: missing plugins array"
+    if not isinstance(listing["plugins"], list):
+        return "invalid plugin listing: plugins is not an array"
+    if "ok" in listing and listing["ok"] is not True:
+        return f"invalid plugin listing: ok is {listing['ok']!r}"
     return None
 
 
 def _positively_empty_plugin_listing(listing):
     if listing == []:
         return True
-    if isinstance(listing, dict) and isinstance(listing.get("plugins"), list) and not listing["plugins"]:
+    if isinstance(listing, dict) and _allowed_plugin_object_listing(listing) is None and not listing["plugins"]:
         return True
     return False
 
@@ -1455,18 +1448,13 @@ def _positively_empty_plugin_listing(listing):
 def _valid_plugin_listing_shape(listing):
     """Return an error string when the JSON is not a readable plugin registry listing."""
     if isinstance(listing, list):
-        return None
-    if isinstance(listing, dict):
-        fail = _plugin_listing_failure_message(listing)
-        if fail:
-            return fail
-        if "plugins" in listing:
-            if isinstance(listing["plugins"], list):
-                return None
-            return "invalid plugin listing: plugins is not an array"
         if not listing:
-            return "invalid plugin listing: empty object"
-        return "invalid plugin listing: missing plugins array"
+            return None
+        if all(isinstance(x, dict) for x in listing):
+            return None
+        return "invalid plugin listing: expected array of plugin objects"
+    if isinstance(listing, dict):
+        return _allowed_plugin_object_listing(listing)
     kind = "null" if listing is None else type(listing).__name__
     return f"invalid plugin listing: expected array or object, got {kind}"
 
