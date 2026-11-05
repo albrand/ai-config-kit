@@ -1542,9 +1542,9 @@ pgrep -f bb',
         blocked = (
             f"CMD='{pk} node'; unset OTHER; $CMD",
             f"CMD='{pk} node'; (unset CMD); $CMD",
-            f"CMD='{pk} node'; [ x ] && unset CMD; $CMD",
         )
         allowed = (
+            f"CMD='{pk} node'; [ x ] && unset CMD; $CMD",
             f"CMD='{pk} node'; unset CMD; $CMD",
             f"CMD='{pk} node'; unset -v CMD; $CMD",
             f"CMD='{pk} node'; unset A CMD B; $CMD",
@@ -1562,6 +1562,32 @@ pgrep -f bb',
                 self.assertFalse(
                     verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
                 )
+
+
+    def test_lifecycle_static_unset_glue_conditions(self):
+        pk = "p" + "kill"
+        allowed = (
+            f"CMD='{pk} node'; [ x ] && unset CMD; $CMD",
+            f"CMD='{pk} node'; true && unset CMD; $CMD",
+            f"CMD='{pk} node'; : && unset CMD; $CMD",
+            f"CMD='{pk} node'; false || unset CMD; $CMD",
+        )
+        blocked = (
+            f"CMD='{pk} node'; true || unset CMD; $CMD",
+            f"CMD='{pk} node'; false && unset CMD; $CMD",
+            f"CMD='{pk} node'; [ -f /nonexistent ] && unset CMD; $CMD",
+            f'CMD=\'{pk} node\'; [ "$X" ] && unset CMD; $CMD',
+            f"CMD='{pk} node'; (unset CMD); $CMD",
+        )
+        for cmd in allowed:
+            with self.subTest(allowed=cmd[:70]):
+                self.assertFalse(
+                    verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})["block"], cmd
+                )
+        for cmd in blocked:
+            with self.subTest(blocked=cmd[:70]):
+                v = verdict(bash(cmd), env={"CONTEXT_HYGIENE": "off"})
+                self.assertTrue(v["block"], cmd)
 
     def test_lifecycle_masker_multiline_single_quote_and_subst_opener_are_data(self):
         pk = "p" + "kill"

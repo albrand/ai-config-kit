@@ -2798,11 +2798,89 @@ _PGREP_LIFECYCLE_DECL_WORDS = frozenset(
 )
 
 
-def _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start):
-    if prev_end is None or prev_end >= cmd_start:
+def _pgrep_lifecycle_normalize_test_span(span):
+    return re.sub(r"\s+", " ", span.strip())
+
+
+def _pgrep_lifecycle_bracket_inner_always_true(inner):
+    inner = inner.strip()
+    if not inner or inner in ('""', "''"):
         return False
+    if "$" in inner or "`" in inner or "$(" in inner:
+        return False
+    if inner.startswith("-") or inner.startswith("!"):
+        return False
+    if re.match(r"^-n\s+(''|\"\")\s*$", inner):
+        return False
+    return True
+
+
+def _pgrep_lifecycle_test_always_true(span):
+    s = _pgrep_lifecycle_normalize_test_span(span)
+    if not s:
+        return False
+    if s in ("true", ":"):
+        return True
+    if re.match(r"^!\s*false$", s, re.I):
+        return True
+    m = re.match(r"^\[\[\s*(.+?)\s+\]\]$", s)
+    if m:
+        return _pgrep_lifecycle_bracket_inner_always_true(m.group(1))
+    m = re.match(r"^\[\s*([^]]+)\s*\]$", s)
+    if m:
+        return _pgrep_lifecycle_bracket_inner_always_true(m.group(1))
+    m = re.match(r"^test\s+(.+)$", s, re.I)
+    if m:
+        return _pgrep_lifecycle_bracket_inner_always_true(m.group(1))
+    return False
+
+
+def _pgrep_lifecycle_test_always_false(span):
+    s = _pgrep_lifecycle_normalize_test_span(span)
+    if not s:
+        return False
+    if s == "false":
+        return True
+    if re.match(r"^!\s*true$", s, re.I):
+        return True
+    m = re.match(r"^\[\s*([^]]+)\s*\]$", s)
+    if m:
+        inner = m.group(1).strip()
+        if inner in ('""', "''"):
+            return True
+        if re.match(r"^-n\s+(''|\"\")\s*$", inner):
+            return True
+    return False
+
+
+def _pgrep_lifecycle_span_first_word_base(text, cmd_start, cmd_end):
+    i = _pgrep_after_command_leaders(text, cmd_start)
+    i = _pgrep_skip_space(text, i)
+    if i >= cmd_end:
+        return None
+    ws = i
+    we = _pgrep_skip_one_word(text, i, cmd_end)
+    if ws >= we:
+        return None
+    return _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
+
+
+def _pgrep_lifecycle_should_apply_unset(
+    text, prev_start, prev_end, cmd_start, cmd_end
+):
+    if _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end):
+        return False
+    if _pgrep_lifecycle_span_first_word_base(text, cmd_start, cmd_end) != "unset":
+        return True
+    if prev_end is None or prev_end >= cmd_start or prev_start is None:
+        return True
     glue = text[prev_end:cmd_start]
-    return "&&" in glue or "||" in glue
+    prev = text[prev_start:prev_end]
+    if "&&" in glue:
+        return _pgrep_lifecycle_test_always_true(prev)
+    if "||" in glue:
+        return _pgrep_lifecycle_test_always_false(prev)
+    return True
 
 
 def _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end):
@@ -2831,7 +2909,7 @@ def _pgrep_lifecycle_apply_unset_words(text, i, cmd_end, into):
 
 
 def _pgrep_lifecycle_mutate_bindings_in_command(
-    text, cmd_start, cmd_end, into, *, conditional=False, subshell=False
+    text, cmd_start, cmd_end, into, *, apply_unset=True, subshell=False
 ):
     if subshell:
         return
@@ -2857,7 +2935,7 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
             break
         base = _pgrep_bare_word(text[ws:we]).rsplit("/", 1)[-1].lower()
         if base == "unset":
-            if not conditional:
+            if apply_unset:
                 _pgrep_lifecycle_apply_unset_words(text, we, cmd_end, into)
             return
         if base in _PGREP_LIFECYCLE_DECL_WORDS:
@@ -2883,7 +2961,7 @@ def _pgrep_lifecycle_mutate_bindings_in_command(
 
 def _pgrep_lifecycle_collect_script_bindings(text, cmd_start, cmd_end, into):
     _pgrep_lifecycle_mutate_bindings_in_command(
-        text, cmd_start, cmd_end, into, conditional=False, subshell=False
+        text, cmd_start, cmd_end, into, apply_unset=True, subshell=False
     )
 
 
@@ -2898,16 +2976,18 @@ def _pgrep_lifecycle_expand_var_segment(segment, binds):
 
 def _pgrep_lifecycle_bindings_for_pos(text, pos):
     binds = {}
-    prev_end = None
+    prev_start = prev_end = None
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
         if pos < cmd_start:
             break
-        cond = _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start)
         sub = _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end)
-        _pgrep_lifecycle_mutate_bindings_in_command(
-            text, cmd_start, cmd_end, binds, conditional=cond, subshell=sub
+        apply_unset = _pgrep_lifecycle_should_apply_unset(
+            text, prev_start, prev_end, cmd_start, cmd_end
         )
-        prev_end = cmd_end
+        _pgrep_lifecycle_mutate_bindings_in_command(
+            text, cmd_start, cmd_end, binds, apply_unset=apply_unset, subshell=sub
+        )
+        prev_start, prev_end = cmd_start, cmd_end
         if pos < cmd_end:
             break
     return binds
@@ -2998,14 +3078,16 @@ def _pgrep_lifecycle_pkill_match(text, _depth=0):
     ):
         return True
     carry = {}
-    prev_end = None
+    prev_start = prev_end = None
     for cmd_start, cmd_end in _pgrep_iter_simple_command_spans(text):
-        cond = _pgrep_lifecycle_glue_is_conditional(text, prev_end, cmd_start)
         sub = _pgrep_lifecycle_span_is_subshell(text, cmd_start, cmd_end)
-        _pgrep_lifecycle_mutate_bindings_in_command(
-            text, cmd_start, cmd_end, carry, conditional=cond, subshell=sub
+        apply_unset = _pgrep_lifecycle_should_apply_unset(
+            text, prev_start, prev_end, cmd_start, cmd_end
         )
-        prev_end = cmd_end
+        _pgrep_lifecycle_mutate_bindings_in_command(
+            text, cmd_start, cmd_end, carry, apply_unset=apply_unset, subshell=sub
+        )
+        prev_start, prev_end = cmd_start, cmd_end
         for ls, le in _pgrep_iter_launched_command_regions(text, cmd_start, cmd_end):
             chunk = _pgrep_mask_lifecycle_comments(text[ls:le])
             if _pgrep_lifecycle_pkill_word_match(
