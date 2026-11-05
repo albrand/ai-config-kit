@@ -1569,10 +1569,16 @@ pgrep -f bb',
         pk = "p" + "kill"
         blocked = (
             f"CMD='{pk} node'; unset -f CMD; $CMD",
+            f"CMD='{pk} node'; unset -f -- CMD; $CMD",
+            f"CMD='{pk} node'; unset -v -f CMD; $CMD",
+            f"CMD='{pk} node'; unset -f -v CMD; $CMD",
+            f"CMD='{pk} node'; unset -fv CMD; $CMD",
+            f"CMD='{pk} node'; unset -vf CMD; $CMD",
             f"CMD='{pk} node'; X=$CMD; unset CMD; $X",
         )
         allowed = (
-            f"CMD='{pk} node'; X=$CMD; unset X; $X",
+            f"CMD='{pk} node'; unset -- -f CMD; $CMD",
+            f"CMD='{pk} node'; unset CMD -f; $CMD",
             "CMD=ls; X=$CMD; $X",
             f"CMD='{pk} node'; X=$CMD; X=ls; $X",
         )
