@@ -9,8 +9,23 @@ const ASSERTION_MATCHERS = new Set([
   'toBe', 'toHaveCount', 'toBeDefined', 'toBeEnabled', 'toBeDisabled', 'toBeChecked', 'toBeInTheDocument',
 ]);
 
-const LOCATOR_IN_EXPR = /getBy(?:Text|LabelText|Role|PlaceholderText|AltText|Title)\s*\(\s*['"]([^'"]+)['"]/g;
+const LOCATOR_HEAD = /getBy(?:Text|LabelText|Role|PlaceholderText|AltText|Title)\s*\(/g;
 const LOCATOR_VAR_DECL = /(?:const|let|var)\s+(\w+)\s*=\s*([^;]+);/g;
+
+function locatorLiteralsAligned(codeExpr, sourceExpr, locatorVars) {
+  const found = [];
+  let m;
+  LOCATOR_HEAD.lastIndex = 0;
+  while ((m = LOCATOR_HEAD.exec(codeExpr))) {
+    const openParen = m.index + m[0].length - 1;
+    const close = findCloseParen(codeExpr, openParen);
+    if (close < 0) continue;
+    found.push(...stringLiteralsInExpr(sourceExpr.slice(openParen + 1, close)));
+  }
+  const trimmed = codeExpr.trim();
+  if (/^\w+$/.test(trimmed) && locatorVars.has(trimmed)) found.push(...locatorVars.get(trimmed));
+  return found;
+}
 
 function findCloseParen(code, openIndex) {
   if (code[openIndex] !== '(') return -1;
@@ -34,26 +49,58 @@ function stringLiteralsInExpr(expr) {
   return out;
 }
 
-function locatorLiteralsInExpr(expr, locatorVars) {
-  const found = [];
-  LOCATOR_IN_EXPR.lastIndex = 0;
-  let m;
-  while ((m = LOCATOR_IN_EXPR.exec(expr))) found.push(m[1]);
-  const trimmed = expr.trim();
-  if (/^\w+$/.test(trimmed) && locatorVars.has(trimmed)) found.push(...locatorVars.get(trimmed));
-  return found;
+function locatorLiteralsInExpr(codeExpr, sourceExpr, locatorVars) {
+  return locatorLiteralsAligned(codeExpr, sourceExpr ?? codeExpr, locatorVars);
 }
 
-/** Locator variables: name -> literal strings from getBy* on the RHS. */
-function buildLocatorVarMap(source) {
+/** Locator variables: name -> literal strings from getBy* on the RHS (detected on tokenized code only). */
+function buildLocatorVarMap(source, code) {
   const map = new Map();
   let m;
   LOCATOR_VAR_DECL.lastIndex = 0;
-  while ((m = LOCATOR_VAR_DECL.exec(source))) {
-    const lits = locatorLiteralsInExpr(m[2], new Map());
+  while ((m = LOCATOR_VAR_DECL.exec(code))) {
+    const semi = m.index + m[0].length - 1;
+    const eq = code.indexOf('=', m.index);
+    if (eq < 0 || eq > semi) continue;
+    const rhsCode = code.slice(eq + 1, semi);
+    const rhsSource = source.slice(eq + 1, semi);
+    const lits = locatorLiteralsAligned(rhsCode, rhsSource, new Map());
     if (lits.length) map.set(m[1], lits);
   }
   return map;
+}
+
+const XUNIT_CALL = /Assert\.(?:Equal|Contains|That|True|AreEqual)\s*\(/g;
+const NODE_ASSERT_CALL = /assert\.(?:strictEqual|equal|match)\s*\(/g;
+
+function literalsFromCallOnCode(code, source, openRe) {
+  const literals = [];
+  let m;
+  openRe.lastIndex = 0;
+  while ((m = openRe.exec(code))) {
+    const openParen = m.index + m[0].length - 1;
+    if (code[openParen] !== '(') continue;
+    const close = findCloseParen(code, openParen);
+    if (close < 0) continue;
+    const argSlice = source.slice(openParen + 1, close);
+    literals.push(...stringLiteralsInExpr(argSlice));
+    const argCode = code.slice(openParen + 1, close);
+    literals.push(...locatorLiteralsAligned(argCode, argSlice, new Map()));
+  }
+  return literals;
+}
+
+function literalsFromPythonAsserts(code, source, locatorVars) {
+  const literals = [];
+  const codeLines = code.split('\n');
+  const sourceLines = source.split('\n');
+  for (let i = 0; i < codeLines.length; i++) {
+    if (!/^\s*assert\b/.test(codeLines[i])) continue;
+    const line = sourceLines[i] ?? '';
+    literals.push(...stringLiteralsInExpr(line));
+    literals.push(...locatorLiteralsAligned(codeLines[i], line, locatorVars));
+  }
+  return literals;
 }
 
 function collectVarsUsedInExpectMatchers(code, locatorVars) {
@@ -93,7 +140,7 @@ function isExecutableExpect(code, openParenIndex) {
  */
 function assertionLiterals(source) {
   const code = tokenize(source);
-  const locatorVars = buildLocatorVarMap(source);
+  const locatorVars = buildLocatorVarMap(source, code);
   const literals = [];
 
   const expectRe = /(?:await\s+)?expect\s*\(/g;
@@ -102,8 +149,9 @@ function assertionLiterals(source) {
     const openParen = m.index + m[0].length - 1;
     if (!isExecutableExpect(code, openParen)) continue;
     const closeArg = findCloseParen(code, openParen);
+    const argCode = code.slice(openParen + 1, closeArg);
     const arg = source.slice(openParen + 1, closeArg);
-    literals.push(...locatorLiteralsInExpr(arg, locatorVars));
+    literals.push(...locatorLiteralsAligned(argCode, arg, locatorVars));
 
     const after = code.slice(closeArg + 1);
     const head = after.match(/^\s*(?:\.not\s*)?\.[a-zA-Z][\w$]*\s*\(/);
@@ -116,20 +164,9 @@ function assertionLiterals(source) {
     }
   }
 
-  const assertPatterns = [
-    /Assert\.(?:Equal|Contains|That|True|AreEqual)\s*\(\s*['"]([^'"]+)['"]/g,
-    /Assert\.(?:Equal|Contains|That|True|AreEqual)\s*\([^,]+,\s*['"]([^'"]+)['"]/g,
-    /assert\.(?:strictEqual|equal|match)\s*\([^,]+,\s*['"]([^'"]+)['"]/g,
-  ];
-  for (const pattern of assertPatterns) {
-    for (const match of source.matchAll(pattern)) literals.push(match[1]);
-  }
-
-  const assertPy = /^\s*assert\s+.+$/gm;
-  for (const line of source.match(assertPy) ?? []) {
-    literals.push(...locatorLiteralsInExpr(line, locatorVars));
-    literals.push(...stringLiteralsInExpr(line));
-  }
+  literals.push(...literalsFromCallOnCode(code, source, XUNIT_CALL));
+  literals.push(...literalsFromCallOnCode(code, source, NODE_ASSERT_CALL));
+  literals.push(...literalsFromPythonAsserts(code, source, locatorVars));
 
   return literals.join('\n');
 }
@@ -151,7 +188,7 @@ function expectWithoutMatcher(source) {
 
 function unassertedLocatorAssignments(source) {
   const code = tokenize(source);
-  const locatorVars = buildLocatorVarMap(source);
+  const locatorVars = buildLocatorVarMap(source, code);
   const used = collectVarsUsedInExpectMatchers(code, locatorVars);
   for (const name of locatorVars.keys()) {
     if (!used.has(name)) return true;

@@ -84,6 +84,58 @@ test('rejects expect() with no matcher chain', () => {
   assert.match(validateSourceAssertions(naked, scenario).reason, /without an assertion matcher/);
 });
 
+test('rejects assertion text in comments across JS, C#, and Python', () => {
+  const jsBlock = `test('QAS-WI-1-01', () => {
+    /* expect(page.getByText('The pending table shows exactly two rows')).toBeVisible();
+       expect(page.getByText('The empty icon is visible')).toBeVisible(); */
+    expect(screen.getByRole('table')).toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(jsBlock, scenario).ok, false);
+
+  const csharpComment = `// Assert.Equal("The pending table shows exactly two rows", actual);
+    // Assert.Equal("The empty icon is visible", actual);
+    test('QAS-WI-1-01', () => {
+      expect(screen.getByRole('table')).toBeVisible();
+    });`;
+  assert.equal(validateSourceAssertions(csharpComment, scenario).ok, false);
+
+  const pythonComment = `# assert "The pending table shows exactly two rows" in page
+    # assert "The empty icon is visible" in page
+    def test_qas():
+      pass`;
+  assert.equal(validateSourceAssertions(pythonComment, scenario).ok, false);
+});
+
+test('rejects expected lines that appear only inside string literals', () => {
+  const spoof = `test('QAS-WI-1-01', () => {
+    const plan = 'expect(page.getByText("The pending table shows exactly two rows")).toBeVisible()';
+    const more = "The empty icon is visible";
+    expect(screen.getByRole('table')).toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(spoof, scenario).ok, false);
+  assert.match(validateSourceAssertions(spoof, scenario).reason, /executable assertion|unasserted|locator stored/);
+});
+
+test('accepts real Assert.Equal, Python assert, and JS expect bindings', () => {
+  const csharp = `[Fact]
+    public void QAS_WI_1_01() {
+      Assert.Equal("The pending table shows exactly two rows", actual);
+      Assert.Equal("The empty icon is visible", actual);
+    }`;
+  assert.equal(validateSourceAssertions(csharp, scenario).ok, true);
+
+  const python = `def test_qas_wi_1_01():
+    assert "The pending table shows exactly two rows" in page.text
+    assert "The empty icon is visible" in page.text`;
+  assert.equal(validateSourceAssertions(python, scenario).ok, true);
+
+  const js = `test('QAS-WI-1-01', () => {
+    expect(page.getByText('The pending table shows exactly two rows')).toBeVisible();
+    expect(page.getByText('The empty icon is visible')).toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(js, scenario).ok, true);
+});
+
 test('check-scenarios source pass flags changed id missing bindings', () => {
   const dir = mkdtempSync(join(tmpdir(), 'src-assert-'));
   try {

@@ -4,9 +4,11 @@ import { criteriaCoverageErrors, validateScenarioDesign } from './behavior-rules
 // Small lexical scanner: replace comments and literal contents with spaces while
 // retaining newlines, so strings/comments cannot impersonate executable tests.
 export function tokenize(source) {
-  let out='', i=0, state='code', rawQuotes=0;
-  while(i<source.length){const c=source[i], n=source[i+1];
+  let out='', i=0, state='code', rawQuotes=0, pyTriple=0;
+  while(i<source.length){const c=source[i], n=source[i+1], p=source[i+2];
     if(state==='code'){
+      if((c==="'"||c==='"')&&n===c&&p===c){out+='   ';i+=3;state=c==='"'?'pytriple-d':'pytriple-s';pyTriple=3;continue;}
+      if(c==='#'&&(!n||n===' '||n==='\t'||n==='\r'||n==='\n'||n==='#'||n==='!')){out+=' ';i++;state='line';continue;}
       if(c==='/'&&n==='/'){out+='  ';i+=2;state='line';continue;}
       if(c==='/'&&n==='*'){out+='  ';i+=2;state='block';continue;}
       if(c==='"'||c==="'"||c==='`'){
@@ -20,6 +22,12 @@ export function tokenize(source) {
     }
     if(state==='line'){if(c==='\n'){out+='\n';state='code';}else out+=' ';i++;continue;}
     if(state==='block'){if(c==='*'&&n==='/'){out+='  ';i+=2;state='code';}else{out+=c==='\n'?'\n':' ';i++;}continue;}
+    if(state==='pytriple-d'||state==='pytriple-s'){
+      const q=state==='pytriple-d'?'"':"'";
+      let count=0;while(source[i+count]===q)count++;
+      if(count>=pyTriple){out+=' '.repeat(count);i+=count;state='code';continue;}
+      out+=c==='\n'?'\n':' ';i++;continue;
+    }
     if(state==='raw'){let count=0;while(source[i+count]==='"')count++;if(count>=rawQuotes){out+=' '.repeat(count);i+=count;state='code';}else{out+=c==='\n'?'\n':' ';i++;}continue;}
     if(state==='verbatim'){if(c==='"'&&n==='"'){out+='  ';i+=2;continue;}if(c==='"'){out+=' ';i++;state='code';continue;}out+=c==='\n'?'\n':' ';i++;continue;}
     const end=state==='double'?'"':state==='single'?"'":'`';
