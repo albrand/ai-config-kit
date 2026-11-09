@@ -11,6 +11,7 @@ import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
 import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
 import { buildPlan, extractWorkItemHints, resolveBoardAssociations } from '../lib/associations.mjs';
+import { checkAiPack, installAiPack } from '../lib/ai-pack.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -105,11 +106,13 @@ try {
     const baseScenarios = last('base-scenarios') ? unwrap(json(last('base-scenarios'))) : [];
     const plan = last('plan') ? json(last('plan')) : {};
     const baseIds = [...new Set([...(last('base-ids') ? json(last('base-ids')) : baseScenarios.map(s => s.id)), ...(plan.regressionIds ?? [])])];
-    const rows = judge(scenarios, results, baseIds, plan);
+    const baseResultsPath = last('base-results');
+    const baseResults = baseResultsPath && existsSync(baseResultsPath) ? readResults(baseResultsPath) : null;
+    const rows = judge(scenarios, results, baseIds, plan, { baseResults, baseScenarios });
     const runDoc = Array.isArray(results) ? { results } : results;
     const output = last('plan')
       ? recomputeTrustedVerdict(plan, scenarios, results)
-      : { kind: 'verdict', schemaVersion: 1, planHash: plan.planHash ?? digest(plan), runHash: digest(runDoc), overall: rows.some(r => r.verdict === 'FAILED') ? 'FAIL' : rows.some(r => r.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS', rows: rows.map(({ id, ...row }) => ({ scenarioId: id, ...row })) };
+      : { kind: 'verdict', schemaVersion: 1, planHash: plan.planHash ?? digest(plan), runHash: digest(runDoc), overall: rows.some(r => r.verdict === 'FAILED' || (r.verdict === 'BUG' && r.blocking)) ? 'FAIL' : rows.some(r => r.verdict === 'BLOCKED') ? 'BLOCKED' : 'PASS', rows: rows.map(({ id, ...row }) => ({ scenarioId: id, ...row })) };
     console.log(JSON.stringify(output, null, 2));
     if (last('output')) writeJson(last('output'), output);
     if (output.overall !== 'PASS') process.exitCode = 1;
@@ -142,23 +145,22 @@ try {
     if (!action) throw new Error('board requires operation and work-item id');
     if (action === 'report') {
       throw new Error('board report no longer accepts verdict artifacts; use publish-evidence with trusted plan and raw runner results');
-    } else {
-      if (!id) throw new Error('board requires operation and work-item id');
-      const body = values.join(' ');
-      const marker = reportMarker(id, last('commit', process.env.GITHUB_SHA ?? 'local'), body);
-      const methods = {
+    }
+    if (!id) throw new Error('board requires operation and work-item id');
+    const body = values.join(' ');
+    const marker = reportMarker(id, last('commit', process.env.GITHUB_SHA ?? 'local'), body);
+    const methods = {
         read: () => adapter.read(id),
         comment: () => adapter.comment(id, body, marker),
         attach: () => adapter.attach(id, body.startsWith('{') ? JSON.parse(body) : body),
         transition: () => adapter.transition(id, values[0], last('revision')),
         linkPr: () => adapter.linkPr(id, values[0], `PR ${last('commit', process.env.GITHUB_SHA ?? 'local')}`)
       };
-      if (!methods[action]) throw new Error(`unsupported board operation: ${action}`);
-      const result = await methods[action]();
-      const safe = structuredClone(result);
-      if (safe.request?.headers?.authorization) safe.request.headers.authorization = '[redacted]';
-      console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', result: safe }, null, 2));
-    }
+    if (!methods[action]) throw new Error(`unsupported board operation: ${action}`);
+    const result = await methods[action]();
+    const safe = structuredClone(result);
+    if (safe.request?.headers?.authorization) safe.request.headers.authorization = '[redacted]';
+    console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', result: safe }, null, 2));
   } else if (command === 'publish-evidence') {
     const cfg = config();
     const apply = args.apply === true;
@@ -189,6 +191,16 @@ try {
       if (existsSync(from)) { cpSync(from, to, { recursive: true, force: true }); installed.push(rel); }
     }
     console.log(JSON.stringify({ installed, ignoredBranchCopies: paths }, null, 2));
+  } else if (command === 'ai-pack') {
+    const target = resolve(last('target', '.'));
+    if (args.check) {
+      const drift = checkAiPack(target);
+      console.log(JSON.stringify({ ok: drift.length === 0, drift }, null, 2));
+      if (drift.length) process.exitCode = 1;
+    } else if (args.write) {
+      const written = installAiPack(target);
+      console.log(JSON.stringify({ ok: true, target, written }, null, 2));
+    } else throw new Error('ai-pack requires --write or --check');
   } else if (command === 'check-scenarios') {
     const scenarioPath = last('file', config().scenarioFile ?? 'qa/scenarios.json');
     const head = unwrap(json(last('head', scenarioPath)));
@@ -236,7 +248,7 @@ try {
     console.log(JSON.stringify({ run: output, compiled: true, discoveredIds: discoveredIds.length, results: results.length, testExitCode: execution.status }, null, 2));
     if (execution.status !== 0) process.exitCode = execution.status;
   } else {
-    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test');
+    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test|ai-pack');
     process.exitCode = 2;
   }
 } catch (error) {

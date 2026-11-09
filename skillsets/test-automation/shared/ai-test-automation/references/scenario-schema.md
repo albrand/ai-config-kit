@@ -2,6 +2,14 @@
 
 All files use JSON Schema draft 2020-12 semantics. Store each artifact with its `schemaVersion` and `kind`; reject unknown versions and additional fields at the boundary. Work-item snapshots contain behavior-relevant fields only; omit person names and volatile status/date data from requirement text.
 
+Every automated scenario is behavioural, not implementation-driven:
+
+- `polarity`: `positive` or `negative` (regression cases set `regressionCase: true`).
+- `layer`: `e2e`, `api`, `unit`, or `component`. Mocked HTTP is allowed at any layer; bias is about intent, not “real backend”.
+- `mockPolicy`: `mixed-source` when steps use mocks/fixtures — mixed input, application logic must produce the filtered or empty outcome.
+- `expected`: one specific observable outcome per line; automation must assert each line (no loose “any element” wording).
+- `status: bug` with `bugKey` records a found defect; keep the automation red until the product fix ships.
+
 ## Artifact contracts
 
 The executable JSON Schema is [`artifact-schema.v1.json`](../templates/qa-kit/lib/artifact-schema.v1.json); tests load this same file so the reference and runtime contract cannot drift.

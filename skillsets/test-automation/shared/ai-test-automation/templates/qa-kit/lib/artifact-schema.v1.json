@@ -30,6 +30,9 @@
         "criterionIds",
         "kind",
         "surface",
+        "layer",
+        "polarity",
+        "regressionCase",
         "mandatory",
         "title",
         "steps",
@@ -96,9 +99,95 @@
         "revisitDate": {
           "type": "string",
           "format": "date"
+        },
+        "polarity": {
+          "enum": [
+            "positive",
+            "negative"
+          ]
+        },
+        "layer": {
+          "enum": [
+            "e2e",
+            "api",
+            "unit",
+            "component"
+          ]
+        },
+        "regressionCase": {
+          "type": "boolean"
+        },
+        "uiBehaviour": {
+          "type": "boolean"
+        },
+        "nonUiReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "active",
+            "bug"
+          ]
+        },
+        "bugKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mockPolicy": {
+          "enum": [
+            "none",
+            "mixed-source"
+          ]
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "automated"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "polarity",
+              "layer",
+              "regressionCase"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "layer": {
+                "const": "e2e"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "surface": {
+                "const": "browser"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "bug"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "bugKey"
+            ]
+          }
+        },
         {
           "if": {
             "properties": {
@@ -129,6 +218,25 @@
               "reason",
               "revisitDate"
             ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mockPolicy"
+            ],
+            "properties": {
+              "mockPolicy": {
+                "const": "mixed-source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mockPolicy": {
+                "const": "mixed-source"
+              }
+            }
           }
         }
       ]
@@ -589,7 +697,8 @@
                   "FAILED",
                   "BLOCKED",
                   "NOT_APPLICABLE",
-                  "DRAFT_PASSED"
+                  "DRAFT_PASSED",
+                  "BUG"
                 ]
               },
               "reason": {
@@ -628,6 +737,9 @@
               },
               "executed": {
                 "type": "boolean"
+              },
+              "bugKey": {
+                "type": "string"
               }
             },
             "additionalProperties": false

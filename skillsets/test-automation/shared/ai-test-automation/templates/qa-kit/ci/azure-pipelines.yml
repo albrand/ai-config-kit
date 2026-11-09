@@ -73,8 +73,14 @@ stages:
       artifact: qa-plan
     - download: current
       artifact: qa-run-results
-    - script: node qaAuthority/qa/bin/qa.mjs judge --config qaAuthority/qa/qa.config.json --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --results "$(Pipeline.Workspace)/qa-run-results" --base "$(System.PullRequest.TargetCommitId)" --output verdict.json
+    - script: |
+        set -euo pipefail
+        base_run="$(Pipeline.Workspace)/qa-run-results/base-run-v1.json"
+        extra=()
+        if [ -f "$base_run" ]; then extra=(--base-results "$base_run"); fi
+        node qaAuthority/qa/bin/qa.mjs judge --config qaAuthority/qa/qa.config.json --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --results "$(Pipeline.Workspace)/qa-run-results" --base "$(System.PullRequest.TargetCommitId)" "${extra[@]}" --output verdict.json
       displayName: Judge every board-associated and base-regression scenario
+    # Optional base-proof stage: run head QA tests against merge-base application and publish base-run-v1.json.
     - publish: verdict.json
       artifact: qa-verdict
       condition: always()

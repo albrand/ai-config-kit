@@ -1,8 +1,16 @@
 import { validateScenario } from './scenario-check.mjs';
+import { newScenarioIds } from './behavior-rules.mjs';
 
-export function judge(scenarios, results, baseIds = [], plan = {}) {
+export function judge(scenarios, results, baseIds = [], plan = {}, options = {}) {
   const run = Array.isArray(results) ? null : results;
   results = Array.isArray(results) ? results : (results.results ?? []);
+  const baseResultsDoc = options.baseResults ?? null;
+  const baseResults = baseResultsDoc
+    ? (Array.isArray(baseResultsDoc) ? baseResultsDoc : (baseResultsDoc.results ?? []))
+    : [];
+  const baseScenarioList = options.baseScenarios ?? [];
+  const freshIds = new Set(options.newScenarioIds ?? newScenarioIds(scenarios, baseScenarioList));
+  const linkedWorkItems = new Set((plan.items ?? []).map(item => String(item.id)));
   const byId = new Map(scenarios.map(s => [s.id, s]));
   const scope = new Map();
   const scenarioWorkItems = new Map((plan.scenarioWorkItems ?? []).map(item => [item.scenarioId, item.workItem]));
@@ -21,20 +29,32 @@ export function judge(scenarios, results, baseIds = [], plan = {}) {
     if (s.deleted) { verdict = 'BLOCKED'; reason = 'base scenario removed from head'; }
     else if (s.kind === 'manual' || s.kind === 'awaiting') { const check = validateScenario(s); verdict = check.ok ? 'NOT_APPLICABLE' : 'BLOCKED'; reason = check.reason; }
     else if (run && (run.compiled !== true || !run.discoveredIds?.includes(s.id))) { verdict = 'BLOCKED'; reason = run.compiled !== true ? 'runner compile evidence missing' : 'scenario was not discovered'; }
-    else if (r?.status === 'passed' && r.executed === true) { verdict = 'VERIFIED'; reason = 'executed and passed'; }
-    else if (r?.status === 'failed' && r.executed === true) { verdict = 'FAILED'; reason = 'test failed'; }
+    else if (r?.status === 'passed' && r.executed === true) {
+      verdict = 'VERIFIED';
+      reason = 'executed and passed';
+      const base = baseResults.find(x => (x.scenario_id ?? x.scenarioId) === s.id);
+      if (freshIds.has(s.id) && base?.status === 'passed' && base.executed === true) { verdict = 'BLOCKED'; reason = 'passes without the change'; }
+    }
+    else if (r?.status === 'failed' && r.executed === true) {
+      if (s.status === 'bug') { verdict = 'BUG'; reason = `known bug ${s.bugKey ?? ''}`.trim(); }
+      else { verdict = 'FAILED'; reason = 'test failed'; }
+    }
     else if (r?.status === 'skipped' || r?.executed === false) { verdict = 'BLOCKED'; reason = 'skipped/not-executed result is not evidence'; }
     if (s.surface === 'browser' && r?.executed === true && !r.screenshot && !r.screenshotUrl) { verdict = 'BLOCKED'; reason = 'missing screenshot'; }
     if (r?.attachmentFailed) { verdict = 'BLOCKED'; reason = 'evidence attachment failed'; }
     if (r?.missingToken || r?.uploadConfirmed === false) { verdict = 'BLOCKED'; reason = r.missingToken ? 'attachment token missing' : 'upload not confirmed'; }
-    return { id: s.id, workItem: s.workItemId ?? scopeInfo.workItem ?? '', scope: scopeInfo.scope, linkedItems: scopeInfo.linkedItems ?? [], surface: s.surface, executed: Boolean(r?.executed), screenshot: r?.screenshotUrl ?? r?.screenshot ?? '', verdict, reason, blocking: ['FAILED', 'BLOCKED'].includes(verdict) };
+    const workItem = String(s.workItemId ?? scopeInfo.workItem ?? '');
+    let blocking = ['FAILED', 'BLOCKED'].includes(verdict);
+    if (verdict === 'BUG') blocking = linkedWorkItems.has(workItem);
+    if (verdict === 'BLOCKED' && reason === 'passes without the change') blocking = true;
+    return { id: s.id, workItem, scope: scopeInfo.scope, linkedItems: scopeInfo.linkedItems ?? [], surface: s.surface, executed: Boolean(r?.executed), screenshot: r?.screenshotUrl ?? r?.screenshot ?? '', verdict, reason, blocking, bugKey: s.bugKey ?? '' };
   });
 }
 
 /** Repeated options accumulate; scalar consumers explicitly select the last value. */
 export function parseArgs(args) {
   const out = { _: [] };
-  const booleans = new Set(['apply', 'dry-run', 'allow-pending', 'no-network-writes']);
+  const booleans = new Set(['apply', 'dry-run', 'allow-pending', 'no-network-writes', 'check', 'write']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {

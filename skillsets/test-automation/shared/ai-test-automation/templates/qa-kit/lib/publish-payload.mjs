@@ -42,7 +42,7 @@ export function recomputeTrustedVerdict(plan, scenarios, run) {
   const scoped = (scenarios ?? []).filter(scenario => allowedById.has(scenario.id));
   const rows = judge(scoped, run, plan.regressionIds ?? [], plan).map(({ id, ...row }) => ({ scenarioId: id, ...row }));
   const gateReasons = (plan.policyReasons ?? []).filter(reason => text(reason, 1000));
-  const overall = rows.some(row => row.verdict === 'FAILED') ? 'FAIL' : rows.some(row => row.verdict === 'BLOCKED') || gateReasons.length ? 'BLOCKED' : 'PASS';
+  const overall = rows.some(row => row.verdict === 'FAILED' || (row.verdict === 'BUG' && row.blocking)) ? 'FAIL' : rows.some(row => row.verdict === 'BLOCKED') || gateReasons.length ? 'BLOCKED' : 'PASS';
   return { kind: 'verdict', schemaVersion: 1, planHash, runHash: digest(run), commitSha: plan.headSha, overall, gateReasons, rows };
 }
 

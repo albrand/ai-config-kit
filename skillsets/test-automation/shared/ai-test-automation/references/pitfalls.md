@@ -2,6 +2,11 @@
 
 | Failure learned | Required check before adoption |
 |---|---|
+| Tests written to pass: expectations copied from code, loose matchers, mocks that pre-filter data, green as the goal. | Specific asserts per `expected` line; `mockPolicy: mixed-source`; reject vague expected text; positive/negative/regression per criterion; red-on-base proof. |
+| Scenarios drafted from current source code bias tests toward green. | `check-scenarios` rejects implementation citations; design from the ticket only. |
+| New feature tests pass before the product change lands. | Supply `--base-results` to `judge`; `passes without the change` blocks storage. |
+| A failing test is "fixed" by weakening expected results. | Use `status: bug` + `bugKey`; keep the scenario red and block only that ticket's PRs. |
+| Unhandled mock calls return empty and accidentally satisfy empty-state tests. | Optional harness hardening: fail on unhandled calls (small guard; does not fix biased intent by itself). |
 | An explicit Deny on a broad group overrides a narrower group's Allow. | Inspect effective permission for the exact service identity after inheritance is broken; assert read allowed, reviewed PR allowed, direct bypass denied. |
 | A required PR policy can block agent direct push unless it can bypass. | Exercise the guarded agent route and require it to create/reuse a PR; never infer direct-push permission from repo write access. |
 | Draft PRs may not trigger build validation. | Open a ready-for-review probe PR and confirm the exact required check starts; draft state is not evidence. |

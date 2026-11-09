@@ -7,13 +7,29 @@ description: Set up test automation, a QA gate, Allure reporting, scenarios from
 
 Use this skill to build a QA-owned scenario system whose source of truth stays separate from application changes. The starter kit uses Node built-ins only and runs on Node 22+; runner-specific Allure packages belong in the application repository.
 
+## First principle: tests hunt bugs, they never excuse them
+
+TESTS ARE HUMAN BEHAVIORAL DRIVEN, WHICH MEANS IF THE UI DOES NOT WORK AS DESCRIBED E2E, THEY SHALL --NOT-- PASS, NEVER, AND THE TESTS SHALL HUNT FOR POSITIVE, NEGATIVE AND REGRESSIONS, ALWAYS, IT IS OUR SAFETY GATE.
+
+- **Priority 1:** Assert every line of `expected` specifically in automation (no `toBeTruthy`, “any icon”, `count > 0`, or silent skips).
+- **Priority 2:** A test must be red when the acceptance criterion is broken and green when it is met. Prove new work: red on merge base (or deliberately broken behaviour), green on head. `judge --base-results` blocks `passes without the change`.
+- **Priority 3:** Each criterion has positive, negative, and regression scenarios (`polarity`, `regressionCase: true`).
+- **Priority 4:** Mocked APIs and fixtures are fine; mocks must not encode the answer. Return mixed data and let application logic produce the outcome (`mockPolicy: mixed-source` when steps use mocks).
+- **Priority 5:** Found bugs stay red: `status: bug`, `bugKey`, never weaken expected to match broken code.
+- Design from the ticket only, never from current implementation source.
+- Minor hardening only: unhandled mock calls should fail so an accidental empty response cannot green an empty-state test (adopter test harness; not a substitute for intent above).
+
+The kit enforces these rules in `check-scenarios`, optional base-run comparison in `judge`, and closed JSON schemas in `templates/qa-kit/lib/artifact-schema.v1.json`.
+
+Adopting teams import `templates/ai-pack/` so every AI loads the same focused skills (scenario design, bug-hunting automation, run/gate, bug report). Only `qa-core` stays always-on; task rules load by glob or skill trigger via `node qa/bin/qa.mjs ai-pack --write|--check`.
+
 ## Quick start (30 minutes)
 
-1. Copy `templates/qa-kit/` into a QA-owned repository as `qa/`; `cd qa`; copy `qa.config.example.json` to `qa.config.json`.
-2. Fill `board`, `boardUrl`, `repo` if applicable, `boardTokenEnv`, `base`, `scenarioFile`, `resultsFile`, `authoritativePaths`, and `testCommand`. Put the token only in a CI secret named by `boardTokenEnv`.
+1. Copy `templates/qa-kit/` into a QA-owned repository as `qa/` and copy `templates/ai-pack/` beside it (same parent directory). From the repository root run `node qa/bin/qa.mjs ai-pack --write --target .`, then `node qa/bin/qa.mjs ai-pack --check --target .` (exit 0 = every provider entrypoint matches). Expected: `.agents/skills/*`, `.claude/skills/*`, `CLAUDE.md` (`@AGENTS.md`), root `AGENTS.md` QA table, `.cursor/rules/qa-*.mdc`, and `.github/copilot-instructions.md` plus `.github/instructions/qa-*.instructions.md`.
+2. `cd qa`; copy `qa.config.example.json` to `qa.config.json`. Fill `board`, `boardUrl`, `repo` if applicable, `boardTokenEnv`, `base`, `scenarioFile`, `resultsFile`, `authoritativePaths`, and `testCommand`. Put the token only in a CI secret named by `boardTokenEnv`.
 3. Preview a board read using the selected board's native ID format: GitHub Issues `12`, Jira or Linear `ABC-123`, Azure Boards `123`. With the supplied example config (`board: "github"`), run `node bin/qa.mjs board read 12 --config qa.config.json --dry-run`. Expected: JSON `mode: "dry-run"`, GET URL and request shape; no `fetch` call is made and no credential value is printed.
 4. Add a starter scenario set and executed run evidence, then run `node bin/qa.mjs check-scenarios --head scenarios.json --base origin/main --file qa/scenarios.json --results run-v1.json`. The `--file` path is relative to the Git repository root. Expected: JSON rows for new/changed/deleted IDs; exit 0 only when every changed automated case compiled, was discovered and executed, and exception records are valid.
-5. Run `node bin/qa.mjs judge --scenarios scenarios.json --results run-v1.json --base-scenarios base-scenarios.json`. Expected: one verdict row per head/base scenario; any missing/skipped/failed evidence exits nonzero.
+5. Run `node bin/qa.mjs judge --scenarios scenarios.json --results run-v1.json --base-scenarios base-scenarios.json --base-results base-run-v1.json` when a merge-base run exists. Expected: one verdict row per head/base scenario; new scenarios that passed on base exit with `passes without the change`; any missing/skipped/failed evidence exits nonzero.
 6. Copy and adapt `ci/github-actions.yml` or `ci/azure-pipelines.yml`, wire the app PR gate and QA-repo validation, and make both checks required. Run the negative probes in phase 10 before enabling writes.
 
 ## 0. Decide

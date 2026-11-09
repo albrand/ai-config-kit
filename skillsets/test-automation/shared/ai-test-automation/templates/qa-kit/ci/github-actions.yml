@@ -92,7 +92,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: qa-run-results, path: qa-run-results }
       - name: Judge complete scope against base
-        run: node qa/bin/qa.mjs judge --config qa/qa.config.json --plan qa-plan/qa-plan.json --results qa-run-results --base "${{ github.event.pull_request.base.sha }}" --output verdict.json
+        run: |
+          set -euo pipefail
+          args=(judge --config qa/qa.config.json --plan qa-plan/qa-plan.json --results qa-run-results --base "${{ github.event.pull_request.base.sha }}" --output verdict.json)
+          if [ -f qa-run-results/base-run-v1.json ]; then args+=(--base-results qa-run-results/base-run-v1.json); fi
+          node qa/bin/qa.mjs "${args[@]}"
+      # Optional base-proof job: check out merge-base application code, overlay head QA tests, run once, upload base-run-v1.json next to qa-run-results.
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: qa-verdict, path: verdict.json, if-no-files-found: error }

@@ -1,0 +1,224 @@
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const packRoot = resolve(kitRoot, '../ai-pack');
+const skillsRoot = join(packRoot, '.agents/skills');
+
+const CORE_AGENTS = `# QA agents core
+
+TESTS ARE HUMAN BEHAVIORAL DRIVEN: tests hunt defects, not green builds. Assert every expected line specifically; prove fail-first; positive/negative/regression per criterion; mocks may be used but must not encode the answer; found bugs stay red. Never design scenarios from implementation code.
+
+Before any QA task, load exactly one task skill from \`.agents/skills/<name>/SKILL.md\` (listed in the provider entrypoints below). Do not improvise gate rules; use the kit in \`qa/\`.
+`;
+
+const CODEX_AGENTS_BLOCK = `${CORE_AGENTS}
+
+## QA work — pick one skill file
+
+| Task | Skill |
+|------|-------|
+| Turn a ticket into scenarios | \`.agents/skills/scenario-design/SKILL.md\` |
+| Write or fix automated tests | \`.agents/skills/bug-hunting-test-automation/SKILL.md\` |
+| Run tests, check-scenarios, judge, CI | \`.agents/skills/run-and-gate/SKILL.md\` |
+| File a product bug, keep a red scenario | \`.agents/skills/bug-report/SKILL.md\` |
+`;
+
+const CLAUDE_MD = `@AGENTS.md
+`;
+
+const COPILOT_MAIN = `${CORE_AGENTS}
+
+Load the matching file under \`.github/instructions/\` for the task you are doing (scenario design, test automation, run/gate, or bug report).
+`;
+
+export function packSourceRoot() {
+  if (!existsSync(skillsRoot)) throw new Error(`ai-pack source missing: ${skillsRoot}`);
+  return packRoot;
+}
+
+function listSkillDirs() {
+  return readdirSync(skillsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort();
+}
+
+function readSkill(name) {
+  const path = join(skillsRoot, name, 'SKILL.md');
+  if (!existsSync(path)) throw new Error(`missing skill: ${path}`);
+  return readFileSync(path, 'utf8');
+}
+
+function sha(text) {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function cursorCoreRule() {
+  return `---
+description: QA core — behavioral tests only; load a task skill for detail
+alwaysApply: true
+---
+
+${CORE_AGENTS}
+`;
+}
+
+function cursorTaskRule(name, globs) {
+  const skill = readSkill(name);
+  const title = name.replace(/-/g, ' ');
+  return `---
+description: QA — ${title}
+globs: ${globs}
+alwaysApply: false
+---
+
+Read and follow \`.agents/skills/${name}/SKILL.md\` for this work. Kit docs live under \`qa/\` (see parent ai-test-automation skill references).
+`;
+}
+
+const CURSOR_GLOBS = {
+  'scenario-design': 'qa/scenarios/**/*,qa/**/*.json',
+  'bug-hunting-test-automation': '**/*.{test,spec}.{ts,tsx,js,cs},qa/**/*',
+  'run-and-gate': 'qa/**/*,.github/workflows/**/*,**/azure-pipelines*.yml',
+  'bug-report': 'qa/scenarios/**/*,qa/**/*.md',
+};
+
+const COPILOT_INSTRUCTIONS = {
+  'scenario-design': {
+    applyTo: 'qa/scenarios/**',
+    body: `Follow \`.agents/skills/scenario-design/SKILL.md\`. Design from the ticket only; each criterion needs positive, negative, and regression scenarios.`,
+  },
+  'bug-hunting-test-automation': {
+    applyTo: '**/*.{test,spec}.{ts,tsx,js,cs}',
+    body: `Follow \`.agents/skills/bug-hunting-test-automation/SKILL.md\`. UI behaviour is browser E2E; assert every expected line; never weaken tests to match broken code.`,
+  },
+  'run-and-gate': {
+    applyTo: 'qa/**',
+    body: `Follow \`.agents/skills/run-and-gate/SKILL.md\`. Use \`node qa/bin/qa.mjs check-scenarios\`, \`judge\`, and CI templates; pass \`--base-results\` when proving new features.`,
+  },
+  'bug-report': {
+    applyTo: 'qa/scenarios/**',
+    body: `Follow \`.agents/skills/bug-report/SKILL.md\`. Use scenario \`status: bug\` and \`bugKey\`; keep the test red on its ticket until the product fix ships.`,
+  },
+};
+
+export function buildInstallPlan(targetRoot) {
+  const target = resolve(targetRoot);
+  const plan = [];
+
+  const copyTree = (from, toRel) => {
+    const to = join(target, toRel);
+    plan.push({ kind: 'copy-tree', from, to, rel: toRel });
+  };
+
+  copyTree(join(packRoot, '.agents'), '.agents');
+
+  for (const name of listSkillDirs()) {
+    const from = join(skillsRoot, name, 'SKILL.md');
+    plan.push({
+      kind: 'file',
+      rel: `.claude/skills/${name}/SKILL.md`,
+      content: readFileSync(from, 'utf8'),
+    });
+  }
+
+  plan.push({ kind: 'file', rel: 'CLAUDE.md', content: CLAUDE_MD });
+  plan.push({ kind: 'file', rel: 'AGENTS.md', content: CODEX_AGENTS_BLOCK });
+
+  plan.push({ kind: 'file', rel: '.cursor/rules/qa-core.mdc', content: cursorCoreRule() });
+  for (const name of listSkillDirs()) {
+    plan.push({
+      kind: 'file',
+      rel: `.cursor/rules/qa-${name}.mdc`,
+      content: cursorTaskRule(name, CURSOR_GLOBS[name] ?? 'qa/**'),
+    });
+  }
+
+  plan.push({ kind: 'file', rel: '.github/copilot-instructions.md', content: COPILOT_MAIN });
+  for (const [name, spec] of Object.entries(COPILOT_INSTRUCTIONS)) {
+    const front = `---\napplyTo: "${spec.applyTo}"\n---\n`;
+    plan.push({
+      kind: 'file',
+      rel: `.github/instructions/qa-${name}.instructions.md`,
+      content: `${front}${spec.body}\n`,
+    });
+  }
+
+  return plan;
+}
+
+function copyDir(from, to) {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const src = join(from, entry.name);
+    const dest = join(to, entry.name);
+    if (entry.isDirectory()) copyDir(src, dest);
+    else cpSync(src, dest);
+  }
+}
+
+function writePlanEntry(target, entry) {
+  const dest = join(target, entry.rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  if (entry.kind === 'copy-tree') copyDir(entry.from, dest);
+  else writeFileSync(dest, entry.content);
+}
+
+export function installAiPack(targetRoot) {
+  const target = resolve(targetRoot);
+  const plan = buildInstallPlan(target);
+  for (const entry of plan) writePlanEntry(target, entry);
+  return plan.map(entry => entry.rel ?? entry.toRel).filter(Boolean);
+}
+
+export function checkAiPack(targetRoot) {
+  const target = resolve(targetRoot);
+  const drift = [];
+  for (const entry of buildInstallPlan(target)) {
+    const rel = entry.rel;
+    const dest = join(target, rel);
+    if (entry.kind === 'copy-tree') {
+      if (!existsSync(dest)) {
+        drift.push({ rel, reason: 'missing directory' });
+        continue;
+      }
+      const expected = collectHashes(entry.from);
+      const actual = collectHashes(dest);
+      for (const [path, hash] of expected) {
+        if (actual.get(path) !== hash) drift.push({ rel: join(rel, path), reason: 'content drift' });
+      }
+      for (const path of actual.keys()) {
+        if (!expected.has(path)) drift.push({ rel: join(rel, path), reason: 'extra file' });
+      }
+      continue;
+    }
+    if (!existsSync(dest)) {
+      drift.push({ rel, reason: 'missing file' });
+      continue;
+    }
+    if (sha(readFileSync(dest, 'utf8')) !== sha(entry.content)) drift.push({ rel, reason: 'content drift' });
+  }
+  return drift;
+}
+
+function collectHashes(root, prefix = '') {
+  const out = new Map();
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const abs = join(root, entry.name);
+    if (entry.isDirectory()) {
+      for (const [k, v] of collectHashes(abs, rel)) out.set(k, v);
+    } else if (entry.isFile()) {
+      out.set(rel, sha(readFileSync(abs, 'utf8')));
+    }
+  }
+  return out;
+}
+
+export function packManifestDigest(targetRoot) {
+  const drift = checkAiPack(targetRoot);
+  return { ok: drift.length === 0, drift, skills: listSkillDirs() };
+}

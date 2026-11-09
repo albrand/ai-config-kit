@@ -1,5 +1,11 @@
 # Gate verdicts and blocking rules
 
+## Behaviour-first gate (always on)
+
+- `check-scenarios` rejects designs drafted from implementation paths, vague `expected` lines, mocks that encode the answer, missing `mockPolicy` when steps use mocks, missing positive/negative/regression coverage per criterion, and steps or expected that cite code.
+- `judge` accepts optional `--base-results <run-v1.json>`; any **new** scenario that **passed** on the merge base is `BLOCKED` with reason `passes without the change`.
+- Scenarios with `status: bug` and a linked `bugKey` stay red as `BUG`; they block only PRs whose plan links the same work item.
+
 | Condition | Verdict | Blocking | Required explanation/evidence |
 |---|---|---:|---|
 | Automated scenario compiled, discovered, executed and passed; ID matches plan | VERIFIED | no | Runner result ID, outcome and execution record |
@@ -12,6 +18,8 @@
 | Valid reviewed awaiting exception | NOT_APPLICABLE | no | Owner, reason and revisit date |
 | Manual/awaiting record missing required fields or approval | BLOCKED | yes | Missing fields/approval |
 | Draft scenario with explicit human approval pending | DRAFT_PASSED | no merge approval implied | Draft marker and reviewer state |
+| Known product bug on the scenario work item (status `bug`) | BUG | yes on that work item's PR only | `bugKey`, executed failure evidence |
+| New scenario passed on merge-base run | BLOCKED | yes | `passes without the change` |
 | Executed browser scenario lacks screenshot attachment | BLOCKED | yes | Screenshot missing |
 | Artifact token missing, upload failed, URL absent or receipt unconfirmed | BLOCKED | yes | Attachment failure reason |
 | Board report/link post has no positive API receipt | BLOCKED | yes | Report not posted |
