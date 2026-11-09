@@ -24,17 +24,17 @@ export function validateSourceAssertions(source, scenario) {
   if (VACUOUS.test(code)) return { ok: false, reason: 'automation uses vacuous assertion (truthy/true/defined-only)' };
   if (mockEncodesAnswer(source)) return { ok: false, reason: 'automation mock encodes the answer instead of letting app logic decide' };
   const haystack = assertionLiterals(source);
-  const missing = expectedLines(scenario.expected).filter(line => {
-    const needle = line.length > 48 ? line.slice(0, 48) : line;
-    return !haystack.includes(needle);
-  });
-  if (missing.length) return { ok: false, reason: `unasserted expected line(s): ${missing.join(' | ')}` };
   for (const line of expectedLines(scenario.expected)) {
     const needle = line.length > 48 ? line.slice(0, 48) : line;
     if (source.includes(needle) && !haystack.includes(needle)) {
       return { ok: false, reason: 'expected text appears in source but not in an executable assertion' };
     }
   }
+  const missing = expectedLines(scenario.expected).filter(line => {
+    const needle = line.length > 48 ? line.slice(0, 48) : line;
+    return !haystack.includes(needle);
+  });
+  if (missing.length) return { ok: false, reason: `unasserted expected line(s): ${missing.join(' | ')}` };
   return { ok: true, reason: 'assertions bound to expected lines' };
 }
 
