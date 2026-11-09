@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { parseAllureResults, parseJunitXml, parsePlaywrightJson, parseTrx } from '../lib/results/parsers.mjs';
 import { boardAdapter } from '../lib/boards/index.mjs';
 import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
+import { validateSourcesForScenarios } from '../lib/source-assertions.mjs';
 import { judge, parseArgs } from '../lib/gate.mjs';
 import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/report.mjs';
 import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
@@ -213,6 +214,9 @@ try {
     const sources = args.source ?? [];
     const unsafe = sources.filter(path => !sourceFilePrecheck(path));
     const result = scenarioCheck(head, base, run);
+    const headById = new Map(head.map(s => [s.id, s]));
+    const changedIds = new Set(result.filter(r => r.changed && r.id.startsWith('QAS-')).map(r => r.id));
+    for (const row of validateSourcesForScenarios(sources, headById, changedIds)) result.push({ id: row.id, ok: row.ok, changed: true, reason: row.reason });
     for (const path of unsafe) result.push({ id: path, ok: false, reason: 'source pre-check found disabled/skipped test pattern' });
     console.log(JSON.stringify(result, null, 2));
     if (result.some(row => !row.ok)) process.exitCode = 1;
