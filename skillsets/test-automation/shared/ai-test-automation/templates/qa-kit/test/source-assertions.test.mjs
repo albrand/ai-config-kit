@@ -41,6 +41,49 @@ test('rejects expected text that exists only in comments or unused literals', ()
   assert.match(validateSourceAssertions(commented, scenario).reason, /executable assertion/);
 });
 
+test('rejects bare getByText, getByLabelText, or getByRole without expect matchers', () => {
+  const bare = `test('QAS-WI-1-01', () => {
+    page.getByText('The pending table shows exactly two rows');
+    page.getByLabelText('The empty icon is visible');
+    page.getByRole('img', { name: 'The empty icon is visible' });
+  });`;
+  assert.equal(validateSourceAssertions(bare, scenario).ok, false);
+  assert.match(validateSourceAssertions(bare, scenario).reason, /unasserted|executable assertion/);
+});
+
+test('rejects locator variables that are never passed to expect with a matcher', () => {
+  const assigned = `test('QAS-WI-1-01', () => {
+    const row = page.getByText('The pending table shows exactly two rows');
+    const icon = page.getByText('The empty icon is visible');
+  });`;
+  assert.equal(validateSourceAssertions(assigned, scenario).ok, false);
+  assert.match(validateSourceAssertions(assigned, scenario).reason, /locator stored|unasserted|executable assertion/);
+});
+
+test('accepts expect(locator).matcher and variable locators asserted later', () => {
+  const direct = `test('QAS-WI-1-01', async () => {
+    await expect(page.getByText('The pending table shows exactly two rows')).toBeVisible();
+    await expect(page.getByText('The empty icon is visible')).toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(direct, scenario).ok, true);
+  const viaVar = `test('QAS-WI-1-01', async () => {
+    const row = page.getByText('The pending table shows exactly two rows');
+    const icon = page.getByText('The empty icon is visible');
+    await expect(row).toBeVisible();
+    await expect(icon).not.toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(viaVar, scenario).ok, true);
+});
+
+test('rejects expect() with no matcher chain', () => {
+  const naked = `test('QAS-WI-1-01', () => {
+    expect(page.getByText('The pending table shows exactly two rows'));
+    expect(page.getByText('The empty icon is visible')).toBeVisible();
+  });`;
+  assert.equal(validateSourceAssertions(naked, scenario).ok, false);
+  assert.match(validateSourceAssertions(naked, scenario).reason, /without an assertion matcher/);
+});
+
 test('check-scenarios source pass flags changed id missing bindings', () => {
   const dir = mkdtempSync(join(tmpdir(), 'src-assert-'));
   try {

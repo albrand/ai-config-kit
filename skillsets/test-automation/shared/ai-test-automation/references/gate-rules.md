@@ -2,7 +2,7 @@
 
 ## Behaviour-first gate (always on)
 
-- `check-scenarios` rejects designs drafted from implementation paths, vague `expected` lines, mocks that encode the answer, missing `mockPolicy` when steps use mocks, missing positive/negative/regression coverage per criterion, steps or expected that cite code, vacuous automation (`toBeTruthy`, `expect(true)`), mocks that pre-filter in source, and `--source` files that omit an `expected` line from executable assertions.
+- `check-scenarios` rejects designs drafted from implementation paths, vague `expected` lines, mocks that encode the answer, missing `mockPolicy` when steps use mocks, missing positive/negative/regression coverage per criterion, steps or expected that cite code, vacuous automation (`toBeTruthy`, `expect(true)`), mocks that pre-filter in source, and `--source` files that omit an `expected` line from executable assertions. A line counts only inside `expect(…).matcher` (or runner `Assert.*` / `assert`); bare `getBy*` queries and locators assigned to variables never count unless that variable is later passed to `expect` with a matcher (including `.not.toBeVisible` / `toHaveCount(0)`).
 - `judge` accepts optional `--base-results <run-v1.json>`; any **new** scenario that **passed** on the merge base is `BLOCKED` with reason `passes without the change`.
 - Scenarios with `status: bug` and a linked `bugKey` stay red as `BUG`; they block only PRs whose plan links the same work item.
 
