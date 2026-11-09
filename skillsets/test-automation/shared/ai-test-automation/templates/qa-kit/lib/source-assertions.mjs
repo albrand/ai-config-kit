@@ -4,16 +4,37 @@ import { tokenize } from './scenario-check.mjs';
 
 const VACUOUS = /\b(?:expect\s*\(\s*true\s*\)|toBeTruthy\s*\(|assert\.ok\s*\(\s*true\s*\)|expect\.[\w$]+\s*\)\s*\.toBeTruthy|\.toBeDefined\s*\(\s*\))/;
 
+function assertionLiterals(source) {
+  const chunks = [];
+  const patterns = [
+    /expect\s*\([^;]+(?:toHaveText|toContain|toEqual|toMatch|toBeVisible|toBe)\s*\(\s*['"]([^'"]+)['"]/g,
+    /\.(?:toHaveText|toContain|toEqual|toMatch)\s*\(\s*['"]([^'"]+)['"]/g,
+    /getBy(?:Text|LabelText|Role)\s*\(\s*['"]([^'"]+)['"]/g,
+    /assert\.(?:strictEqual|equal)\s*\([^,]+,\s*['"]([^'"]+)['"]/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) chunks.push(match[1]);
+  }
+  return chunks.join('\n');
+}
+
 export function validateSourceAssertions(source, scenario) {
   if (!scenario || scenario.kind !== 'automated') return { ok: true, reason: 'n/a' };
   const code = tokenize(source);
   if (VACUOUS.test(code)) return { ok: false, reason: 'automation uses vacuous assertion (truthy/true/defined-only)' };
   if (mockEncodesAnswer(source)) return { ok: false, reason: 'automation mock encodes the answer instead of letting app logic decide' };
+  const haystack = assertionLiterals(source);
   const missing = expectedLines(scenario.expected).filter(line => {
     const needle = line.length > 48 ? line.slice(0, 48) : line;
-    return !source.includes(needle);
+    return !haystack.includes(needle);
   });
   if (missing.length) return { ok: false, reason: `unasserted expected line(s): ${missing.join(' | ')}` };
+  for (const line of expectedLines(scenario.expected)) {
+    const needle = line.length > 48 ? line.slice(0, 48) : line;
+    if (source.includes(needle) && !haystack.includes(needle)) {
+      return { ok: false, reason: 'expected text appears in source but not in an executable assertion' };
+    }
+  }
   return { ok: true, reason: 'assertions bound to expected lines' };
 }
 

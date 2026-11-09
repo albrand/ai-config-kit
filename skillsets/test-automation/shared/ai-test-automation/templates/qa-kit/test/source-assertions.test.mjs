@@ -35,6 +35,12 @@ test('requires each expected line string to appear in bound automation', () => {
   assert.equal(validateSourceAssertions(fixed, scenario).ok, true);
 });
 
+test('rejects expected text that exists only in comments or unused literals', () => {
+  const commented = `// The pending table shows exactly two rows
+    test('QAS-WI-1-01', () => { expect(screen.getByRole('table')).toBeVisible(); });`;
+  assert.match(validateSourceAssertions(commented, scenario).reason, /executable assertion/);
+});
+
 test('check-scenarios source pass flags changed id missing bindings', () => {
   const dir = mkdtempSync(join(tmpdir(), 'src-assert-'));
   try {
