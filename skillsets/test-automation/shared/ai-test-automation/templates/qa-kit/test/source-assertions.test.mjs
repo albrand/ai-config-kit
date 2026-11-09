@@ -84,6 +84,14 @@ test('rejects expect() with no matcher chain', () => {
   assert.match(validateSourceAssertions(naked, scenario).reason, /without an assertion matcher/);
 });
 
+test('rejects Python docstring with escaped triple-quote spoof', () => {
+  const pySpoof = `def test_qas():
+    """\\""" assert "The pending table shows exactly two rows" in page
+    assert "The empty icon is visible" in page
+    """`;
+  assert.equal(validateSourceAssertions(pySpoof, scenario).ok, false);
+});
+
 test('rejects assertion text in comments across JS, C#, and Python', () => {
   const jsBlock = `test('QAS-WI-1-01', () => {
     /* expect(page.getByText('The pending table shows exactly two rows')).toBeVisible();

@@ -17,7 +17,7 @@
 | Branch copies of acceptance tests can be edited to spoof authority. | Overlay QA-owned scenarios/tests before running, log ignored copied paths, and assert the installed digest equals QA source. |
 | Regression membership comes from base, not head or current ticket association. | Remove/relabel a base scenario and unlink its ticket in a probe; assert it remains in `scenarioIds`, `regressionIds`, the verdict and report, while it is absent from board write targets unless its item is independently associated. |
 | GitHub issue numbers collide across repositories. | Return a closing reference to `otherrepo#12` while `config.repo` is `acme/api`; assert it is listed under `crossRepo` and no GET/POST is sent to `/repos/acme/api/issues/12`. |
-| Static “test exists” checks are spoofable by comments, strings, dead code, `#if false` and `Skip=`. | Run tokenizer corpus plus compile, discovery and actual execution checks; each spoof probe must fail as a test definition. |
+| Static “test exists” checks are spoofable by comments, strings, dead code, `#if false` and `Skip=`. | `lang-tokenize.mjs` blanks comment/string bodies per language (escape-aware); `tokenizer-spoof.test.mjs` is the corpus. Run compile, discovery and execution checks too. |
 | Skipped tests are not executed. | Feed JUnit skipped, TRX NotExecuted, Playwright skipped and Allure skipped fixtures; all must remain non-VERIFIED. |
 | Manual/awaiting exceptions must be judged the same by storage and gate. | Send identical valid/invalid fixtures through both consumers and compare verdict plus reason. |
 | Report-only changes must keep verdicts byte-identical. | Run reference-judge golden fixture before and after report changes and compare canonical verdict bytes. |

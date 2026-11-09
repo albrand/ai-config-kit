@@ -1,40 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { criteriaCoverageErrors, validateScenarioDesign } from './behavior-rules.mjs';
+import { tokenize } from './lang-tokenize.mjs';
 
-// Small lexical scanner: replace comments and literal contents with spaces while
-// retaining newlines, so strings/comments cannot impersonate executable tests.
-export function tokenize(source) {
-  let out='', i=0, state='code', rawQuotes=0, pyTriple=0;
-  while(i<source.length){const c=source[i], n=source[i+1], p=source[i+2];
-    if(state==='code'){
-      if((c==="'"||c==='"')&&n===c&&p===c){out+='   ';i+=3;state=c==='"'?'pytriple-d':'pytriple-s';pyTriple=3;continue;}
-      if(c==='#'&&(!n||n===' '||n==='\t'||n==='\r'||n==='\n'||n==='#'||n==='!')){out+=' ';i++;state='line';continue;}
-      if(c==='/'&&n==='/'){out+='  ';i+=2;state='line';continue;}
-      if(c==='/'&&n==='*'){out+='  ';i+=2;state='block';continue;}
-      if(c==='"'||c==="'"||c==='`'){
-        const verbatim=c==='"'&&(source[i-1]==='@'||(source[i-1]==='$'&&source[i-2]==='@'));
-        let count=1;if(c==='"'){while(source[i+count]==='"')count++;}
-        out+=' '.repeat(count);i+=count;
-        if(c==='"'&&count>=3){state='raw';rawQuotes=count;}else if(verbatim){state='verbatim';}else state=c==='"'?'double':c==="'"?'single':'template';
-        continue;
-      }
-      out+=c;i++;continue;
-    }
-    if(state==='line'){if(c==='\n'){out+='\n';state='code';}else out+=' ';i++;continue;}
-    if(state==='block'){if(c==='*'&&n==='/'){out+='  ';i+=2;state='code';}else{out+=c==='\n'?'\n':' ';i++;}continue;}
-    if(state==='pytriple-d'||state==='pytriple-s'){
-      const q=state==='pytriple-d'?'"':"'";
-      let count=0;while(source[i+count]===q)count++;
-      if(count>=pyTriple){out+=' '.repeat(count);i+=count;state='code';continue;}
-      out+=c==='\n'?'\n':' ';i++;continue;
-    }
-    if(state==='raw'){let count=0;while(source[i+count]==='"')count++;if(count>=rawQuotes){out+=' '.repeat(count);i+=count;state='code';}else{out+=c==='\n'?'\n':' ';i++;}continue;}
-    if(state==='verbatim'){if(c==='"'&&n==='"'){out+='  ';i+=2;continue;}if(c==='"'){out+=' ';i++;state='code';continue;}out+=c==='\n'?'\n':' ';i++;continue;}
-    const end=state==='double'?'"':state==='single'?"'":'`';
-    if(c==='\\'){out+='  ';i+=2;continue;} if(c===end){out+=' ';i++;state='code';continue;} out+=c==='\n'?'\n':' ';i++;
-  }
-  return out;
-}
+export { tokenize };
 function stable(x){if(Array.isArray(x))return x.map(stable);if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).sort().filter(k=>k!=='evidence').map(k=>[k,stable(x[k])]));return x;}
 export function validateScenario(s,run){
  if(!s.id||!/^QAS-[\w-]+-\d{2,}$/.test(s.id))return {ok:false,reason:'invalid stable scenario id'};
