@@ -22,10 +22,20 @@ const CSS_ASSERTION_RE = [
 
 const TO_HAVE_STYLE_RE = /toHaveStyle\s*\(\s*\{([^}]+)\}/g;
 
-const ICON_ASSERTION_MATCHERS = new Set([
-  'toBeVisible', 'toBeHidden', 'toHaveAttribute', 'toHaveCount', 'toHaveClass',
-  'to_be_visible', 'to_be_hidden', 'to_have_attribute', 'to_have_count', 'to_have_class',
+const ICON_POSITIVE_MATCHERS = new Set([
+  'toBeVisible', 'toHaveAttribute', 'toHaveCount', 'toHaveClass',
+  'to_be_visible', 'to_have_attribute', 'to_have_count', 'to_have_class',
   'ToBeVisibleAsync', 'ToHaveAttributeAsync', 'ToHaveCountAsync',
+]);
+
+const CSS_POSITIVE_MATCHERS = new Set([
+  'toHaveCSS', 'toHaveStyle',
+  'to_have_css', 'to_have_style',
+  'ToHaveCSSAsync', 'ToHaveStyleAsync',
+]);
+
+const IDENTITY_ATTRS = new Set([
+  'aria-label', 'data-testid', 'data-icon', 'src', 'href', 'xlink:href', 'class', 'alt', 'title',
 ]);
 
 const ICON_LOCATOR_HEAD = [
@@ -51,12 +61,45 @@ function findCloseParen(code, openIndex) {
   return -1;
 }
 
-function assertionMatcherRightAfter(closeParenIndex, code) {
+function isNegatedAfterExpect(closeParenIndex, code) {
   const after = code.slice(closeParenIndex + 1);
-  const neg = after.match(/^\s*\.not\s*\.([a-zA-Z][\w$]*)\s*\(/);
-  if (neg) return neg[1];
+  if (/^\s*\.not\s*\./.test(after)) return true;
+  if (/^\s*\.Not\s*\./.test(after)) return true;
+  if (/^\s*\.not_/.test(after)) return true;
+  return false;
+}
+
+function assertionMatcherRightAfter(closeParenIndex, code) {
+  if (isNegatedAfterExpect(closeParenIndex, code)) return null;
+  const after = code.slice(closeParenIndex + 1);
   const head = after.match(/^\s*\.([a-zA-Z][\w$]*)\s*\(/);
   return head ? head[1] : null;
+}
+
+function statementEnd(source, fromIndex) {
+  for (let i = fromIndex; i < source.length; i++) {
+    const c = source[i];
+    if (c === ';' || c === '\n') return i;
+  }
+  return source.length;
+}
+
+function forEachPositiveExpect(source, code, onMatch) {
+  const expectHeads = [/(?:await\s+)?expect\s*\(/g, /(?:await\s+)?Expect\s*\(/g];
+  for (const expectRe of expectHeads) {
+    expectRe.lastIndex = 0;
+    let m;
+    while ((m = expectRe.exec(code))) {
+      const expectOpen = m.index + m[0].length - 1;
+      if (!isExecutableSpan(code, m.index, expectOpen + 1)) continue;
+      const argClose = findCloseParen(code, expectOpen);
+      if (argClose < 0) continue;
+      if (isNegatedAfterExpect(argClose, code)) continue;
+      const matcher = assertionMatcherRightAfter(argClose, code);
+      if (!matcher) continue;
+      onMatch({ expectOpen, argClose, matcher });
+    }
+  }
 }
 
 function regexArgHasInsensitiveFlag(srcTail) {
@@ -234,17 +277,30 @@ function parseToHaveStylePairs(source, code, out) {
   }
 }
 
-/** CSS property/value pairs from executable assertion calls only. */
+/** CSS property/value pairs from positive executable expect matchers only. */
 export function collectExecutableCssAssertions(source, code) {
   const out = [];
-  for (const re of CSS_ASSERTION_RE) {
-    re.lastIndex = 0;
-    for (const m of source.matchAll(re)) {
-      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-      out.push({ prop: m[1], value: m[2] });
+  forEachPositiveExpect(source, code, ({ argClose, matcher }) => {
+    if (!CSS_POSITIVE_MATCHERS.has(matcher)) return;
+    const afterCode = code.slice(argClose + 1);
+    const open = argClose + 1 + afterCode.indexOf('(');
+    const close = findCloseParen(code, open);
+    if (close < 0 || !isExecutableSpan(code, open, close + 1)) return;
+    const args = source.slice(open + 1, close);
+    if (/CSS|css/i.test(matcher)) {
+      const m = args.match(/^\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/);
+      if (m) out.push({ prop: m[1], value: m[2] });
     }
-  }
-  parseToHaveStylePairs(source, code, out);
+    if (/Style|style/i.test(matcher)) {
+      for (const pair of args.matchAll(/(fontFamily|fontSize|fontWeight|color|backgroundColor|textTransform)\s*:\s*['"]([^'"]+)['"]/g)) {
+        const propMap = {
+          fontFamily: 'font-family', fontSize: 'font-size', fontWeight: 'font-weight',
+          color: 'color', backgroundColor: 'background-color', textTransform: 'text-transform',
+        };
+        out.push({ prop: propMap[pair[1]] ?? pair[1], value: pair[2] });
+      }
+    }
+  });
   return out;
 }
 
@@ -253,33 +309,43 @@ function styleAssertionCoversKind(source, code, kind, needle) {
   return assertions.some(({ prop, value }) => cssPropMatchesKind(prop, kind) && valuesMatch(value, needle, kind));
 }
 
+function hasNegatedEqualityOnVisual(code, source) {
+  if (/\.not\.toHaveCSS/.test(code) || /\.not_to_have_css/.test(code)) return true;
+  if (/\.Not\.ToHaveCSSAsync/.test(code)) return true;
+  if (/Assert\.NotEqual/.test(code)) return true;
+  if (/!=\s*['"]/.test(code) && /toHaveCSS|to_have_css|ToHaveCSSAsync/.test(code)) return true;
+  return false;
+}
+
 function letterCaseAssertionOk(source, code, line) {
+  if (hasNegatedEqualityOnVisual(code, source)) return false;
   const needle = visualValueNeedle(line, 'letter-case');
   const assertions = collectExecutableCssAssertions(source, code);
   if (assertions.some(a => a.prop === 'text-transform' && valuesMatch(a.value, needle, 'letter-case'))) {
     return true;
   }
-  for (const m of source.matchAll(/to_have_css\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/gi)) {
-    if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-    if (m[1].toLowerCase() === 'text-transform' && valuesMatch(m[2], needle, 'letter-case')) return true;
-  }
-  if (/ToHaveCSSAsync\s*\([^)]*text-transform/i.test(source)) {
-    for (const m of source.matchAll(/ToHaveCSSAsync\s*\(\s*"text-transform"\s*,\s*"([^"]+)"/g)) {
-      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-      if (valuesMatch(m[1], needle, 'letter-case')) return true;
-    }
-  }
   for (const m of source.matchAll(/toHaveText\s*\([^)]*\)/g)) {
     if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-    const callSrc = source.slice(m.index, m.index + m[0].length);
-    if (/useInnerText\s*:\s*true/.test(callSrc)) return true;
+    const callSrc = m[0];
+    if (/useInnerText\s*:\s*true/.test(callSrc)) {
+      const expectIdx = code.lastIndexOf('expect', m.index);
+      if (expectIdx >= 0) {
+        const expOpen = code.indexOf('(', expectIdx);
+        const expClose = expOpen >= 0 ? findCloseParen(code, expOpen) : -1;
+        if (expClose >= 0 && isNegatedAfterExpect(expClose, code)) continue;
+      }
+      return true;
+    }
   }
   for (const m of source.matchAll(/\.innerText\s*\(\s*\)/g)) {
     if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-    const tail = source.slice(m.index, m.index + 160);
-    if (!/(?:\.toBe\s*\(|===|==|assert\.strictEqual)/.test(tail)) continue;
-  if (/uppercase/i.test(line) && /['"][A-Z][^'"]{2,}['"]/.test(tail)) return true;
-    if (/lowercase/i.test(line) && /['"][a-z][^'"]{2,}['"]/.test(tail)) return true;
+    const end = statementEnd(source, m.index);
+    const stmt = source.slice(m.index, end);
+    const stmtCode = code.slice(m.index, end);
+    if (/\.not\s*\.|\.Not\.|not_to_/.test(stmtCode)) continue;
+    if (!/(?:\.toBe\s*\(|===|==|assert\.strictEqual)/.test(stmtCode)) continue;
+    if (/uppercase/i.test(line) && /['"][A-Z][^'"]{2,}['"]/.test(stmt)) return true;
+    if (/lowercase/i.test(line) && /['"][a-z][^'"]{2,}['"]/.test(stmt)) return true;
   }
   return false;
 }
@@ -320,52 +386,69 @@ function iconLocatorsInRange(source, code, rangeStart, rangeEnd) {
   return found;
 }
 
-function matcherCallLiterals(source, code, argClose) {
+function classTokens(value) {
+  return value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function identityAttrValueMatches(attr, asserted, needle) {
+  if (!IDENTITY_ATTRS.has(attr.toLowerCase())) return false;
+  if (attr.toLowerCase() === 'class') {
+    return classTokens(asserted).some(t => strictIdentityMatch(t, needle));
+  }
+  return strictIdentityMatch(asserted, needle);
+}
+
+function matcherCallLiterals(source, code, argClose, matcher) {
   const afterCode = code.slice(argClose + 1);
-  const afterSrc = source.slice(argClose + 1);
-  const head = afterCode.match(/^\s*(?:\.not\s*)?\.([a-zA-Z][\w$]*)\s*\(/);
-  if (!head || !ICON_ASSERTION_MATCHERS.has(head[1])) return [];
   const open = argClose + 1 + afterCode.indexOf('(');
   const close = findCloseParen(code, open);
   if (close < 0 || !isExecutableSpan(code, open, close + 1)) return [];
-  const matcher = head[1];
   const args = source.slice(open + 1, close);
-  if (/Attribute/i.test(matcher)) {
+  if (/Attribute|attribute/i.test(matcher)) {
     const m = args.match(/^\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/);
-    if (m && /^(aria-label|src|href|alt|data-testid)$/i.test(m[1])) return [m[2]];
+    if (m && IDENTITY_ATTRS.has(m[1].toLowerCase())) return [m[2]];
+  }
+  if (/Count|count/.test(matcher)) {
+    const n = args.match(/^\s*(\d+)/);
+    if (n && n[1] === '1') return ['__count_one__'];
+  }
+  if (/Class|class/.test(matcher) && !/Attribute/i.test(matcher)) {
+    const m = args.match(/^\s*['"]([^'"]+)['"]/);
+    if (m) return classTokens(m[1]);
   }
   return [];
 }
 
 function collectExecutableIconBindings(source, code) {
   const values = [];
-  const expectHeads = [
-    /(?:await\s+)?expect\s*\(/g,
-    /(?:await\s+)?Expect\s*\(/g,
-  ];
-  for (const expectRe of expectHeads) {
-    expectRe.lastIndex = 0;
-    let m;
-    while ((m = expectRe.exec(code))) {
-      const expectOpen = m.index + m[0].length - 1;
-      if (!isExecutableSpan(code, m.index, expectOpen + 1)) continue;
-      const argClose = findCloseParen(code, expectOpen);
-      if (argClose < 0) continue;
-      const matcher = assertionMatcherRightAfter(argClose, code);
-      if (!matcher || !ICON_ASSERTION_MATCHERS.has(matcher)) continue;
-      for (const arg of iconLocatorsInRange(source, code, expectOpen + 1, argClose)) {
-        values.push(...iconIdentityLiteralsInArg(arg));
-      }
-      values.push(...matcherCallLiterals(source, code, argClose));
+  forEachPositiveExpect(source, code, ({ expectOpen, argClose, matcher }) => {
+    if (!ICON_POSITIVE_MATCHERS.has(matcher)) return;
+    if (/Count|count/.test(matcher)) {
+      const afterCode = code.slice(argClose + 1);
+      const open = argClose + 1 + afterCode.indexOf('(');
+      const close = findCloseParen(code, open);
+      const args = source.slice(open + 1, close);
+      const n = args.match(/^\s*(\d+)/);
+      if (!n || n[1] !== '1') return;
     }
-  }
+    for (const arg of iconLocatorsInRange(source, code, expectOpen + 1, argClose)) {
+      values.push(...iconIdentityLiteralsInArg(arg));
+    }
+    const extras = matcherCallLiterals(source, code, argClose, matcher);
+    for (const v of extras) {
+      if (v !== '__count_one__') values.push(v);
+    }
+    if (/Visible|visible/.test(matcher) && values.length) {
+      values.push('__visible_asserted__');
+    }
+  });
   return values;
 }
 
 function iconAssertionOk(source, code, line) {
   const needle = visualValueNeedle(line, 'icon');
   if (!needle) return false;
-  const bindings = collectExecutableIconBindings(source, code);
+  const bindings = collectExecutableIconBindings(source, code).filter(v => v !== '__visible_asserted__');
   return bindings.some(v => strictIdentityMatch(v, needle));
 }
 
