@@ -9,7 +9,10 @@ const scenario = { kind: 'automated', expected: `${LINE_A}\n${LINE_B}` };
 
 const SPOOFS = [
   { lang: 'js', form: 'line-comment', body: `// expect(page.getByText('${LINE_A}')).toBeVisible();` },
+  { lang: 'js', form: 'line-comment-no-space', body: `//expect(page.getByText('${LINE_A}')).toBeVisible();` },
+  { lang: 'js', form: 'line-suffix-comment', body: `const x = 1;//expect(page.getByText('${LINE_A}')).toBeVisible();` },
   { lang: 'js', form: 'block-comment', body: `/* expect(page.getByText('${LINE_A}')).toBeVisible(); */` },
+  { lang: 'js', form: 'block-comment-no-space', body: `/*expect(page.getByText('${LINE_A}')).toBeVisible();*/` },
   { lang: 'js', form: 'single-quoted', body: `'expect(page.getByText("${LINE_A}")).toBeVisible()';` },
   { lang: 'js', form: 'double-quoted', body: `"expect(page.getByText('${LINE_A}')).toBeVisible()";` },
   { lang: 'js', form: 'double-escaped-quote', body: `"expect(page.getByText(\\"${LINE_A}\\")).toBeVisible()";` },
@@ -29,7 +32,9 @@ const SPOOFS = [
     body: `const re = /expect\\(page\\.getByText\\('${LINE_A}'\\)\\)\\.toBeVisible\\(\\)/;`,
   },
   { lang: 'csharp', form: 'line-comment', body: `// Assert.Equal("${LINE_A}", actual);` },
+  { lang: 'csharp', form: 'line-comment-no-space', body: `//Assert.Equal("${LINE_A}", actual);` },
   { lang: 'csharp', form: 'block-comment', body: `/* Assert.Equal("${LINE_A}", actual); */` },
+  { lang: 'csharp', form: 'block-comment-no-space', body: `/*Assert.Equal("${LINE_A}", actual);*/` },
   { lang: 'csharp', form: 'verbatim', body: `@"Assert.Equal(""${LINE_A}"", actual)";` },
   {
     lang: 'csharp',
@@ -47,6 +52,8 @@ const SPOOFS = [
     body: `"""spoof Assert.Equal("${LINE_A}", actual)""" ;`,
   },
   { lang: 'python', form: 'hash-comment', body: `# assert "${LINE_A}" in page` },
+  { lang: 'python', form: 'hash-comment-no-space', body: `#expect(page.getByText('${LINE_A}')).toBeVisible()` },
+  { lang: 'python', form: 'hash-suffix-comment', body: `x = 1 #assert "${LINE_A}" in page` },
   { lang: 'python', form: 'single-quoted', body: `'assert "${LINE_A}" in page'` },
   { lang: 'python', form: 'double-quoted', body: `"assert '${LINE_A}' in page"` },
   { lang: 'python', form: 'double-escaped', body: `"assert \\"${LINE_A}\\" in page"` },

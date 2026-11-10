@@ -84,6 +84,13 @@ test('rejects expect() with no matcher chain', () => {
   assert.match(validateSourceAssertions(naked, scenario).reason, /without an assertion matcher/);
 });
 
+test('rejects Python hash comment without space before assertion text', () => {
+  const py = `def test_qas():
+    #expect(page.getByText('The pending table shows exactly two rows')).toBeVisible()
+    expect(page.getByText('The empty icon is visible')).toBeVisible();`;
+  assert.equal(validateSourceAssertions(py, scenario).ok, false);
+});
+
 test('rejects Python docstring with escaped triple-quote spoof', () => {
   const pySpoof = `def test_qas():
     """\\""" assert "The pending table shows exactly two rows" in page

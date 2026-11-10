@@ -13,9 +13,19 @@ function csharpAtOrDollarBefore(source, i) {
   return { at: seg.includes('@'), dollar: seg.includes('$') };
 }
 
-function isPyHashComment(source, i) {
+function isHashLineComment(source, i) {
+  if (source[i] !== '#') return false;
   const n = source[i + 1];
-  return source[i] === '#' && (!n || /[\s#]/.test(n));
+  if (n && /[a-zA-Z_]/.test(n)) {
+    const word = source.slice(i + 1).match(/^[a-zA-Z_][\w]*/)?.[0] ?? '';
+    if (/^(if|elif|else|endif|region|endregion|pragma|line|warning|error|nullable|define|undef)$/.test(word)) {
+      return false;
+    }
+    let j = i - 1;
+    while (j >= 0 && /\s/.test(source[j])) j--;
+    if (source[j] === '{') return false;
+  }
+  return true;
 }
 
 function skipQuotedContent(source, pos, quote, opts) {
@@ -154,7 +164,7 @@ export function tokenize(source) {
     const c = source[i];
     const n = source[i + 1];
     if (state === 'code') {
-      if (isPyHashComment(source, i)) {
+      if (isHashLineComment(source, i)) {
         out += ' ';
         i++;
         state = 'line';
