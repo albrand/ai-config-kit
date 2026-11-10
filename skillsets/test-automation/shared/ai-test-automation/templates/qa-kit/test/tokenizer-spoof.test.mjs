@@ -99,8 +99,8 @@ const REAL = [
   {
     lang: 'python',
     body: `def test_qas_wi_1_01():
-    assert "${LINE_A}" in page.text
-    assert "${LINE_B}" in page.text`,
+    assert page.text == "${LINE_A}"
+    assert page.text == "${LINE_B}"`,
   },
 ];
 

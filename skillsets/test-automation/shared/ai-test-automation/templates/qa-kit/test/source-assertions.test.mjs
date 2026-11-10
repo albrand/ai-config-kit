@@ -143,8 +143,8 @@ test('accepts real Assert.Equal, Python assert, and JS expect bindings', () => {
   assert.equal(validateSourceAssertions(csharp, scenario).ok, true);
 
   const python = `def test_qas_wi_1_01():
-    assert "The pending table shows exactly two rows" in page.text
-    assert "The empty icon is visible" in page.text`;
+    assert page.text == "The pending table shows exactly two rows"
+    assert page.text == "The empty icon is visible"`;
   assert.equal(validateSourceAssertions(python, scenario).ok, true);
 
   const js = `test('QAS-WI-1-01', () => {

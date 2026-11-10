@@ -4,6 +4,7 @@ import { tokenize } from './scenario-check.mjs';
 import {
   isVisibilityOnlyExpect,
   scenarioLineIdPrefix,
+  visualLineIsBound,
   visualSourceViolations,
 } from './visual-source-check.mjs';
 
@@ -216,7 +217,7 @@ export function validateSourceAssertions(source, scenario) {
   if (mockEncodesAnswer(source)) {
     return { ok: false, reason: `${prefix}automation mock encodes the answer instead of letting app logic decide` };
   }
-  for (const row of visualSourceViolations(source)) {
+  for (const row of visualSourceViolations(source, scenario)) {
     return { ok: false, reason: `${prefix}${row.reason}` };
   }
   if (expectWithoutMatcher(source)) {
@@ -228,6 +229,7 @@ export function validateSourceAssertions(source, scenario) {
   const haystack = assertionLiterals(source);
   const visibilityHaystack = collectExpectLiterals(source, { countVisibilityBinding: true });
   for (const line of expectedLines(scenario.expected)) {
+    if (visualLineIsBound(source, line)) continue;
     const needle = line.length > 48 ? line.slice(0, 48) : line;
     if (source.includes(needle) && !haystack.includes(needle)) {
       if (visibilityHaystack.includes(needle)) {
@@ -240,6 +242,7 @@ export function validateSourceAssertions(source, scenario) {
     }
   }
   const missing = expectedLines(scenario.expected).filter(line => {
+    if (visualLineIsBound(source, line)) return false;
     const needle = line.length > 48 ? line.slice(0, 48) : line;
     return !haystack.includes(needle);
   });
