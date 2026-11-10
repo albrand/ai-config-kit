@@ -5,28 +5,118 @@ import { hasCaseInsensitiveTextMatcher, hasPartialTextMatch, textLocatorMissingE
 import { tokenize } from '../lib/lang-tokenize.mjs';
 
 const LINE_TEXT = 'Submit Order';
-const LINE_COLOUR = 'Primary button colour is #0A5CFF';
-const LINE_FONT = 'Body font family is Inter';
-const LINE_SIZE = 'Heading font size is 24px';
-const LINE_CASE = 'Submit label is shown in uppercase';
 
-const scenarioFull = {
+const VISUAL_PROPS = [
+  {
+    kind: 'colour',
+    line: 'Primary label text colour is #111827',
+    js: `await expect(page.locator('.label')).toHaveCSS('color', '#111827');`,
+    csharp: `await Expect(Page.Locator(".label")).ToHaveCSSAsync("color", "#111827");`,
+    python: `expect(page.locator(".label")).to_have_css("color", "#111827")`,
+  },
+  {
+    kind: 'background-colour',
+    line: 'Primary button background colour is #0A5CFF',
+    js: `await expect(page.locator('[data-testid=primary-cta]')).toHaveCSS('background-color', '#0A5CFF');`,
+    csharp: `await Expect(Page.Locator("[data-testid=primary-cta]")).ToHaveCSSAsync("background-color", "#0A5CFF");`,
+    python: `expect(page.locator("[data-testid=primary-cta]")).to_have_css("background-color", "#0A5CFF")`,
+  },
+  {
+    kind: 'font-family',
+    line: 'Body font family is Inter',
+    js: `await expect(page.locator('.body')).toHaveCSS('font-family', 'Inter');`,
+    csharp: `await Expect(Page.Locator(".body")).ToHaveCSSAsync("font-family", "Inter");`,
+    python: `expect(page.locator(".body")).to_have_css("font-family", "Inter")`,
+  },
+  {
+    kind: 'font-size',
+    line: 'Heading font size is 24px',
+    js: `await expect(page.locator('h1')).toHaveCSS('font-size', '24px');`,
+    csharp: `await Expect(Page.Locator("h1")).ToHaveCSSAsync("font-size", "24px");`,
+    python: `expect(page.locator("h1")).to_have_css("font-size", "24px")`,
+  },
+  {
+    kind: 'font-weight',
+    line: 'Section title font weight is 700',
+    js: `await expect(page.locator('h2.section')).toHaveCSS('font-weight', '700');`,
+    csharp: `await Expect(Page.Locator("h2.section")).ToHaveCSSAsync("font-weight", "700");`,
+    python: `expect(page.locator("h2.section")).to_have_css("font-weight", "700")`,
+  },
+  {
+    kind: 'letter-case',
+    line: 'Submit label is shown in uppercase',
+    js: `await expect(page.locator('[data-testid=submit]')).toHaveCSS('text-transform', 'uppercase');`,
+    csharp: `await Expect(Page.Locator("[data-testid=submit]")).ToHaveCSSAsync("text-transform", "uppercase");`,
+    python: `expect(page.locator("[data-testid=submit]")).to_have_css("text-transform", "uppercase")`,
+  },
+  {
+    kind: 'icon',
+    line: 'Cart icon shows shopping-bag glyph',
+    js: `await expect(page.getByRole('img', { name: 'shopping-bag glyph' })).toBeVisible();`,
+    csharp: `await Expect(Page.GetByRole(AriaRole.Img, new() { Name = "shopping-bag glyph" })).ToBeVisibleAsync();`,
+    python: `expect(page.get_by_role("img", name="shopping-bag glyph")).to_be_visible()`,
+  },
+];
+
+const scenarioAllVisual = {
   id: 'QAS-VIS-01',
   kind: 'automated',
-  expected: [LINE_TEXT, LINE_COLOUR, LINE_FONT, LINE_SIZE, LINE_CASE].join('\n'),
+  expected: [LINE_TEXT, ...VISUAL_PROPS.map(p => p.line)].join('\n'),
 };
 
-const scenarioTextColour = {
+const scenarioTextBg = {
   id: 'QAS-VIS-01',
   kind: 'automated',
-  expected: `${LINE_TEXT}\n${LINE_COLOUR}`,
+  expected: `${LINE_TEXT}\n${VISUAL_PROPS.find(p => p.kind === 'background-colour').line}`,
 };
 
-const JS_BIND = `await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
-    await expect(page.locator('[data-testid=primary-cta]')).toHaveCSS('background-color', '#0A5CFF');
-    await expect(page.locator('.body')).toHaveCSS('font-family', 'Inter');
-    await expect(page.locator('h1')).toHaveCSS('font-size', '24px');
-    await expect(page.locator('[data-testid=submit]')).toHaveCSS('text-transform', 'uppercase');`;
+const scenarioLetterCase = {
+  id: 'QAS-VIS-01',
+  kind: 'automated',
+  expected: `${LINE_TEXT}\n${VISUAL_PROPS.find(p => p.kind === 'letter-case').line}`,
+};
+
+function bindsForLang(lang, omitKind) {
+  return VISUAL_PROPS.filter(p => p.kind !== omitKind).map(p => p[lang]);
+}
+
+function jsBody(omitKind, extraLines = []) {
+  const lines = [
+    `await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');`,
+    ...bindsForLang('js', omitKind),
+    ...extraLines,
+  ];
+  return `test('QAS-VIS-01', async () => {\n    ${lines.join('\n    ')}\n  });`;
+}
+
+function csharpBody(omitKind, extraLines = []) {
+  const lines = [
+    'Assert.Equal("Submit Order", await Page.Locator("h1").InnerTextAsync());',
+    ...bindsForLang('csharp', omitKind),
+    ...extraLines,
+  ];
+  return `[Fact]
+public async Task QAS_VIS_01() {
+  ${lines.join('\n  ')}
+}`;
+}
+
+function pythonBody(omitKind, extraLines = []) {
+  const lines = [
+    `assert page.inner_text("h1") == "${LINE_TEXT}"`,
+    ...bindsForLang('python', omitKind),
+    ...extraLines,
+  ];
+  return `def test_qas_vis_01():\n    ${lines.join('\n    ')}`;
+}
+
+function bodyFor(lang, omitKind, extra = []) {
+  if (lang === 'js') return jsBody(omitKind, extra);
+  if (lang === 'csharp') return csharpBody(omitKind, extra);
+  return pythonBody(omitKind, extra);
+}
+
+const PROP_LANGS = ['js', 'csharp', 'python'];
 
 const REJECTS = [
   { lang: 'js', form: 'visibility-only', body: `test('QAS-VIS-01', async () => {
@@ -44,11 +134,11 @@ const REJECTS = [
       expect(page.innerText().toLowerCase()).toBe('${LINE_TEXT}'.toLowerCase()); });`, match: /case-insensitive/ },
   { lang: 'js', form: 'regexp-i', body: `test('QAS-VIS-01', async () => {
       await expect(page.getByText(/submit order/i)).toHaveText('${LINE_TEXT}'); });`, match: /case-insensitive/ },
-  { lang: 'js', form: 'colour-by-text', body: `test('QAS-VIS-01', async () => {
-      ${JS_BIND.split('\n').slice(0, 1).join('\n')}; });`, match: /visual expected line|unasserted/ },
+  { lang: 'js', form: 'colour-by-text', body: jsBody('background-colour', []), scenario: scenarioAllVisual, match: /missing background-colour/ },
   { lang: 'js', form: 'colour-by-class', body: `test('QAS-VIS-01', async () => {
       await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
-      await expect(page.locator('[data-testid=primary-cta]')).toHaveClass('btn-primary'); });`, match: /visual expected line|class-name/ },
+      await expect(page.locator('[data-testid=primary-cta]')).toHaveClass('btn-primary'); });`,
+    scenario: scenarioTextBg, match: /missing background-colour|class-name/ },
   { lang: 'csharp', form: 'Assert.Contains', body: `[Fact]
     public void QAS_VIS_01() { Assert.Contains("${LINE_TEXT}", Page.Locator("h1").InnerText); }`, match: /partial|substring/ },
   { lang: 'csharp', form: 'OrdinalIgnoreCase', body: `[Fact]
@@ -84,22 +174,42 @@ const REJECTS = [
       test('QAS-VIS-01', async () => { await expect(page.getByRole('table')).toBeVisible(); });`, match: /unasserted|visibility|executable/ },
   { lang: 'js', form: 'string-spoof-exact', body: `const plan = "getByText('${LINE_TEXT}', { exact: true })";
       test('QAS-VIS-01', async () => { await expect(page.getByRole('table')).toBeVisible(); });`, match: /unasserted|executable/ },
-];
-
-const ACCEPTS = [
-  {
-    lang: 'js',
-    body: `test('QAS-VIS-01', async () => { ${JS_BIND} });`,
-    scenario: scenarioFull,
-  },
-  {
-    lang: 'js',
+  { lang: 'js', form: 'font-size-value-in-comment', scenario: scenarioAllVisual,
+    body: jsBody('font-size', ['// heading font-size 24px']),
+    match: /missing font-size assertion/ },
+  { lang: 'js', form: 'font-size-wrong-property', scenario: scenarioAllVisual,
+    body: jsBody('font-size', [`await expect(page.locator('h1')).toHaveCSS('color', '#111827');`]),
+    match: /missing font-size assertion/ },
+  { lang: 'js', form: 'font-size-wrong-value', scenario: scenarioAllVisual,
+    body: jsBody('font-size', [`await expect(page.locator('h1')).toHaveCSS('font-size', '16px');`]),
+    match: /missing font-size assertion/ },
+  { lang: 'js', form: 'letter-case-dom-toHaveText', scenario: scenarioLetterCase,
     body: `test('QAS-VIS-01', async () => {
       await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
-      await expect(page.locator('[data-testid=primary-cta]')).toHaveCSS('background-color', '#0A5CFF');
+      await expect(page.locator('[data-testid=submit]')).toHaveText('SUBMIT ORDER');
     });`,
-    scenario: scenarioTextColour,
-  },
+    match: /missing letter-case assertion/ },
+  { lang: 'js', form: 'letter-case-getByText-exact-chain', scenario: scenarioLetterCase,
+    body: `test('QAS-VIS-01', async () => {
+      await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
+      await expect(page.getByText('SUBMIT ORDER', { exact: true })).toHaveText('SUBMIT ORDER');
+    });`,
+    match: /missing letter-case assertion/ },
+];
+
+for (const prop of VISUAL_PROPS) {
+  for (const lang of PROP_LANGS) {
+    REJECTS.push({
+      lang,
+      form: `missing-${prop.kind}`,
+      scenario: scenarioAllVisual,
+      body: bodyFor(lang, prop.kind),
+      match: new RegExp(`missing ${prop.kind.replace(/-/g, '[- ]')} assertion`),
+    });
+  }
+}
+
+const ACCEPTS = [
   {
     lang: 'csharp',
     body: `[Fact]
@@ -116,9 +226,36 @@ const ACCEPTS = [
   },
 ];
 
+for (const prop of VISUAL_PROPS) {
+  for (const lang of PROP_LANGS) {
+    ACCEPTS.push({
+      lang,
+      form: `bind-${prop.kind}`,
+      scenario: scenarioAllVisual,
+      body: bodyFor(lang, null),
+    });
+  }
+}
+
+ACCEPTS.push({
+  lang: 'js',
+  form: 'bind-letter-case-useInnerText',
+  scenario: scenarioLetterCase,
+  body: `test('QAS-VIS-01', async () => {
+      await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
+      await expect(page.locator('[data-testid=submit]')).toHaveText('SUBMIT ORDER', { useInnerText: true });
+    });`,
+});
+
+function scenarioForRow(row) {
+  if (row.scenario) return row.scenario;
+  if (row.form?.startsWith('colour')) return scenarioTextBg;
+  return { ...scenarioAllVisual, expected: LINE_TEXT };
+}
+
 for (const row of REJECTS) {
   test(`visual reject: ${row.lang} ${row.form}`, () => {
-    const scen = row.form.startsWith('colour') ? scenarioTextColour : { ...scenarioFull, expected: LINE_TEXT };
+    const scen = scenarioForRow(row);
     const check = validateSourceAssertions(row.body, scen);
     assert.equal(check.ok, false);
     assert.match(check.reason, row.match);
@@ -127,7 +264,7 @@ for (const row of REJECTS) {
 }
 
 for (const row of ACCEPTS) {
-  test(`visual accept: ${row.lang} ${row.scenario.expected.slice(0, 12)}`, () => {
+  test(`visual accept: ${row.lang} ${row.form ?? row.scenario.expected.slice(0, 12)}`, () => {
     assert.equal(validateSourceAssertions(row.body, row.scenario).ok, true);
   });
 }
@@ -137,4 +274,11 @@ test('lexer unit: partial and case-insensitive patterns not in comment spoof', (
   assert.equal(hasPartialTextMatch(src), false);
   assert.equal(hasCaseInsensitiveTextMatcher(src), false);
   assert.equal(textLocatorMissingExactOption(src, tokenize(src)), false);
+});
+
+test('lexer unit: visual value in comment does not bind font-size', () => {
+  const body = jsBody('font-size', ['// 24px in comment only']);
+  const check = validateSourceAssertions(body, scenarioAllVisual);
+  assert.equal(check.ok, false);
+  assert.match(check.reason, /missing font-size assertion/);
 });

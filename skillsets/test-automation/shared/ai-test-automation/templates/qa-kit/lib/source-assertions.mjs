@@ -14,6 +14,9 @@ const ASSERTION_MATCHERS = new Set([
   'toHaveText', 'toContainText', 'toContain', 'toEqual', 'toMatch', 'toBeVisible', 'toBeHidden',
   'toBe', 'toHaveCount', 'toBeDefined', 'toBeEnabled', 'toBeDisabled', 'toBeChecked', 'toBeInTheDocument',
   'toHaveCSS', 'toHaveStyle', 'toHaveAttribute', 'toHaveClass',
+  'to_have_text', 'to_have_css', 'to_have_style', 'to_have_attribute', 'to_have_class',
+  'to_be_visible', 'to_be_hidden', 'to_be_enabled', 'to_be_disabled',
+  'ToHaveCSSAsync', 'ToBeVisibleAsync', 'ToHaveTextAsync',
 ]);
 
 const LOCATOR_HEAD = /getBy(?:Text|LabelText|Role|PlaceholderText|AltText|Title)\s*\(/g;

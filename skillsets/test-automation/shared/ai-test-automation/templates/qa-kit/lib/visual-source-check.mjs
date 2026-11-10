@@ -2,13 +2,25 @@ import { tokenize } from './lang-tokenize.mjs';
 
 const VISIBILITY_ONLY_MATCHERS = new Set(['toBeVisible', 'toBeHidden', 'toBeInTheDocument', 'toBeAttached', 'toBeDetached']);
 const TEXT_LOCATOR = /getBy(?:Text|LabelText|PlaceholderText)\s*\(/g;
-const PARTIAL_TEXT_MATCHERS = new Set([
-  'toContain', 'toContainText', 'toMatch', 'matches', 'Contains', 'Matches',
-]);
-const STYLE_MATCHERS = /toHaveCSS\s*\(|toHaveStyle\s*\(|getComputedStyle|\.(?:backgroundColor|color|fontFamily|fontSize|fontWeight|textTransform)\b|Assert\.Equal\s*\([^)]*(?:Color|color)/;
 
 /** Covered runners: Playwright/Testing Library, xUnit, Node assert, pytest (equality-only text). */
 export const VISUAL_CHECK_RUNNERS = 'Playwright, Testing Library (getByText), xUnit Assert.Equal, Node assert.strictEqual, pytest assert ==';
+
+const KIND_CSS_PROPS = {
+  colour: ['color'],
+  'background-colour': ['background-color', 'background'],
+  'font-family': ['font-family'],
+  'font-size': ['font-size'],
+  'font-weight': ['font-weight'],
+};
+
+const CSS_ASSERTION_RE = [
+  /toHaveCSS\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/g,
+  /to_have_css\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/gi,
+  /ToHaveCSSAsync\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)/g,
+];
+
+const TO_HAVE_STYLE_RE = /toHaveStyle\s*\(\s*\{([^}]+)\}/g;
 
 function findCloseParen(code, openIndex) {
   if (code[openIndex] !== '(') return -1;
@@ -105,7 +117,7 @@ export function hasPartialTextMatch(source) {
   for (let i = 0; i < codeLines.length; i++) {
     if (!/^\s*assert\b/.test(codeLines[i])) continue;
     const srcLine = srcLines[i] ?? '';
-  if (/\bin\b/.test(codeLines[i]) && /['"]/.test(srcLine)) return true;
+    if (/\bin\b/.test(codeLines[i]) && /['"]/.test(srcLine)) return true;
     if (/\.find\s*\(/.test(codeLines[i])) return true;
     if (/re\.search/.test(codeLines[i])) return true;
   }
@@ -113,50 +125,159 @@ export function hasPartialTextMatch(source) {
 }
 
 export function isVisualPropertyLine(line) {
-  if (/\b(?:colour|color)\b/i.test(line) && (/#(?:[0-9a-fA-F]{3,8})\b|\brgb\s*\(/i.test(line) || /\bcolour is\b/i.test(line))) {
+  if (/\bbackground\b/i.test(line) && /\b(?:colour|color)\b/i.test(line)
+    && (/#(?:[0-9a-fA-F]{3,8})\b|\brgb\s*\(/i.test(line))) {
+    return 'background-colour';
+  }
+  if (/\b(?:colour|color)\b/i.test(line) && (/#(?:[0-9a-fA-F]{3,8})\b|\brgb\s*\(/i.test(line))) {
     return 'colour';
   }
   if (/\bfont family\b/i.test(line)) return 'font-family';
   if (/\bfont size\b/i.test(line) && /\d+\s*(?:px|pt|rem|em|%)\b/i.test(line)) return 'font-size';
   if (/\bfont weight\b/i.test(line)) return 'font-weight';
   if (/\b(?:uppercase|lowercase|title case|letter case|text-transform)\b/i.test(line)) return 'letter-case';
+  if (/\bicon\s+shows\s+/i.test(line)) return 'icon';
+  if (/\bicon\s+is\s+(?!visible\b)/i.test(line)) return 'icon';
   return null;
 }
 
 function visualValueNeedle(line, kind) {
   const hex = line.match(/#(?:[0-9a-fA-F]{3,8})\b/)?.[0];
-  if (hex) return hex;
+  if (hex && (kind === 'colour' || kind === 'background-colour')) return hex;
   const px = line.match(/\d+\s*(?:px|pt|rem|em)\b/i)?.[0];
   if (px && kind === 'font-size') return px.replace(/\s+/g, '');
+  const weight = line.match(/font weight is\s+(\d{3})\b/i)?.[1];
+  if (weight && kind === 'font-weight') return weight;
   const family = line.match(/font family is\s+["']?([^"'\n]+)/i)?.[1]?.trim();
   if (family) return family.length > 32 ? family.slice(0, 32) : family;
   if (kind === 'letter-case' && /uppercase/i.test(line)) return 'uppercase';
   if (kind === 'letter-case' && /lowercase/i.test(line)) return 'lowercase';
+  if (kind === 'icon') {
+    const icon = line.match(/\bicon\s+(?:shows|is)\s+(\S+)/i)?.[1];
+    if (icon) return icon.toLowerCase();
+  }
   return line.length > 48 ? line.slice(0, 48) : line;
 }
 
-function styleAssertionCoversValue(source, code, value) {
-  if (!value) return false;
-  const v = value.toLowerCase();
-  if (!STYLE_MATCHERS.test(code)) return false;
-  for (const m of source.matchAll(/toHaveCSS\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g)) {
-    const joined = `${m[1]} ${m[2]}`.toLowerCase();
-    if (joined.includes(v) || v.includes(m[2].toLowerCase())) return true;
+function isExecutableSpan(code, start, end) {
+  const slice = code.slice(start, end);
+  return /\S/.test(slice);
+}
+
+function normalizeVisualValue(value, kind) {
+  if (!value) return '';
+  let v = value.trim().toLowerCase().replace(/\s+/g, '');
+  if (kind === 'font-size') v = v.replace(/(\d)(px|pt|rem|em|%)/, '$1$2');
+  return v;
+}
+
+function valuesMatch(asserted, needle, kind) {
+  const a = normalizeVisualValue(asserted, kind);
+  const n = normalizeVisualValue(needle, kind);
+  if (!n) return false;
+  if (a === n) return true;
+  if (kind === 'font-family') return a.includes(n) || n.includes(a);
+  if (kind === 'icon') return a.includes(n) || n.includes(a);
+  return false;
+}
+
+function cssPropMatchesKind(prop, kind) {
+  const p = prop.toLowerCase();
+  const allowed = KIND_CSS_PROPS[kind];
+  if (!allowed) return false;
+  return allowed.some(a => p === a || (a === 'background' && p === 'background-color'));
+}
+
+function parseToHaveStylePairs(source, code, out) {
+  for (const m of source.matchAll(TO_HAVE_STYLE_RE)) {
+    if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+    const inner = m[1];
+    for (const pair of inner.matchAll(/(fontFamily|fontSize|fontWeight|color|backgroundColor|textTransform)\s*:\s*['"]([^'"]+)['"]/g)) {
+      const propMap = {
+        fontFamily: 'font-family',
+        fontSize: 'font-size',
+        fontWeight: 'font-weight',
+        color: 'color',
+        backgroundColor: 'background-color',
+        textTransform: 'text-transform',
+      };
+      out.push({ prop: propMap[pair[1]] ?? pair[1], value: pair[2] });
+    }
   }
-  for (const m of source.matchAll(/toHaveStyle\s*\(\s*\{([^}]+)\}/g)) {
-    if (m[1].toLowerCase().includes(v)) return true;
+}
+
+/** CSS property/value pairs from executable assertion calls only. */
+export function collectExecutableCssAssertions(source, code) {
+  const out = [];
+  for (const re of CSS_ASSERTION_RE) {
+    re.lastIndex = 0;
+    for (const m of source.matchAll(re)) {
+      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+      out.push({ prop: m[1], value: m[2] });
+    }
   }
-  if (/getComputedStyle/.test(code) && source.toLowerCase().includes(v)) return true;
-  return source.toLowerCase().includes(v) && /toHaveCSS|toHaveStyle|getComputedStyle|textTransform|fontFamily|fontSize|fontWeight/.test(code);
+  parseToHaveStylePairs(source, code, out);
+  return out;
+}
+
+function styleAssertionCoversKind(source, code, kind, needle) {
+  const assertions = collectExecutableCssAssertions(source, code);
+  return assertions.some(({ prop, value }) => cssPropMatchesKind(prop, kind) && valuesMatch(value, needle, kind));
 }
 
 function letterCaseAssertionOk(source, code, line) {
-  if (/text-transform/i.test(line) && /uppercase/i.test(line)) {
-    return /toHaveCSS\s*\(\s*['"]text-transform['"]\s*,\s*['"]uppercase['"]/.test(source)
-      || /textTransform['"]\s*:\s*['"]uppercase/.test(source);
+  const needle = visualValueNeedle(line, 'letter-case');
+  const assertions = collectExecutableCssAssertions(source, code);
+  if (assertions.some(a => a.prop === 'text-transform' && valuesMatch(a.value, needle, 'letter-case'))) {
+    return true;
   }
-  if (/uppercase/i.test(line)) {
-    return /toHaveCSS\s*\(\s*['"]text-transform['"]/.test(source) || /\.textTransform/.test(code);
+  for (const m of source.matchAll(/to_have_css\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/gi)) {
+    if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+    if (m[1].toLowerCase() === 'text-transform' && valuesMatch(m[2], needle, 'letter-case')) return true;
+  }
+  if (/ToHaveCSSAsync\s*\([^)]*text-transform/i.test(source)) {
+    for (const m of source.matchAll(/ToHaveCSSAsync\s*\(\s*"text-transform"\s*,\s*"([^"]+)"/g)) {
+      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+      if (valuesMatch(m[1], needle, 'letter-case')) return true;
+    }
+  }
+  for (const m of source.matchAll(/toHaveText\s*\([^)]*\)/g)) {
+    if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+    const callSrc = source.slice(m.index, m.index + m[0].length);
+    if (/useInnerText\s*:\s*true/.test(callSrc)) return true;
+  }
+  for (const m of source.matchAll(/\.innerText\s*\(\s*\)/g)) {
+    if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+    const tail = source.slice(m.index, m.index + 160);
+    if (!/(?:\.toBe\s*\(|===|==|assert\.strictEqual)/.test(tail)) continue;
+  if (/uppercase/i.test(line) && /['"][A-Z][^'"]{2,}['"]/.test(tail)) return true;
+    if (/lowercase/i.test(line) && /['"][a-z][^'"]{2,}['"]/.test(tail)) return true;
+  }
+  return false;
+}
+
+function iconAssertionOk(source, code, line) {
+  const needle = visualValueNeedle(line, 'icon');
+  if (!needle) return false;
+  const rolePatterns = [
+    /getByRole\s*\(\s*['"]img['"]/g,
+    /get_by_role\s*\(\s*['"]img['"]/gi,
+    /GetByRole\s*\(\s*AriaRole\.Img/g,
+  ];
+  for (const re of rolePatterns) {
+    re.lastIndex = 0;
+    for (const m of source.matchAll(re)) {
+      if (!isExecutableSpan(code, m.index, m.index + 200)) continue;
+      const tail = source.slice(m.index, m.index + 200).toLowerCase();
+      if (tail.includes(needle)) return true;
+    }
+  }
+  for (const re of [/toHaveAttribute\s*\(\s*['"]aria-label['"]\s*,\s*['"]([^'"]+)['"]/g,
+    /toHaveAttribute\s*\(\s*['"]src['"]\s*,\s*['"]([^'"]+)['"]/g]) {
+    for (const m of source.matchAll(re)) {
+      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
+      if (m[1].toLowerCase().includes(needle)) return true;
+    }
   }
   return false;
 }
@@ -171,28 +292,30 @@ function visualLineBindingFails(source, code, line) {
   const kind = isVisualPropertyLine(line);
   if (!kind) return false;
   const needle = visualValueNeedle(line, kind);
-  if (kind === 'letter-case') {
-    return !letterCaseAssertionOk(source, code, line);
-  }
-  if (kind === 'colour' || kind === 'font-family' || kind === 'font-size' || kind === 'font-weight') {
-    return !styleAssertionCoversValue(source, code, needle);
-  }
+  if (kind === 'letter-case') return !letterCaseAssertionOk(source, code, line);
+  if (kind === 'icon') return !iconAssertionOk(source, code, line);
+  if (kind in KIND_CSS_PROPS) return !styleAssertionCoversKind(source, code, kind, needle);
   return true;
+}
+
+export function visualMissingKindReason(kind, line) {
+  return `visual expected line missing ${kind} assertion (${line})`;
 }
 
 export function visualLineViolations(source, scenario) {
   const code = tokenize(source);
   const lines = (scenario?.expected ?? '').split(/\n+/).map(l => l.trim()).filter(Boolean);
   for (const line of lines) {
-    if (!isVisualPropertyLine(line)) continue;
+    const kind = isVisualPropertyLine(line);
+    if (!kind) continue;
     if (visualLineBindingFails(source, code, line)) {
-      return {
-        reason: `visual expected line needs style/transform assertion (${line})`,
-      };
+      return { reason: visualMissingKindReason(kind, line) };
     }
-    const needle = visualValueNeedle(line, isVisualPropertyLine(line));
-    if (/toHaveClass\s*\(/.test(code) && !STYLE_MATCHERS.test(code) && source.includes(needle)) {
-      return { reason: `class-name check cannot satisfy visual expected line (${line})` };
+    if (/toHaveClass\s*\(/.test(code) && kind !== 'icon') {
+      const needle = visualValueNeedle(line, kind);
+      if (needle && source.toLowerCase().includes(needle.toLowerCase().slice(0, 8))) {
+        return { reason: `class-name check cannot satisfy visual expected line (${line})` };
+      }
     }
   }
   return null;
