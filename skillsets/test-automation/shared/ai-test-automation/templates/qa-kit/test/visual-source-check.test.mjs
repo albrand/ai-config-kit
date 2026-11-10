@@ -76,6 +76,20 @@ const scenarioLetterCase = {
   expected: `${LINE_TEXT}\n${VISUAL_PROPS.find(p => p.kind === 'letter-case').line}`,
 };
 
+const ICON_LINE = VISUAL_PROPS.find(p => p.kind === 'icon').line;
+
+const scenarioIcon = {
+  id: 'QAS-VIS-01',
+  kind: 'automated',
+  expected: `${LINE_TEXT}\n${ICON_LINE}`,
+};
+
+const scenarioIconShort = {
+  id: 'QAS-VIS-01',
+  kind: 'automated',
+  expected: `${LINE_TEXT}\nCart icon shows bag`,
+};
+
 function bindsForLang(lang, omitKind) {
   return VISUAL_PROPS.filter(p => p.kind !== omitKind).map(p => p[lang]);
 }
@@ -195,6 +209,39 @@ const REJECTS = [
       await expect(page.getByText('SUBMIT ORDER', { exact: true })).toHaveText('SUBMIT ORDER');
     });`,
     match: /missing letter-case assertion/ },
+  { lang: 'js', form: 'icon-locator-unasserted', scenario: scenarioIcon,
+    body: jsBody('icon', [`page.getByRole('img', { name: 'shopping-bag glyph' });`]),
+    match: /missing icon assertion/ },
+  { lang: 'js', form: 'icon-name-in-comment', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.getByRole('img', { name: 'checkout glyph' })).toBeVisible(); // shopping-bag glyph`]),
+    match: /missing icon assertion/ },
+  { lang: 'js', form: 'icon-name-next-statement', scenario: scenarioIcon,
+    body: jsBody('icon', [
+      `await expect(page.getByRole('img', { name: 'checkout glyph' })).toBeVisible();`,
+      `const _note = 'shopping-bag glyph';`,
+    ]),
+    match: /missing icon assertion/ },
+  { lang: 'js', form: 'icon-substring-assert', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.getByRole('img', { name: 'shopping-bag-off' })).toBeVisible();`]),
+    match: /missing icon assertion/ },
+  { lang: 'js', form: 'icon-substring-needle', scenario: scenarioIconShort,
+    body: jsBody('icon', [`await expect(page.getByRole('img', { name: 'shopping-bag-off' })).toBeVisible();`]),
+    match: /missing icon assertion/ },
+  { lang: 'csharp', form: 'icon-locator-unasserted', scenario: scenarioIcon,
+    body: csharpBody('icon', [`Page.GetByRole(AriaRole.Img, new() { Name = "shopping-bag glyph" });`]),
+    match: /missing icon assertion/ },
+  { lang: 'csharp', form: 'icon-substring-assert', scenario: scenarioIcon,
+    body: csharpBody('icon', [`await Expect(Page.GetByRole(AriaRole.Img, new() { Name = "shopping-bag-off" })).ToBeVisibleAsync();`]),
+    match: /missing icon assertion/ },
+  { lang: 'python', form: 'icon-locator-unasserted', scenario: scenarioIcon,
+    body: pythonBody('icon', [`page.get_by_role("img", name="shopping-bag glyph")`]),
+    match: /missing icon assertion/ },
+  { lang: 'python', form: 'icon-substring-assert', scenario: scenarioIcon,
+    body: pythonBody('icon', [`expect(page.get_by_role("img", name="shopping-bag-off")).to_be_visible()`]),
+    match: /missing icon assertion/ },
+  { lang: 'js', form: 'font-family-substring', scenario: scenarioAllVisual,
+    body: jsBody('font-family', [`await expect(page.locator('.body')).toHaveCSS('font-family', 'Inter Tight');`]),
+    match: /missing font-family assertion/ },
 ];
 
 for (const prop of VISUAL_PROPS) {

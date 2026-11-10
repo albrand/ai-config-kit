@@ -22,6 +22,21 @@ const CSS_ASSERTION_RE = [
 
 const TO_HAVE_STYLE_RE = /toHaveStyle\s*\(\s*\{([^}]+)\}/g;
 
+const ICON_ASSERTION_MATCHERS = new Set([
+  'toBeVisible', 'toBeHidden', 'toHaveAttribute', 'toHaveCount', 'toHaveClass',
+  'to_be_visible', 'to_be_hidden', 'to_have_attribute', 'to_have_count', 'to_have_class',
+  'ToBeVisibleAsync', 'ToHaveAttributeAsync', 'ToHaveCountAsync',
+]);
+
+const ICON_LOCATOR_HEAD = [
+  /getByRole\s*\(\s*['"]img['"]/g,
+  /get_by_role\s*\(\s*['"]img['"]/gi,
+  /GetByRole\s*\(\s*AriaRole\.Img/g,
+  /getByTestId\s*\(/g,
+  /get_by_test_id\s*\(/gi,
+  /GetByTestId\s*\(/g,
+];
+
 function findCloseParen(code, openIndex) {
   if (code[openIndex] !== '(') return -1;
   let depth = 0;
@@ -153,7 +168,7 @@ function visualValueNeedle(line, kind) {
   if (kind === 'letter-case' && /uppercase/i.test(line)) return 'uppercase';
   if (kind === 'letter-case' && /lowercase/i.test(line)) return 'lowercase';
   if (kind === 'icon') {
-    const icon = line.match(/\bicon\s+(?:shows|is)\s+(\S+)/i)?.[1];
+    const icon = line.match(/\bicon\s+(?:shows|is)\s+(.+)/i)?.[1]?.trim();
     if (icon) return icon.toLowerCase();
   }
   return line.length > 48 ? line.slice(0, 48) : line;
@@ -171,13 +186,26 @@ function normalizeVisualValue(value, kind) {
   return v;
 }
 
+function fontFamilyTokenMatch(asserted, needle) {
+  const n = needle.trim().toLowerCase();
+  if (!n) return false;
+  const raw = asserted.trim().toLowerCase();
+  if (raw === n) return true;
+  const tokens = raw.split(',').map(t => t.trim().replace(/^['"]|['"]$/g, ''));
+  return tokens.some(t => t === n);
+}
+
+function strictIdentityMatch(asserted, expected) {
+  if (!expected) return false;
+  return asserted.trim().toLowerCase() === expected.trim().toLowerCase();
+}
+
 function valuesMatch(asserted, needle, kind) {
   const a = normalizeVisualValue(asserted, kind);
   const n = normalizeVisualValue(needle, kind);
   if (!n) return false;
   if (a === n) return true;
-  if (kind === 'font-family') return a.includes(n) || n.includes(a);
-  if (kind === 'icon') return a.includes(n) || n.includes(a);
+  if (kind === 'font-family') return fontFamilyTokenMatch(asserted, needle);
   return false;
 }
 
@@ -256,30 +284,89 @@ function letterCaseAssertionOk(source, code, line) {
   return false;
 }
 
+function iconIdentityLiteralsInArg(argSource) {
+  const literals = [];
+  const patterns = [
+    /(?:\bname\b|\bName\b)\s*[:=]\s*['"]([^'"]+)['"]/g,
+    /getByTestId\s*\(\s*['"]([^'"]+)['"]/g,
+    /get_by_test_id\s*\(\s*['"]([^'"]+)['"]/g,
+    /GetByTestId\s*\(\s*"([^"]+)"/g,
+    /locator\s*\(\s*['"][^'"]*(?:data-testid|data-icon|aria-label)=([^'"\]]+)/gi,
+  ];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    for (const m of argSource.matchAll(re)) literals.push(m[1]);
+  }
+  return literals;
+}
+
+function iconLocatorsInRange(source, code, rangeStart, rangeEnd) {
+  const found = [];
+  const slice = source.slice(rangeStart, rangeEnd);
+  for (const re of ICON_LOCATOR_HEAD) {
+    const local = new RegExp(re.source, re.flags);
+    let m;
+    while ((m = local.exec(slice))) {
+      const abs = rangeStart + m.index;
+      const relOpen = m[0].indexOf('(');
+      if (relOpen < 0) continue;
+      const openParen = abs + relOpen;
+      const close = findCloseParen(code, openParen);
+      if (close < 0 || close > rangeEnd) continue;
+      if (!isExecutableSpan(code, abs, close + 1)) continue;
+      found.push(source.slice(openParen + 1, close));
+    }
+  }
+  return found;
+}
+
+function matcherCallLiterals(source, code, argClose) {
+  const afterCode = code.slice(argClose + 1);
+  const afterSrc = source.slice(argClose + 1);
+  const head = afterCode.match(/^\s*(?:\.not\s*)?\.([a-zA-Z][\w$]*)\s*\(/);
+  if (!head || !ICON_ASSERTION_MATCHERS.has(head[1])) return [];
+  const open = argClose + 1 + afterCode.indexOf('(');
+  const close = findCloseParen(code, open);
+  if (close < 0 || !isExecutableSpan(code, open, close + 1)) return [];
+  const matcher = head[1];
+  const args = source.slice(open + 1, close);
+  if (/Attribute/i.test(matcher)) {
+    const m = args.match(/^\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/);
+    if (m && /^(aria-label|src|href|alt|data-testid)$/i.test(m[1])) return [m[2]];
+  }
+  return [];
+}
+
+function collectExecutableIconBindings(source, code) {
+  const values = [];
+  const expectHeads = [
+    /(?:await\s+)?expect\s*\(/g,
+    /(?:await\s+)?Expect\s*\(/g,
+  ];
+  for (const expectRe of expectHeads) {
+    expectRe.lastIndex = 0;
+    let m;
+    while ((m = expectRe.exec(code))) {
+      const expectOpen = m.index + m[0].length - 1;
+      if (!isExecutableSpan(code, m.index, expectOpen + 1)) continue;
+      const argClose = findCloseParen(code, expectOpen);
+      if (argClose < 0) continue;
+      const matcher = assertionMatcherRightAfter(argClose, code);
+      if (!matcher || !ICON_ASSERTION_MATCHERS.has(matcher)) continue;
+      for (const arg of iconLocatorsInRange(source, code, expectOpen + 1, argClose)) {
+        values.push(...iconIdentityLiteralsInArg(arg));
+      }
+      values.push(...matcherCallLiterals(source, code, argClose));
+    }
+  }
+  return values;
+}
+
 function iconAssertionOk(source, code, line) {
   const needle = visualValueNeedle(line, 'icon');
   if (!needle) return false;
-  const rolePatterns = [
-    /getByRole\s*\(\s*['"]img['"]/g,
-    /get_by_role\s*\(\s*['"]img['"]/gi,
-    /GetByRole\s*\(\s*AriaRole\.Img/g,
-  ];
-  for (const re of rolePatterns) {
-    re.lastIndex = 0;
-    for (const m of source.matchAll(re)) {
-      if (!isExecutableSpan(code, m.index, m.index + 200)) continue;
-      const tail = source.slice(m.index, m.index + 200).toLowerCase();
-      if (tail.includes(needle)) return true;
-    }
-  }
-  for (const re of [/toHaveAttribute\s*\(\s*['"]aria-label['"]\s*,\s*['"]([^'"]+)['"]/g,
-    /toHaveAttribute\s*\(\s*['"]src['"]\s*,\s*['"]([^'"]+)['"]/g]) {
-    for (const m of source.matchAll(re)) {
-      if (!isExecutableSpan(code, m.index, m.index + m[0].length)) continue;
-      if (m[1].toLowerCase().includes(needle)) return true;
-    }
-  }
-  return false;
+  const bindings = collectExecutableIconBindings(source, code);
+  return bindings.some(v => strictIdentityMatch(v, needle));
 }
 
 export function visualLineIsBound(source, line) {
