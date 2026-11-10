@@ -56,6 +56,8 @@ test('always-loaded surfaces share one identical qa core block', () => {
     assert.match(readFileSync(join(target, 'CLAUDE.md'), 'utf8'), /@AGENTS\.md/);
     for (const surface of [canonical, agents, cursor, copilot]) {
       assert.match(surface, /positive.*negative.*regression/s);
+      assert.match(surface, /text in its letter case, colour, background/);
+      assert.match(surface, /no case-insensitive regex, no partial match/);
     }
   } finally {
     rmSync(target, { recursive: true, force: true });

@@ -84,8 +84,8 @@ const REAL = [
   {
     lang: 'js',
     body: `test('QAS-WI-1-01', () => {
-      expect(page.getByText('${LINE_A}')).toBeVisible();
-      expect(page.getByText('${LINE_B}')).toBeVisible();
+      expect(page.getByText('${LINE_A}', { exact: true })).toHaveText('${LINE_A}');
+      expect(page.getByText('${LINE_B}', { exact: true })).toHaveText('${LINE_B}');
     });`,
   },
   {
@@ -109,7 +109,7 @@ for (const row of SPOOFS) {
     const source = `def stub():\n  pass\n${row.body}`;
     const code = tokenize(source);
     assert.equal(/assert\b|expect\s*\(|Assert\./.test(code), false, 'assertion keyword survives tokenize');
-    const tail = `expect(page.getByText('${LINE_B}')).toBeVisible();`;
+    const tail = `expect(page.getByText('${LINE_B}', { exact: true })).toHaveText('${LINE_B}');`;
     const check = validateSourceAssertions(`${row.body}\n${tail}`, scenario);
     assert.equal(check.ok, false);
   });

@@ -22,6 +22,10 @@ Expectations come from the **ticket only** (parent ai-test-automation skill and 
 
 Automate a **specific assertion** for every \`expected\` line (\`references/gate-rules.md\`) — no \`any svg\`, \`toBeTruthy\`, or \`count > 0\`.
 
+For every UI element a scenario names, check exactly what the user sees: the text in its letter case, colour, background, font family, font size, font weight and the specific icon. A test that would still pass with any of these wrong is a failed test.
+
+Visual values come from the ticket's design reference (prototype, design tokens, Figma), never from the running app or its source. Match text exactly and case-sensitively: no case-insensitive regex, no partial match.
+
 Mocks are fine; mock data must be contract-shaped and must **not** encode the scenario's expected answer.
 
 A red test while the app is wrong is a **bug report**; do not weaken the assertion.

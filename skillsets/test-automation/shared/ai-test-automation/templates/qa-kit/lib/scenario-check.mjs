@@ -3,6 +3,7 @@ import { criteriaCoverageErrors, validateScenarioDesign } from './behavior-rules
 import { tokenize } from './lang-tokenize.mjs';
 
 export { tokenize };
+export { VISUAL_CHECK_RUNNERS, visualSourceViolations } from './visual-source-check.mjs';
 function stable(x){if(Array.isArray(x))return x.map(stable);if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).sort().filter(k=>k!=='evidence').map(k=>[k,stable(x[k])]));return x;}
 export function validateScenario(s,run){
  if(!s.id||!/^QAS-[\w-]+-\d{2,}$/.test(s.id))return {ok:false,reason:'invalid stable scenario id'};

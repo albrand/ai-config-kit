@@ -10,7 +10,7 @@ Read: `references/ci-github-actions.md` or `references/ci-azure-pipelines.md`, a
 ## Commands
 
 - `node qa/bin/qa.mjs test --config qa.config.json` — compile, discover, run, emit `run-v1.json`.
-- `node qa/bin/qa.mjs check-scenarios --head … --base … --file … --results …` — storage gate for scenario changes.
+- `node qa/bin/qa.mjs check-scenarios --head … --base … --file … --results …` — storage gate for scenario changes. A `DRAFT_PASSED` verdict is local diagnostics only, not a finishing result for merge.
 - `node qa/bin/qa.mjs judge --scenarios … --results … --base-scenarios … [--base-results base-run-v1.json]` — verdict per scenario; nonzero on FAILED/BLOCKED.
 
 ## CI

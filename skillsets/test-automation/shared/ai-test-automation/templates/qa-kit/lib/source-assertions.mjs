@@ -1,12 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { expectedLines, mockEncodesAnswer } from './behavior-rules.mjs';
 import { tokenize } from './scenario-check.mjs';
+import {
+  isVisibilityOnlyExpect,
+  scenarioLineIdPrefix,
+  visualSourceViolations,
+} from './visual-source-check.mjs';
 
 const VACUOUS = /\b(?:expect\s*\(\s*true\s*\)|toBeTruthy\s*\(|assert\.ok\s*\(\s*true\s*\)|expect\.[\w$]+\s*\)\s*\.toBeTruthy|\.toBeDefined\s*\(\s*\))/;
 
 const ASSERTION_MATCHERS = new Set([
   'toHaveText', 'toContainText', 'toContain', 'toEqual', 'toMatch', 'toBeVisible', 'toBeHidden',
   'toBe', 'toHaveCount', 'toBeDefined', 'toBeEnabled', 'toBeDisabled', 'toBeChecked', 'toBeInTheDocument',
+  'toHaveCSS', 'toHaveStyle', 'toHaveAttribute', 'toHaveClass',
 ]);
 
 const LOCATOR_HEAD = /getBy(?:Text|LabelText|Role|PlaceholderText|AltText|Title)\s*\(/g;
@@ -138,7 +144,7 @@ function isExecutableExpect(code, openParenIndex) {
  * Literals bound only through executable assertions (expect + matcher, Assert.*, etc.).
  * Bare getBy* calls never contribute.
  */
-function assertionLiterals(source) {
+function collectExpectLiterals(source, { countVisibilityBinding = true } = {}) {
   const code = tokenize(source);
   const locatorVars = buildLocatorVarMap(source, code);
   const literals = [];
@@ -148,6 +154,8 @@ function assertionLiterals(source) {
   while ((m = expectRe.exec(code))) {
     const openParen = m.index + m[0].length - 1;
     if (!isExecutableExpect(code, openParen)) continue;
+    const visibilityOnly = isVisibilityOnlyExpect(code, openParen);
+    if (visibilityOnly && !countVisibilityBinding) continue;
     const closeArg = findCloseParen(code, openParen);
     const argCode = code.slice(openParen + 1, closeArg);
     const arg = source.slice(openParen + 1, closeArg);
@@ -169,6 +177,10 @@ function assertionLiterals(source) {
   literals.push(...literalsFromPythonAsserts(code, source, locatorVars));
 
   return literals.join('\n');
+}
+
+function assertionLiterals(source) {
+  return collectExpectLiterals(source, { countVisibilityBinding: false });
 }
 
 function expectWithoutMatcher(source) {
@@ -198,27 +210,40 @@ function unassertedLocatorAssignments(source) {
 
 export function validateSourceAssertions(source, scenario) {
   if (!scenario || scenario.kind !== 'automated') return { ok: true, reason: 'n/a' };
+  const prefix = scenarioLineIdPrefix(scenario);
   const code = tokenize(source);
-  if (VACUOUS.test(code)) return { ok: false, reason: 'automation uses vacuous assertion (truthy/true/defined-only)' };
-  if (mockEncodesAnswer(source)) return { ok: false, reason: 'automation mock encodes the answer instead of letting app logic decide' };
+  if (VACUOUS.test(code)) return { ok: false, reason: `${prefix}automation uses vacuous assertion (truthy/true/defined-only)` };
+  if (mockEncodesAnswer(source)) {
+    return { ok: false, reason: `${prefix}automation mock encodes the answer instead of letting app logic decide` };
+  }
+  for (const row of visualSourceViolations(source)) {
+    return { ok: false, reason: `${prefix}${row.reason}` };
+  }
   if (expectWithoutMatcher(source)) {
-    return { ok: false, reason: 'expect() without an assertion matcher does not bind expected lines' };
+    return { ok: false, reason: `${prefix}expect() without an assertion matcher does not bind expected lines` };
   }
   if (unassertedLocatorAssignments(source)) {
-    return { ok: false, reason: 'locator stored in a variable must be passed to expect() with a matcher' };
+    return { ok: false, reason: `${prefix}locator stored in a variable must be passed to expect() with a matcher` };
   }
   const haystack = assertionLiterals(source);
+  const visibilityHaystack = collectExpectLiterals(source, { countVisibilityBinding: true });
   for (const line of expectedLines(scenario.expected)) {
     const needle = line.length > 48 ? line.slice(0, 48) : line;
     if (source.includes(needle) && !haystack.includes(needle)) {
-      return { ok: false, reason: 'expected text appears in source but not in an executable assertion' };
+      if (visibilityHaystack.includes(needle)) {
+        return {
+          ok: false,
+          reason: `${prefix}expected line bound only by visibility matcher (${line}) — require text/style/icon assertion`,
+        };
+      }
+      return { ok: false, reason: `${prefix}expected text appears in source but not in an executable assertion` };
     }
   }
   const missing = expectedLines(scenario.expected).filter(line => {
     const needle = line.length > 48 ? line.slice(0, 48) : line;
     return !haystack.includes(needle);
   });
-  if (missing.length) return { ok: false, reason: `unasserted expected line(s): ${missing.join(' | ')}` };
+  if (missing.length) return { ok: false, reason: `${prefix}unasserted expected line(s): ${missing.join(' | ')}` };
   return { ok: true, reason: 'assertions bound to expected lines' };
 }
 
