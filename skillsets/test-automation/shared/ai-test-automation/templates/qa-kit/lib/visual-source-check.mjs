@@ -47,41 +47,87 @@ const ICON_LOCATOR_HEAD = [
   /GetByTestId\s*\(/g,
 ];
 
-function isIconShapedLocator(expr) {
+function splitDesignationTokens(value) {
+  return String(value).toLowerCase().split(/[-_\s]+/).filter(Boolean);
+}
+
+function designatedIdsFromIconLine(iconLine) {
+  if (!iconLine) return [];
+  const out = [];
+  for (const m of iconLine.matchAll(/`([^`]+)`/g)) out.push(m[1]);
+  return out;
+}
+
+function testIdDesignatedForIcon(testId, iconLine, needle) {
+  if (!testId) return false;
+  const idLow = testId.toLowerCase();
+  if (/\bicon\b/.test(idLow) || idLow.includes('-ico') || /\bglyph\b/.test(idLow)) return true;
+  if (designatedIdsFromIconLine(iconLine).includes(testId)) return true;
+  if (!needle) return false;
+  const needleTokens = splitDesignationTokens(needle);
+  const idTokens = splitDesignationTokens(testId);
+  return needleTokens.some(t => t.length >= 2 && idTokens.includes(t));
+}
+
+function extractTestIdFromExpr(expr) {
+  const patterns = [
+    /getByTestId\s*\(\s*['"]([^'"]+)['"]/i,
+    /get_by_test_id\s*\(\s*['"]([^'"]+)['"]/i,
+    /GetByTestId\s*\(\s*"([^"]+)"/i,
+  ];
+  for (const re of patterns) {
+    const m = expr.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function selectorDesignatedForIcon(sel, iconLine, needle) {
+  const q = sel.trim();
+  if (!q) return false;
+  if (/data-icon\s*=/i.test(q)) return true;
+  if (/lucide-/i.test(q) || /Mui\w*Icon/.test(q)) return true;
+  if (/\bicon\b/i.test(q) || /-ico/i.test(q) || /\bglyph\b/i.test(q)) return true;
+  const dataTestId = q.match(/data-testid\s*=\s*['"]?([^'"\]\s]+)/i);
+  if (dataTestId && testIdDesignatedForIcon(dataTestId[1], iconLine, needle)) return true;
+  for (const id of designatedIdsFromIconLine(iconLine)) {
+    if (q.includes(id)) return true;
+  }
+  if (/^(?:svg|img|i|use)$/.test(q)) return false;
+  const tagClass = q.match(/^(?:svg|img|i|use)[.#]([\w-]+)$/);
+  if (tagClass) return testIdDesignatedForIcon(tagClass[1], iconLine, needle);
+  const classOnly = q.match(/^\.([\w-]+)$/);
+  if (classOnly) return testIdDesignatedForIcon(classOnly[1], iconLine, needle);
+  if (/^(?:svg|img|i|use)/.test(q) && !/data-/.test(q) && !/\bicon\b/i.test(q) && !/-ico/i.test(q) && !/\bglyph\b/i.test(q)) {
+    return false;
+  }
+  return false;
+}
+
+function isIconShapedLocator(expr, iconLine = '', needle = '') {
   const s = expr.trim();
   if (!s) return false;
   if (/getByRole\s*\(\s*['"]img['"]/i.test(s)) return true;
   if (/get_by_role\s*\(\s*['"]img['"]/i.test(s)) return true;
   if (/GetByRole\s*\(\s*AriaRole\.Img\b/i.test(s)) return true;
-  if (/getByTestId\s*\(/i.test(s) || /get_by_test_id\s*\(/i.test(s) || /GetByTestId\s*\(/i.test(s)) {
-    return true;
-  }
+
+  const testId = extractTestIdFromExpr(s);
+  if (testId !== null) return testIdDesignatedForIcon(testId, iconLine, needle);
+
   for (const sel of s.matchAll(/(?:locator|Locator)\s*\(\s*['"]([^'"]+)['"]/g)) {
-    const q = sel[1];
-    if (/(?:^|[\s>+~(])(?:svg|img|i|use)(?:[.#\s\[]|$)/i.test(q) || /^(?:svg|img|i|use)(?:[[]|$)/i.test(q.trim())) {
-      return true;
-    }
-    if (/\bicon\b/i.test(q) || /\bIcon\b/.test(q) || /lucide-/i.test(q) || /Mui\w*Icon/.test(q)) {
-      return true;
-    }
-  }
-  if (/getByTestId\s*\(\s*['"][^'"]+['"]/i.test(s) || /get_by_test_id\s*\(\s*['"][^'"]+['"]/i.test(s)) {
-    return true;
-  }
-  if (/\bicon\b/i.test(s) || /\bIcon\b/.test(s) || /lucide-/i.test(s) || /Mui\w*Icon/.test(s)) {
-    if (/(?:locator|Locator|getBy|GetBy)\s*\(/.test(s)) return true;
+    if (selectorDesignatedForIcon(sel[1], iconLine, needle)) return true;
   }
   return false;
 }
 
 export const iconMisplacedAttributeReason =
-  'icon attribute assertion must target the icon element (use role img, icon test id, or svg/img/i/use selector), not unrelated locators';
+  'icon attribute assertion must use a designated icon locator (backtick the test id on the scenario expected icon line, or use a test id with icon, -ico, glyph, or the icon name; svg/img selectors need data-icon or an icon marker in the selector)';
 
 function attributeMatcherIdentityValues(source, code, argClose, matcher) {
   return matcherCallLiterals(source, code, argClose, matcher).filter(v => v !== '__count_one__');
 }
 
-function iconMisplacedAttributeViolation(source, code, needle) {
+function iconMisplacedAttributeViolation(source, code, needle, iconLine) {
   if (!needle) return null;
   let hit = false;
   forEachPositiveExpect(source, code, ({ expectOpen, argClose, matcher }) => {
@@ -89,10 +135,11 @@ function iconMisplacedAttributeViolation(source, code, needle) {
     const values = attributeMatcherIdentityValues(source, code, argClose, matcher);
     if (!values.some(v => strictIdentityMatch(v, needle))) return;
     const locatorExpr = source.slice(expectOpen + 1, argClose).trim();
-    if (!isIconShapedLocator(locatorExpr)) hit = true;
+    if (!isIconShapedLocator(locatorExpr, iconLine, needle)) hit = true;
   });
   return hit ? iconMisplacedAttributeReason : null;
 }
+
 
 
 
@@ -243,8 +290,8 @@ export function isVisualPropertyLine(line) {
   if (/\bfont size\b/i.test(line) && /\d+\s*(?:px|pt|rem|em|%)\b/i.test(line)) return 'font-size';
   if (/\bfont weight\b/i.test(line)) return 'font-weight';
   if (/\b(?:uppercase|lowercase|title case|letter case|text-transform)\b/i.test(line)) return 'letter-case';
-  if (/\bicon\s+shows\s+/i.test(line)) return 'icon';
-  if (/\bicon\s+is\s+(?!visible\b)/i.test(line)) return 'icon';
+  if (/\bicon\b/i.test(line) && /\bshows\s+/i.test(line)) return 'icon';
+  if (/\bicon\b/i.test(line) && /\bis\s+(?!visible\b)/i.test(line)) return 'icon';
   return null;
 }
 
@@ -260,7 +307,7 @@ function visualValueNeedle(line, kind) {
   if (kind === 'letter-case' && /uppercase/i.test(line)) return 'uppercase';
   if (kind === 'letter-case' && /lowercase/i.test(line)) return 'lowercase';
   if (kind === 'icon') {
-    const icon = line.match(/\bicon\s+(?:shows|is)\s+(.+)/i)?.[1]?.trim();
+    const icon = line.match(/\bshows\s+(.+)/i)?.[1]?.trim() ?? line.match(/\bis\s+(.+)/i)?.[1]?.trim();
     if (icon) return icon.toLowerCase();
   }
   return line.length > 48 ? line.slice(0, 48) : line;
@@ -468,7 +515,7 @@ function matcherCallLiterals(source, code, argClose, matcher) {
   return [];
 }
 
-function collectExecutableIconBindings(source, code) {
+function collectExecutableIconBindings(source, code, iconLine = '') {
   const values = [];
   forEachPositiveExpect(source, code, ({ expectOpen, argClose, matcher }) => {
     if (!ICON_POSITIVE_MATCHERS.has(matcher)) return;
@@ -481,13 +528,14 @@ function collectExecutableIconBindings(source, code) {
       if (!n || n[1] !== '1') return;
     }
     const locatorExpr = source.slice(expectOpen + 1, argClose).trim();
+    const iconNeedle = visualValueNeedle(iconLine, 'icon');
     for (const arg of iconLocatorsInRange(source, code, expectOpen + 1, argClose)) {
       values.push(...iconIdentityLiteralsInArg(arg));
     }
     const extras = matcherCallLiterals(source, code, argClose, matcher);
     for (const v of extras) {
       if (v === '__count_one__') continue;
-      if (/Attribute|attribute/.test(matcher) && !isIconShapedLocator(locatorExpr)) continue;
+      if (/Attribute|attribute/.test(matcher) && !isIconShapedLocator(locatorExpr, iconLine, iconNeedle)) continue;
       values.push(v);
     }
     if (/Visible|visible/.test(matcher) && values.length) {
@@ -500,7 +548,7 @@ function collectExecutableIconBindings(source, code) {
 function iconAssertionOk(source, code, line) {
   const needle = visualValueNeedle(line, 'icon');
   if (!needle) return false;
-  const bindings = collectExecutableIconBindings(source, code).filter(v => v !== '__visible_asserted__');
+  const bindings = collectExecutableIconBindings(source, code, line).filter(v => v !== '__visible_asserted__');
   return bindings.some(v => strictIdentityMatch(v, needle));
 }
 
@@ -532,7 +580,7 @@ export function visualLineViolations(source, scenario) {
     if (!kind) continue;
     if (kind === 'icon') {
       const iconNeedle = visualValueNeedle(line, 'icon');
-      const misplaced = iconMisplacedAttributeViolation(source, code, iconNeedle);
+      const misplaced = iconMisplacedAttributeViolation(source, code, iconNeedle, line);
       if (misplaced) return { reason: misplaced };
     }
     if (visualLineBindingFails(source, code, line)) {

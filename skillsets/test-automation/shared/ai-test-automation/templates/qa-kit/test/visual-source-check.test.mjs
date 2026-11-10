@@ -84,6 +84,13 @@ const scenarioIcon = {
   expected: `${LINE_TEXT}\n${ICON_LINE}`,
 };
 
+
+const scenarioIconDesignated = {
+  id: 'QAS-VIS-01',
+  kind: 'automated',
+  expected: `${LINE_TEXT}\nCart icon (\`cart-glyph\`) shows shopping-bag glyph`,
+};
+
 const scenarioIconShort = {
   id: 'QAS-VIS-01',
   kind: 'automated',
@@ -252,21 +259,33 @@ const REJECTS = [
   { lang: 'js', form: 'icon-toHaveCount-0', scenario: scenarioIcon,
     body: jsBody('icon', [`await expect(page.getByRole('img', { name: 'shopping-bag glyph' })).toHaveCount(0);`]),
     match: /missing icon assertion/ },
+  { lang: 'js', form: 'icon-testid-label', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.getByTestId('label')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
+    match: /designated icon locator/ },
+  { lang: 'js', form: 'icon-testid-header', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.getByTestId('header')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
+    match: /designated icon locator/ },
+  { lang: 'js', form: 'icon-attr-bare-svg', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.locator('svg')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
+    match: /designated icon locator/ },
+  { lang: 'js', form: 'icon-attr-class-header', scenario: scenarioIcon,
+    body: jsBody('icon', [`await expect(page.locator('.header')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
+    match: /designated icon locator/ },
   { lang: 'js', form: 'icon-attr-on-label', scenario: scenarioIcon,
     body: jsBody('icon', [`await expect(page.locator('.label')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
-    match: /must target the icon element/ },
+    match: /designated icon locator/ },
   { lang: 'csharp', form: 'icon-attr-on-label', scenario: scenarioIcon,
     body: csharpBody('icon', [`await Expect(Page.Locator(".label")).ToHaveAttributeAsync("aria-label", "shopping-bag glyph");`]),
-    match: /must target the icon element/ },
+    match: /designated icon locator/ },
   { lang: 'python', form: 'icon-attr-on-label', scenario: scenarioIcon,
     body: pythonBody('icon', [`expect(page.locator(".label")).to_have_attribute("aria-label", "shopping-bag glyph")`]),
-    match: /must target the icon element/ },
+    match: /designated icon locator/ },
   { lang: 'js', form: 'icon-attr-on-div', scenario: scenarioIcon,
     body: jsBody('icon', [`await expect(page.locator('div')).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
-    match: /must target the icon element/ },
+    match: /designated icon locator/ },
   { lang: 'js', form: 'icon-attr-on-getByText', scenario: scenarioIcon,
     body: jsBody('icon', [`await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveAttribute('aria-label', 'shopping-bag glyph');`]),
-    match: /must target the icon element/ },
+    match: /designated icon locator/ },
     { lang: 'js', form: 'icon-data-state-attr', scenario: scenarioIcon,
     body: jsBody('icon', [`await expect(page.locator('.cart-icon')).toHaveAttribute('data-state', 'shopping-bag glyph');`]),
     match: /missing icon assertion/ },
@@ -343,6 +362,16 @@ for (const prop of VISUAL_PROPS) {
     });
   }
 }
+
+ACCEPTS.push({
+  lang: 'js',
+  form: 'icon-testid-scenario-designated',
+  scenario: scenarioIconDesignated,
+  body: `test('QAS-VIS-01', async () => {
+      await expect(page.getByText('${LINE_TEXT}', { exact: true })).toHaveText('${LINE_TEXT}');
+      await expect(page.getByTestId('cart-glyph')).toHaveAttribute('aria-label', 'shopping-bag glyph');
+    });`,
+});
 
 ACCEPTS.push({
   lang: 'js',
