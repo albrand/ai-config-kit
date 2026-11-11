@@ -1,0 +1,139 @@
+trigger: none
+resources:
+  repositories:
+  - repository: qaAuthority
+    type: git
+    name: acme-qa/qa-authority
+    ref: refs/heads/main
+pr:
+  branches:
+    include: ['main', 'release/*']
+parameters:
+- name: release
+  type: boolean
+  default: false
+- name: pullRequestId
+  type: string
+  default: ''
+- name: changeUrl
+  type: string
+  default: ''
+variables:
+  nodeVersion: '22.x'
+stages:
+- stage: Plan
+  jobs:
+  - job: plan
+    steps:
+    - checkout: qaAuthority # declare a repository resource; authorize it on first run
+    - task: NodeTool@0
+      inputs: { versionSpec: '$(nodeVersion)' }
+    - bash: |
+        node qaAuthority/qa/bin/qa.mjs plan --config qaAuthority/qa/qa.config.json --scenarios qaAuthority/qa/scenarios.json --base-scenarios qaAuthority/qa/base-scenarios.json --base "$(System.PullRequest.TargetCommitId)" --head "$(Build.SourceVersion)" --pull-request "${{ parameters.pullRequestId }}" --change-url "${{ parameters.changeUrl }}" --output qa-plan.json
+      displayName: Plan board-associated work items and base regressions; report unlinked text hints only
+      env:
+        QA_BOARD_READ_TOKEN: $(QA_BOARD_READ_TOKEN)
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+    - publish: qa-plan.json
+      artifact: qa-plan
+    - publish: qaAuthority/qa
+      artifact: qa-authority
+- stage: Test
+  dependsOn: Plan
+  jobs:
+  - job: token_free_tests
+    steps:
+    - download: current
+      artifact: qa-plan
+    - checkout: self
+      persistCredentials: false
+    - download: current
+      artifact: qa-authority
+    - task: NodeTool@0
+      inputs: { versionSpec: '$(nodeVersion)' }
+    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" install-authoritative --source "$(Pipeline.Workspace)/qa-authority" --target . --config "$(Pipeline.Workspace)/qa-authority/qa.config.json"
+      displayName: Overlay QA-owned tests and list ignored branch copies
+    - script: node "$(Pipeline.Workspace)/qa-authority/bin/qa.mjs" test --config "$(Pipeline.Workspace)/qa-authority/qa.config.json" --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --commit "$(Build.SourceVersion)" --output qa-results/run-v1.json --no-network-writes
+      displayName: Run authoritative suite without secrets
+    - publish: qa-results
+      artifact: qa-run-results
+      condition: always()
+    - publish: allure-results
+      artifact: allure-results
+      condition: always()
+- stage: Judge
+  dependsOn: Test
+  condition: always()
+  jobs:
+  - job: verdict
+    steps:
+    - checkout: qaAuthority
+      persistCredentials: false
+    - download: current
+      artifact: qa-plan
+    - download: current
+      artifact: qa-run-results
+    - script: |
+        set -euo pipefail
+        base_run="$(Pipeline.Workspace)/qa-run-results/base-run-v1.json"
+        extra=()
+        if [ -f "$base_run" ]; then extra=(--base-results "$base_run"); fi
+        node qaAuthority/qa/bin/qa.mjs judge --config qaAuthority/qa/qa.config.json --plan "$(Pipeline.Workspace)/qa-plan/qa-plan.json" --results "$(Pipeline.Workspace)/qa-run-results" --base "$(System.PullRequest.TargetCommitId)" "${extra[@]}" --output verdict.json
+      displayName: Judge every board-associated and base-regression scenario
+    # Optional base-proof stage: run head QA tests against merge-base application and publish base-run-v1.json.
+    - publish: verdict.json
+      artifact: qa-verdict
+      condition: always()
+- stage: Report
+  dependsOn: Judge
+  condition: always()
+  jobs:
+  - job: report
+    steps:
+    - checkout: self
+      persistCredentials: false
+    - download: current
+      artifact: allure-results
+    - script: npm ci --ignore-scripts
+      displayName: Install locked application reporting tools without lifecycle scripts
+    - script: npx allure generate --config ./allurerc.mjs
+      displayName: Generate Allure 3 single-file report
+    - script: mkdir -p report-pending && cp -R allure-report report-pending/allure-report
+      displayName: Assemble Allure-only report artifact; verdict remains in trusted QA code
+    - publish: report-pending
+      artifact: qa-report-pending-$(Build.SourceVersion)
+- stage: DEV
+  dependsOn: [Test, Judge, Report]
+  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
+  jobs:
+  - deployment: deploy_dev
+    environment: DEV
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: ./deploy.sh DEV "$(Build.SourceVersion)"
+- stage: STAGING
+  dependsOn: DEV
+  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
+  jobs:
+  - deployment: deploy_staging
+    environment: STAGING
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: ./deploy.sh STAGING "$(Build.SourceVersion)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --base-url "$(STAGING_URL)"
+- stage: PROD
+  dependsOn: STAGING
+  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
+  jobs:
+  - deployment: deploy_prod
+    environment: PROD
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: ./deploy.sh PROD "$(Build.SourceVersion)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --base-url "$(PROD_URL)"

@@ -1,0 +1,27 @@
+# Azure Pipelines integration
+
+Use `templates/qa-kit/ci/azure-pipelines.yml` with `templates/qa-kit/ci/azure-publisher-pipeline.yml`. Store the app-gate YAML or its required `extends` template in a protected QA-owned repository/ref, and configure the branch validation to require that trusted definition; a PR must not be able to edit the YAML that receives secrets. The app gate publishes a data-only Allure artifact; a separate QA-owned pipeline is triggered on completion, downloads the trusted plan and raw runner result artifacts separately, recomputes the verdict with `publish-evidence`, then posts using the board-write token. Never map `System.AccessToken`, a board secret, or a persisted checkout credential into a job that checks out app PR code or installs its dependencies. The plan job checks out only trusted QA code and may use read-only board access to resolve work items. A first cross-repository QA checkout usually pauses for repository authorization: authorize that resource explicitly before relying on it.
+
+## Application PR pipeline
+
+1. Declare the QA repository as a protected repository resource pinned to its default branch, with read-only pipeline permission. Verify the first pipeline run is authorized.
+2. Plan only work items confirmed by the board's PR association endpoint. Keep all current scenarios and every base regression in the gate plan; only associated item/scenario pairs are write targets.
+3. In a separate job, checkout the PR head with `persistCredentials: false`, download the QA authority snapshot from the trusted plan job, overwrite branch copies, print ignored paths, and run the full suite with board/upload secrets unset. Publish runner output, screenshots and Allure results even after failure.
+4. Always run `judge` against the merge base. It emits all current and base-regression rows, including skips and not-run reasons. A missing screenshot, artifact confirmation or upload confirmation is BLOCKED.
+5. The unprivileged report job checks out app PR code with `persistCredentials: false`, uses `npm ci --ignore-scripts` when application reporting tools are needed, and publishes Allure assets only. It has no board token and does not post.
+6. In the QA-owned pipeline, configure a pipeline-completion resource for the app gate. The publisher checks out only QA's protected default branch, downloads the plan and raw runner results as separate artifacts, recomputes the verdict, validates plan/head/run binding and scenario/work-item membership, then posts with a scoped variable group. Never execute artifacts or accept verdict files from the report job. Use a marker containing item, commit and content hash and verify the API receipt; missing artifact, token or confirmed receipt blocks publication.
+7. In Project Settings → Repositories → Policies, add a Build validation policy for the app target branch; set it required, automatic, and apply to the intended paths. Add required reviewer policies. Do not use a draft PR as proof that build validation runs.
+
+## QA repository validation
+
+### Trust boundary and residual risk
+
+PR-controlled test code creates the raw results, so it can spoof pass/fail for an already-planned scenario. It cannot select another scenario or work item: the QA-owned publisher recomputes the verdict and validates every scenario/work-item pair against the plan before it writes to the board.
+
+Place `templates/qa-kit/ci/qa-repository-pr-azure.yml` in the QA repository as its separate PR pipeline and require it on scenario/test paths. It fetches the target branch, compiles the changed runner projects, discovers IDs from runner output, executes the configured suite, parses native result artifacts, and rejects static-only or skipped evidence. Add a QA-owner reviewer policy for schema/scenario changes. The storage validator and application judge must share fixtures and exception-field rules so manual/awaiting behavior cannot diverge.
+
+## Release stages and tiers
+
+Promote the exact tested candidate SHA and work-item set through deployment jobs with environments `DEV`, `STAGING`, `PROD`. Configure approvals/checks on STAGING and PROD, pin artifact version, and make later stages depend on successful earlier stages. Run pre-push changed-scenario tests; PR linked+related+base-regression tests; release candidate tests and deployed smoke/sanity walks. Every stage uploads evidence and links it only after artifact confirmation.
+
+Configure pipeline variables/secrets by stage and scope them only to report/deploy jobs; keep test job variables explicitly empty for board tokens and upload credentials. Set a required build-validation policy using the pipeline's stable definition name and “Policy requirement: Required”. Add QA repo read authorization explicitly; do not give application contributors write access to authoritative scenarios.

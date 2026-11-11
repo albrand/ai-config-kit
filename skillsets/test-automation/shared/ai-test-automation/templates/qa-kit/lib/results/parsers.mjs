@@ -1,0 +1,7 @@
+import { parseResults } from './index.mjs';
+export function parsePlaywrightJson(data) {
+ const tests=[]; const walk=s=>{ for(const spec of s.specs??[]) for(const t of spec.tests??[]) for(const r of t.results??[]) tests.push({scenario_id:t.annotations?.find(a=>a.type==='scenario_id')?.description??t.title,status:r.status==='passed'?'passed':r.status==='skipped'?'skipped':'failed',executed:r.status==='passed'||r.status==='failed',screenshot:r.attachments?.find(a=>a.name==='screenshot')?.path}); for(const c of s.suites??[])walk(c);}; for(const s of data.suites??[])walk(s); return tests;
+}
+export function parseAllureResults(rows) { return parseResults(rows.map(x=>({scenario_id:x.labels?.find(l=>l.name==='scenario_id')?.value,status:x.status,screenshot:x.attachments?.find(a=>a.type?.includes('image'))?.source}))); }
+export function parseJunitXml(xml) { const cases=[...xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)]; return cases.map(([,attrs='',body=''])=>({scenario_id:attrs.match(/name="([^"]+)"/)?.[1]?.match(/QAS-[\w-]+/)?.[0],status:/<skipped\b/.test(body)?'skipped':/<failure\b|<error\b/.test(body)?'failed':'passed',executed:!/<skipped\b/.test(body)})); }
+export function parseTrx(xml) { const results=[...xml.matchAll(/<UnitTestResult\b([^>]+)>?/g)]; return results.map(([,a])=>({scenario_id:a.match(/testName="([^"]+)"/)?.[1]?.match(/QAS-[\w-]+/)?.[0],status:/outcome="Passed"/.test(a)?'passed':/outcome="NotExecuted"/.test(a)?'skipped':'failed',executed:!/outcome="NotExecuted"/.test(a)})); }

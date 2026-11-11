@@ -1,0 +1,159 @@
+name: authoritative-qa-gate
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Promote this tested candidate through environments
+        required: true
+        type: boolean
+        default: false
+      work_items:
+        description: Candidate work-item hints; only board-associated items enter the plan
+        required: false
+        type: string
+      pull_request:
+        description: Existing PR number for a manually queued release association lookup
+        required: false
+        type: string
+      change_url:
+        description: Canonical PR URL for a manually queued release association lookup
+        required: false
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+jobs:
+  plan:
+    if: github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    permissions: { contents: read, pull-requests: read, actions: read }
+    runs-on: ubuntu-latest
+    outputs:
+      planned: ${{ steps.plan.outputs.planned }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: acme-qa/qa-authority, path: qa-authority, ref: main, token: ${{ secrets.QA_READ_TOKEN }}, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Resolve board-associated work items and base regressions; text IDs are hints only
+        id: plan
+        run: node qa-authority/qa/bin/qa.mjs plan --config qa-authority/qa/qa.config.json --base-scenarios qa-authority/qa/base-scenarios.json --scenarios qa-authority/qa/scenarios.json --base "${{ github.event.pull_request.base.sha || 'origin/main' }}" --head "${{ github.event.pull_request.head.sha || github.sha }}" --pull-request "${{ inputs.pull_request }}" --change-url "${{ inputs.change_url }}" --output qa-plan.json
+        env: { QA_BOARD_READ_TOKEN: ${{ secrets.QA_BOARD_READ_TOKEN }} }
+      - uses: actions/upload-artifact@v4
+        with: { name: qa-plan, path: qa-plan.json, if-no-files-found: error }
+      - uses: actions/upload-artifact@v4
+        with: { name: qa-authority, path: qa-authority/qa/**, if-no-files-found: error }
+  test:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: qa-plan, path: qa-plan }
+      - uses: actions/checkout@v4
+        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }}, persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with: { name: qa-authority, path: qa-authority/qa }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Replace branch copies with QA authority
+        run: node qa-authority/qa/bin/qa.mjs install-authoritative --source qa-authority/qa --target . --config qa-authority/qa/qa.config.json
+      - name: Run without board or publishing secrets
+        env: { CI: 'true' }
+        run: node qa-authority/qa/bin/qa.mjs test --config qa-authority/qa/qa.config.json --plan qa-plan/qa-plan.json --commit "${{ github.event.pull_request.head.sha || github.sha }}" --output qa-results/run-v1.json --no-network-writes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-run-results
+          path: qa-results/run-v1.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allure-results
+          path: allure-results/**
+          if-no-files-found: error
+  judge:
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    needs: [plan, test]
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: acme-qa/qa-authority, ref: main }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: qa-plan, path: qa-plan }
+      - uses: actions/download-artifact@v4
+        with: { name: qa-run-results, path: qa-run-results }
+      - name: Judge complete scope against base
+        run: |
+          set -euo pipefail
+          args=(judge --config qa/qa.config.json --plan qa-plan/qa-plan.json --results qa-run-results --base "${{ github.event.pull_request.base.sha }}" --output verdict.json)
+          if [ -f qa-run-results/base-run-v1.json ]; then args+=(--base-results qa-run-results/base-run-v1.json); fi
+          node qa/bin/qa.mjs "${args[@]}"
+      # Optional base-proof job: check out merge-base application code, overlay head QA tests, run once, upload base-run-v1.json next to qa-run-results.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: qa-verdict, path: verdict.json, if-no-files-found: error }
+  report:
+    if: always() && github.repository != 'acme-qa/qa-authority' && (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch') && (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+    needs: [judge]
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: ${{ github.event.pull_request.head.sha || github.sha }}, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: allure-results, path: allure-results }
+      - name: Install locked application tooling without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Generate Allure 3 single-file report
+        run: npx allure generate --config ./allurerc.mjs
+      - name: Assemble data-only report payload
+        run: mkdir -p report-pending && cp -R allure-report report-pending/allure-report
+      - uses: actions/upload-artifact@v4
+        with: { name: qa-report-${{ github.event.pull_request.head.sha || github.sha }}, path: report-pending/**, if-no-files-found: error, retention-days: 30 }
+  # Put this workflow in the QA-owned repository too. Protect qa/** with CODEOWNERS and require this check.
+  qa-repository-pr:
+    if: github.repository == 'acme-qa/qa-authority' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Compile, discover and execute changed scenarios
+        run: node qa/bin/qa.mjs test --config qa/qa.config.json --output qa/changed-scenario-run.json
+      - name: Require evidence for every changed scenario
+        run: node qa/bin/qa.mjs check-scenarios --config qa/qa.config.json --head qa/scenarios.json --base "origin/${{ github.base_ref }}" --file qa/scenarios.json --results qa/changed-scenario-run.json
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'
+    needs: [plan, test, judge, report]
+    runs-on: ubuntu-latest
+    environment: DEV
+    steps:
+      - name: Promote the exact tested candidate to DEV
+        run: ./deploy.sh DEV "${{ github.sha }}"
+  staging:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: STAGING
+    steps:
+      - run: ./deploy.sh STAGING "${{ github.sha }}"
+      - run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --base-url "$STAGING_URL"
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: PROD
+    steps:
+      - run: ./deploy.sh PROD "${{ github.sha }}"
+      - run: node qa-authority/qa/bin/qa.mjs test --tier production-sanity --base-url "$PROD_URL"

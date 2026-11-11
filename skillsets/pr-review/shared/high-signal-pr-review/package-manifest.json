@@ -4,7 +4,13 @@
   "required": [
     "SKILL.md",
     "agents/openai.yaml",
-    "references/pr-review-output-contract.md"
+    "references/pr-review-output-contract.md",
+    "references/review-workflow.md",
+    "scripts/fixtures/no-fire-manifest.md",
+    "scripts/hermes-bundle.py",
+    "scripts/test_hermes_bundle.py"
   ],
-  "executable": []
+  "executable": [
+    "scripts/hermes-bundle.py"
+  ]
 }

@@ -6,6 +6,8 @@ The manifest does not replace the framework files. It tells an AI agent which fi
 
 ## Canonical File Set
 
+- `skillsets/test-automation/`: portable AI-assisted QA automation skill, board/Allure/CI references, and dependency-free starter kit.
+
 Core files:
 
 - `README.md`: overview, layer model, and adoption summary.
