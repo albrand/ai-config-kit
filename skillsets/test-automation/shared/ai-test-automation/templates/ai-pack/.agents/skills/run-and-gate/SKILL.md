@@ -28,4 +28,4 @@ Read: `references/ci-github-actions.md` or `references/ci-azure-pipelines.md`, a
 
 - App PR: plan (trusted QA) → test (head, no secrets) → judge → report artifacts; publisher recomputes verdicts.
 - QA repo PR: run changed scenarios and `check-scenarios` against merge base.
-- Merge-base proof: every new scenario needs a `base-run-v1.json` from the merge base; `judge` blocks new scenarios that passed without the change. A new scenario with no base run has no red-on-base proof.
+- Merge-base proof: the CI templates run a `base-proof` job whenever a scenario is new or changed (same scenarios on the merge base, results in `base-run-v1.json`), and `judge` takes `--base-results` unconditionally in that case. A missing base results file fails the job with `NOT RUN`. `judge` blocks new scenarios that passed without the change. Do not make the flag conditional on the file existing.

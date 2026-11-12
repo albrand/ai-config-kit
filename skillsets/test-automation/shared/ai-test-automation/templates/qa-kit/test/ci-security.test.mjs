@@ -101,3 +101,40 @@ test('trusted publishers consume validated data without checking out or installi
   const azureReport = azureYaml.split('- stage: Report')[1]?.split('- stage: DEV')[0] ?? '';
   assert.doesNotMatch(azureReport, /verdict\.json|qa-verdict/);
 });
+
+const FILE_GATED_BASE = /\[\s*-[fse]\s+[^\]]*base[^\]]*\]\s*;\s*then[^\n]*--base-results/;
+const BASE_PROOF_COMMENT = /#\s*optional\s+base-proof/i;
+
+test('base-run detector flags the file-gated form and the comment-only form', () => {
+  assert.match('if [ -f qa-run-results/base-run-v1.json ]; then args+=(--base-results x); fi', FILE_GATED_BASE);
+  assert.match('if [ -f "$base_run" ]; then extra=(--base-results "$base_run"); fi'.replace('$base_run', 'base_run'), FILE_GATED_BASE);
+  assert.match('# Optional base-proof job: check out merge-base', BASE_PROOF_COMMENT);
+});
+
+test('GitHub template runs a real base-proof job and requires its results when scenarios are new or changed', () => {
+  const jobs = githubJobs(githubYaml);
+  const proof = jobs.find(job => job.name === 'base-proof');
+  assert.ok(proof, 'base-proof must be a job, not a comment');
+  assert.match(proof.source, /qa\.mjs test[^\n]*base-run-v1\.json/, 'base-proof must run the scenarios and write base-run-v1.json');
+  assert.match(proof.source, /NOT RUN/, 'a missing base results file must fail with a NOT RUN message');
+  assert.match(proof.source, /persist-credentials: false/);
+  const judge = jobs.find(job => job.name === 'judge');
+  assert.match(judge.source, /needs: \[[^\]]*base-proof[^\]]*\]/, 'judge must wait for base-proof');
+  assert.match(judge.source, /--base-results/);
+  assert.match(judge.source, /NOT RUN/);
+  assert.doesNotMatch(githubYaml, FILE_GATED_BASE, '--base-results must not depend on a file existing');
+  assert.doesNotMatch(githubYaml, BASE_PROOF_COMMENT);
+});
+
+test('Azure template runs a real base-proof job and requires its results when scenarios are new or changed', () => {
+  const proof = azureJobs(azureYaml).find(job => job.name === 'base_proof');
+  assert.ok(proof, 'base_proof must be a job, not a comment');
+  assert.match(proof.source, /qa\.mjs"? test[^\n]*base-run-v1\.json/, 'base_proof must run the scenarios and write base-run-v1.json');
+  assert.match(proof.source, /NOT RUN/, 'a missing base results file must fail with a NOT RUN message');
+  assert.match(proof.source, /persistCredentials: false/);
+  assert.match(azureYaml, /- stage: Judge\n  dependsOn: \[Plan, Test\]/, 'Judge must see the plan outputs and wait for the tests');
+  assert.match(azureYaml, /--base-results/);
+  assert.match(azureYaml, /NOT RUN: red-on-base proof is missing/);
+  assert.doesNotMatch(azureYaml, FILE_GATED_BASE, '--base-results must not depend on a file existing');
+  assert.doesNotMatch(azureYaml, BASE_PROOF_COMMENT);
+});
