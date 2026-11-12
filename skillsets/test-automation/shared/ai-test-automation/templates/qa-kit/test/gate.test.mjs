@@ -104,6 +104,22 @@ for(const [name,code] of [
  ['MSTest Assert.Inconclusive',hidden('Assert.','Inconclusive("later");')],
  ['xunit Skip.If',hidden('Skip.','If(Environment.GetEnvironmentVariable("CI") != null);')],
 ]) test(`spoof guard rejects a conditional or alternate skip: ${name}`,()=>{assert.equal(sourcePrecheck(code),false);});
+for(const [name,code] of [
+ ['imported expectedFailure decorator',hidden('@expected','Failure\ndef test_x(self): pass')],
+ ['imported skipUnless decorator',hidden('@skip','Unless(HAS_DB, "x")\ndef test_x(self): pass')],
+ ['imported bare skip decorator',hidden('@sk','ip("later")\ndef test_x(self): pass')],
+ ['module-qualified skipIf decorator',hidden('@helpers.skip','If(CI, "x")\ndef test_x(self): pass')],
+ ['skipTest on another test object',hidden('def test_x(case):\n    case.skip','Test("later")')],
+]) test(`spoof guard still rejects a real skip: ${name}`,()=>{assert.equal(sourcePrecheck(code),false);});
+for(const [name,code] of [
+ ['python helper named expectedFailure','def expectedFailure(value):\n    return value\n'],
+ ['python helper named skipIf','def skipIf(condition, reason):\n    return condition\n'],
+ ['python assignment to skipTest','skipTest = 3\nexpectedFailure = lambda f: f\n'],
+ ['python plain references','handlers = [skipUnless, expectedFailure]\nvalue = config.skipIf\nprint(opts.expectedFailure, skipTest)\n'],
+ ['js function named skipIf','function skipIf(condition) { return condition; }\n'],
+ ['js const assignment to expectedFailure','const expectedFailure = (value) => value;\nlet skipUnless = 1;\n'],
+ ['js plain references and property reads','const handlers = [skipIf, skipTest];\nconst value = config.skipUnless + options.expectedFailure;\n'],
+]) test(`spoof guard accepts ${name}`,()=>{assert.equal(sourcePrecheck(code),true);});
 test('spoof guard ignores every new skip form inside comments and strings',()=>{assert.equal(sourcePrecheck(hidden('// @pytest.mark.','skipif(x)\n# unittest.','skipIf(x)\n/* x','it("a") test.','skipIf(c) test.','todo("t") */\nconst a = "pytest.','importorskip(x) @unittest.','expectedFailure test.','skip(c, \'r\') [','Ignore] Assert.','Inconclusive";\nawait expect(a).toHaveText("b");')),true);});
 test('spoof guard accepts identifiers that merely contain skip, todo or only',()=>{assert.equal(sourcePrecheck('const skipped = rows.filter(r => r.skipIfEmpty);\nconst todos = list.todoCount + only.length;\nawait expect(page.getByRole("heading")).toHaveText("Done",{useInnerText:true});'),true);});
 test('spoof guard ignores hidden-red words inside comments and strings',()=>{assert.equal(sourcePrecheck(hidden('// test','.fixme(x)\nconst note = "test','.fail( and retries: 3";\nawait expect(a).toHaveText("b");')),true);});
