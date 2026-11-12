@@ -5,7 +5,7 @@ All files use JSON Schema draft 2020-12 semantics. Store each artifact with its 
 Every automated scenario is behavioural, not implementation-driven:
 
 - `polarity`: `positive` or `negative` (regression cases set `regressionCase: true`).
-- `layer`: `e2e`, `api`, `unit`, or `component`. Mocked HTTP is allowed at any layer; bias is about intent, not “real backend”.
+- `layer`: `e2e`, `api`, `unit`, or `component`. Mocked HTTP is allowed at any layer; bias is about intent, not “real backend”. List each write the scenario expects (method, path, body) in `steps`; the mock accepts those and refuses every other write.
 - `mockPolicy`: `mixed-source` when steps use mocks/fixtures — mixed input, application logic must produce the filtered or empty outcome.
 - `expected`: one specific observable outcome per line; automation must assert each line (no loose “any element” wording).
 - `status: bug` with `bugKey` records a found defect; keep the automation red until the product fix ships.

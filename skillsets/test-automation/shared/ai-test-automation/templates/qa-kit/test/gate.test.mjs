@@ -55,6 +55,21 @@ test('spoof guard strips raw and interpolated raw literals',()=>{assert.equal(so
 test('spoof guard rejects a false preprocessor branch',()=>{assert.equal(sourcePrecheck('#if false\n[Fact] void Hidden() {}\n#endif'),false);});
 test('spoof guard rejects a skipped attribute',()=>{const attribute='[Fact'+'(Skip'+'="reason")] void Hidden() {}';assert.equal(sourcePrecheck(attribute),false);});
 test('spoof guard rejects skipped JavaScript test declarations',()=>{assert.equal(sourcePrecheck(['test','.','skip("case",()=>{});'].join('')),false);});
+const hidden=(...parts)=>parts.join('');
+for(const [name,code] of [
+ ['fixme',hidden('test','.','fixme("case",async()=>{});')],
+ ['fail-marked',hidden('test','.','fail("case",async()=>{});')],
+ ['conditional fail',hidden('test','.','fail(browserName==="webkit");')],
+ ['focused',hidden('test','.','only("case",async()=>{});')],
+ ['focused describe',hidden('test','.describe.','only("group",()=>{});')],
+ ['slowed',hidden('test','.','slow();')],
+ ['fixed sleep',hidden('await page.wait','ForTimeout(5000);')],
+ ['retried',hidden('test.describe.configure({ ret','ries: 2 });')],
+ ['pytest skip',hidden('@pytest.mark.','skip(reason="later")\ndef test_x(): pass')],
+ ['pytest xfail',hidden('@pytest.mark.','xfail\ndef test_x(): pass')],
+]) test(`spoof guard rejects a ${name} test`,()=>{assert.equal(sourcePrecheck(code),false);});
+test('spoof guard ignores hidden-red words inside comments and strings',()=>{assert.equal(sourcePrecheck(hidden('// test','.fixme(x)\nconst note = "test','.fail( and retries: 3";\nawait expect(a).toHaveText("b");')),true);});
+test('spoof guard keeps accepting a plain strict test',()=>{assert.equal(sourcePrecheck('test("case",async({page})=>{await expect(page.getByRole("heading")).toHaveText("Done",{useInnerText:true});});'),true);});
 test('manual exception requires reason owner and procedure in storage and judge',()=>{const s={...row('QAS-WI-123-23','manual'),reason:'needs visual review',owner:'qa',procedure:'open page and inspect'};assert.equal(validateStoreAndGate(s).valid,true);});
 test('manual exception missing procedure is blocked in both paths',()=>{const s={...row('QAS-WI-123-24','manual'),reason:'needs review',owner:'qa'};assert.deepEqual(validateStoreAndGate(s),{valid:false,verdict:'BLOCKED'});});
 test('awaiting exception requires owner reason and revisit date in both paths',()=>{const s={...row('QAS-WI-123-25','awaiting'),reason:'sandbox unavailable',owner:'qa',revisitDate:'2027-01-01'};assert.equal(validateStoreAndGate(s).valid,true);});

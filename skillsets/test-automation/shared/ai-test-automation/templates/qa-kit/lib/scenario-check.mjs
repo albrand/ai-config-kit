@@ -39,5 +39,15 @@ export function scenarioCheck(head,base,run){
  for(const err of criteriaCoverageErrors(head,affected))changed.push({id:`criterion:${err.criterionId}`,changed:true,ok:false,reason:err.reason});
  return changed;
 }
-export function sourcePrecheck(source){const code=tokenize(source);return !/#\s*if\s+false\b|\b(?:Skip|skip)\s*=|\b(?:test|it|describe)\s*\.\s*skip\s*\(/.test(code);}
+// Patterns that turn a red test green, or hide it, without fixing the product: skipped, fixme, fail-marked,
+// focused (.only), slowed (longer timeout), fixed-sleep and retried tests. Comment and string bodies are blanked first.
+const HIDDEN_RED_PATTERNS=[
+ /#\s*if\s+false\b/,
+ /\b(?:Skip|skip)\s*=/,
+ /\b(?:test|it|describe)\s*\.\s*(?:describe\s*\.\s*)?(?:skip|fixme|fail|only|slow)\s*\(/,
+ /\bwaitForTimeout\s*\(/,
+ /\bretries\s*:\s*[1-9]/,
+ /\bpytest\s*\.\s*(?:mark\s*\.\s*)?(?:skip|xfail)\b/,
+];
+export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code));}
 export function sourceFilePrecheck(file){return sourcePrecheck(readFileSync(file,'utf8'));}

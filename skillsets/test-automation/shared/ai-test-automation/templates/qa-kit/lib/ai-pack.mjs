@@ -26,9 +26,17 @@ For every UI element a scenario names, check exactly what the user sees: the tex
 
 Visual values come from the ticket's design reference (prototype, design tokens, Figma), never from the running app or its source. Match text exactly and case-sensitively: no case-insensitive regex, no partial match.
 
+For every quoted copy line, assert the rendered text with \`toHaveText(expected, { useInnerText: true })\` or \`expect(await locator.innerText()).toBe(expected)\`, and assert the computed \`text-transform\` with \`toHaveCSS\` (use \`none\` when the design shows the copy as typed). Default \`toHaveText\`, \`getByText\` and \`exact: true\` read \`textContent\` and do not see CSS \`text-transform\`.
+
+If any expected line is visual (quoted copy letter case, colour, background, typography, \`text-transform\`, named icon), the scenario must use a real-browser runner (Playwright); a jsdom or unit runner cannot assert what the user sees. \`toBeVisible()\` alone never satisfies a visual line: assert the computed style of each expected visual.
+
 Mocks are fine; mock data must be contract-shaped and must **not** encode the scenario's expected answer.
 
-A red test while the app is wrong is a **bug report**; do not weaken the assertion.
+A mock refuses every write the scenario does not declare (method, path and body), and the refusal fails the test with the policy's own message. Parse a body as JSON only for \`application/json\`; refuse multipart without a boundary. Register every route the spec adds through the same write policy so a later route cannot serve a forbidden write. A refusal test asserts that message and never passes through \`test.fail()\`.
+
+A red test while the app is wrong is a **bug report**; do not weaken the assertion. Never turn it green with \`skip\`, \`fixme\`, \`test.fail\`, \`test.slow\`, a retry, a longer timeout, an inverted assertion or \`--allow-draft-pass\`.
+
+Prove each visual check can fail: set the value wrong on purpose, see the assertion go red, then restore it.
 
 Load the task skill:
 
@@ -107,6 +115,8 @@ alwaysApply: false
 ---
 
 ${PACK_GENERATED}
+
+${buildQaCoreBlock()}
 
 Read and follow \`.agents/skills/${name}/SKILL.md\` for this work. Kit docs live under \`qa/\` (see parent ai-test-automation skill references).
 `;
@@ -194,7 +204,7 @@ export function buildInstallPlan(targetRoot) {
     plan.push({
       kind: 'file',
       rel: `.github/instructions/qa-${name}.instructions.md`,
-      content: `${front}${PACK_GENERATED}\n\n${spec.body}\n`,
+      content: `${front}${PACK_GENERATED}\n\n${buildQaCoreBlock()}\n\n${spec.body}\n`,
     });
   }
 
