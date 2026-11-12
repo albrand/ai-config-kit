@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -119,3 +119,122 @@ test('old kit without ai-pack command fails CLI smoke', () => {
 function writeTamper(path) {
   writeFileSync(path, `${readFileSync(path, 'utf8')}\n# drift\n`);
 }
+
+const CORE_RULES = [
+  /toHaveText\(expected, \{ useInnerText: true \}\)/,
+  /innerText\(\)\)\.toBe\(expected\)/,
+  /`text-transform`/,
+  /real-browser runner/,
+  /`toBeVisible\(\)` alone never satisfies a visual line/,
+  /refuses every write the scenario does not declare/,
+  /`application\/json`/,
+  /multipart without a boundary/,
+  /never passes through `test\.fail\(\)`/,
+  /Never turn it green with `skip`, `fixme`, `test\.fail`, `test\.slow`, a retry, a longer timeout, an inverted assertion or `--allow-draft-pass`/,
+  /set the value wrong on purpose/,
+];
+
+test('qa core block carries the visual, mock-write and hidden-red rules', () => {
+  const block = buildQaCoreBlock();
+  for (const rule of CORE_RULES) assert.match(block, rule);
+});
+
+test('every provider surface, including task-scoped ones, embeds the byte-identical core block', () => {
+  const target = mkdtempSync(join(tmpdir(), 'ai-pack-task-'));
+  try {
+    installAiPack(target);
+    const canonical = buildQaCoreBlock();
+    const surfaces = [
+      'AGENTS.md',
+      '.cursor/rules/qa-core.mdc',
+      '.github/copilot-instructions.md',
+      ...['scenario-design', 'bug-hunting-test-automation', 'run-and-gate', 'bug-report'].flatMap(name => [
+        `.cursor/rules/qa-${name}.mdc`,
+        `.github/instructions/qa-${name}.instructions.md`,
+      ]),
+    ];
+    for (const rel of surfaces) {
+      assert.equal(extractCoreBlock(readFileSync(join(target, rel), 'utf8')), canonical, `${rel} must embed the core block`);
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('task skills carry the rules their task needs, canonical and provider copy', () => {
+  const root = packSourceRoot();
+  const target = mkdtempSync(join(tmpdir(), 'ai-pack-skills-'));
+  try {
+    installAiPack(target);
+    const needs = {
+      'scenario-design': [/text-transform/, /real-browser runner/, /design reference/, /refuses all others/],
+      'bug-hunting-test-automation': [/useInnerText/, /toHaveCSS/, /application\/json/, /boundary/, /test\.fail\(\)/, /deliberately wrong/],
+      'run-and-gate': [/--allow-draft-pass/, /never a finish line/, /NOT RUN/, /base-run-v1\.json/],
+      'bug-report': [/observed/i, /unchanged/i, /test\.fail/, /retry/, /longer timeout/, /--allow-draft-pass/],
+    };
+    for (const [name, patterns] of Object.entries(needs)) {
+      const canonical = readFileSync(join(root, '.agents/skills', name, 'SKILL.md'), 'utf8');
+      const provider = readFileSync(join(target, '.claude/skills', name, 'SKILL.md'), 'utf8');
+      for (const re of patterns) {
+        assert.match(canonical, re, `${name}: canonical copy missing ${re}`);
+        assert.match(provider, re, `${name}: provider copy missing ${re}`);
+      }
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+const HEDGES = [
+  /\bif possible\b/i,
+  /\bwhen supported\b/i,
+  /\bwhere possible\b/i,
+  /\bif feasible\b/i,
+  /\bideally\b/i,
+  /\btry to\b/i,
+  /\bbest effort\b/i,
+  /\bminor hardening\b/i,
+  /\boptional (?:harness )?hardening\b/i,
+  /^\s*[-*]\s*Optional:/im,
+  /\boptional `?--base-results/i,
+  /\boptional base-run\b/i,
+  /\boptional `?base-proof\b/i,
+];
+
+function markdownFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : markdownFiles(path);
+    return entry.name.endsWith('.md') ? [path] : [];
+  });
+}
+
+function walkFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? walkFiles(path) : [path];
+  });
+}
+
+test('no pass-biased hedge wording remains in the skillset or any generated provider surface', () => {
+  const skillset = resolve(kit, '../..');
+  const files = markdownFiles(skillset);
+  assert.ok(files.length >= 12, 'expected the skillset markdown files');
+  const findings = [];
+  const surfaces = files.map(path => [path, readFileSync(path, 'utf8')]);
+  surfaces.push(['core block', buildQaCoreBlock()]);
+  const generated = mkdtempSync(join(tmpdir(), 'ai-pack-hedge-'));
+  try {
+    installAiPack(generated);
+    for (const dir of ['.agents', '.claude', '.cursor', '.github']) {
+      for (const path of walkFiles(join(generated, dir))) surfaces.push([path.replace(generated, '<generated>'), readFileSync(path, 'utf8')]);
+    }
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) surfaces.push([`<generated>/${name}`, readFileSync(join(generated, name), 'utf8')]);
+  } finally {
+    rmSync(generated, { recursive: true, force: true });
+  }
+  for (const [path, text] of surfaces) {
+    for (const re of HEDGES) if (re.test(text)) findings.push(`${path}: ${re}`);
+  }
+  assert.deepEqual(findings, []);
+});

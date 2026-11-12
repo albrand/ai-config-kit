@@ -11,17 +11,22 @@ Use this skill to build a QA-owned scenario system whose source of truth stays s
 
 TESTS ARE HUMAN BEHAVIORAL DRIVEN, WHICH MEANS IF THE UI DOES NOT WORK AS DESCRIBED E2E, THEY SHALL --NOT-- PASS, NEVER, AND THE TESTS SHALL HUNT FOR POSITIVE, NEGATIVE AND REGRESSIONS, ALWAYS, IT IS OUR SAFETY GATE.
 
-- **Priority 1:** Assert every line of `expected` specifically in automation (no `toBeTruthy`, “any icon”, `count > 0`, or silent skips).
+- **Priority 1:** Assert every line of `expected` specifically in automation (no `toBeTruthy`, “any icon”, `count > 0`, or silent skips). For each UI element, assert rendered text in its exact letter case, colour, background, font family, font size, font weight and the named icon, with values from the design reference (never from application source or from what the running app shows). `toBeVisible()` alone never satisfies a visual line.
 - **Priority 2:** A test must be red when the acceptance criterion is broken and green when it is met. Prove new work: red on merge base (or deliberately broken behaviour), green on head. `judge --base-results` blocks `passes without the change`.
 - **Priority 3:** Each criterion has positive, negative, and regression scenarios (`polarity`, `regressionCase: true`).
-- **Priority 4:** Mocked APIs and fixtures are fine; mocks must not encode the answer. Return mixed data and let application logic produce the outcome (`mockPolicy: mixed-source` when steps use mocks).
+- **Priority 4:** Mocked APIs and fixtures are fine; mocks must not encode the answer. Return mixed data and let application logic produce the outcome (`mockPolicy: mixed-source` when steps use mocks). Every mock refuses a write the scenario does not declare (see the mock write policy in `references/gate-rules.md`).
 - **Priority 5:** Found bugs stay red: `status: bug`, `bugKey`, never weaken expected to match broken code.
+- **Priority 6:** A red test is never made green by `skip`, `fixme`, `test.fail`, `test.slow`, a retry, a longer timeout, an inverted assertion or `--allow-draft-pass`.
 - Design from the ticket only, never from current implementation source.
-- Minor hardening only: unhandled mock calls should fail so an accidental empty response cannot green an empty-state test (adopter test harness; not a substitute for intent above).
+- Unhandled mock calls and undeclared writes fail the test, so an accidental empty or accepted response cannot green a test (adopter test harness; it complements the intent above and does not replace it).
 
-The kit enforces these rules in `check-scenarios`, optional base-run comparison in `judge`, and closed JSON schemas in `templates/qa-kit/lib/artifact-schema.v1.json`.
+The kit enforces these rules in `check-scenarios`, base-run comparison in `judge` (required for every new scenario), and closed JSON schemas in `templates/qa-kit/lib/artifact-schema.v1.json`.
 
 Adopting teams import `templates/ai-pack/` so every AI loads the same focused skills (scenario design, bug-hunting automation, run/gate, bug report). Only `qa-core` stays always-on; task rules load by glob or skill trigger via `node qa/bin/qa.mjs ai-pack --write|--check`.
+
+## Framework path for visual parity
+
+Some QA frameworks record visual expectations as data instead of loose assertions. In the framework used by one adopter, a scenario carries `expectedVisual[]` (element, property, expected value and its design-reference source) and a test records what it asserted through `qaVisual`; the gate then fails a scenario whose visual lines have no executed assertion (`VISUAL_NOT_ASSERTED`), checks that the asserted element is the target element, and a prove command seeds a mismatch per property to show the test goes red. This kit does not ship that code. Use the framework path when your framework offers it; the assertions in the `bug-hunting-test-automation` skill and the `--source` check apply either way, and the wrong-value proof stays a reviewer-owned requirement until `judge` can read it (see `references/gate-rules.md`).
 
 ## Quick start (30 minutes)
 
@@ -29,7 +34,7 @@ Adopting teams import `templates/ai-pack/` so every AI loads the same focused sk
 2. `cd qa`; copy `qa.config.example.json` to `qa.config.json`. Fill `board`, `boardUrl`, `repo` if applicable, `boardTokenEnv`, `base`, `scenarioFile`, `resultsFile`, `authoritativePaths`, and `testCommand`. Put the token only in a CI secret named by `boardTokenEnv`.
 3. Preview a board read using the selected board's native ID format: GitHub Issues `12`, Jira or Linear `ABC-123`, Azure Boards `123`. With the supplied example config (`board: "github"`), run `node bin/qa.mjs board read 12 --config qa.config.json --dry-run`. Expected: JSON `mode: "dry-run"`, GET URL and request shape; no `fetch` call is made and no credential value is printed.
 4. Add a starter scenario set and executed run evidence, then run `node bin/qa.mjs check-scenarios --head scenarios.json --base origin/main --file qa/scenarios.json --results run-v1.json`. The `--file` path is relative to the Git repository root. Expected: JSON rows for new/changed/deleted IDs; exit 0 only when every changed automated case compiled, was discovered and executed, and exception records are valid.
-5. Run `node bin/qa.mjs judge --scenarios scenarios.json --results run-v1.json --base-scenarios base-scenarios.json --base-results base-run-v1.json` when a merge-base run exists. Expected: one verdict row per head/base scenario; new scenarios that passed on base exit with `passes without the change`; any missing/skipped/failed evidence exits nonzero.
+5. Run `node bin/qa.mjs judge --scenarios scenarios.json --results run-v1.json --base-scenarios base-scenarios.json --base-results base-run-v1.json` after producing a merge-base run for every new scenario; without it the red-on-base proof is NOT RUN. Expected: one verdict row per head/base scenario; new scenarios that passed on base exit with `passes without the change`; any missing/skipped/failed evidence exits nonzero.
 6. Copy and adapt `ci/github-actions.yml` or `ci/azure-pipelines.yml`, wire the app PR gate and QA-repo validation, and make both checks required. Run the negative probes in phase 10 before enabling writes.
 
 ## 0. Decide
