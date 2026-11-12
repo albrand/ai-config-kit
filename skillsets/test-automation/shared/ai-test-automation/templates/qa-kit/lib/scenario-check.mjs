@@ -47,6 +47,8 @@ const HIDDEN_RED_PATTERNS=[
  /\b(?:test|it|describe)\s*\.\s*(?:describe\s*\.\s*)?(?:skip|fixme|fail|only|slow|setTimeout)\s*\(/,
  /\bwaitForTimeout\s*\(/,
  /\bretries\s*:\s*[1-9]/,
+ /\b(?:test|describe)\s*\.\s*(?:describe\s*\.\s*)?configure\s*\([^)]*\btimeout\s*:/,
+ /\btest\s*\.\s*use\s*\([^)]*\b(?:actionTimeout|navigationTimeout|timeout)\s*:/,
  /\bpytest\s*\.\s*(?:mark\s*\.\s*)?(?:skip|xfail)\b/,
 ];
 export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code));}
