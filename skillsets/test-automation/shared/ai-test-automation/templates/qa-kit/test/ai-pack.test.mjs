@@ -198,6 +198,7 @@ const HEDGES = [
   /^\s*[-*]\s*Optional:/im,
   /\boptional `?--base-results/i,
   /\boptional base-run\b/i,
+  /\boptional `?base-proof\b/i,
 ];
 
 function markdownFiles(dir) {
@@ -208,13 +209,30 @@ function markdownFiles(dir) {
   });
 }
 
-test('no pass-biased hedge wording remains in the skillset instructions', () => {
+function walkFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? walkFiles(path) : [path];
+  });
+}
+
+test('no pass-biased hedge wording remains in the skillset or any generated provider surface', () => {
   const skillset = resolve(kit, '../..');
   const files = markdownFiles(skillset);
   assert.ok(files.length >= 12, 'expected the skillset markdown files');
   const findings = [];
   const surfaces = files.map(path => [path, readFileSync(path, 'utf8')]);
   surfaces.push(['core block', buildQaCoreBlock()]);
+  const generated = mkdtempSync(join(tmpdir(), 'ai-pack-hedge-'));
+  try {
+    installAiPack(generated);
+    for (const dir of ['.agents', '.claude', '.cursor', '.github']) {
+      for (const path of walkFiles(join(generated, dir))) surfaces.push([path.replace(generated, '<generated>'), readFileSync(path, 'utf8')]);
+    }
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) surfaces.push([`<generated>/${name}`, readFileSync(join(generated, name), 'utf8')]);
+  } finally {
+    rmSync(generated, { recursive: true, force: true });
+  }
   for (const [path, text] of surfaces) {
     for (const re of HEDGES) if (re.test(text)) findings.push(`${path}: ${re}`);
   }

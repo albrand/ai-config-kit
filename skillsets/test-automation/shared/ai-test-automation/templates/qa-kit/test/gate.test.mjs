@@ -63,6 +63,7 @@ for(const [name,code] of [
  ['focused',hidden('test','.','only("case",async()=>{});')],
  ['focused describe',hidden('test','.describe.','only("group",()=>{});')],
  ['slowed',hidden('test','.','slow();')],
+ ['timeout-extended',hidden('test','.set','Timeout(120000);')],
  ['fixed sleep',hidden('await page.wait','ForTimeout(5000);')],
  ['retried',hidden('test.describe.configure({ ret','ries: 2 });')],
  ['pytest skip',hidden('@pytest.mark.','skip(reason="later")\ndef test_x(): pass')],

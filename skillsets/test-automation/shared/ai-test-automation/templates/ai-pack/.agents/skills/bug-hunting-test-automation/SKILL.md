@@ -45,5 +45,5 @@ Read: parent skill **First principle** and `references/gate-rules.md`.
 
 - For each visual value the scenario names, set it deliberately wrong (colour, font, size, case, icon), confirm the test fails on that assertion (not merely because the feature is missing), then restore it. Keep the red output.
 - Run the test on the merge base (or with the behaviour deliberately broken) and keep the red output next to the green run.
-- `node qa/bin/qa.mjs check-scenarios --source` enforces Playwright/Testing Library `getByText`/`getByLabelText` with `{ exact: true }`, bans case-insensitive text matchers, rejects visibility-only binding, and rejects skipped, fixme, fail-marked, `.only`, slowed and retried tests.
+- `node qa/bin/qa.mjs check-scenarios --source` enforces Playwright/Testing Library `getByText`/`getByLabelText` with `{ exact: true }`, bans case-insensitive text matchers, rejects visibility-only binding, and rejects skipped, fixme, fail-marked, `.only`, slowed, timeout-extended and retried tests.
 - Some runners have a framework path that records these visual checks as data (`qaVisual` / `expectedVisual`); see the parent skill. Use it when your framework has it; the assertions above still apply.

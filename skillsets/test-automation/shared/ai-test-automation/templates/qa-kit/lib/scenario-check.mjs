@@ -44,7 +44,7 @@ export function scenarioCheck(head,base,run){
 const HIDDEN_RED_PATTERNS=[
  /#\s*if\s+false\b/,
  /\b(?:Skip|skip)\s*=/,
- /\b(?:test|it|describe)\s*\.\s*(?:describe\s*\.\s*)?(?:skip|fixme|fail|only|slow)\s*\(/,
+ /\b(?:test|it|describe)\s*\.\s*(?:describe\s*\.\s*)?(?:skip|fixme|fail|only|slow|setTimeout)\s*\(/,
  /\bwaitForTimeout\s*\(/,
  /\bretries\s*:\s*[1-9]/,
  /\bpytest\s*\.\s*(?:mark\s*\.\s*)?(?:skip|xfail)\b/,

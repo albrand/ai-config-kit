@@ -30,7 +30,7 @@
 
 ## Hidden-red patterns (`--source`)
 
-`check-scenarios --source` rejects test files that turn a red test green or hide it: `skip`, `fixme`, `fail`, `only` and `slow` on `test`/`it`/`describe`, `waitForTimeout`, `retries` above zero, `pytest.mark.skip`/`xfail`, `Skip=` and `#if false`. Comment and string bodies are blanked first. A longer per-test timeout or a retry never replaces a fix: a red test is a finding.
+`check-scenarios --source` rejects test files that turn a red test green or hide it: `skip`, `fixme`, `fail`, `only`, `slow` and `setTimeout` on `test`/`it`/`describe`, `waitForTimeout`, `retries` above zero, `pytest.mark.skip`/`xfail`, `Skip=` and `#if false`. Comment and string bodies are blanked first. A longer timeout or a retry never replaces a fix: a red test is a finding. A per-test `{ timeout: N }` option is not detected; review it by hand.
 
 ## Mock write policy
 
