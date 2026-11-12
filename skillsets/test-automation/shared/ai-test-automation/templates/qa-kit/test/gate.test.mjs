@@ -74,6 +74,38 @@ for(const [name,code] of [
  ['pytest skip',hidden('@pytest.mark.','skip(reason="later")\ndef test_x(): pass')],
  ['pytest xfail',hidden('@pytest.mark.','xfail\ndef test_x(): pass')],
 ]) test(`spoof guard rejects a ${name} test`,()=>{assert.equal(sourcePrecheck(code),false);});
+for(const [name,code] of [
+ ['pytest skipif',hidden('@pytest.mark.','skipif(sys.platform == "win32", reason="x")\ndef test_x(): pass')],
+ ['pytest skip call',hidden('def test_x():\n    pytest.','skip("later")')],
+ ['pytest importorskip',hidden('np = pytest.','importorskip("numpy")')],
+ ['pytest xfail call',hidden('def test_x():\n    pytest.','xfail("known")')],
+ ['pytest xfail strict marker',hidden('@pytest.mark.','xfail(strict=True)\ndef test_x(): pass')],
+ ['unittest skip',hidden('@unittest.','skip("later")\ndef test_x(self): pass')],
+ ['unittest skipIf',hidden('@unittest.','skipIf(sys.platform == "win32", "x")\ndef test_x(self): pass')],
+ ['unittest skipUnless',hidden('@unittest.','skipUnless(HAS_DB, "x")\ndef test_x(self): pass')],
+ ['unittest expectedFailure',hidden('@unittest.','expectedFailure\ndef test_x(self): pass')],
+ ['unittest skipTest call',hidden('def test_x(self):\n    self.','skipTest("later")')],
+ ['imported skipIf decorator',hidden('from unittest import ','skipIf\n@skipIf(True, "x")\ndef test_x(self): pass')],
+ ['playwright conditional skip in body',hidden('test("c", async ({ page, browserName }) => {\n  test.','skip(browserName === "webkit", "flaky");\n});')],
+ ['playwright conditional fixme in body',hidden('test("c", async ({ browserName }) => {\n  test.','fixme(browserName === "firefox", "broken");\n});')],
+ ['describe skip',hidden('describe.','skip("group", () => {});')],
+ ['it skip',hidden('it.','skip("case", () => {});')],
+ ['it skip each',hidden('it.skip','.each([1, 2])("case %i", () => {});')],
+ ['test.describe skip',hidden('test.describe.','skip("group", () => {});')],
+ ['xit',hidden('x','it("case", () => {});')],
+ ['xtest',hidden('x','test("case", () => {});')],
+ ['xdescribe',hidden('x','describe("group", () => {});')],
+ ['vitest todo',hidden('test.','todo("later");')],
+ ['vitest skipIf',hidden('test.','skipIf(process.env.CI)("case", () => {});')],
+ ['vitest runIf',hidden('test.','runIf(process.env.RUN_IT)("case", () => {});')],
+ ['vitest concurrent skip',hidden('it.concurrent.','skip("case", () => {});')],
+ ['NUnit Ignore attribute',hidden('[','Ignore("later")]\npublic void Hidden() {}')],
+ ['NUnit Assert.Ignore',hidden('Assert.','Ignore("later");')],
+ ['MSTest Assert.Inconclusive',hidden('Assert.','Inconclusive("later");')],
+ ['xunit Skip.If',hidden('Skip.','If(Environment.GetEnvironmentVariable("CI") != null);')],
+]) test(`spoof guard rejects a conditional or alternate skip: ${name}`,()=>{assert.equal(sourcePrecheck(code),false);});
+test('spoof guard ignores every new skip form inside comments and strings',()=>{assert.equal(sourcePrecheck(hidden('// @pytest.mark.','skipif(x)\n# unittest.','skipIf(x)\n/* x','it("a") test.','skipIf(c) test.','todo("t") */\nconst a = "pytest.','importorskip(x) @unittest.','expectedFailure test.','skip(c, \'r\') [','Ignore] Assert.','Inconclusive";\nawait expect(a).toHaveText("b");')),true);});
+test('spoof guard accepts identifiers that merely contain skip, todo or only',()=>{assert.equal(sourcePrecheck('const skipped = rows.filter(r => r.skipIfEmpty);\nconst todos = list.todoCount + only.length;\nawait expect(page.getByRole("heading")).toHaveText("Done",{useInnerText:true});'),true);});
 test('spoof guard ignores hidden-red words inside comments and strings',()=>{assert.equal(sourcePrecheck(hidden('// test','.fixme(x)\nconst note = "test','.fail( and retries: 3";\nawait expect(a).toHaveText("b");')),true);});
 test('spoof guard accepts describe.configure without timeout or retries and use without timeouts',()=>{assert.equal(sourcePrecheck('test.describe.configure({ mode: "serial" });\ntest.use({ viewport: { width: 800, height: 600 } });'),true);});
 test('spoof guard keeps accepting a plain strict test',()=>{assert.equal(sourcePrecheck('test("case",async({page})=>{await expect(page.getByRole("heading")).toHaveText("Done",{useInnerText:true});});'),true);});
