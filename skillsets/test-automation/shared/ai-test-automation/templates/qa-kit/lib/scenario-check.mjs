@@ -40,16 +40,23 @@ export function scenarioCheck(head,base,run){
  return changed;
 }
 // Patterns that turn a red test green, or hide it, without fixing the product: skipped, fixme, fail-marked,
-// focused (.only), slowed (longer timeout), fixed-sleep and retried tests. Comment and string bodies are blanked first.
+// focused (.only), slowed (longer timeout), fixed-sleep and retried tests, plus every conditional form (skipif, skipIf, runIf, importorskip, expectedFailure, test.skip(condition), todo, xit). Comment and string bodies are blanked first.
 const HIDDEN_RED_PATTERNS=[
  /#\s*if\s+false\b/,
  /\b(?:Skip|skip)\s*=/,
- /\b(?:test|it|describe)\s*\.\s*(?:describe\s*\.\s*)?(?:skip|fixme|fail|only|slow|setTimeout)\s*\(/,
+ /\b(?:test|it|describe|suite)\s*\.\s*(?:\w+\s*\.\s*)*(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)\b/,
+ /\b(?:xit|xtest|xdescribe)\s*\(/,
  /\bwaitForTimeout\s*\(/,
  /\bretries\s*:\s*[1-9]/,
  /\b(?:test|describe)\s*\.\s*(?:describe\s*\.\s*)?configure\s*\([^)]*\btimeout\s*:/,
  /\btest\s*\.\s*use\s*\([^)]*\b(?:actionTimeout|navigationTimeout|timeout)\s*:/,
- /\bpytest\s*\.\s*(?:mark\s*\.\s*)?(?:skip|xfail)\b/,
+ /\bpytest\s*\.\s*(?:mark\s*\.\s*)?(?:skip\w*|xfail\w*|importorskip)\b/,
+ /\bunittest\s*\.\s*(?:skip\w*|expectedFailure)\b/,
+ /@\s*(?:\w+\s*\.\s*)*(?:skip\w*|expectedFailure)\b/,
+ /\.\s*skipTest\s*\(/,
+ /\[\s*Ignore\b/,
+ /\bAssert\s*\.\s*(?:Ignore|Inconclusive|Skip)\b/,
+ /\bSkip\s*\.\s*(?:If|Unless)\b/,
 ];
 export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code));}
 export function sourceFilePrecheck(file){return sourcePrecheck(readFileSync(file,'utf8'));}

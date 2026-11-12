@@ -30,7 +30,7 @@
 
 ## Hidden-red patterns (`--source`)
 
-`check-scenarios --source` rejects test files that turn a red test green or hide it: `skip`, `fixme`, `fail`, `only`, `slow` and `setTimeout` on `test`/`it`/`describe`, `describe.configure({ timeout })`, `test.use({ actionTimeout | navigationTimeout | timeout })`, `waitForTimeout`, `retries` above zero, `pytest.mark.skip`/`xfail`, `Skip=` and `#if false`. Comment and string bodies are blanked first. A longer timeout or a retry never replaces a fix: a red test is a finding. A per-test `{ timeout: N }` option is not detected; review it by hand.
+`check-scenarios --source` rejects test files that turn a red test green or hide it: `skip`, `fixme`, `fail`, `only`, `slow` and `setTimeout` on `test`/`it`/`describe`, `describe.configure({ timeout })`, `test.use({ actionTimeout | navigationTimeout | timeout })`, `waitForTimeout`, `retries` above zero, every conditional or alternate form (`pytest.mark.skipif`, `pytest.skip`/`importorskip`/`xfail`, `unittest.skipIf`/`skipUnless`/`expectedFailure`/`skipTest`, `test.skip(condition)`, `test.fixme(condition)`, `describe.skip`, `it.skip`, `xit`/`xdescribe`/`xtest`, vitest `todo`/`skipIf`/`runIf`, NUnit/MSTest `Ignore`/`Inconclusive`, xunit `Skip.If`), `Skip=` and `#if false`. Comment and string bodies are blanked first. A longer timeout or a retry never replaces a fix: a red test is a finding. A per-test `{ timeout: N }` option is not detected; review it by hand.
 
 ## Mock write policy
 
