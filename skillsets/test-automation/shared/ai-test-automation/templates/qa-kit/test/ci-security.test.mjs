@@ -138,3 +138,98 @@ test('Azure template runs a real base-proof job and requires its results when sc
   assert.doesNotMatch(azureYaml, FILE_GATED_BASE, '--base-results must not depend on a file existing');
   assert.doesNotMatch(azureYaml, BASE_PROOF_COMMENT);
 });
+
+// ---- merge base, not the target tip ----
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const qaCli = new URL('../bin/qa.mjs', import.meta.url).pathname;
+
+function gitIn(cwd, ...args) {
+  const run = spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout.trim();
+}
+
+function divergedRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-merge-base-'));
+  gitIn(dir, 'init', '-q', '-b', 'main');
+  gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'common ancestor');
+  const ancestor = gitIn(dir, 'rev-parse', 'HEAD');
+  gitIn(dir, 'checkout', '-q', '-b', 'feature');
+  gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'feature work');
+  const head = gitIn(dir, 'rev-parse', 'HEAD');
+  gitIn(dir, 'checkout', '-q', 'main');
+  gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'target advanced 1');
+  gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'target advanced 2');
+  const tip = gitIn(dir, 'rev-parse', 'HEAD');
+  return { dir, ancestor, head, tip };
+}
+
+const mergeBase = (repo, ...extra) => spawnSync(process.execPath, [qaCli, 'merge-base', '--repo', repo.dir, '--head', repo.head, '--target', repo.tip, ...extra], { encoding: 'utf8' });
+
+test('merge-base resolves the common ancestor, not the target tip, when the target advanced after divergence', () => {
+  const repo = divergedRepo();
+  try {
+    assert.notEqual(repo.ancestor, repo.tip);
+    const run = mergeBase(repo);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.trim(), repo.ancestor);
+    assert.notEqual(run.stdout.trim(), repo.tip);
+  } finally { rmSync(repo.dir, { recursive: true, force: true }); }
+});
+
+test('merge-base --expect fails with NOT RUN when the recorded base is the target tip or has no baseSha', () => {
+  const repo = divergedRepo();
+  try {
+    const tip = mergeBase(repo, '--expect', repo.tip);
+    assert.equal(tip.status, 1);
+    assert.match(tip.stderr, /NOT RUN: .*wrong commit/);
+    const missing = mergeBase(repo, '--expect', 'undefined');
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /NOT RUN/);
+    const ok = mergeBase(repo, '--expect', repo.ancestor);
+    assert.equal(ok.status, 0, ok.stderr);
+  } finally { rmSync(repo.dir, { recursive: true, force: true }); }
+});
+
+test('merge-base fails with NOT RUN when history is too shallow to resolve it', () => {
+  const repo = divergedRepo();
+  const shallow = mkdtempSync(join(tmpdir(), 'qa-merge-base-shallow-'));
+  try {
+    const clone = spawnSync('git', ['clone', '-q', '--depth', '1', '--no-single-branch', `file://${repo.dir}`, shallow], { encoding: 'utf8' });
+    assert.equal(clone.status, 0, clone.stderr);
+    const run = spawnSync(process.execPath, [qaCli, 'merge-base', '--repo', shallow, '--head', repo.head, '--target', repo.tip], { encoding: 'utf8' });
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /NOT RUN: cannot resolve the merge base/);
+  } finally {
+    rmSync(repo.dir, { recursive: true, force: true });
+    rmSync(shallow, { recursive: true, force: true });
+  }
+});
+
+test('GitHub template checks out the resolved merge base with full history and verifies it in judge', () => {
+  const jobs = githubJobs(githubYaml);
+  const proof = jobs.find(job => job.name === 'base-proof').source;
+  assert.match(proof, /fetch-depth: 0/, 'base-proof needs full history to find the merge base');
+  assert.match(proof, /qa\.mjs merge-base\b/, 'base-proof must resolve the merge base');
+  assert.match(proof, /git checkout --detach "\$mb"/, 'base-proof must check out the resolved merge base');
+  assert.match(proof, /base-meta\.json/, 'base-proof must record baseSha');
+  assert.doesNotMatch(proof, /ref:[^\n]*pull_request\.base\.sha/, 'the target tip is not the merge base');
+  assert.doesNotMatch(proof, /--commit "\$\{\{[^}]*pull_request\.base\.sha/, 'the base run must be recorded at the merge base');
+  const judge = jobs.find(job => job.name === 'judge').source;
+  assert.match(judge, /qa\.mjs merge-base --repo app[^\n]*--expect/, 'judge must verify the recorded baseSha against the resolved merge base');
+});
+
+test('Azure template checks out the resolved merge base with full history and verifies it in judge', () => {
+  const proof = azureJobs(azureYaml).find(job => job.name === 'base_proof').source;
+  assert.match(proof, /fetchDepth: 0/);
+  assert.match(proof, /qa\.mjs"? merge-base\b/, 'base_proof must resolve the merge base');
+  assert.match(proof, /git checkout --detach "\$mb"/);
+  assert.match(proof, /base-meta\.json/);
+  assert.doesNotMatch(proof, /git checkout --detach "\$\(System\.PullRequest\.TargetCommitId\)"/, 'the target tip is not the merge base');
+  assert.doesNotMatch(proof, /--commit "\$\(System\.PullRequest\.TargetCommitId\)"/);
+  assert.match(azureYaml, /qa\.mjs merge-base --repo[^\n]*--expect/, 'judge must verify the recorded baseSha against the resolved merge base');
+});

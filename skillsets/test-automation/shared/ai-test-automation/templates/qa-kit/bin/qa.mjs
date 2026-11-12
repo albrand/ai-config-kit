@@ -192,6 +192,22 @@ try {
       if (existsSync(from)) { cpSync(from, to, { recursive: true, force: true }); installed.push(rel); }
     }
     console.log(JSON.stringify({ installed, ignoredBranchCopies: paths }, null, 2));
+  } else if (command === 'merge-base') {
+    // Resolve the real common ancestor of head and target (never the target tip) and optionally verify a recorded SHA.
+    const repo = resolve(last('repo', '.'));
+    const head = last('head');
+    const target = last('target');
+    if (!head || !target) throw new Error('merge-base requires --head and --target');
+    let resolved;
+    try { resolved = execFileSync('git', ['-C', repo, 'merge-base', head, target], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
+    catch { throw new Error(`NOT RUN: cannot resolve the merge base of ${head} and ${target}; fetch full history (fetch-depth 0)`); }
+    const expected = last('expect');
+    if (expected !== undefined && expected !== resolved) {
+      throw new Error(`NOT RUN: the base run was recorded at ${expected || '(missing baseSha)'} but the merge base of head and target is ${resolved}; the red-on-base proof is for the wrong commit`);
+    }
+    const output = last('output');
+    if (output) writeJson(output, { kind: 'base-meta', baseSha: resolved, head, target });
+    console.log(resolved);
   } else if (command === 'ai-pack') {
     const target = resolve(last('target', '.'));
     if (args.check) {
@@ -252,7 +268,7 @@ try {
     console.log(JSON.stringify({ run: output, compiled: true, discoveredIds: discoveredIds.length, results: results.length, testExitCode: execution.status }, null, 2));
     if (execution.status !== 0) process.exitCode = execution.status;
   } else {
-    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test|ai-pack');
+    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test|merge-base|ai-pack');
     process.exitCode = 2;
   }
 } catch (error) {
