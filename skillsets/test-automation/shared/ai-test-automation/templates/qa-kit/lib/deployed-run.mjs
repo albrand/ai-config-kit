@@ -55,17 +55,19 @@ export function runPreflights(names, checks, env) {
   return { ok: !blocked, code: blocked ? 'PREFLIGHT_BLOCKED' : undefined, results };
 }
 
-/** A deployed environment must declare how created data is cleaned up, or declare itself read-only. */
+/** A deployed environment must declare a cleanupCheck: the adopter's command that looks for residue on the target. */
 export function checkCleanupDeclared(envConfig) {
   const check = envConfig?.cleanupCheck;
-  const declared = Array.isArray(check) && check.length > 0;
-  if (declared && envConfig.readOnly === true) return { ok: false, code: 'CLEANUP_CHECK_MISSING', reason: 'CLEANUP_CHECK_MISSING: declare either cleanupCheck or readOnly, not both' };
-  if (declared || envConfig?.readOnly === true) return { ok: true, readOnly: !declared };
-  return { ok: false, code: 'CLEANUP_CHECK_MISSING', reason: 'CLEANUP_CHECK_MISSING: a deployed environment must declare cleanupCheck or readOnly: true; no test was run' };
+  if (Array.isArray(check) && check.length > 0 && check.every(part => typeof part === 'string')) return { ok: true };
+  return { ok: false, code: 'CLEANUP_CHECK_MISSING', reason: 'CLEANUP_CHECK_MISSING: a deployed environment must declare cleanupCheck as an argv array; no test was run' };
 }
 
-/** Every record the run created (JSON lines `{kind,id}`) must be reported gone by the cleanup check, or the run fails. */
-export function verifyCleanup(ledgerPath, cleanupCheck, env) {
+/**
+ * The cleanup check always runs, even when the ledger is empty, so it can search the target for residue (for example records tagged
+ * with QA_RUN_ID) that the tests never recorded. It prints `{"gone":["kind:id"], "residue":["..."]}`: every ledger row must be in `gone`
+ * and `residue` must be empty, or the run fails.
+ */
+export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID) {
   const fail = reason => ({ ok: false, code: 'CLEANUP_UNVERIFIED', reason: `CLEANUP_UNVERIFIED: ${reason}` });
   // `qa test` creates the ledger before the tests start, so a missing one was removed.
   if (!existsSync(ledgerPath)) return fail('ownership ledger is missing');
@@ -73,13 +75,13 @@ export function verifyCleanup(ledgerPath, cleanupCheck, env) {
   try { owned = readFileSync(ledgerPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)); }
   catch { return fail('ownership ledger is unreadable'); }
   if (owned.some(r => typeof r?.kind !== 'string' || typeof r?.id !== 'string')) return fail('ownership ledger has a malformed row');
-  // A read-only environment declares no cleanup check: it may create nothing, so any recorded row fails the run.
-  if (!cleanupCheck) return owned.length ? fail(`read-only environment, but ${owned.length} record(s) were recorded: ${owned.map(m => `${m.kind}:${m.id}`).join(', ')}`) : { ok: true, owned: 0 };
-  const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath });
+  const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) });
   if (r.status !== 0) return fail(`cleanup check exited ${r.status}`);
   let reported;
   try { reported = JSON.parse(r.stdout); } catch { return fail('cleanup check wrote no JSON result'); }
   const gone = new Set((Array.isArray(reported?.gone) ? reported.gone : []).map(String));
+  const residue = (Array.isArray(reported?.residue) ? reported.residue : []).map(String);
+  if (residue.length) return fail(`the cleanup check found ${residue.length} residual record(s) on the target: ${residue.slice(0, 20).join(', ')}`);
   const missing = owned.filter(rec => !gone.has(`${rec.kind}:${rec.id}`));
   if (missing.length) return fail(`${missing.length} owned record(s) not proven gone: ${missing.map(m => `${m.kind}:${m.id}`).join(', ')}`);
   return { ok: true, owned: owned.length };

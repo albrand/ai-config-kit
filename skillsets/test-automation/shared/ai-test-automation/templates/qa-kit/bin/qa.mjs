@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, cpSync, existsSync, mkdirSync } from 'node
 import { dirname, resolve, isAbsolute, relative, sep } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseAllureResults, parseJunitXml, parsePlaywrightJson, parseTrx } from '../lib/results/parsers.mjs';
 import { boardAdapter } from '../lib/boards/index.mjs';
 import { scenarioCheck, sourceFilePrecheck } from '../lib/scenario-check.mjs';
@@ -269,7 +269,7 @@ try {
       const credentials = resolveCredentials(envConfig, process.env, { allowLocalCredentials: args['allow-local-credentials'] === true });
       if (!credentials.ok) throw new Error(credentials.reason);
       for (const name of credentials.names) testEnv[name] = process.env[name];
-      // A deployed run must say how created data is cleaned up (cleanupCheck) or declare itself read-only; refuse before any test.
+      // A deployed run must declare the cleanupCheck that looks for residue on the target; refuse before any test.
       const declared = checkCleanupDeclared(envConfig);
       if (!declared.ok) throw new Error(declared.reason);
       const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv);
@@ -281,6 +281,7 @@ try {
       }
       writeFileSync(ownsFile, '');
       testEnv.QA_OWNS_FILE = ownsFile;
+      testEnv.QA_RUN_ID = last('run-id', randomUUID());
     }
     const execute = command => {
       const [exe, ...argv] = command;
@@ -302,7 +303,7 @@ try {
     } catch (error) { runnerError = error; }
     // Every record the run created must be proven gone on every exit path, including a runner spawn error.
     if (target.deployed) {
-      const cleanup = verifyCleanup(ownsFile, envConfig.readOnly === true ? null : envConfig.cleanupCheck, testEnv);
+      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv);
       if (!cleanup.ok) {
         if (runnerError) console.error(`qa: ${runnerError.message}`);
         console.error(`qa: ${cleanup.reason}; no run evidence was written`);

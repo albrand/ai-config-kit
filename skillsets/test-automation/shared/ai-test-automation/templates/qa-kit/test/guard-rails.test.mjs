@@ -151,6 +151,7 @@ function runProject(config, files = {}) {
   script('compile.mjs', `import { writeFileSync } from 'node:fs'; writeFileSync('compiled.marker', '1');`);
   script('discover.mjs', `console.log('${ID}');`);
   script('tests.mjs', files.tests ?? `import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('qa-results', { recursive: true }); writeFileSync('qa-results/junit.xml', '<testsuite><testcase name="${ID}"/></testsuite>');`);
+  script('cleanup.mjs', `console.log(JSON.stringify({ gone: [] }));`);
   for (const [name, body] of Object.entries(files.other ?? {})) script(name, body);
   const base = { compileCommand: ['node', 'compile.mjs'], discoverCommand: ['node', 'discover.mjs'], testCommand: ['node', 'tests.mjs'], resultFormat: 'junit', resultPath: 'qa-results/junit.xml', runner: 'stub' };
   writeFileSync(join(root, 'qa.config.json'), JSON.stringify({ ...base, ...config }));
@@ -245,7 +246,7 @@ test('deployed run: the cleanup ledger fails the run unless every created record
 
 const SECRET_USER = 'svc-secret-user@corp.invalid';
 const SECRET_PASSWORD = 'planted-password-9f3a';
-const deployed = { staging: { origins: ['https://staging.example.invalid'], credentials: { identities: [{ userEnv: 'QA_U', passwordEnv: 'QA_P' }], deny: ['admin*'] }, readOnly: true } };
+const deployed = { staging: { origins: ['https://staging.example.invalid'], credentials: { identities: [{ userEnv: 'QA_U', passwordEnv: 'QA_P' }], deny: ['admin*'] }, cleanupCheck: ['node', 'cleanup.mjs'] } };
 const ciEnv = { CI: 'true', QA_U: SECRET_USER, QA_P: SECRET_PASSWORD };
 const deployedArgs = ['--base-url', 'https://staging.example.invalid', '--env', 'staging'];
 
@@ -289,7 +290,7 @@ test('qa test on a deployed target blocks (exit 2) when a preflight fails and st
 });
 
 test('qa test on a deployed target fails when a created record is not proven gone', () => {
-  const withCleanup = { ...deployed.staging, readOnly: undefined, cleanupCheck: ['node', 'cleanup.mjs'] };
+  const withCleanup = { ...deployed.staging, cleanupCheck: ['node', 'cleanup.mjs'] };
   const tests = `import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n'); mkdirSync('qa-results', { recursive: true }); writeFileSync('qa-results/junit.xml', '<testsuite><testcase name="${ID}"/></testsuite>');`;
   const cleanup = gone => `console.log(JSON.stringify({ gone: ${JSON.stringify(gone)} }));`;
   const leaking = runProject({ environments: { staging: withCleanup } }, { tests, other: { 'cleanup.mjs': cleanup([]) } });
@@ -305,7 +306,7 @@ test('qa test on a deployed target fails when a created record is not proven gon
 });
 
 test('qa test on a deployed target verifies cleanup after a runner spawn error and still reports the runner error', () => {
-  const withCleanup = { ...deployed.staging, readOnly: undefined, cleanupCheck: ['node', 'cleanup.mjs'] };
+  const withCleanup = { ...deployed.staging, cleanupCheck: ['node', 'cleanup.mjs'] };
   const record = `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n');`;
   const cleanup = gone => `import { writeFileSync } from 'node:fs'; writeFileSync('cleanup-ran.marker', '1'); console.log(JSON.stringify({ gone: ${JSON.stringify(gone)} }));`;
   const overflow = `${record} process.stdout.write('x'.repeat(3 * 1024 * 1024));`;
@@ -334,31 +335,27 @@ test('qa test on a deployed target verifies cleanup after a runner spawn error a
 const record = `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n');`;
 const writeJunit = `import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('qa-results', { recursive: true }); writeFileSync('qa-results/junit.xml', '<testsuite><testcase name="${ID}"/></testsuite>');`;
 
-test('a deployed environment that declares neither cleanupCheck nor readOnly refuses to start', () => {
-  const noCleanup = { ...deployed.staging, readOnly: undefined };
-  const project = runProject({ environments: { staging: noCleanup } });
-  try {
-    const r = project.run(deployedArgs, ciEnv);
-    assert.equal(r.status, 1);
-    assert.match(r.stderr, /CLEANUP_CHECK_MISSING/);
-    assert.equal(project.has('compiled.marker'), false, 'no command started');
-    assert.equal(project.has('owns.jsonl'), false);
-    const both = runProject({ environments: { staging: { ...noCleanup, readOnly: true, cleanupCheck: ['node', 'c.mjs'] } } });
+test('a deployed environment without a cleanupCheck refuses to start, and readOnly is not an exemption', () => {
+  for (const extra of [{}, { readOnly: true }, { cleanupCheck: [] }, { cleanupCheck: 'node cleanup.mjs' }]) {
+    const project = runProject({ environments: { staging: { ...deployed.staging, cleanupCheck: undefined, ...extra } } });
     try {
-      const b = both.run(deployedArgs, ciEnv);
-      assert.equal(b.status, 1);
-      assert.match(b.stderr, /CLEANUP_CHECK_MISSING/);
-    } finally { rmSync(both.root, { recursive: true, force: true }); }
-  } finally { rmSync(project.root, { recursive: true, force: true }); }
+      const r = project.run(deployedArgs, ciEnv);
+      assert.equal(r.status, 1, JSON.stringify(extra));
+      assert.match(r.stderr, /CLEANUP_CHECK_MISSING/);
+      assert.equal(project.has('compiled.marker'), false, 'no command started');
+      assert.equal(project.has('owns.jsonl'), false);
+    } finally { rmSync(project.root, { recursive: true, force: true }); }
+  }
 });
 
-test('the example config declares cleanupCheck or readOnly for every environment', () => {
+test('the example config declares a cleanupCheck for every environment and no readOnly option', () => {
   const example = JSON.parse(readFileSync(resolve(import.meta.dirname, '../qa.config.example.json'), 'utf8'));
   const names = Object.keys(example.environments);
   assert.ok(names.includes('production') && names.includes('staging'));
   for (const name of names) {
     const env = example.environments[name];
-    assert.ok(Array.isArray(env.cleanupCheck) || env.readOnly === true, `${name} declares a cleanup check or readOnly`);
+    assert.ok(Array.isArray(env.cleanupCheck) && env.cleanupCheck.length > 0, `${name} declares a cleanupCheck`);
+    assert.equal('readOnly' in env, false, `${name} has no readOnly option`);
   }
 });
 
@@ -387,24 +384,34 @@ test("the example config's production environment fails a run that leaves a reco
   try { assert.equal(clean.run(args, env).status, 0); } finally { rmSync(clean.root, { recursive: true, force: true }); }
 });
 
-test('a read-only deployed environment fails when any record is reported to the ledger', () => {
-  const readOnly = { ...deployed.staging, readOnly: true };
-  const silent = runProject({ environments: { staging: readOnly } }, { tests: writeJunit });
-  const writing = runProject({ environments: { staging: readOnly } }, { tests: `${record} ${writeJunit}` });
+test('an empty ledger still runs cleanupCheck, with the run ID and ledger path, and the run fails when the check reports residue', () => {
+  // The tests write to the "target" (a file) without calling recordOwned, tagged with the run ID; only the adopter's check can see it.
+  const writeUnrecorded = `import { appendFileSync } from 'node:fs'; appendFileSync('target-state.txt', process.env.QA_RUN_ID + ':order-7\\n'); ${writeJunit}`;
+  const check = `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+    writeFileSync('check-env.json', JSON.stringify({ runId: process.env.QA_RUN_ID, ledger: process.env.QA_OWNS_FILE, ledgerBytes: readFileSync(process.env.QA_OWNS_FILE, 'utf8').length }));
+    const state = existsSync('target-state.txt') ? readFileSync('target-state.txt', 'utf8').split('\\n').filter(Boolean) : [];
+    console.log(JSON.stringify({ gone: [], residue: state.filter(line => line.startsWith(process.env.QA_RUN_ID + ':')) }));`;
+  const leaking = runProject({ environments: { staging: deployed.staging } }, { tests: writeUnrecorded, other: { 'cleanup.mjs': check } });
+  const clean = runProject({ environments: { staging: deployed.staging } }, { tests: writeJunit, other: { 'cleanup.mjs': check } });
   try {
-    const ok = silent.run(deployedArgs, ciEnv);
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(silent.has('run-v1.json'), true);
-    const bad = writing.run(deployedArgs, ciEnv);
+    const bad = leaking.run([...deployedArgs, '--run-id', 'run-abc'], ciEnv);
     assert.equal(bad.status, 1);
-    assert.match(bad.stderr, /CLEANUP_UNVERIFIED.*read-only environment/);
-    assert.equal(writing.has('run-v1.json'), false);
-  } finally { for (const p of [silent, writing]) rmSync(p.root, { recursive: true, force: true }); }
-  assert.match(verifyCleanup(join(tmpdir(), 'no-such-ledger-qa'), null, process.env).reason, /ledger is missing/);
+    assert.match(bad.stderr, /CLEANUP_UNVERIFIED.*residual record/);
+    assert.match(bad.stderr, /run-abc:order-7/);
+    assert.equal(leaking.has('run-v1.json'), false);
+    const seen = JSON.parse(leaking.read('check-env.json'));
+    assert.equal(seen.runId, 'run-abc', 'the check receives the run ID');
+    assert.equal(seen.ledgerBytes, 0, 'the ledger was empty, yet the check ran');
+    assert.match(seen.ledger, /owns\.jsonl$/, 'the check receives the ledger path');
+    const ok = clean.run(deployedArgs, ciEnv);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(JSON.parse(clean.read('check-env.json')).runId, /^[0-9a-f-]{36}$/, 'a run ID is generated when none is passed');
+  } finally { for (const p of [leaking, clean]) rmSync(p.root, { recursive: true, force: true }); }
+  assert.match(verifyCleanup(join(tmpdir(), 'no-such-ledger-qa'), ['node', '-e', ''], process.env).reason, /ledger is missing/);
 });
 
 test('environment checks attach only to deployed targets', () => {
-  const full = { ...deployed.staging, readOnly: undefined, preflights: ['ready'], cleanupCheck: ['node', 'cleanup.mjs'] };
+  const full = { ...deployed.staging, preflights: ['ready'], cleanupCheck: ['node', 'cleanup.mjs'] };
   const project = runProject({ environments: { staging: full }, checks: { ready: ['node', 'preflight.mjs'] } }, { other: { 'preflight.mjs': 'process.exit(9);', 'cleanup.mjs': 'process.exit(9);' } });
   try {
     for (const args of [['--env', 'staging'], ['--env', 'staging', '--base-url', 'http://localhost:3000'], []]) {
@@ -465,6 +472,10 @@ test('skill and references state each ported rule and its reason code', () => {
     assert.ok(runAndGate.includes(code), `run-and-gate names ${code}`);
   }
   assert.match(gateRules, /Bound tests/);
+  assert.match(gateRules, /Limit of the ledger/);
+  assert.match(gateRules, /always runs, even when the ledger is empty/);
+  assert.match(read('references/pitfalls.md'), /QA_RUN_ID/);
+  assert.doesNotMatch(gateRules + runAndGate, /readOnly/);
   assert.match(read('SKILL.md'), /runnable test carries its tag/);
   assert.match(read('references/pitfalls.md'), /import alias/);
 });
