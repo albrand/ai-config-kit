@@ -88,7 +88,9 @@ const stepRange = (lines, at) => {
   return [start, end];
 };
 
-function credentialStepViolations(label, source, ownNames, mapping) {
+// Line numbers (0-based, within `source`) of the credential mappings that are allowed: the own-name mapping lines in the env block of the
+// single step that runs `qa.mjs test`.
+function allowedStepLines(source, ownNames, mapping) {
   const lines = source.split('\n');
   const testLines = lines.map((line, index) => (/qa\.mjs\s+test\b/.test(line) && !line.trim().startsWith('#') ? index : -1)).filter(index => index >= 0);
   const allowed = new Set();
@@ -102,6 +104,11 @@ function credentialStepViolations(label, source, ownNames, mapping) {
       if (up >= start && /^\s*env:\s*$/.test(lines[up])) allowed.add(i);
     }
   }
+  return allowed;
+}
+
+// Every credential name in the text that is not one of the allowed lines is a violation.
+function stray(label, lines, allowed) {
   const violations = [];
   lines.forEach((line, index) => {
     if (allowed.has(index) || line.trim().startsWith('#')) return;
@@ -109,8 +116,14 @@ function credentialStepViolations(label, source, ownNames, mapping) {
       if (new RegExp(`\\b${name}\\b`).test(line)) violations.push(`${label}: credential ${name} outside the env block of the single qa test step`);
     }
   });
-  return [...new Set(violations)];
+  return violations;
 }
+
+function credentialStepViolations(label, source, ownNames, mapping) {
+  return [...new Set(stray(label, source.split('\n'), allowedStepLines(source, ownNames, mapping)))];
+}
+
+const lineOffset = (source, part) => { const at = source.indexOf(part.trimEnd()); assert.notEqual(at, -1, 'part of the file'); return source.slice(0, at).split('\n').length - 1; };
 const githubMapping = name => new RegExp(`^\\s+${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}\\s*$`);
 const azureMapping = name => new RegExp(`^\\s+${name}:\\s*\\$\\(${name}\\)\\s*$`);
 
@@ -131,6 +144,22 @@ function auditGithub(source) {
   const globalWrite = /\b(?:contents|issues|pull-requests|actions):\s*write\b|permissions:\s*write-all/.test(top);
   const violations = [];
   const jobs = githubJobs(source);
+  // Whole file: a credential name or secret anywhere (root env, defaults, a reusable-workflow call, container env, ...) fails unless its
+  // line is an allowed mapping in the qa test step of a release job. The root is inherited by every job, PR-code jobs included.
+  const allowedLines = new Set();
+  for (const job of jobs) {
+    if (!githubCredentialJobAllowed(jobs, job)) continue;
+    const base = lineOffset(source, job.source);
+    for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping)) allowedLines.add(base + index);
+  }
+  violations.push(...stray('github', source.split('\n'), allowedLines));
+  const rootLines = top.split('\n');
+  rootLines.forEach(line => {
+    if (!line.trim().startsWith('#') && /\bsecrets\./.test(line)) violations.push('github: a secret in the workflow root reaches every job');
+  });
+  source.split('\n').forEach(line => {
+    if (/^\s*secrets:\s*inherit\b/.test(line)) violations.push('github: secrets: inherit passes every secret to a called workflow');
+  });
   for (const job of jobs) {
     // Credential secrets: checked in every job, so a job that does not look like PR code cannot carry one either.
     const own = GITHUB_RELEASE_JOBS[job.name] ? credentialsOf(GITHUB_RELEASE_JOBS[job.name].config) : new Set();
@@ -146,7 +175,7 @@ function auditGithub(source) {
     const runsPrCode = prCheckout || /\bnpm\s+(?:ci|install)\b/.test(job.source)
       || /qa(?:-authority)?\/qa\/bin\/qa\.mjs\s+test\b/.test(job.source)
       || (job.name === 'qa-repository-pr' && /github\.event_name\s*==\s*'pull_request'/.test(job.source));
-    if (!runsPrCode) continue;
+    if (!runsPrCode) { continue; }
     if (globalWrite || /\b(?:contents|issues|pull-requests|actions):\s*write\b|permissions:\s*write-all/.test(job.source)) {
       violations.push(`github:${job.name}: write permission`);
     }
@@ -190,6 +219,22 @@ function azureCredentialStageAllowed(stages, stage) {
 function auditAzureCredentials(source) {
   const violations = [];
   const stages = azureStages(source);
+  // Whole file: a credential name anywhere (root variables, parameters, another stage) fails unless its line is an allowed mapping, and a
+  // variable group may be listed only in the stage of its own environment.
+  const allowedLines = new Set();
+  const groupHomes = { 'qa-staging-credentials': 'STAGING', 'qa-production-credentials': 'PROD' };
+  for (const stage of stages) {
+    if (!azureCredentialStageAllowed(stages, stage)) continue;
+    const base = lineOffset(source, stage.source);
+    for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping)) allowedLines.add(base + index);
+  }
+  violations.push(...stray('azure', source.split('\n'), allowedLines));
+  source.split('\n').forEach((line, index) => {
+    const group = line.match(/^\s*-?\s*group:\s*(\S+)/)?.[1];
+    if (!group) return;
+    const home = stages.find(st => lineOffset(source, st.source) <= index && index < lineOffset(source, st.source) + st.source.split('\n').length)?.name;
+    if (groupHomes[group] !== home) violations.push(`azure: variable group ${group} listed outside its own release stage`);
+  });
   for (const stage of stages) {
     const own = AZURE_RELEASE_STAGES[stage.name] ? credentialsOf(AZURE_RELEASE_STAGES[stage.name].config) : new Set();
     const allowed = azureCredentialStageAllowed(stages, stage);
@@ -304,6 +349,39 @@ test('GitHub audit rejects a second step in the release job that can send a cred
   };
   for (const [name, yaml] of Object.entries(fixtures)) {
     assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('GitHub audit rejects a credential or secret that reaches the jobs through the workflow root or a call', () => {
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const beforeJobs = extra => mutate('\njobs:\n', `\n${extra}jobs:\n`);
+  const fixtures = {
+    'root env mapping a credential': beforeJobs('env:\n  QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'root env mapping an undeclared secret': beforeJobs('env:\n  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}\n'),
+    'root defaults referencing a credential': beforeJobs('defaults:\n  run:\n    shell: bash -c "echo $QA_PRODUCTION_PASSWORD"\n'),
+    'workflow_call secrets declaring a credential': mutate('\njobs:\n', '\n# note\njobs:\n').replace('on:\n', 'on:\n  workflow_call:\n    secrets:\n      QA_STAGING_PASSWORD:\n        required: true\n'),
+    'secrets inherit to a reusable workflow': githubYaml.replace(/\n$/, '') + '\n  reuse:\n    uses: ./.github/workflows/other.yml\n    secrets: inherit\n',
+    'a job container env credential': mutate('  staging:\n    needs: release\n', '  staging:\n    needs: release\n    container:\n      image: node:22\n      env:\n        QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'a PR-code job service env credential': mutate('  test:\n', '  test:\n    services:\n      db:\n        image: postgres\n        env:\n          QA_PRODUCTION_PASSWORD: ${{ secrets.QA_PRODUCTION_PASSWORD }}\n'),
+  };
+  assert.deepEqual(auditGithub(githubYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('Azure audit rejects a credential or variable group outside its own release stage', () => {
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const fixtures = {
+    'root variables copying a credential': mutate('\nvariables:\n', '\nvariables:\n- name: copy\n  value: $(QA_STAGING_PASSWORD)\n'),
+    'a top-level variable group of the staging credentials': mutate('\nvariables:\n', '\nvariables:\n- group: qa-staging-credentials\n'),
+    'the staging group listed in the PROD stage': mutate('  - group: qa-production-credentials\n', '  - group: qa-production-credentials\n  - group: qa-staging-credentials\n'),
+    'a template parameter named after a credential': mutate('\nparameters:\n', '\nparameters:\n- name: QA_STAGING_PASSWORD\n  type: string\n  default: x\n'),
+    'a PR-code stage reading a credential': mutate('- stage: Test\n', '- stage: Test\n  variables:\n    leak: $(QA_PRODUCTION_PASSWORD)\n'),
+  };
+  assert.deepEqual(auditAzure(azureYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditAzure(yaml).length > 0, `rejected: ${name}`);
   }
 });
 
