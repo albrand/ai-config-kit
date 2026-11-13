@@ -80,21 +80,31 @@ function aliasedHiddenRed(code){
 // (`test["sk"+"ip"]`, `const { [name]: x } = test`) cannot be resolved here and is a documented limit.
 const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
-// An assignment inside a parenthesised group is an alias only when that group is an expression or a condition, decided by what stands
-// before its `(` and without parsing types: the start of the file, `;` `{` `}` `(` `,` `=` `!` `&` `|` `?` `:` or the keywords `if`, `while`,
-// `for` or `return` (`(t = test);`, `if (t = test)`, `x = (t = test)`). After an identifier, `>`, `]`, `)` or `function` the `(` opens a call
-// or a parameter list of any generic depth, a method or an arrow, whose `name = test` is a local default or an argument, not an alias of the
-// file. A call argument (`f(t = test)`) and a skip through a default parameter are therefore documented limits.
+// An assignment inside parentheses is an alias only when EVERY enclosing group, walked outward to statement level, is an expression or a
+// condition, decided by what stands before its `(` and without parsing types: the start of the file, `;` `{` `}` `(` `,` `=` `!` `&` `|` `?` `:`
+// or the keywords `if`, `while`, `for` or `return` (`(t = test);`, `((t = test))`, `if ((t = test))`, `x = (t = test)`). One group that follows an
+// identifier, `>`, `]`, `)` or `function` is a call or a parameter list of any generic depth, a method or an arrow, whose `name = test` is a local
+// default or an argument, not an alias of the file; so is a group followed by `=>` or `:`. The walk stops, as statement level, at an unmatched `{`
+// (a function or block body: `test('x', () => { t = test; t.skip(); })`). Object and array literals are not told apart from blocks. A call
+// argument (`f(t = test)`), a skip through a default parameter and the middle operand of a ternary are therefore documented limits.
 function assignmentIsAlias(code,index){
- let depth=0,open=-1;
- for(let i=index-1;i>=0;i--){const c=code[i];if(c===')')depth++;else if(c==='('){if(depth===0){open=i;break;}depth--;}}
- if(open<0)return true;
- // A group followed by `=>` or `:` is an arrow's parameter list (`(t = test): void => {}`), not an expression.
- let close=open+1;for(depth=1;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
- if(/^\s*(?:=>|:)/.test(code.slice(close)))return false;
- const before=code.slice(0,open).trimEnd();
- if(!before)return true;
- return /[;{}(,=!&|?:]$/.test(before)&&!/=>$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before);
+ let pos=index;
+ for(;;){
+  let parens=0,braces=0,open=-1;
+  for(let i=pos-1;i>=0;i--){
+   const c=code[i];
+   if(c===')')parens++;
+   else if(c==='('){if(parens===0){open=i;break;}parens--;}
+   else if(c==='}')braces++;
+   else if(c==='{'){if(braces>0)braces--;else if(parens===0)return true;}
+  }
+  if(open<0)return true;
+  let depth=1,close=open+1;for(;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
+  if(/^\s*(?:=>|:)/.test(code.slice(close)))return false;
+  const before=code.slice(0,open).trimEnd();
+  if(before&&!(/[;{}(,=!&|?:]$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before)))return false;
+  pos=open;
+ }
 }
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
