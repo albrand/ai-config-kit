@@ -16,7 +16,7 @@ import { checkAiPack, installAiPack } from '../lib/ai-pack.mjs';
 import { assertCanaries, runCanaries } from '../lib/canaries.mjs';
 import { unboundScenarios } from '../lib/bound-tests.mjs';
 import { checkTarget } from '../lib/target-allowlist.mjs';
-import { checkCleanupDeclared, resolveCredentials, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
+import { checkCleanupDeclared, resolveCredentials, resolveTimeouts, runBounded, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -264,6 +264,7 @@ try {
     const testEnv = { PATH: process.env.PATH, CI: 'true', ...(baseUrl ? { QA_BASE_URL: baseUrl } : {}) };
     const envConfig = cfg.environments?.[environment] ?? {};
     const ownsFile = resolve(last('owns-output', 'owns.jsonl'));
+    let limits = null;
     // Environment safeguards apply only to a deployed target; local, loopback and no-base-URL runs are unchanged.
     if (target.deployed) {
       const credentials = resolveCredentials(envConfig, process.env, { allowLocalCredentials: args['allow-local-credentials'] === true });
@@ -272,7 +273,10 @@ try {
       // A deployed run must declare the cleanupCheck that looks for residue on the target; refuse before any test.
       const declared = checkCleanupDeclared(envConfig);
       if (!declared.ok) throw new Error(declared.reason);
-      const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv);
+      const timeouts = resolveTimeouts(envConfig);
+      if (!timeouts.ok) throw new Error(timeouts.reason);
+      limits = timeouts;
+      const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv, limits.checkMs);
       if (envConfig.preflights?.length) writeJson(last('preflights-output', 'preflights.json'), preflight);
       if (!preflight.ok) {
         console.error(`qa: PREFLIGHT_BLOCKED: ${preflight.results.filter(r => !r.ok).map(r => `${r.name} (${r.reason})`).join(', ')}; no test was run`);
@@ -285,6 +289,13 @@ try {
     }
     const execute = command => {
       const [exe, ...argv] = command;
+      // A deployed run is time-bound so a hung test cannot skip the cleanup check; a local run is unchanged.
+      if (limits) {
+        const bounded = runBounded(command, testEnv, limits.testMs);
+        if (bounded.timedOut) throw new Error(`TEST_TIMEOUT: ${exe} did not finish within ${limits.testMs / 1000}s and was killed`);
+        if (bounded.error) throw bounded.error;
+        return { status: bounded.status, stdout: bounded.stdout, stderr: bounded.stderr };
+      }
       const result = spawnSync(exe, argv, { encoding: 'utf8', env: testEnv, shell: false });
       if (result.error) throw result.error;
       return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -303,7 +314,7 @@ try {
     } catch (error) { runnerError = error; }
     // Every record the run created must be proven gone on every exit path, including a runner spawn error.
     if (target.deployed) {
-      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv);
+      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv, testEnv.QA_RUN_ID, limits.checkMs);
       if (!cleanup.ok) {
         if (runnerError) console.error(`qa: ${runnerError.message}`);
         console.error(`qa: ${cleanup.reason}; no run evidence was written`);

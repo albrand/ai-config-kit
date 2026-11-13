@@ -11,7 +11,7 @@ const load = name => import(`../lib/${name}.mjs`).catch(() => ({}));
 const { scenarioIdsInBoundTestFile, unboundScenarios } = await load('bound-tests');
 const { assertCanaries, runCanaries } = await load('canaries');
 const { checkTarget, isDeployedTarget } = await load('target-allowlist');
-const { resolveCredentials, runPreflights, verifyCleanup, wildcardMatch } = await load('deployed-run');
+const { DEFAULT_CHECK_TIMEOUT_SECONDS, DEFAULT_TEST_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, resolveCredentials, resolveTimeouts, runPreflights, verifyCleanup, wildcardMatch } = await load('deployed-run');
 const { recordOwned } = await load('qa-owns');
 
 const cli = resolve(import.meta.dirname, '../bin/qa.mjs');
@@ -437,6 +437,77 @@ test("the example config's production environment fails a run that leaves a reco
   }
   const clean = make(`${record} ${writeJunit}`, ['user:u1']);
   try { assert.equal(clean.run(args, env).status, 0); } finally { rmSync(clean.root, { recursive: true, force: true }); }
+});
+
+// A test that hangs after creating a record must still reach the cleanup check; timeouts of a second keep these fast.
+const hang = `setInterval(() => {}, 1000);`;
+const timed = extra => ({ ...deployed.staging, testTimeoutSeconds: 1, checkTimeoutSeconds: 1, ...extra });
+
+test('a deployed test that hangs after creating a record is killed, the cleanup check still runs, and the run fails', () => {
+  const pidFile = `import { writeFileSync } from 'node:fs'; writeFileSync('child.pid', String(process.pid));`;
+  const recorded = `${pidFile} import { appendFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n'); ${hang}`;
+  const unrecorded = `${pidFile} import { appendFileSync } from 'node:fs'; appendFileSync('target-state.txt', process.env.QA_RUN_ID + ':order-9\\n'); ${hang}`;
+  const check = `import { existsSync, readFileSync, writeFileSync } from 'node:fs'; writeFileSync('cleanup-ran.marker', '1');
+    const state = existsSync('target-state.txt') ? readFileSync('target-state.txt', 'utf8').split('\\n').filter(Boolean) : [];
+    console.log(JSON.stringify({ gone: process.env.GONE ? ['user:u1'] : [], residue: state.filter(l => l.startsWith(process.env.QA_RUN_ID + ':')) }));`;
+  const cases = [
+    ['recorded record still on the target', recorded, /CLEANUP_UNVERIFIED/, {}],
+    ['unrecorded tagged record on the target', unrecorded, /CLEANUP_UNVERIFIED.*residual record|run-.*order-9/s, {}],
+    ['record cleaned up, the timeout alone fails the run', recorded, /TEST_TIMEOUT/, { GONE: '1' }],
+  ];
+  for (const [name, tests, expected, extraEnv] of cases) {
+    const project = runProject({ environments: { staging: timed() } }, { tests, other: { 'cleanup.mjs': check } });
+    try {
+      const started = Date.now();
+      const outcome = project.run([...deployedArgs, '--run-id', 'run-hang'], { ...ciEnv, ...extraEnv });
+      assert.ok(Date.now() - started < 20000, `${name}: bounded wall time`);
+      assert.equal(outcome.status, 1, `${name}: ${outcome.stderr}`);
+      assert.match(outcome.stderr, expected, name);
+      assert.equal(project.has('cleanup-ran.marker'), true, `${name}: cleanup check ran after the hang`);
+      assert.equal(project.has('run-v1.json'), false, `${name}: no run evidence`);
+      const pid = Number(project.read('child.pid'));
+      assert.throws(() => process.kill(pid, 0), `${name}: the hung child was killed`);
+      assert.doesNotMatch(outcome.stdout + outcome.stderr, new RegExp(`${SECRET_USER}|${SECRET_PASSWORD}`));
+    } finally { rmSync(project.root, { recursive: true, force: true }); }
+  }
+  // A clean cleanup does not turn the timeout into a pass: TEST_TIMEOUT is reported and the exit is non-zero (third case above).
+});
+
+test('a hung cleanup check or preflight fails the run and is never a pass', () => {
+  const hangingCheck = project => project.run([...deployedArgs], ciEnv);
+  const cleanupHangs = runProject({ environments: { staging: timed() } }, { tests: writeJunit, other: { 'cleanup.mjs': hang } });
+  const preflightHangs = runProject({ environments: { staging: timed({ preflights: ['up'] }) }, checks: { up: ['node', 'up.mjs'] } }, { other: { 'up.mjs': hang } });
+  try {
+    const bad = hangingCheck(cleanupHangs);
+    assert.equal(bad.status, 1, bad.stderr);
+    assert.match(bad.stderr, /CLEANUP_CHECK_INVALID.*timed out/);
+    assert.equal(cleanupHangs.has('run-v1.json'), false);
+    const blocked = hangingCheck(preflightHangs);
+    assert.equal(blocked.status, 2, blocked.stderr);
+    assert.match(blocked.stderr, /PREFLIGHT_BLOCKED.*timed out/);
+    assert.equal(preflightHangs.has('compiled.marker'), false, 'no test command ran');
+  } finally { for (const p of [cleanupHangs, preflightHangs]) rmSync(p.root, { recursive: true, force: true }); }
+});
+
+test('timeout overrides are validated before any test and the defaults are documented values', () => {
+  assert.equal(DEFAULT_TEST_TIMEOUT_SECONDS, 45 * 60);
+  assert.equal(DEFAULT_CHECK_TIMEOUT_SECONDS, 5 * 60);
+  assert.deepEqual(resolveTimeouts({}), { ok: true, testMs: 45 * 60 * 1000, checkMs: 5 * 60 * 1000 });
+  assert.deepEqual(resolveTimeouts({ testTimeoutSeconds: 90, checkTimeoutSeconds: 30 }), { ok: true, testMs: 90000, checkMs: 30000 });
+  for (const bad of [0, -5, 1.5, '60', null, MAX_TIMEOUT_SECONDS + 1, Infinity, NaN]) {
+    for (const key of ['testTimeoutSeconds', 'checkTimeoutSeconds']) {
+      const outcome = resolveTimeouts({ [key]: bad });
+      assert.equal(outcome.ok, false, `${key}=${String(bad)}`);
+      assert.match(outcome.reason, /^TIMEOUT_CONFIG_INVALID/);
+    }
+  }
+  const project = runProject({ environments: { staging: { ...deployed.staging, testTimeoutSeconds: 0 } } });
+  try {
+    const outcome = project.run(deployedArgs, ciEnv);
+    assert.equal(outcome.status, 1);
+    assert.match(outcome.stderr, /TIMEOUT_CONFIG_INVALID/);
+    assert.equal(project.has('compiled.marker'), false);
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
 });
 
 test('an empty ledger still runs cleanupCheck, with the run ID and ledger path, and the run fails when the check reports residue', () => {

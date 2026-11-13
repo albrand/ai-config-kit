@@ -55,18 +55,43 @@ export function resolveCredentials(envConfig, env, { allowLocalCredentials = fal
   return { ok: true, names };
 }
 
-const runArgv = (argv, env) => {
+/** Defaults: the test run gets 45 minutes (as upstream), each preflight or cleanup check 5 minutes; both can be overridden per environment. */
+export const DEFAULT_TEST_TIMEOUT_SECONDS = 45 * 60;
+export const DEFAULT_CHECK_TIMEOUT_SECONDS = 5 * 60;
+export const MAX_TIMEOUT_SECONDS = 6 * 60 * 60;
+
+/** `testTimeoutSeconds` and `checkTimeoutSeconds` are optional per-environment overrides: positive integers up to six hours. */
+export function resolveTimeouts(envConfig) {
+  const read = (key, fallback) => {
+    const value = envConfig?.[key];
+    if (value === undefined) return { ms: fallback * 1000 };
+    if (!Number.isInteger(value) || value < 1 || value > MAX_TIMEOUT_SECONDS) return { error: `${key} must be an integer from 1 to ${MAX_TIMEOUT_SECONDS} seconds` };
+    return { ms: value * 1000 };
+  };
+  const test = read('testTimeoutSeconds', DEFAULT_TEST_TIMEOUT_SECONDS);
+  const check = read('checkTimeoutSeconds', DEFAULT_CHECK_TIMEOUT_SECONDS);
+  const error = test.error ?? check.error;
+  if (error) return { ok: false, code: 'TIMEOUT_CONFIG_INVALID', reason: `TIMEOUT_CONFIG_INVALID: ${error}; no test was run` };
+  return { ok: true, testMs: test.ms, checkMs: check.ms };
+}
+
+/** Run an argv with a hard time limit; the child is killed on expiry and the result says so. */
+export function runBounded(argv, env, timeoutMs) {
   const [exe, ...rest] = argv;
-  const r = spawnSync(exe, rest, { encoding: 'utf8', env, shell: false });
-  return { status: r.error ? 1 : (r.status ?? 1), stdout: r.stdout ?? '' };
-};
+  const r = spawnSync(exe, rest, { encoding: 'utf8', env, shell: false, timeout: timeoutMs, killSignal: 'SIGKILL' });
+  const timedOut = r.error?.code === 'ETIMEDOUT';
+  return { status: r.error ? 1 : (r.status ?? 1), stdout: r.stdout ?? '', stderr: r.stderr ?? '', timedOut, error: r.error };
+}
+
+const runArgv = (argv, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) => runBounded(argv, env, timeoutMs);
 
 /** Run each needed argv check once. A failed or undefined check yields BLOCKED, never PASS or a misleading FAIL. */
-export function runPreflights(names, checks, env) {
+export function runPreflights(names, checks, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
   const results = names.map(name => {
     const argv = checks?.[name];
     if (!Array.isArray(argv) || !argv.length) return { name, ok: false, reason: 'check is not defined in config.checks' };
-    const r = runArgv(argv, env);
+    const r = runArgv(argv, env, timeoutMs);
+    if (r.timedOut) return { name, ok: false, reason: `timed out after ${timeoutMs / 1000}s` };
     return r.status === 0 ? { name, ok: true } : { name, ok: false, reason: `exit ${r.status}` };
   });
   const blocked = results.some(r => !r.ok);
@@ -85,7 +110,7 @@ export function checkCleanupDeclared(envConfig) {
  * with QA_RUN_ID) that the tests never recorded. It prints `{"gone":["kind:id"], "residue":["..."]}`: every ledger row must be in `gone`
  * and `residue` must be empty, or the run fails.
  */
-export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID) {
+export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
   const fail = reason => ({ ok: false, code: 'CLEANUP_UNVERIFIED', reason: `CLEANUP_UNVERIFIED: ${reason}` });
   const invalid = reason => ({ ok: false, code: 'CLEANUP_CHECK_INVALID', reason: `CLEANUP_CHECK_INVALID: ${reason}` });
   // `qa test` creates the ledger before the tests start, so a missing one was removed.
@@ -94,7 +119,8 @@ export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_
   try { owned = readFileSync(ledgerPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)); }
   catch { return fail('ownership ledger is unreadable'); }
   if (owned.some(r => typeof r?.kind !== 'string' || typeof r?.id !== 'string')) return fail('ownership ledger has a malformed row');
-  const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) });
+  const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) }, timeoutMs);
+  if (r.timedOut) return invalid(`the cleanup check timed out after ${timeoutMs / 1000}s, so the target is not proven clean`);
   if (r.status !== 0) return invalid(`the cleanup check exited ${r.status}`);
   let reported;
   try { reported = JSON.parse(r.stdout); } catch { return invalid('the cleanup check did not print JSON'); }
