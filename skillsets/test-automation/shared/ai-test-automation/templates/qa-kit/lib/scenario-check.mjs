@@ -80,34 +80,28 @@ function aliasedHiddenRed(code){
 // (`test["sk"+"ip"]`, `const { [name]: x } = test`) cannot be resolved here and is a documented limit.
 const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
-// True when the assignment at `index` sits directly inside a function parameter list (`function f(t = test)`, `function (t = test)`,
-// `(t = test) => ...`, a method signature): that is a default parameter, which binds a name local to the function, not an alias of the
-// file. A parenthesised expression, a call argument and a condition (`if (t = test)`) are not parameter lists.
-function inParamList(code,index){
+// An assignment inside a parenthesised group is an alias only when that group is an expression or a condition, decided by what stands
+// before its `(` and without parsing types: the start of the file, `;` `{` `}` `(` `,` `=` `!` `&` `|` `?` `:` or the keywords `if`, `while`,
+// `for` or `return` (`(t = test);`, `if (t = test)`, `x = (t = test)`). After an identifier, `>`, `]`, `)` or `function` the `(` opens a call
+// or a parameter list of any generic depth, a method or an arrow, whose `name = test` is a local default or an argument, not an alias of the
+// file. A call argument (`f(t = test)`) and a skip through a default parameter are therefore documented limits.
+function assignmentIsAlias(code,index){
  let depth=0,open=-1;
  for(let i=index-1;i>=0;i--){const c=code[i];if(c===')')depth++;else if(c==='('){if(depth===0){open=i;break;}depth--;}}
- if(open<0)return false;
+ if(open<0)return true;
+ // A group followed by `=>` or `:` is an arrow's parameter list (`(t = test): void => {}`), not an expression.
  let close=open+1;for(depth=1;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
- // Drop a generic list in front of the parentheses (`m<T>(`), then look at what follows `)`: an optional TypeScript return type
- // (`: void`, `: Promise<void>`) and a body `{`, an arrow `=>` or, for an overload, abstract or interface signature, `;`.
- const before=code.slice(0,open).replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>\s*$/,''),after=code.slice(close);
- if(/\bfunction\s*\*?\s*[\w$]*\s*$/.test(before))return true;
- const tail=/^\s*(:[^{;]*?)?\s*(\{|=>|;)/.exec(after);
- if(!tail)return false;
- if(tail[2]==='=>')return true;
- const found=/([\w$]+)\s*$/.exec(before);
- if(!found||/^(?:if|while|for|switch|catch|with)$/.test(found[1]))return false;
- if(!tail[1]&&tail[2]==='{')return true;
- if(!tail[1])return false;
- // a return type before `{` or `;` is a method or signature only when the name starts a member (`m(`, `static m(`, `{ m(`), not a call in a ternary
- return /(?:^|[{};,\n])\s*(?:(?:public|private|protected|static|abstract|override|readonly|async|get|set|declare)\s+)*\*?\s*$/.test(before.slice(0,found.index));
+ if(/^\s*(?:=>|:)/.test(code.slice(close)))return false;
+ const before=code.slice(0,open).trimEnd();
+ if(!before)return true;
+ return /[;{}(,=!&|?:]$/.test(before)&&!/=>$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before);
 }
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
- // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); a default parameter
- // (`function f(t = test) {}`) is skipped: it names a local, and treating it as a file-wide alias would reject an unrelated `t`. `==`, `===` and `=>` never match.
+ // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); an assignment inside
+ // a call or a parameter list is not an alias (see assignmentIsAlias). `==`, `===` and `=>` never match.
  // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>!inParamList(code,m.index));
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>assignmentIsAlias(code,m.index));
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
