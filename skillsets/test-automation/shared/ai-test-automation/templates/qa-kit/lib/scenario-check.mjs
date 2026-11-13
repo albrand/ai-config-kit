@@ -117,7 +117,10 @@ function jsAliasedHiddenRed(code){
  // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); an assignment inside
  // a call or a parameter list is not an alias (see assignmentIsAlias). `==`, `===` and `=>` never match.
  // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>assignmentIsAlias(code,m.index));
+ // An assignment that main already matched (ended by `;`, a newline or the end of the file) stays an alias unconditionally, so this scan only
+ // adds detections; the outward walk judges only the forms added here, an assignment ended by `,` or `)`.
+ const sinceMain=new Set([...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)].map(m=>m.index));
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>sinceMain.has(m.index)||assignmentIsAlias(code,m.index));
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;

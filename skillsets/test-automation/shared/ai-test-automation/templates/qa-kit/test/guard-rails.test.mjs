@@ -728,6 +728,9 @@ test('source precheck rejects a JS/TS skip reached by destructuring or by assign
     'a sequence of assignments': "let t, u;\nt = test, u = it;\nu.skip();\n",
     'an object literal property assignment': "let t;\nconst o = { a: (t = test) };\ntest('x', () => { t.skip(); });\n",
     'a parenthesised object literal assignment': "let t;\n({ a: (t = test) });\ntest('x', () => t.skip());\n",
+    'a call argument ended by a newline': "let t;\nf(t = test\n);\nt.skip('hidden');\n",
+    'a call argument on its own line': "let t;\nf(\n  t = test\n);\nt.skip();\n",
+    'a method signature default ended by a newline': "let t;\nm(t = test\n): void {}\nt.skip();\n",
     'a function body after a void return type': "let t;\ndescribe('d', function (): void { t = test; t.skip(); });\n",
     'a function body after a generic return type': "let t;\ndescribe('d', function (): Promise<void> { t = test; t.skip(); });\n",
     'a method with a return type inside an object literal': "let t;\nf({ m(): void { t = test; t.skip(); } });\n",
@@ -808,6 +811,19 @@ test('source precheck accepts same-name helpers, destructures from other objects
     'a python copy of a non-skip name': "from pytest import fixture\nlater = fixture\nlater('x')\n",
   };
   for (const [name, source] of Object.entries(accepted)) assert.equal(sourcePrecheck(source), true, name);
+});
+
+test('source precheck only adds detections: an assignment ended by ; or a newline is an alias wherever it stands, as on main', () => {
+  // A fixed list, each form also rejected by the scan on main 69ea9b12 (checked when the list was written).
+  const rejectedOnMain = {
+    'a call argument ended by a newline': "let t;\nf(t = test\n);\nt.skip('hidden');\n",
+    'a call argument on its own line': "let t;\nf(\n  t = test\n);\nt.skip();\n",
+    'a method signature default ended by a newline': "let t;\nm(t = test\n): void {}\nt.skip();\n",
+    'a default parameter ended by a newline, a false positive main already has': "function f(t = test\n) {}\nfunction g(t) { t.skip(); }\n",
+    'a generic call argument ended by a newline': "let t;\nsend<T>((t = test\n));\nt.skip();\n",
+    'an assignment ended by a semicolon': "let t;\nt = test;\nt.skip();\n",
+  };
+  for (const [name, source] of Object.entries(rejectedOnMain)) assert.equal(sourcePrecheck(source), false, name);
 });
 
 test('source precheck leaves the forms that need a parser unresolved, as documented', () => {
