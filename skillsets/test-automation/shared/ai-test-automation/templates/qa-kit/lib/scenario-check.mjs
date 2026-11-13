@@ -58,5 +58,18 @@ const HIDDEN_RED_PATTERNS=[
  /\bAssert\s*\.\s*(?:Ignore|Inconclusive|Skip)\b/,
  /\bSkip\s*\.\s*(?:If|Unless)\b/,
 ];
-export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code));}
+// Python skip helpers reached through an import alias: `from pytest import skip`, `from unittest import skip as later`,
+// `import pytest as pt`. Only an actual call or decorator use of an alias that was imported from pytest or unittest
+// is a hidden red; a local helper, an assignment or a plain reference with the same name is not.
+const PY_SKIP_NAMES={pytest:/^(?:skip\w*|xfail\w*|importorskip)$/,unittest:/^(?:skip\w*|expectedFailure)$/};
+function aliasedHiddenRed(code){
+ const modules=new Map();const callable=new Set();const marks=new Set();
+ for(const m of code.matchAll(/^[ \t]*import[ \t]+([^\n]+)/gm))for(const part of m[1].split(',')){const mm=/^\s*(pytest|unittest)(?:\s+as\s+(\w+))?\s*$/.exec(part);if(mm)modules.set(mm[2]??mm[1],mm[1]);}
+ for(const m of code.matchAll(/^[ \t]*from[ \t]+(pytest|unittest)[ \t]+import[ \t]+(\([^)]*\)|[^\n]+)/gm))for(const part of m[2].replace(/[()]/g,'').split(',')){const mm=/^\s*(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(part);if(!mm)continue;const local=mm[2]??mm[1];if(PY_SKIP_NAMES[m[1]].test(mm[1]))callable.add(local);else if(m[1]==='pytest'&&mm[1]==='mark')marks.add(local);}
+ for(const [alias,module] of modules){const names=module==='pytest'?String.raw`(?:mark\s*\.\s*)?(?:skip\w*|xfail\w*|importorskip)`:String.raw`(?:skip\w*|expectedFailure)`;if(new RegExp(String.raw`(?<![\w.])${alias}\s*\.\s*${names}\b`).test(code))return true;}
+ for(const alias of marks)if(new RegExp(String.raw`(?<![\w.])${alias}\s*\.\s*(?:skip\w*|xfail\w*)\b`).test(code))return true;
+ for(const name of callable)if(new RegExp(String.raw`(?<![\w.])(?<!\bdef\s+)${name}\s*\(|@\s*${name}\b`).test(code))return true;
+ return false;
+}
+export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code))&&!aliasedHiddenRed(code);}
 export function sourceFilePrecheck(file){return sourcePrecheck(readFileSync(file,'utf8'));}

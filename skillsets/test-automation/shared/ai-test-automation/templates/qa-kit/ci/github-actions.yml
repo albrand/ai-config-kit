@@ -201,11 +201,22 @@ jobs:
     environment: STAGING
     steps:
       - run: ./deploy.sh STAGING "${{ github.sha }}"
-      - run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --base-url "$STAGING_URL"
+      # Identities: one mapping per credentials.userEnv / passwordEnv declared for this environment in qa.config.json, from the
+      # secrets of the protected STAGING environment above. Names must match; a new identity needs its mapping. Never echo them or set -x.
+      - run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"
+        env:
+          CI: 'true'
+          QA_STAGING_USER: ${{ secrets.QA_STAGING_USER }}
+          QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}
   production:
     needs: staging
     runs-on: ubuntu-latest
     environment: PROD
     steps:
       - run: ./deploy.sh PROD "${{ github.sha }}"
-      - run: node qa-authority/qa/bin/qa.mjs test --tier production-sanity --base-url "$PROD_URL"
+      # Identities: see the staging job; these come from the protected PROD environment's secrets.
+      - run: node qa-authority/qa/bin/qa.mjs test --tier production-sanity --env production --base-url "$PROD_URL"
+        env:
+          CI: 'true'
+          QA_PRODUCTION_USER: ${{ secrets.QA_PRODUCTION_USER }}
+          QA_PRODUCTION_PASSWORD: ${{ secrets.QA_PRODUCTION_PASSWORD }}

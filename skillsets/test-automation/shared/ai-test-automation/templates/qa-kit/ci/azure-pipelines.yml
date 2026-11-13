@@ -162,6 +162,10 @@ stages:
 - stage: STAGING
   dependsOn: DEV
   condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
+  # Secret variables are not exposed to scripts by default: keep QA_STAGING_USER / QA_STAGING_PASSWORD in this variable group
+  # and map each one explicitly into the step env below. Names must match credentials.userEnv / passwordEnv; never echo them or set -x.
+  variables:
+  - group: qa-staging-credentials
   jobs:
   - deployment: deploy_staging
     environment: STAGING
@@ -170,10 +174,17 @@ stages:
         deploy:
           steps:
           - script: ./deploy.sh STAGING "$(Build.SourceVersion)"
-          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --base-url "$(STAGING_URL)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"
+            env:
+              CI: 'true'
+              QA_STAGING_USER: $(QA_STAGING_USER)
+              QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)
 - stage: PROD
   dependsOn: STAGING
   condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
+  # Same rule as STAGING: QA_PRODUCTION_USER / QA_PRODUCTION_PASSWORD come from this variable group, mapped explicitly below.
+  variables:
+  - group: qa-production-credentials
   jobs:
   - deployment: deploy_prod
     environment: PROD
@@ -182,4 +193,8 @@ stages:
         deploy:
           steps:
           - script: ./deploy.sh PROD "$(Build.SourceVersion)"
-          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --base-url "$(PROD_URL)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --env production --base-url "$(PROD_URL)"
+            env:
+              CI: 'true'
+              QA_PRODUCTION_USER: $(QA_PRODUCTION_USER)
+              QA_PRODUCTION_PASSWORD: $(QA_PRODUCTION_PASSWORD)

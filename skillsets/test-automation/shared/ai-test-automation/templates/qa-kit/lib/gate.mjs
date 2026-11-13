@@ -54,7 +54,7 @@ export function judge(scenarios, results, baseIds = [], plan = {}, options = {})
 /** Repeated options accumulate; scalar consumers explicitly select the last value. */
 export function parseArgs(args) {
   const out = { _: [] };
-  const booleans = new Set(['apply', 'dry-run', 'allow-pending', 'no-network-writes', 'check', 'write']);
+  const booleans = new Set(['apply', 'dry-run', 'allow-pending', 'no-network-writes', 'check', 'write', 'allow-local-credentials']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {

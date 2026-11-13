@@ -13,6 +13,10 @@ Read: `references/ci-github-actions.md` or `references/ci-azure-pipelines.md`, a
 - `node qa/bin/qa.mjs check-scenarios --head … --base … --file … --results …` — storage gate for scenario changes.
 - `node qa/bin/qa.mjs judge --scenarios … --results … --base-scenarios … --base-results base-run-v1.json` — verdict per scenario; nonzero on FAILED/BLOCKED. Pass `--base-results` for every new scenario.
 
+- `node qa/bin/qa.mjs canary` — runs the gate canaries alone; `judge` and `check-scenarios` run them first and stop with `SANITY_CANARY_FAILED` when a known-bad input is no longer rejected. Fix the gate, never the canary.
+- `node qa/bin/qa.mjs test --env <name> --base-url <url>` — against a deployed target. Refused with `TARGET_NOT_ALLOWED` unless the origin is in `environments.<name>.origins`; `CREDENTIALS_NOT_FROM_CI` unless identities come from the declared CI variables and avoid the deny list; `PREFLIGHT_BLOCKED` (exit 2, report **BLOCKED**, never pass or fail) when a prerequisite is missing; `CLEANUP_CHECK_MISSING` (before any test) unless the environment declares `cleanupCheck`; `CLEANUP_CHECK_INVALID` when the cleanup check exits non-zero or does not print a JSON object with `gone` and `residue` arrays of strings; `CLEANUP_UNVERIFIED` (exit 1, also after a runner error) when a record the run created is not proven gone or the check reports residue. Never print a secret.
+- `check-scenarios --source` counts a scenario as bound only when a runnable test title or `scenario_id` label carries its ID; a comment, a string or a skipped test does not.
+
 ## Finishing (AI work vs merge)
 
 - Never approve your own scenario; keep the binding `draft` until QA approves it.
