@@ -705,6 +705,77 @@ test('source precheck accepts helpers, assignments and plain references that onl
   for (const [name, source] of Object.entries(accepted)) assert.equal(sourcePrecheck(source), true, name);
 });
 
+// --- Issue #148 items 3 and 4: destructured, assigned and wrapped skips ---------------------------------------
+
+test('source precheck rejects a JS/TS skip reached by destructuring or by assigning the test object', () => {
+  const rejected = {
+    'const { skip } = test': "const { skip } = test;\nskip('later');\n",
+    'const { skip: later } = test': "const { skip: later } = test;\nlater('x');\n",
+    'const { fixme } = test': "const { fixme } = test;\nfixme();\n",
+    'const { skip } = it': "const { skip } = it;\nskip();\n",
+    'const { skip } = describe': "const { skip } = describe;\nskip('x', () => {});\n",
+    'let { only } = test': "let { only } = test;\nonly('a', () => {});\n",
+    'const t = test; t.skip': "const t = test;\nt.skip('x');\n",
+    'const d = describe; d.skip': "const d = describe;\nd.skip('x', () => {});\n",
+    'alias of an alias': "const t = test;\nconst u = t;\nu.fixme();\n",
+    'a copy of a destructured skip': "const { skip } = test;\nconst later = skip;\nlater();\n",
+    'let t; t = test': "let t;\nt = test;\nt.skip('x');\n",
+    'var t; t = it': "var t;\nt = it;\nt.fixme();\n",
+    't = describe after a declaration': "let t;\nt = describe;\nt.skip('x', () => {});\n",
+    'a reassigned destructure target': "let s;\n({ skip: s } = test);\ns();\n",
+    'a reassigned alias of an alias': "let t, u;\nt = test;\nu = t;\nu.skip();\n",
+    'a reassigned copy of a skip callable': "const { skip } = test;\nlet later;\nlater = skip;\nlater();\n",
+    'reassigned to another object afterwards (kept conservative)': "let t;\nt = test;\nt = other;\nt.skip('x');\n",
+  };
+  for (const [name, source] of Object.entries(rejected)) assert.equal(sourcePrecheck(source), false, name);
+});
+
+test('source precheck rejects a skip wrapped in a helper defined in the same file', () => {
+  const rejected = {
+    'function helper with test.skip': "function later() { test.skip(); }\ntest('a', () => { later(); });\n",
+    'arrow helper with pytest.skip': "const later = () => pytest.skip('x')\n",
+    'python def helper calling pytest.skip': "import pytest\ndef later():\n    pytest.skip()\ndef test_a():\n    later()\n",
+    'python helper through an import alias': "from pytest import skip as s\ndef later():\n    s()\ndef test_a():\n    later()\n",
+    'JS helper through a destructured skip': "const { skip } = test;\nfunction later() { skip(); }\ntest('a', () => { later(); });\n",
+    'python copy of an imported skip': "from pytest import skip\nlater = skip\nlater('x')\n",
+  };
+  for (const [name, source] of Object.entries(rejected)) assert.equal(sourcePrecheck(source), false, name);
+});
+
+test('source precheck accepts same-name helpers, destructures from other objects and plain references', () => {
+  const accepted = {
+    'a helper named skip that only logs': "function skip(reason) { console.log(reason); }\nskip('not a runner skip');\n",
+    'destructure from options': "const { skip } = options;\nskip('x');\n",
+    'destructure of another property from test': "const { expect } = test;\nexpect(1).toBe(1);\n",
+    'a plain reference after destructuring': "const { skip } = test;\nconst list = [skip];\n",
+    'an alias of a non-test object': "const t = options;\nt.skip('x');\n",
+    'a reassignment from options': "let t;\nt = options;\nt.skip('x');\n",
+    'a reassignment from a call': "let t;\nt = makeThing();\nt.skip('x');\n",
+    'a reassigned destructure from options': "let s;\n({ skip: s } = options);\ns();\n",
+    'a property assignment named like the object': "holder.t = test;\nholder.t.step('a');\n",
+    'a comparison': "if (t == test) { log(t); }\n",
+    'an alias of test used for something else': "const t = test;\nt.step('a', () => {});\n",
+    'a string mentioning skip': "const note = 'const { skip } = test; skip()';\n",
+    'a comment mentioning skip': "// const { skip } = test; skip();\nconst a = 1;\n",
+    'a python helper that only logs': "def later():\n    print('x')\ndef test_a():\n    later()\n",
+    'a python copy of a non-skip name': "from pytest import fixture\nlater = fixture\nlater('x')\n",
+  };
+  for (const [name, source] of Object.entries(accepted)) assert.equal(sourcePrecheck(source), true, name);
+});
+
+test('source precheck leaves the forms that need a parser unresolved, as documented', () => {
+  const unresolved = {
+    'a helper imported from another file': "import { later } from './helpers';\ntest('a', () => { later(); });\n",
+    'computed property access': "test['sk' + 'ip']('x');\n",
+    'computed destructuring': "const name = 'skip';\nconst { [name]: later } = test;\nlater();\n",
+    'a skip passed as a value and called elsewhere': "const { skip } = test;\n[skip].forEach(fn => fn('x'));\n",
+  };
+  for (const [name, source] of Object.entries(unresolved)) assert.equal(sourcePrecheck(source), true, `${name} is a documented limit`);
+  const gateRules = readFileSync(join(resolve(import.meta.dirname, '../../..'), 'references/gate-rules.md'), 'utf8');
+  assert.match(gateRules, /imported from another file/);
+  assert.match(gateRules, /computed property/);
+});
+
 // --- Documentation carries every rule -------------------------------------------------------------------------
 
 test('skill and references state each ported rule and its reason code', () => {
@@ -726,6 +797,7 @@ test('skill and references state each ported rule and its reason code', () => {
   assert.doesNotMatch(gateRules + runAndGate, /readOnly/);
   assert.match(read('SKILL.md'), /runnable test carries its tag/);
   assert.match(read('references/pitfalls.md'), /import alias/);
+  assert.match(read('references/pitfalls.md'), /destructur/);
 });
 
 // The credential names come from the example config, never from a hard-coded copy.

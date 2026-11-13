@@ -68,8 +68,42 @@ function aliasedHiddenRed(code){
  for(const m of code.matchAll(/^[ \t]*from[ \t]+(pytest|unittest)[ \t]+import[ \t]+(\([^)]*\)|[^\n]+)/gm))for(const part of m[2].replace(/[()]/g,'').split(',')){const mm=/^\s*(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(part);if(!mm)continue;const local=mm[2]??mm[1];if(PY_SKIP_NAMES[m[1]].test(mm[1]))callable.add(local);else if(m[1]==='pytest'&&mm[1]==='mark')marks.add(local);}
  for(const [alias,module] of modules){const names=module==='pytest'?String.raw`(?:mark\s*\.\s*)?(?:skip\w*|xfail\w*|importorskip)`:String.raw`(?:skip\w*|expectedFailure)`;if(new RegExp(String.raw`(?<![\w.])${alias}\s*\.\s*${names}\b`).test(code))return true;}
  for(const alias of marks)if(new RegExp(String.raw`(?<![\w.])${alias}\s*\.\s*(?:skip\w*|xfail\w*)\b`).test(code))return true;
+ for(let changed=true;changed;){changed=false;for(const m of code.matchAll(/^[ \t]*(\w+)[ \t]*=[ \t]*(\w+)[ \t]*$/gm))if(callable.has(m[2])&&!callable.has(m[1])){callable.add(m[1]);changed=true;}}
  for(const name of callable)if(new RegExp(String.raw`(?<![\w.])(?<!\bdef\s+)${name}\s*\(|@\s*${name}\b`).test(code))return true;
  return false;
 }
-export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code))&&!aliasedHiddenRed(code);}
+// JS/TS skips reached by destructuring or by assigning the test object: `const { skip } = test; skip(...)`, `const { skip: later } = describe`,
+// `const t = test; t.skip(...)`, and a copy of such a callable (`const later = skip; later()`). Same-file resolution on the blanked code, no
+// parser: only a call of the resolved name (or a member skip on an aliased object) counts, so a helper called `skip` that only logs, a
+// destructure from some other object and a plain reference are accepted. A skip written inside a helper body is already seen as a hidden red
+// by the patterns above, called or not, so a wrapper needs no extra step; a helper imported from another file or a computed property
+// (`test["sk"+"ip"]`, `const { [name]: x } = test`) cannot be resolved here and is a documented limit.
+const JS_TEST_OBJECTS=['test','it','describe','suite'];
+const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
+function jsAliasedHiddenRed(code){
+ const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
+ // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
+ const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
+ for(let changed=true;changed;){
+  changed=false;
+  for(const m of declarations){
+   if(objects.has(m[2])&&!objects.has(m[1])){objects.add(m[1]);changed=true;}
+   if(callable.has(m[2])&&!callable.has(m[1])){callable.add(m[1]);changed=true;}
+  }
+  for(const m of destructures){
+   if(!objects.has(m[2]))continue;
+   for(const part of m[1].split(',')){
+    const mm=/^\s*(\w+)(?:\s*:\s*(\w+))?\s*$/.exec(part);
+    if(!mm||!JS_SKIP_PROP.test(mm[1]))continue;
+    const local=mm[2]??mm[1];
+    if(!callable.has(local)){callable.add(local);changed=true;}
+   }
+  }
+ }
+ for(const alias of objects){if(JS_TEST_OBJECTS.includes(alias))continue;if(new RegExp(String.raw`(?<![\w.$])${alias}\s*\.\s*(?:\w+\s*\.\s*)*(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)\b`).test(code))return true;}
+ for(const name of callable)if(new RegExp(String.raw`(?<![\w.$])(?<!\bfunction\s+)${name}\s*\(`).test(code))return true;
+ return false;
+}
+export function sourcePrecheck(source){const code=tokenize(source);return !HIDDEN_RED_PATTERNS.some(pattern=>pattern.test(code))&&!aliasedHiddenRed(code)&&!jsAliasedHiddenRed(code);}
 export function sourceFilePrecheck(file){return sourcePrecheck(readFileSync(file,'utf8'));}
