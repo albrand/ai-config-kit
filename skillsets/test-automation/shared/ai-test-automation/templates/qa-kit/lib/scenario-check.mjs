@@ -82,8 +82,10 @@ const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
+ // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); a default parameter
+ // (`function f(t = test) {}`) is matched too, deliberately conservative. `==`, `===` and `=>` never match.
  // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)];
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
