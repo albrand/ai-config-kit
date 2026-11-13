@@ -2,9 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// Credential variables a deployed environment declares. A release job that names a protected `environment:` may map exactly these from secrets.
+// Credential variables a deployed environment declares. Each one may be mapped from a secret only by the release job or stage of its OWN
+// environment: reached through the release gate, on its matching protected environment, and never in a job that checks out or installs PR code.
 const exampleConfig = JSON.parse(readFileSync(new URL('../qa.config.example.json', import.meta.url), 'utf8'));
-const credentialNames = new Set(Object.values(exampleConfig.environments).flatMap(env => (env.credentials?.identities ?? []).flatMap(i => [i.userEnv, i.passwordEnv])));
+const credentialsOf = configName => new Set((exampleConfig.environments[configName]?.credentials?.identities ?? []).flatMap(i => [i.userEnv, i.passwordEnv]));
+const credentialNames = new Set(Object.keys(exampleConfig.environments).flatMap(name => [...credentialsOf(name)]));
+const GITHUB_RELEASE_JOBS = { staging: { environment: 'STAGING', config: 'staging' }, production: { environment: 'PROD', config: 'production' } };
+const AZURE_RELEASE_STAGES = { STAGING: { environment: 'STAGING', config: 'staging' }, PROD: { environment: 'PROD', config: 'production' } };
+const PR_HEAD = /github\.event\.pull_request\.head|github\.head_ref|pull_request_target|refs\/pull\//;
+const INSTALLS_CODE = /\b(?:npm\s+(?:ci|install|i)|pnpm|yarn)\b/;
+const dependencies = (source, key) => {
+  const line = source.match(new RegExp(`^  ?  ?${key}:\\s*(.*)$`, 'm'))?.[1] ?? '';
+  const listed = [...source.matchAll(new RegExp(`^  ?  ?${key}:\\s*\\n((?:\\s+-\\s*[\\w-]+\\n?)+)`, 'gm'))].flatMap(m => m[1].match(/[\w-]+/g) ?? []);
+  return [...(line.match(/[\w-]+/g) ?? []), ...listed];
+};
 
 const ci = new URL('../ci/', import.meta.url);
 const githubYaml = readFileSync(process.env.QA_GITHUB_TEMPLATE ?? new URL('github-actions.yml', ci), 'utf8');
@@ -39,11 +50,47 @@ function azureJobs(source) {
     .map(([, name, body]) => ({ name, source: body }));
 }
 
+const githubReachesRelease = (jobs, name, seen = new Set()) => {
+  if (name === 'release') return true;
+  if (seen.has(name)) return false;
+  seen.add(name);
+  const job = jobs.find(j => j.name === name);
+  return Boolean(job) && dependencies(job.source, 'needs').some(next => githubReachesRelease(jobs, next, seen));
+};
+
+// The release job runs only from a manual dispatch that asks for a release; anything weaker (an `||`, a missing input) opens the gate.
+function githubReleaseGateOk(jobs) {
+  const release = jobs.find(j => j.name === 'release');
+  const gate = release?.source.match(/^    if:\s*(.+)$/m)?.[1] ?? '';
+  return /github\.event_name\s*==\s*'workflow_dispatch'/.test(gate) && /inputs\.release\s*==\s*'true'/.test(gate) && !/\|\|/.test(gate);
+}
+
+function githubCredentialJobAllowed(jobs, job) {
+  const rule = GITHUB_RELEASE_JOBS[job.name];
+  if (!rule) return false;
+  const environment = job.source.match(/^    environment:\s*(\S+)\s*$/m)?.[1];
+  return environment === rule.environment
+    && githubReachesRelease(jobs, job.name)
+    && githubReleaseGateOk(jobs)
+    && !PR_HEAD.test(job.source)
+    && !INSTALLS_CODE.test(job.source);
+}
+
 function auditGithub(source) {
   const top = source.slice(0, source.indexOf('\njobs:\n'));
   const globalWrite = /\b(?:contents|issues|pull-requests|actions):\s*write\b|permissions:\s*write-all/.test(top);
   const violations = [];
-  for (const job of githubJobs(source)) {
+  const jobs = githubJobs(source);
+  for (const job of jobs) {
+    // Credential secrets: checked in every job, so a job that does not look like PR code cannot carry one either.
+    const own = GITHUB_RELEASE_JOBS[job.name] ? credentialsOf(GITHUB_RELEASE_JOBS[job.name].config) : new Set();
+    const eligible = githubCredentialJobAllowed(jobs, job);
+    let scanned = job.source;
+    for (const [, name] of job.source.matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g)) {
+      if (!credentialNames.has(name)) continue;
+      if (eligible && own.has(name)) scanned = scanned.replace(new RegExp(`\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`, 'g'), '');
+      else if (!violations.includes(`github:${job.name}: credential secret ${name} outside its own release job`)) violations.push(`github:${job.name}: credential secret ${name} outside its own release job`);
+    }
     const prCheckout = githubCheckoutSteps(job.source).some(step => /github\.event\.pull_request\.head\.sha/.test(step));
     const runsPrCode = prCheckout || /\bnpm\s+(?:ci|install)\b/.test(job.source)
       || /qa(?:-authority)?\/qa\/bin\/qa\.mjs\s+test\b/.test(job.source)
@@ -55,18 +102,56 @@ function auditGithub(source) {
     for (const step of githubCheckoutSteps(job.source)) {
       if (!/persist-credentials:\s*false/.test(step)) violations.push(`github:${job.name}: checkout credentials not disabled`);
     }
-    const allowed = /^    environment:\s*\S+/m.test(job.source)
-      ? job.source.replace(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g, (match, name) => (credentialNames.has(name) ? '' : match))
-      : job.source;
-    if (/\$\{\{\s*secrets\.|\b(?:QA_BOARD_\w*TOKEN|QA_READ_TOKEN|SYSTEM_ACCESSTOKEN)\b/.test(allowed)) {
+    if (/\$\{\{\s*secrets\.|\b(?:QA_BOARD_\w*TOKEN|QA_READ_TOKEN|SYSTEM_ACCESSTOKEN)\b/.test(scanned)) {
       violations.push(`github:${job.name}: secret or board token reaches PR-code job`);
     }
   }
   return violations;
 }
 
-function auditAzure(source) {
+function azureStages(source) {
+  return [...source.matchAll(/^- stage: ([A-Za-z0-9_-]+)\s*\n([\s\S]*?)(?=^- stage: |$(?![\s\S]))/gm)].map(([, name, body]) => ({ name, source: body }));
+}
+
+const azureReachesDev = (stages, name, seen = new Set()) => {
+  if (name === 'DEV') return true;
+  if (seen.has(name)) return false;
+  seen.add(name);
+  const stage = stages.find(st => st.name === name);
+  return Boolean(stage) && dependencies(stage.source, 'dependsOn').some(next => azureReachesDev(stages, next, seen));
+};
+
+const azureGated = stage => /^  condition:.*parameters\.release\s*\}\}'\s*,\s*'true'/m.test(stage.source) && !/\bor\(|\balways\(/.test(stage.source.match(/^  condition:.*$/m)?.[0] ?? '');
+
+function azureCredentialStageAllowed(stages, stage) {
+  const rule = AZURE_RELEASE_STAGES[stage.name];
+  if (!rule) return false;
+  const environment = stage.source.match(/^    environment:\s*(\S+)\s*$/m)?.[1];
+  const dev = stages.find(st => st.name === 'DEV');
+  return environment === rule.environment
+    && azureReachesDev(stages, stage.name)
+    && azureGated(stage)
+    && Boolean(dev) && azureGated(dev)
+    && !/checkout:\s*self\b/.test(stage.source)
+    && !INSTALLS_CODE.test(stage.source);
+}
+
+function auditAzureCredentials(source) {
   const violations = [];
+  const stages = azureStages(source);
+  for (const stage of stages) {
+    const own = AZURE_RELEASE_STAGES[stage.name] ? credentialsOf(AZURE_RELEASE_STAGES[stage.name].config) : new Set();
+    const allowed = azureCredentialStageAllowed(stages, stage);
+    for (const name of credentialNames) {
+      if (!new RegExp(`\\b${name}\\b`).test(stage.source)) continue;
+      if (!(allowed && own.has(name))) violations.push(`azure:${stage.name}: credential variable ${name} outside its own release stage`);
+    }
+  }
+  return violations;
+}
+
+function auditAzure(source) {
+  const violations = auditAzureCredentials(source);
   for (const job of azureJobs(source)) {
     const runsPrCode = /checkout:\s*self\b/.test(job.source) || /\bnpm\s+(?:ci|install)\b/.test(job.source)
       || /qaAuthority\/qa\/bin\/qa\.mjs\s+test\b/.test(job.source);
@@ -94,7 +179,74 @@ test('only declared credential secrets are allowed in a release job, and only wi
   assert.match(auditGithub(stolen).join(';'), /github:staging: secret/);
   const unprotected = githubYaml.replace('    environment: STAGING\n    steps:\n      - run: ./deploy.sh STAGING', '    steps:\n      - run: ./deploy.sh STAGING');
   assert.notEqual(unprotected, githubYaml);
-  assert.match(auditGithub(unprotected).join(';'), /github:staging: secret/);
+  assert.match(auditGithub(unprotected).join(';'), /github:staging: credential secret/);
+});
+
+const prCodeJob = (environment, secret) => `  pr-code:
+    runs-on: ubuntu-latest
+    environment: ${environment}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - run: npm ci
+      - run: node qa-authority/qa/bin/qa.mjs test
+        env:
+          ${secret}: \${{ secrets.${secret} }}
+`;
+
+test('the real GitHub and Azure templates pass the credential audit', () => {
+  assert.deepEqual(auditGithub(githubYaml), []);
+  assert.deepEqual(auditAzure(azureYaml), []);
+  assert.deepEqual(auditAzureCredentials(azureYaml), []);
+});
+
+test('GitHub audit rejects a credential secret anywhere but its own gated release job', () => {
+  const real = githubYaml.endsWith('\n') ? githubYaml : `${githubYaml}\n`;
+  const withPrCode = job => `${real}${job}`;
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const fixtures = {
+    'PR-code job with PR-head checkout, npm ci, environment STAGING and a production secret': withPrCode(prCodeJob('STAGING', 'QA_PRODUCTION_PASSWORD')),
+    'PR-code job with PR-head checkout, npm ci and its own environment secret': withPrCode(prCodeJob('STAGING', 'QA_STAGING_PASSWORD')),
+    'staging job mapping production credentials': mutate('QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}', 'QA_STAGING_PASSWORD: ${{ secrets.QA_PRODUCTION_PASSWORD }}'),
+    'production job mapping staging credentials': mutate('QA_PRODUCTION_PASSWORD: ${{ secrets.QA_PRODUCTION_PASSWORD }}', 'QA_PRODUCTION_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}'),
+    'a new job with another name on environment STAGING': withPrCode('  smoke:\n    runs-on: ubuntu-latest\n    environment: STAGING\n    steps:\n      - run: echo ok\n        env:\n          QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n'),
+    'staging job without its needs chain to release': mutate('  staging:\n    needs: release\n', '  staging:\n'),
+    'staging job needing something that never reaches release': mutate('  staging:\n    needs: release\n', '  staging:\n    needs: plan\n'),
+    'staging job on the wrong environment': mutate('    environment: STAGING\n    steps:\n      - run: ./deploy.sh STAGING', '    environment: PROD\n    steps:\n      - run: ./deploy.sh STAGING'),
+    'release gate no longer requires the release input': mutate(" && inputs.release == 'true'", ''),
+    'release gate opened with an or': mutate("inputs.release == 'true'", "inputs.release == 'true' || github.event_name == 'pull_request'"),
+    'staging job that checks out the PR head': mutate('  staging:\n    needs: release\n    runs-on: ubuntu-latest\n    environment: STAGING\n    steps:\n', '  staging:\n    needs: release\n    runs-on: ubuntu-latest\n    environment: STAGING\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n'),
+    'staging job that installs PR code': mutate('      - run: ./deploy.sh STAGING "${{ github.sha }}"\n', '      - run: ./deploy.sh STAGING "${{ github.sha }}"\n      - run: npm ci\n'),
+    'staging job that installs with pnpm': mutate('      - run: ./deploy.sh STAGING "${{ github.sha }}"\n', '      - run: pnpm install\n'),
+  };
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    const violations = auditGithub(yaml);
+    assert.ok(violations.length > 0, `rejected: ${name}`);
+  }
+});
+
+test('Azure audit rejects a credential variable anywhere but its own gated release stage', () => {
+  const real = azureYaml.endsWith('\n') ? azureYaml : `${azureYaml}\n`;
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const stage = (name, lines) => `${real}- stage: ${name}\n  jobs:\n  - job: evil\n    steps:\n${lines}`;
+  const fixtures = {
+    'a PR-code job with checkout, npm ci and a production variable': stage('Evil', '    - checkout: self\n    - script: npm ci\n    - script: node run.mjs\n      env:\n        QA_PRODUCTION_PASSWORD: $(QA_PRODUCTION_PASSWORD)\n'),
+    'a new stage with another name mapping a staging variable': stage('Smoke', '    - script: node run.mjs\n      env:\n        QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)\n'),
+    'the STAGING stage mapping production variables': mutate('QA_STAGING_PASSWORD: $(QA_STAGING_PASSWORD)', 'QA_STAGING_PASSWORD: $(QA_PRODUCTION_PASSWORD)'),
+    'the PROD stage mapping staging variables': mutate('QA_PRODUCTION_PASSWORD: $(QA_PRODUCTION_PASSWORD)', 'QA_PRODUCTION_PASSWORD: $(QA_STAGING_PASSWORD)'),
+    'the STAGING stage without its dependsOn chain': mutate('- stage: STAGING\n  dependsOn: DEV\n', '- stage: STAGING\n'),
+    'the STAGING stage depending on a stage that never reaches DEV': mutate('- stage: STAGING\n  dependsOn: DEV\n', '- stage: STAGING\n  dependsOn: Plan\n'),
+    'the STAGING stage without the release parameter gate': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", '- stage: STAGING\n  dependsOn: DEV\n  condition: succeeded()'),
+    'the STAGING stage on the wrong environment': mutate('    environment: STAGING\n', '    environment: PROD\n'),
+    'the STAGING stage that checks out the PR': mutate('          - script: ./deploy.sh STAGING', '          - checkout: self\n          - script: ./deploy.sh STAGING'),
+    'the STAGING stage that installs PR code': mutate('          - script: ./deploy.sh STAGING', '          - script: yarn install\n          - script: ./deploy.sh STAGING'),
+  };
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    const violations = auditAzure(yaml);
+    assert.ok(violations.length > 0, `rejected: ${name}`);
+  }
 });
 
 test('trusted publishers consume validated data without checking out or installing PR code', () => {
