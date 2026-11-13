@@ -284,18 +284,28 @@ try {
       if (result.error) throw result.error;
       return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     };
-    const compiled = execute(cfg.compileCommand);
-    if (compiled.status !== 0) throw new Error(`compile command failed with exit ${compiled.status}`);
-    const discovery = execute(cfg.discoverCommand);
-    if (discovery.status !== 0) throw new Error(`discovery command failed with exit ${discovery.status}`);
-    const discoveredIds = [...new Set(discovery.stdout.match(/QAS-[\w-]+/g) ?? [])];
-    if (!discoveredIds.length) throw new Error('discovery command returned no stable QAS IDs');
-    const execution = execute(cfg.testCommand);
-    // Every record the run created must be proven gone, even when the tests failed.
+    let discoveredIds;
+    let execution;
+    let runnerError = null;
+    try {
+      const compiled = execute(cfg.compileCommand);
+      if (compiled.status !== 0) throw new Error(`compile command failed with exit ${compiled.status}`);
+      const discovery = execute(cfg.discoverCommand);
+      if (discovery.status !== 0) throw new Error(`discovery command failed with exit ${discovery.status}`);
+      discoveredIds = [...new Set(discovery.stdout.match(/QAS-[\w-]+/g) ?? [])];
+      if (!discoveredIds.length) throw new Error('discovery command returned no stable QAS IDs');
+      execution = execute(cfg.testCommand);
+    } catch (error) { runnerError = error; }
+    // Every record the run created must be proven gone on every exit path, including a runner spawn error.
     if (target.deployed && envConfig.cleanupCheck) {
       const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv);
-      if (!cleanup.ok) { console.error(`qa: ${cleanup.reason}; no run evidence was written`); process.exit(1); }
+      if (!cleanup.ok) {
+        if (runnerError) console.error(`qa: ${runnerError.message}`);
+        console.error(`qa: ${cleanup.reason}; no run evidence was written`);
+        process.exit(1);
+      }
     }
+    if (runnerError) throw runnerError;
     const format = cfg.resultFormat;
     const resultPath = cfg.resultPath;
     if (!format || !resultPath) throw new Error('qa.config.json must define resultFormat and resultPath');

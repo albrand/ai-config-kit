@@ -304,6 +304,33 @@ test('qa test on a deployed target fails when a created record is not proven gon
   } finally { for (const p of [leaking, clean]) rmSync(p.root, { recursive: true, force: true }); }
 });
 
+test('qa test on a deployed target verifies cleanup after a runner spawn error and still reports the runner error', () => {
+  const withCleanup = { ...deployed.staging, cleanupCheck: ['node', 'cleanup.mjs'] };
+  const record = `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n');`;
+  const cleanup = gone => `import { writeFileSync } from 'node:fs'; writeFileSync('cleanup-ran.marker', '1'); console.log(JSON.stringify({ gone: ${JSON.stringify(gone)} }));`;
+  const overflow = `${record} process.stdout.write('x'.repeat(3 * 1024 * 1024));`;
+  const cases = [
+    ['maxBuffer overflow', { tests: overflow }, /ENOBUFS/],
+    ['missing test binary', { other: { 'compile.mjs': record } }, /ENOENT/],
+  ];
+  for (const [name, files, runnerError] of cases) {
+    const patched = name === 'missing test binary' ? { other: { ...files.other, 'cleanup.mjs': cleanup(['user:u1']) } } : { ...files, other: { 'cleanup.mjs': cleanup(['user:u1']) } };
+    const project = runProject({ environments: { staging: withCleanup }, ...(name === 'missing test binary' ? { testCommand: ['./no-such-runner'] } : {}) }, patched);
+    const leaking = runProject({ environments: { staging: withCleanup }, ...(name === 'missing test binary' ? { testCommand: ['./no-such-runner'] } : {}) }, { ...patched, other: { ...patched.other, 'cleanup.mjs': cleanup([]) } });
+    try {
+      const r = project.run(deployedArgs, ciEnv);
+      assert.notEqual(r.status, 0, name);
+      assert.match(r.stderr, runnerError, `${name}: the original runner error is reported`);
+      assert.equal(project.has('cleanup-ran.marker'), true, `${name}: the cleanup check was invoked`);
+      assert.equal(project.has('run-v1.json'), false, name);
+      const bad = leaking.run(deployedArgs, ciEnv);
+      assert.equal(bad.status, 1, name);
+      assert.match(bad.stderr, runnerError, `${name}: runner error kept beside the cleanup failure`);
+      assert.match(bad.stderr, /CLEANUP_UNVERIFIED/, name);
+    } finally { for (const p of [project, leaking]) rmSync(p.root, { recursive: true, force: true }); }
+  }
+});
+
 test('environment checks attach only to deployed targets', () => {
   const full = { ...deployed.staging, preflights: ['ready'], cleanupCheck: ['node', 'cleanup.mjs'] };
   const project = runProject({ environments: { staging: full }, checks: { ready: ['node', 'preflight.mjs'] } }, { other: { 'preflight.mjs': 'process.exit(9);', 'cleanup.mjs': 'process.exit(9);' } });
