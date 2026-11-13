@@ -16,22 +16,40 @@ export function wildcardMatch(pattern, value) {
   return text.length - last.length >= pos && text.endsWith(last);
 }
 
-/** Identities come only from CI variables the config declares; personal and admin accounts are refused. */
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,127}$/;
+
+/**
+ * Identities come only from CI variables the config declares; personal and admin accounts are refused. The config is validated before any
+ * variable is read: at least one identity, valid and distinct variable names, and a non-empty `deny` list of non-blank patterns.
+ * A variable that is blank after trimming is not set; the user value and each pattern are trimmed before matching.
+ */
 export function resolveCredentials(envConfig, env, { allowLocalCredentials = false } = {}) {
   const fail = reason => ({ ok: false, code: 'CREDENTIALS_NOT_FROM_CI', reason: `CREDENTIALS_NOT_FROM_CI: ${reason}` });
   const declared = envConfig?.credentials?.identities;
   if (!Array.isArray(declared) || !declared.length) return fail('no credentials declared for this environment');
-  if (!(env.CI === 'true' || env.CI === '1') && !allowLocalCredentials) return fail('CI is not set; pass --allow-local-credentials to use local variables');
-  const deny = envConfig.credentials.deny ?? [];
-  const names = [];
+  const deny = envConfig.credentials.deny;
+  if (!Array.isArray(deny) || !deny.length) return fail('credentials.deny must list at least one pattern for personal and admin accounts');
+  for (const [index, pattern] of deny.entries()) {
+    if (typeof pattern !== 'string' || !pattern.trim() || pattern.length > 256) return fail(`deny pattern ${index} must be a non-blank string of at most 256 characters`);
+  }
   for (const [index, identity] of declared.entries()) {
     for (const key of ['userEnv', 'passwordEnv']) {
       const name = identity?.[key];
       if (typeof name !== 'string' || !name) return fail(`identity ${index} does not declare ${key}`);
-      if (!env[name]) return fail(`variable ${name} is not set`);
+      if (!ENV_NAME.test(name)) return fail(`identity ${index} ${key} is not a valid variable name`);
+    }
+    if (identity.userEnv === identity.passwordEnv) return fail(`identity ${index} must use different variables for user and password`);
+  }
+  if (!(env.CI === 'true' || env.CI === '1') && !allowLocalCredentials) return fail('CI is not set; pass --allow-local-credentials to use local variables');
+  const names = [];
+  for (const [index, identity] of declared.entries()) {
+    for (const key of ['userEnv', 'passwordEnv']) {
+      const name = identity[key];
+      if (!String(env[name] ?? '').trim()) return fail(`variable ${name} is not set`);
       names.push(name);
     }
-    const hit = deny.findIndex(pattern => wildcardMatch(pattern, env[identity.userEnv]));
+    const user = String(env[identity.userEnv]).trim();
+    const hit = deny.findIndex(pattern => wildcardMatch(pattern.trim(), user));
     if (hit >= 0) return fail(`identity ${index} matches deny pattern ${hit}`);
   }
   return { ok: true, names };

@@ -208,6 +208,58 @@ test('deployed run: identities come only from declared CI variables and exclude 
   assert.equal(resolveCredentials(envCfg, { ...ok, CI: undefined }, { allowLocalCredentials: true }).ok, true);
 });
 
+test('deployed run: the credentials config is validated before any variable is read', () => {
+  const ok = { CI: 'true', QA_U: 'svc-qa@corp.invalid', QA_P: 'pw-value' };
+  const withCreds = credentials => ({ credentials: { identities: [{ userEnv: 'QA_U', passwordEnv: 'QA_P' }], ...credentials } });
+  const refused = {
+    'deny missing': withCreds({}),
+    'deny empty': withCreds({ deny: [] }),
+    'deny not an array': withCreds({ deny: 'admin*' }),
+    'deny holds an empty string': withCreds({ deny: [''] }),
+    'deny holds a blank string': withCreds({ deny: ['   '] }),
+    'deny holds a non-string': withCreds({ deny: [42] }),
+    'deny pattern over 256 characters': withCreds({ deny: ['a'.repeat(257)] }),
+    'user and password share a variable': { credentials: { identities: [{ userEnv: 'QA_U', passwordEnv: 'QA_U' }], deny: ['admin*'] } },
+    'lower-case variable name': { credentials: { identities: [{ userEnv: 'qa_u', passwordEnv: 'QA_P' }], deny: ['admin*'] } },
+    'variable name with a dash': { credentials: { identities: [{ userEnv: 'QA-U', passwordEnv: 'QA_P' }], deny: ['admin*'] } },
+    'variable name over 128 characters': { credentials: { identities: [{ userEnv: 'A'.repeat(129), passwordEnv: 'QA_P' }], deny: ['admin*'] } },
+    'no identities': { credentials: { identities: [], deny: ['admin*'] } },
+  };
+  for (const [name, cfg] of Object.entries(refused)) {
+    const outcome = resolveCredentials(cfg, ok);
+    assert.equal(outcome.ok, false, name);
+    assert.match(outcome.reason, /^CREDENTIALS_NOT_FROM_CI/, name);
+  }
+  assert.equal(resolveCredentials(withCreds({ deny: ['admin*'] }), ok).ok, true);
+});
+
+test('deployed run: admin and personal accounts are refused case-insensitively; a dedicated test account passes', () => {
+  const run = user => resolveCredentials(envCfg, { CI: 'true', QA_U: user, QA_P: 'pw-value' });
+  assert.equal(run('Admin@corp.invalid').ok, false);
+  assert.equal(run('ADMIN').ok, false);
+  assert.equal(run('Alex@PERSONAL.invalid').ok, false);
+  assert.equal(run('svc-qa-staging@corp.invalid').ok, true);
+});
+
+test('deployed run: blank values count as unset and whitespace cannot dodge the deny list', () => {
+  const base = { CI: 'true', QA_U: 'svc-qa@corp.invalid', QA_P: 'pw-value' };
+  assert.equal(resolveCredentials(envCfg, { ...base, QA_P: '   ' }).ok, false);
+  assert.equal(resolveCredentials(envCfg, { ...base, QA_U: '\t ' }).ok, false);
+  assert.equal(resolveCredentials(envCfg, { ...base, QA_U: ' admin@corp.invalid' }).ok, false);
+  assert.equal(resolveCredentials(envCfg, { ...base, QA_U: 'admin@corp.invalid ' }).ok, false);
+  assert.equal(resolveCredentials({ credentials: { ...envCfg.credentials, deny: [' admin* '] } }, { ...base, QA_U: 'admin@corp.invalid' }).ok, false);
+  assert.equal(resolveCredentials(envCfg, { ...base, QA_U: ' svc-qa@corp.invalid ' }).ok, true);
+});
+
+test('the example config gives every deployed environment a non-empty deny list that its own credentials pass', () => {
+  const cfg = JSON.parse(readFileSync(new URL('../qa.config.example.json', import.meta.url), 'utf8'));
+  for (const [name, env] of Object.entries(cfg.environments)) {
+    assert.ok(Array.isArray(env.credentials.deny) && env.credentials.deny.length > 0, name);
+    const vars = Object.fromEntries(env.credentials.identities.flatMap(i => [[i.userEnv, 'svc-qa-account'], [i.passwordEnv, 'pw-value']]));
+    assert.equal(resolveCredentials(env, { CI: 'true', ...vars }).ok, true, name);
+  }
+});
+
 test('deployed run: a missing prerequisite reports PREFLIGHT_BLOCKED, never a pass', () => {
   const pass = ['node', '-e', 'process.exit(0)'];
   const fail = ['node', '-e', 'process.exit(3)'];
