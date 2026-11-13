@@ -16,7 +16,7 @@ import { checkAiPack, installAiPack } from '../lib/ai-pack.mjs';
 import { assertCanaries, runCanaries } from '../lib/canaries.mjs';
 import { unboundScenarios } from '../lib/bound-tests.mjs';
 import { checkTarget } from '../lib/target-allowlist.mjs';
-import { resolveCredentials, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
+import { checkCleanupDeclared, resolveCredentials, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -269,6 +269,9 @@ try {
       const credentials = resolveCredentials(envConfig, process.env, { allowLocalCredentials: args['allow-local-credentials'] === true });
       if (!credentials.ok) throw new Error(credentials.reason);
       for (const name of credentials.names) testEnv[name] = process.env[name];
+      // A deployed run must say how created data is cleaned up (cleanupCheck) or declare itself read-only; refuse before any test.
+      const declared = checkCleanupDeclared(envConfig);
+      if (!declared.ok) throw new Error(declared.reason);
       const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv);
       if (envConfig.preflights?.length) writeJson(last('preflights-output', 'preflights.json'), preflight);
       if (!preflight.ok) {
@@ -276,7 +279,8 @@ try {
         process.exitCode = 2;
         process.exit();
       }
-      if (envConfig.cleanupCheck) { writeFileSync(ownsFile, ''); testEnv.QA_OWNS_FILE = ownsFile; }
+      writeFileSync(ownsFile, '');
+      testEnv.QA_OWNS_FILE = ownsFile;
     }
     const execute = command => {
       const [exe, ...argv] = command;
@@ -297,8 +301,8 @@ try {
       execution = execute(cfg.testCommand);
     } catch (error) { runnerError = error; }
     // Every record the run created must be proven gone on every exit path, including a runner spawn error.
-    if (target.deployed && envConfig.cleanupCheck) {
-      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv);
+    if (target.deployed) {
+      const cleanup = verifyCleanup(ownsFile, envConfig.readOnly === true ? null : envConfig.cleanupCheck, testEnv);
       if (!cleanup.ok) {
         if (runnerError) console.error(`qa: ${runnerError.message}`);
         console.error(`qa: ${cleanup.reason}; no run evidence was written`);

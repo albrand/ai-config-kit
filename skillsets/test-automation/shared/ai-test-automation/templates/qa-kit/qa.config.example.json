@@ -73,7 +73,11 @@
           "admin*",
           "*@personal.example.invalid"
         ]
-      }
+      },
+      "cleanupCheck": [
+        "node",
+        "qa/cleanup-check.mjs"
+      ]
     }
   },
   "checks": {

@@ -55,6 +55,15 @@ export function runPreflights(names, checks, env) {
   return { ok: !blocked, code: blocked ? 'PREFLIGHT_BLOCKED' : undefined, results };
 }
 
+/** A deployed environment must declare how created data is cleaned up, or declare itself read-only. */
+export function checkCleanupDeclared(envConfig) {
+  const check = envConfig?.cleanupCheck;
+  const declared = Array.isArray(check) && check.length > 0;
+  if (declared && envConfig.readOnly === true) return { ok: false, code: 'CLEANUP_CHECK_MISSING', reason: 'CLEANUP_CHECK_MISSING: declare either cleanupCheck or readOnly, not both' };
+  if (declared || envConfig?.readOnly === true) return { ok: true, readOnly: !declared };
+  return { ok: false, code: 'CLEANUP_CHECK_MISSING', reason: 'CLEANUP_CHECK_MISSING: a deployed environment must declare cleanupCheck or readOnly: true; no test was run' };
+}
+
 /** Every record the run created (JSON lines `{kind,id}`) must be reported gone by the cleanup check, or the run fails. */
 export function verifyCleanup(ledgerPath, cleanupCheck, env) {
   const fail = reason => ({ ok: false, code: 'CLEANUP_UNVERIFIED', reason: `CLEANUP_UNVERIFIED: ${reason}` });
@@ -64,6 +73,8 @@ export function verifyCleanup(ledgerPath, cleanupCheck, env) {
   try { owned = readFileSync(ledgerPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)); }
   catch { return fail('ownership ledger is unreadable'); }
   if (owned.some(r => typeof r?.kind !== 'string' || typeof r?.id !== 'string')) return fail('ownership ledger has a malformed row');
+  // A read-only environment declares no cleanup check: it may create nothing, so any recorded row fails the run.
+  if (!cleanupCheck) return owned.length ? fail(`read-only environment, but ${owned.length} record(s) were recorded: ${owned.map(m => `${m.kind}:${m.id}`).join(', ')}`) : { ok: true, owned: 0 };
   const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath });
   if (r.status !== 0) return fail(`cleanup check exited ${r.status}`);
   let reported;
