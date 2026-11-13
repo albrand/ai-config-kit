@@ -58,12 +58,22 @@ const githubReachesRelease = (jobs, name, seen = new Set()) => {
   return Boolean(job) && dependencies(job.source, 'needs').some(next => githubReachesRelease(jobs, next, seen));
 };
 
-// The release job runs only from a manual dispatch that asks for a release; anything weaker (an `||`, a missing input) opens the gate.
+// Fail closed: the release job's `if` must be one of these exact spellings (trimmed). No expression parsing, so a negation, an extra clause,
+// an `||`, `always()` or any other wrapping fails by not matching. An adopter who edits the gate gets a failing audit on purpose.
+const APPROVED_GITHUB_GATES = [
+  "github.event_name == 'workflow_dispatch' && inputs.release == 'true'",
+  "${{ github.event_name == 'workflow_dispatch' && inputs.release == 'true' }}",
+];
+const APPROVED_AZURE_CONDITION = "and(succeeded(), eq('${{ parameters.release }}', 'true'))";
+
 function githubReleaseGateOk(jobs) {
   const release = jobs.find(j => j.name === 'release');
-  const gate = release?.source.match(/^    if:\s*(.+)$/m)?.[1] ?? '';
-  return /github\.event_name\s*==\s*'workflow_dispatch'/.test(gate) && /inputs\.release\s*==\s*'true'/.test(gate) && !/\|\|/.test(gate);
+  const gate = release?.source.match(/^    if:[ \t]*(.*)$/m)?.[1]?.trim() ?? '';
+  return APPROVED_GITHUB_GATES.includes(gate);
 }
+
+// The gated jobs inherit the gate through `needs`; any `if:` of their own (`always()`, `!cancelled()`) could run them with `release` skipped.
+const githubJobHasOwnIf = job => /^    if:/m.test(job.source);
 
 function githubCredentialJobAllowed(jobs, job) {
   const rule = GITHUB_RELEASE_JOBS[job.name];
@@ -72,6 +82,7 @@ function githubCredentialJobAllowed(jobs, job) {
   return environment === rule.environment
     && githubReachesRelease(jobs, job.name)
     && githubReleaseGateOk(jobs)
+    && !githubJobHasOwnIf(job)
     && !PR_HEAD.test(job.source)
     && !INSTALLS_CODE.test(job.source);
 }
@@ -121,7 +132,7 @@ const azureReachesDev = (stages, name, seen = new Set()) => {
   return Boolean(stage) && dependencies(stage.source, 'dependsOn').some(next => azureReachesDev(stages, next, seen));
 };
 
-const azureGated = stage => /^  condition:.*parameters\.release\s*\}\}'\s*,\s*'true'/m.test(stage.source) && !/\bor\(|\balways\(/.test(stage.source.match(/^  condition:.*$/m)?.[0] ?? '');
+const azureGated = stage => (stage.source.match(/^  condition:[ \t]*(.*)$/m)?.[1]?.trim() ?? '') === APPROVED_AZURE_CONDITION;
 
 function azureCredentialStageAllowed(stages, stage) {
   const rule = AZURE_RELEASE_STAGES[stage.name];
@@ -216,6 +227,15 @@ test('GitHub audit rejects a credential secret anywhere but its own gated releas
     'staging job needing something that never reaches release': mutate('  staging:\n    needs: release\n', '  staging:\n    needs: plan\n'),
     'staging job on the wrong environment': mutate('    environment: STAGING\n    steps:\n      - run: ./deploy.sh STAGING', '    environment: PROD\n    steps:\n      - run: ./deploy.sh STAGING'),
     'release gate no longer requires the release input': mutate(" && inputs.release == 'true'", ''),
+    'release gate negated as a whole': mutate("if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'", "if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.release == 'true') }}"),
+    'release gate negated without a wrapper': mutate("if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'", "if: !(github.event_name == 'workflow_dispatch' && inputs.release == 'true')"),
+    'release gate with ! before the release input': mutate("&& inputs.release == 'true'", "&& !inputs.release == 'true'"),
+    'release gate with an extra comparison clause': mutate("&& inputs.release == 'true'", "&& (inputs.release == 'true') == false"),
+    'release gate led by always()': mutate("if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'", "if: always() && github.event_name == 'workflow_dispatch' && inputs.release == 'true'"),
+    'release gate wrapped in an expression with an extra clause': mutate("if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'", "if: ${{ github.event_name == 'workflow_dispatch' && inputs.release == 'true' || true }}"),
+    'staging job with if always()': mutate('  staging:\n    needs: release\n', '  staging:\n    needs: release\n    if: always()\n'),
+    'staging job with if not cancelled': mutate('  staging:\n    needs: release\n', '  staging:\n    needs: release\n    if: ${{ !cancelled() }}\n'),
+    'production job with if always()': mutate('  production:\n    needs: staging\n', '  production:\n    needs: staging\n    if: always()\n'),
     'release gate opened with an or': mutate("inputs.release == 'true'", "inputs.release == 'true' || github.event_name == 'pull_request'"),
     'staging job that checks out the PR head': mutate('  staging:\n    needs: release\n    runs-on: ubuntu-latest\n    environment: STAGING\n    steps:\n', '  staging:\n    needs: release\n    runs-on: ubuntu-latest\n    environment: STAGING\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n'),
     'staging job that installs PR code': mutate('      - run: ./deploy.sh STAGING "${{ github.sha }}"\n', '      - run: ./deploy.sh STAGING "${{ github.sha }}"\n      - run: npm ci\n'),
@@ -239,6 +259,12 @@ test('Azure audit rejects a credential variable anywhere but its own gated relea
     'the STAGING stage without its dependsOn chain': mutate('- stage: STAGING\n  dependsOn: DEV\n', '- stage: STAGING\n'),
     'the STAGING stage depending on a stage that never reaches DEV': mutate('- stage: STAGING\n  dependsOn: DEV\n', '- stage: STAGING\n  dependsOn: Plan\n'),
     'the STAGING stage without the release parameter gate': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", '- stage: STAGING\n  dependsOn: DEV\n  condition: succeeded()'),
+    'the DEV stage with a negated condition': mutate("- stage: DEV\n  dependsOn: [Test, Judge, Report]\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: DEV\n  dependsOn: [Test, Judge, Report]\n  condition: not(and(succeeded(), eq('${{ parameters.release }}', 'true')))"),
+    'the STAGING stage with not(and(...))': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: STAGING\n  dependsOn: DEV\n  condition: not(and(succeeded(), eq('${{ parameters.release }}', 'true')))"),
+    'the STAGING stage with or(...)': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: STAGING\n  dependsOn: DEV\n  condition: or(succeeded(), eq('${{ parameters.release }}', 'true'))"),
+    'the STAGING stage with ne(...)': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), ne('${{ parameters.release }}', 'true'))"),
+    'the STAGING stage with always()': mutate("- stage: STAGING\n  dependsOn: DEV\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: STAGING\n  dependsOn: DEV\n  condition: always()"),
+    'the PROD stage with always()': mutate("- stage: PROD\n  dependsOn: STAGING\n  condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))", "- stage: PROD\n  dependsOn: STAGING\n  condition: always()"),
     'the STAGING stage on the wrong environment': mutate('    environment: STAGING\n', '    environment: PROD\n'),
     'the STAGING stage that checks out the PR': mutate('          - script: ./deploy.sh STAGING', '          - checkout: self\n          - script: ./deploy.sh STAGING'),
     'the STAGING stage that installs PR code': mutate('          - script: ./deploy.sh STAGING', '          - script: yarn install\n          - script: ./deploy.sh STAGING'),
