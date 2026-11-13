@@ -88,11 +88,19 @@ function inParamList(code,index){
  for(let i=index-1;i>=0;i--){const c=code[i];if(c===')')depth++;else if(c==='('){if(depth===0){open=i;break;}depth--;}}
  if(open<0)return false;
  let close=open+1;for(depth=1;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
- const before=code.slice(0,open),after=code.slice(close);
+ // Drop a generic list in front of the parentheses (`m<T>(`), then look at what follows `)`: an optional TypeScript return type
+ // (`: void`, `: Promise<void>`) and a body `{`, an arrow `=>` or, for an overload, abstract or interface signature, `;`.
+ const before=code.slice(0,open).replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>\s*$/,''),after=code.slice(close);
  if(/\bfunction\s*\*?\s*[\w$]*\s*$/.test(before))return true;
- if(/^\s*=>/.test(after))return true;
- const name=/([\w$]+)\s*$/.exec(before)?.[1];
- return /^\s*\{/.test(after)&&Boolean(name)&&!/^(?:if|while|for|switch|catch|with)$/.test(name);
+ const tail=/^\s*(:[^{;]*?)?\s*(\{|=>|;)/.exec(after);
+ if(!tail)return false;
+ if(tail[2]==='=>')return true;
+ const found=/([\w$]+)\s*$/.exec(before);
+ if(!found||/^(?:if|while|for|switch|catch|with)$/.test(found[1]))return false;
+ if(!tail[1]&&tail[2]==='{')return true;
+ if(!tail[1])return false;
+ // a return type before `{` or `;` is a method or signature only when the name starts a member (`m(`, `static m(`, `{ m(`), not a call in a ternary
+ return /(?:^|[{};,\n])\s*(?:(?:public|private|protected|static|abstract|override|readonly|async|get|set|declare)\s+)*\*?\s*$/.test(before.slice(0,found.index));
 }
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
