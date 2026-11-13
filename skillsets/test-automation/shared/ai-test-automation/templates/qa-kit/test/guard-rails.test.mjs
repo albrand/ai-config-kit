@@ -513,6 +513,29 @@ test('a worker left behind by the cleanup check is killed too', async () => {
   } finally { rmSync(project.root, { recursive: true, force: true }); }
 });
 
+test('a discovery command that prints thousands of IDs and exits at once loses none of them', () => {
+  const many = `for (let i = 0; i < 5000; i += 1) console.log('QAS-' + String(i).padStart(5, '0'));`;
+  const project = runProject({ environments: { staging: timed() } }, { other: { 'discover.mjs': many } });
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const outcome = project.run(deployedArgs, ciEnv);
+      assert.equal(outcome.status, 0, `attempt ${attempt}: ${outcome.stderr}`);
+      assert.equal(JSON.parse(outcome.stdout).discoveredIds, 5000, `attempt ${attempt}: every ID was read`);
+    }
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
+});
+
+test('a discovery output over the 10 MB cap fails clearly instead of judging on partial IDs', () => {
+  const flood = `console.log('QAS-00001'); process.stdout.write('x'.repeat(11 * 1024 * 1024));`;
+  const project = runProject({ environments: { staging: timed() } }, { other: { 'discover.mjs': flood } });
+  try {
+    const outcome = project.run(deployedArgs, ciEnv);
+    assert.equal(outcome.status, 1, outcome.stderr);
+    assert.match(outcome.stderr, /discovery output exceeded 10 MB/);
+    assert.equal(project.has('run-v1.json'), false);
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
+});
+
 test('a hung cleanup check or preflight fails the run and is never a pass', () => {
   const hangingCheck = project => project.run([...deployedArgs], ciEnv);
   const cleanupHangs = runProject({ environments: { staging: timed() } }, { tests: writeJunit, other: { 'cleanup.mjs': hang } });

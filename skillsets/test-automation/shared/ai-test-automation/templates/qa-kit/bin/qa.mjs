@@ -297,7 +297,7 @@ try {
         if (!bounded.treeGone) treeStuck = exe;
         if (bounded.timedOut) throw new Error(`TEST_TIMEOUT: ${exe} did not finish within ${limits.testMs / 1000}s and was killed`);
         if (bounded.error) throw bounded.error;
-        return { status: bounded.status, stdout: bounded.stdout, stderr: bounded.stderr };
+        return { status: bounded.status, stdout: bounded.stdout, stderr: bounded.stderr, truncated: bounded.truncated };
       }
       const result = spawnSync(exe, argv, { encoding: 'utf8', env: testEnv, shell: false });
       if (result.error) throw result.error;
@@ -311,6 +311,7 @@ try {
       if (compiled.status !== 0) throw new Error(`compile command failed with exit ${compiled.status}`);
       const discovery = await execute(cfg.discoverCommand);
       if (discovery.status !== 0) throw new Error(`discovery command failed with exit ${discovery.status}`);
+      if (discovery.truncated) throw new Error('discovery output exceeded 10 MB and was cut; refusing to judge on partial IDs');
       discoveredIds = [...new Set(discovery.stdout.match(/QAS-[\w-]+/g) ?? [])];
       if (!discoveredIds.length) throw new Error('discovery command returned no stable QAS IDs');
       execution = await execute(cfg.testCommand);

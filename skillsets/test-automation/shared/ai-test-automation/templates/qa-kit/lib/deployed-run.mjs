@@ -103,9 +103,16 @@ export async function runBounded(argv, env, timeoutMs) {
   const child = spawn(exe, rest, { env, shell: false, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
-  const CAP = 10 * 1024 * 1024; // keep at most 10 MB of each stream
-  child.stdout.setEncoding('utf8').on('data', chunk => { if (stdout.length < CAP) stdout += chunk; });
-  child.stderr.setEncoding('utf8').on('data', chunk => { if (stderr.length < CAP) stderr += chunk; });
+  let truncated = false;
+  const CAP = 10 * 1024 * 1024; // keep at most 10 MB of each stream; a longer one is flagged, never silently cut
+  const collect = (stream, append) => {
+    stream.setEncoding('utf8').on('data', chunk => { if (append.length() + chunk.length <= CAP) append.add(chunk); else truncated = true; });
+    return new Promise(done => { stream.once('end', done); stream.once('close', done); stream.once('error', done); });
+  };
+  const drained = Promise.all([
+    collect(child.stdout, { length: () => stdout.length, add: chunk => { stdout += chunk; } }),
+    collect(child.stderr, { length: () => stderr.length, add: chunk => { stderr += chunk; } }),
+  ]);
   let timedOut = false;
   const outcome = await new Promise(done => {
     const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }, timeoutMs);
@@ -113,9 +120,12 @@ export async function runBounded(argv, env, timeoutMs) {
     child.once('exit', (code, signal) => { clearTimeout(timer); done({ status: code ?? (signal ? 1 : 1) }); });
   });
   const treeGone = child.pid ? await terminateGroup(child.pid) : true;
+  // 'exit' can fire before the pipes are drained. With the group dead nobody holds them open, so this returns at once; the bound only
+  // matters for a pipe somebody outside the group still holds, and then the streams are destroyed.
+  await Promise.race([drained, sleep(2000)]);
   child.stdout.destroy();
   child.stderr.destroy();
-  return { status: outcome.status, stdout, stderr, timedOut, treeGone, error: outcome.error };
+  return { status: outcome.status, stdout, stderr, timedOut, treeGone, truncated, error: outcome.error };
 }
 
 const runArgv = (argv, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) => runBounded(argv, env, timeoutMs);
