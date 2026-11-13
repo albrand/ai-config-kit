@@ -112,6 +112,58 @@ const APPROVED_AZURE_RELEASE_STEPS = {
   PROD: { dependsOn: 'STAGING', group: 'qa-production-credentials', deployment: 'deploy_prod', deploy: './deploy.sh PROD "$(Build.SourceVersion)"', qa: APPROVED_AZURE_COMMANDS.PROD },
 };
 
+// The release chain in front of the credential-bearing jobs is pinned too: the release job (and the Azure DEV stage) must equal its approved
+// text, and the jobs it needs must exist with their own `needs`. Dropping a QA prerequisite makes every credential line below a violation.
+// Update these on purpose, in the same PR, when you change the chain.
+const APPROVED_GITHUB_RELEASE_JOB = [
+  '  release:',
+  "    if: github.event_name == 'workflow_dispatch' && inputs.release == 'true'",
+  '    needs: [plan, test, judge, report]',
+  '    runs-on: ubuntu-latest',
+  '    environment: DEV',
+  '    steps:',
+  '      - name: Promote the exact tested candidate to DEV',
+  '        run: ./deploy.sh DEV "${{ github.sha }}"',
+];
+const APPROVED_GITHUB_PREREQUISITE_NEEDS = { plan: null, test: 'plan', 'base-proof': 'plan', judge: '[plan, test, base-proof]', report: '[judge]' };
+const APPROVED_AZURE_DEV_STAGE = [
+  '  dependsOn: [Test, Judge, Report]',
+  `  condition: ${APPROVED_AZURE_CONDITION}`,
+  '  jobs:',
+  '  - deployment: deploy_dev',
+  '    environment: DEV',
+  '    strategy:',
+  '      runOnce:',
+  '        deploy:',
+  '          steps:',
+  '          - script: ./deploy.sh DEV "$(Build.SourceVersion)"',
+];
+const APPROVED_AZURE_PREREQUISITE_DEPENDS = { Plan: null, Test: 'Plan', Judge: '[Plan, Test]', Report: 'Judge' };
+
+const needsLine = (source, key) => source.split('\n').find(line => new RegExp(`^ {1,4}${key}:`).test(line) && indentOf(line) === (key === 'needs' ? 4 : 2));
+
+function githubChainOk(jobs) {
+  const release = jobs.find(j => j.name === 'release');
+  if (!release || !sameLines(release.source, APPROVED_GITHUB_RELEASE_JOB)) return false;
+  return Object.entries(APPROVED_GITHUB_PREREQUISITE_NEEDS).every(([name, needs]) => {
+    const job = jobs.find(j => j.name === name);
+    if (!job) return false;
+    const line = needsLine(job.source, 'needs');
+    return needs === null ? line === undefined : line?.trim() === `needs: ${needs}`;
+  });
+}
+
+function azureChainOk(stages) {
+  const dev = stages.find(st => st.name === 'DEV');
+  if (!dev || !sameLines(dev.source, APPROVED_AZURE_DEV_STAGE)) return false;
+  return Object.entries(APPROVED_AZURE_PREREQUISITE_DEPENDS).every(([name, dependsOn]) => {
+    const stage = stages.find(st => st.name === name);
+    if (!stage) return false;
+    const line = needsLine(stage.source, 'dependsOn');
+    return dependsOn === null ? line === undefined : line?.trim() === `dependsOn: ${dependsOn}`;
+  });
+}
+
 function githubExpectedJob(name) {
   const rule = GITHUB_RELEASE_JOBS[name];
   const steps = APPROVED_GITHUB_RELEASE_STEPS[name];
@@ -198,6 +250,7 @@ function githubCredentialJobAllowed(jobs, job) {
   return environment === rule.environment
     && githubReachesRelease(jobs, job.name)
     && githubReleaseGateOk(jobs)
+    && githubChainOk(jobs)
     && !githubJobHasOwnIf(job)
     && !PR_HEAD.test(job.source)
     && !INSTALLS_CODE.test(job.source);
@@ -217,6 +270,7 @@ function auditGithub(source) {
     for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name], githubExpectedJob(job.name))) allowedLines.add(base + index);
   }
   violations.push(...stray('github', source.split('\n'), allowedLines));
+  if (!githubChainOk(jobs)) violations.push('github: the release chain (release job and the jobs it needs) differs from the approved text');
   for (const job of jobs) {
     if (GITHUB_RELEASE_JOBS[job.name] && !sameLines(job.source, githubExpectedJob(job.name))) violations.push(`github:${job.name}: release job differs from the approved steps`);
   }
@@ -279,6 +333,7 @@ function azureCredentialStageAllowed(stages, stage) {
     && azureReachesDev(stages, stage.name)
     && azureGated(stage)
     && Boolean(dev) && azureGated(dev)
+    && azureChainOk(stages)
     && !/checkout:\s*self\b/.test(stage.source)
     && !INSTALLS_CODE.test(stage.source);
 }
@@ -296,6 +351,7 @@ function auditAzureCredentials(source) {
     for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name], azureExpectedStage(stage.name))) allowedLines.add(base + index);
   }
   violations.push(...stray('azure', source.split('\n'), allowedLines));
+  if (!azureChainOk(stages)) violations.push('azure: the release chain (DEV stage and the stages it depends on) differs from the approved text');
   for (const stage of stages) {
     if (AZURE_RELEASE_STAGES[stage.name] && !sameLines(stage.source, azureExpectedStage(stage.name))) violations.push(`azure:${stage.name}: release stage differs from the approved steps`);
   }
@@ -462,6 +518,52 @@ test('Azure audit rejects any change to the approved qa test step', () => {
   assert.deepEqual(auditAzure(azureYaml), []);
   for (const [name, yaml] of Object.entries(fixtures)) {
     assert.ok(auditAzure(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('GitHub audit rejects a release chain that drops a QA prerequisite', () => {
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const needs = '    needs: [plan, test, judge, report]\n';
+  const fixtures = {
+    'release without plan': mutate(needs, '    needs: [test, judge, report]\n'),
+    'release without test': mutate(needs, '    needs: [plan, judge, report]\n'),
+    'release without judge': mutate(needs, '    needs: [plan, test, report]\n'),
+    'release without report': mutate(needs, '    needs: [plan, test, judge]\n'),
+    'release needing only plan': mutate(needs, '    needs: plan\n'),
+    'release with its if intact but needs removed': mutate(needs, ''),
+    'test without needs plan': mutate('  test:\n    needs: plan\n', '  test:\n'),
+    'judge without test': mutate('    needs: [plan, test, base-proof]\n', '    needs: [plan, base-proof]\n'),
+    'report without judge': mutate('    needs: [judge]\n', '    needs: []\n'),
+    'a prerequisite job removed': mutate('  report:\n', '  reportx:\n'),
+    'release with an extra step': mutate('        run: ./deploy.sh DEV "${{ github.sha }}"\n', '        run: ./deploy.sh DEV "${{ github.sha }}"\n      - run: ./collect.sh\n'),
+  };
+  assert.deepEqual(auditGithub(githubYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    const violations = auditGithub(yaml);
+    assert.ok(violations.length > 0, `rejected: ${name}`);
+    assert.ok(violations.some(v => /credential/.test(v)), `the credential lines below it are violations too: ${name}`);
+  }
+});
+
+test('Azure audit rejects a release chain that drops a QA prerequisite', () => {
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const fixtures = {
+    'DEV without Test': mutate('  dependsOn: [Test, Judge, Report]\n', '  dependsOn: [Judge, Report]\n'),
+    'DEV without Judge': mutate('  dependsOn: [Test, Judge, Report]\n', '  dependsOn: [Test, Report]\n'),
+    'DEV without Report': mutate('  dependsOn: [Test, Judge, Report]\n', '  dependsOn: [Test, Judge]\n'),
+    'DEV depending only on Test': mutate('  dependsOn: [Test, Judge, Report]\n', '  dependsOn: Test\n'),
+    'DEV with dependsOn removed': mutate('  dependsOn: [Test, Judge, Report]\n', ''),
+    'STAGING depending on Test instead of DEV': mutate('- stage: STAGING\n  dependsOn: DEV\n', '- stage: STAGING\n  dependsOn: Test\n'),
+    'Test without dependsOn Plan': mutate('- stage: Test\n  dependsOn: Plan\n', '- stage: Test\n'),
+    'Judge without Test': mutate('  dependsOn: [Plan, Test]\n', '  dependsOn: [Plan]\n'),
+    'Report without Judge': mutate('- stage: Report\n  dependsOn: Judge\n', '- stage: Report\n'),
+    'DEV with an extra step': mutate('          - script: ./deploy.sh DEV "$(Build.SourceVersion)"\n', '          - script: ./deploy.sh DEV "$(Build.SourceVersion)"\n          - script: ./collect.sh\n'),
+  };
+  assert.deepEqual(auditAzure(azureYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    const violations = auditAzure(yaml);
+    assert.ok(violations.length > 0, `rejected: ${name}`);
+    assert.ok(violations.some(v => /credential/.test(v)), `the credential lines below it are violations too: ${name}`);
   }
 });
 
