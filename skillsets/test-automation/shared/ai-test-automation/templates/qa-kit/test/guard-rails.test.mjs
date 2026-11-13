@@ -260,20 +260,20 @@ test('the example config gives every deployed environment a non-empty deny list 
   }
 });
 
-test('deployed run: a missing prerequisite reports PREFLIGHT_BLOCKED, never a pass', () => {
+test('deployed run: a missing prerequisite reports PREFLIGHT_BLOCKED, never a pass', async () => {
   const pass = ['node', '-e', 'process.exit(0)'];
   const fail = ['node', '-e', 'process.exit(3)'];
-  assert.equal(runPreflights(['up'], { up: pass }, process.env).ok, true);
+  assert.equal((await runPreflights(['up'], { up: pass }, process.env)).ok, true);
   for (const checks of [{ up: fail }, {}, { up: [] }]) {
-    const outcome = runPreflights(['up'], checks, process.env);
+    const outcome = (await runPreflights(['up'], checks, process.env));
     assert.equal(outcome.ok, false);
     assert.equal(outcome.code, 'PREFLIGHT_BLOCKED');
   }
-  const once = runPreflights(['up', 'db'], { up: pass, db: fail }, process.env);
+  const once = (await runPreflights(['up', 'db'], { up: pass, db: fail }, process.env));
   assert.deepEqual(once.results.map(r => [r.name, r.ok]), [['up', true], ['db', false]]);
 });
 
-test('deployed run: the cleanup ledger fails the run unless every created record is proven gone', () => {
+test('deployed run: the cleanup ledger fails the run unless every created record is proven gone', async () => {
   const root = mkdtempSync(join(tmpdir(), 'qa-owns-'));
   try {
     const ledger = join(root, 'owns.jsonl');
@@ -281,21 +281,21 @@ test('deployed run: the cleanup ledger fails the run unless every created record
     assert.equal(recordOwned('order', 7, ledger), true);
     assert.equal(recordOwned('user', 'u2', undefined), false);
     const reporting = gone => ['node', '-e', `console.log(JSON.stringify({ gone: ${JSON.stringify(gone)}, residue: [] }))`];
-    assert.deepEqual(verifyCleanup(ledger, reporting(['user:u1', 'order:7']), process.env), { ok: true, owned: 2 });
+    assert.deepEqual((await verifyCleanup(ledger, reporting(['user:u1', 'order:7']), process.env)), { ok: true, owned: 2 });
     for (const check of [reporting(['user:u1']), reporting([])]) {
-      const outcome = verifyCleanup(ledger, check, process.env);
+      const outcome = (await verifyCleanup(ledger, check, process.env));
       assert.equal(outcome.ok, false);
       assert.match(outcome.reason, /^CLEANUP_UNVERIFIED/);
     }
     for (const check of [['node', '-e', 'process.exit(2)'], ['node', '-e', 'console.log("not json")']]) {
-      assert.match(verifyCleanup(ledger, check, process.env).reason, /^CLEANUP_CHECK_INVALID/);
+      assert.match((await verifyCleanup(ledger, check, process.env)).reason, /^CLEANUP_CHECK_INVALID/);
     }
     rmSync(ledger);
-    assert.match(verifyCleanup(ledger, reporting([]), process.env).reason, /ledger is missing/);
+    assert.match((await verifyCleanup(ledger, reporting([]), process.env)).reason, /ledger is missing/);
     writeFileSync(ledger, 'not json\n');
-    assert.match(verifyCleanup(ledger, reporting([]), process.env).reason, /unreadable/);
+    assert.match((await verifyCleanup(ledger, reporting([]), process.env)).reason, /unreadable/);
     writeFileSync(ledger, '{"kind":1}\n');
-    assert.match(verifyCleanup(ledger, reporting([]), process.env).reason, /malformed/);
+    assert.match((await verifyCleanup(ledger, reporting([]), process.env)).reason, /malformed/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -364,9 +364,7 @@ test('qa test on a deployed target verifies cleanup after a runner spawn error a
   const withCleanup = { ...deployed.staging, cleanupCheck: ['node', 'cleanup.mjs'] };
   const record = `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.QA_OWNS_FILE, JSON.stringify({ kind: 'user', id: 'u1' }) + '\\n');`;
   const cleanup = gone => `import { writeFileSync } from 'node:fs'; writeFileSync('cleanup-ran.marker', '1'); console.log(JSON.stringify({ gone: ${JSON.stringify(gone)}, residue: [] }));`;
-  const overflow = `${record} process.stdout.write('x'.repeat(3 * 1024 * 1024));`;
   const cases = [
-    ['maxBuffer overflow', { tests: overflow }, /ENOBUFS/],
     ['missing test binary', { other: { 'compile.mjs': record } }, /ENOENT/],
   ];
   for (const [name, files, runnerError] of cases) {
@@ -424,7 +422,7 @@ test("the example config's production environment fails a run that leaves a reco
   const overflow = `${record} process.stdout.write('x'.repeat(3 * 1024 * 1024));`;
   const cases = [
     ['leftover record', `${record} ${writeJunit}`, /CLEANUP_UNVERIFIED/],
-    ['leftover record after a runner spawn error', overflow, /CLEANUP_UNVERIFIED/],
+    ['leftover record after a run that wrote no results', overflow, /CLEANUP_UNVERIFIED/],
   ];
   for (const [name, tests, expected] of cases) {
     const leaking = make(tests, []);
@@ -473,6 +471,48 @@ test('a deployed test that hangs after creating a record is killed, the cleanup 
   // A clean cleanup does not turn the timeout into a pass: TEST_TIMEOUT is reported and the exit is non-zero (third case above).
 });
 
+// A worker the command leaves behind (same process group) must be killed with it, or it can write to the target after the cleanup check.
+const worker = `import { spawn } from 'node:child_process'; import { writeFileSync as saveWorkerPid } from 'node:fs';
+  const w = spawn(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync('late.marker', 'wrote after cleanup'), 1500)"], { stdio: 'ignore' });
+  w.unref(); saveWorkerPid('worker.pid', String(w.pid));`;
+const gone = pid => { try { process.kill(pid, 0); return false; } catch { return true; } };
+const pause = ms => new Promise(done => setTimeout(done, ms));
+
+test('a worker that outlives a timed-out test is killed with it and never writes after cleanup', async () => {
+  const project = runProject({ environments: { staging: timed() } }, { tests: `${worker} ${hang}` });
+  try {
+    const outcome = project.run(deployedArgs, ciEnv);
+    assert.equal(outcome.status, 1, outcome.stderr);
+    assert.match(outcome.stderr, /TEST_TIMEOUT/);
+    await pause(2500);
+    assert.equal(project.has('late.marker'), false, 'the worker never wrote its marker');
+    assert.equal(gone(Number(project.read('worker.pid'))), true, 'the worker process is gone');
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
+});
+
+test('a worker left behind by a test that exits normally is killed before the run is judged', async () => {
+  const project = runProject({ environments: { staging: timed() } }, { tests: `${worker} ${writeJunit}` });
+  try {
+    const outcome = project.run(deployedArgs, ciEnv);
+    assert.equal(outcome.status, 0, outcome.stderr);
+    await pause(2500);
+    assert.equal(project.has('late.marker'), false, 'the worker never wrote its marker');
+    assert.equal(gone(Number(project.read('worker.pid'))), true, 'the worker process is gone');
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
+});
+
+test('a worker left behind by the cleanup check is killed too', async () => {
+  const check = `${worker} console.log(JSON.stringify({ gone: [], residue: [] }));`;
+  const project = runProject({ environments: { staging: timed() } }, { tests: writeJunit, other: { 'cleanup.mjs': check } });
+  try {
+    const outcome = project.run(deployedArgs, ciEnv);
+    assert.equal(outcome.status, 0, outcome.stderr);
+    await pause(2500);
+    assert.equal(project.has('late.marker'), false, 'the worker never wrote its marker');
+    assert.equal(gone(Number(project.read('worker.pid'))), true, 'the worker process is gone');
+  } finally { rmSync(project.root, { recursive: true, force: true }); }
+});
+
 test('a hung cleanup check or preflight fails the run and is never a pass', () => {
   const hangingCheck = project => project.run([...deployedArgs], ciEnv);
   const cleanupHangs = runProject({ environments: { staging: timed() } }, { tests: writeJunit, other: { 'cleanup.mjs': hang } });
@@ -510,7 +550,7 @@ test('timeout overrides are validated before any test and the defaults are docum
   } finally { rmSync(project.root, { recursive: true, force: true }); }
 });
 
-test('an empty ledger still runs cleanupCheck, with the run ID and ledger path, and the run fails when the check reports residue', () => {
+test('an empty ledger still runs cleanupCheck, with the run ID and ledger path, and the run fails when the check reports residue', async () => {
   // The tests write to the "target" (a file) without calling recordOwned, tagged with the run ID; only the adopter's check can see it.
   const writeUnrecorded = `import { appendFileSync } from 'node:fs'; appendFileSync('target-state.txt', process.env.QA_RUN_ID + ':order-7\\n'); ${writeJunit}`;
   const check = `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -533,10 +573,10 @@ test('an empty ledger still runs cleanupCheck, with the run ID and ledger path, 
     assert.equal(ok.status, 0, ok.stderr);
     assert.match(JSON.parse(clean.read('check-env.json')).runId, /^[0-9a-f-]{36}$/, 'a run ID is generated when none is passed');
   } finally { for (const p of [leaking, clean]) rmSync(p.root, { recursive: true, force: true }); }
-  assert.match(verifyCleanup(join(tmpdir(), 'no-such-ledger-qa'), ['node', '-e', ''], process.env).reason, /ledger is missing/);
+  assert.match((await verifyCleanup(join(tmpdir(), 'no-such-ledger-qa'), ['node', '-e', ''], process.env)).reason, /ledger is missing/);
 });
 
-test('a cleanup check result that is not a strict {gone, residue} object fails the run, even with an empty ledger', () => {
+test('a cleanup check result that is not a strict {gone, residue} object fails the run, even with an empty ledger', async () => {
   const root = mkdtempSync(join(tmpdir(), 'qa-strict-'));
   try {
     const ledger = join(root, 'owns.jsonl');
@@ -556,12 +596,12 @@ test('a cleanup check result that is not a strict {gone, residue} object fails t
       'non-zero exit with valid JSON': ['node', '-e', 'console.log(JSON.stringify({ gone: [], residue: [] })); process.exit(3)'],
     };
     for (const [name, check] of Object.entries(rejected)) {
-      const outcome = verifyCleanup(ledger, check, process.env);
+      const outcome = (await verifyCleanup(ledger, check, process.env));
       assert.equal(outcome.ok, false, name);
       assert.equal(outcome.code, 'CLEANUP_CHECK_INVALID', name);
       assert.match(outcome.reason, /^CLEANUP_CHECK_INVALID/, name);
     }
-    assert.deepEqual(verifyCleanup(ledger, printing('{"gone":[],"residue":[]}'), process.env), { ok: true, owned: 0 });
+    assert.deepEqual((await verifyCleanup(ledger, printing('{"gone":[],"residue":[]}'), process.env)), { ok: true, owned: 0 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

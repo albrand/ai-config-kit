@@ -16,7 +16,7 @@ import { checkAiPack, installAiPack } from '../lib/ai-pack.mjs';
 import { assertCanaries, runCanaries } from '../lib/canaries.mjs';
 import { unboundScenarios } from '../lib/bound-tests.mjs';
 import { checkTarget } from '../lib/target-allowlist.mjs';
-import { checkCleanupDeclared, resolveCredentials, resolveTimeouts, runBounded, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
+import { checkCleanupDeclared, resolveCredentials, resolveTimeouts, runBounded, runPreflights, TREE_KILL_SUPPORTED, verifyCleanup } from '../lib/deployed-run.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -273,10 +273,11 @@ try {
       // A deployed run must declare the cleanupCheck that looks for residue on the target; refuse before any test.
       const declared = checkCleanupDeclared(envConfig);
       if (!declared.ok) throw new Error(declared.reason);
+      if (!TREE_KILL_SUPPORTED) throw new Error('TREE_KILL_UNSUPPORTED: a deployed run needs process-group termination, which cannot be confirmed on this platform; run it on Linux or macOS; no test was run');
       const timeouts = resolveTimeouts(envConfig);
       if (!timeouts.ok) throw new Error(timeouts.reason);
       limits = timeouts;
-      const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv, limits.checkMs);
+      const preflight = await runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv, limits.checkMs);
       if (envConfig.preflights?.length) writeJson(last('preflights-output', 'preflights.json'), preflight);
       if (!preflight.ok) {
         console.error(`qa: PREFLIGHT_BLOCKED: ${preflight.results.filter(r => !r.ok).map(r => `${r.name} (${r.reason})`).join(', ')}; no test was run`);
@@ -287,11 +288,13 @@ try {
       testEnv.QA_OWNS_FILE = ownsFile;
       testEnv.QA_RUN_ID = last('run-id', randomUUID());
     }
-    const execute = command => {
+    let treeStuck = null;
+    const execute = async command => {
       const [exe, ...argv] = command;
       // A deployed run is time-bound so a hung test cannot skip the cleanup check; a local run is unchanged.
       if (limits) {
-        const bounded = runBounded(command, testEnv, limits.testMs);
+        const bounded = await runBounded(command, testEnv, limits.testMs);
+        if (!bounded.treeGone) treeStuck = exe;
         if (bounded.timedOut) throw new Error(`TEST_TIMEOUT: ${exe} did not finish within ${limits.testMs / 1000}s and was killed`);
         if (bounded.error) throw bounded.error;
         return { status: bounded.status, stdout: bounded.stdout, stderr: bounded.stderr };
@@ -304,20 +307,25 @@ try {
     let execution;
     let runnerError = null;
     try {
-      const compiled = execute(cfg.compileCommand);
+      const compiled = await execute(cfg.compileCommand);
       if (compiled.status !== 0) throw new Error(`compile command failed with exit ${compiled.status}`);
-      const discovery = execute(cfg.discoverCommand);
+      const discovery = await execute(cfg.discoverCommand);
       if (discovery.status !== 0) throw new Error(`discovery command failed with exit ${discovery.status}`);
       discoveredIds = [...new Set(discovery.stdout.match(/QAS-[\w-]+/g) ?? [])];
       if (!discoveredIds.length) throw new Error('discovery command returned no stable QAS IDs');
-      execution = execute(cfg.testCommand);
+      execution = await execute(cfg.testCommand);
     } catch (error) { runnerError = error; }
     // Every record the run created must be proven gone on every exit path, including a runner spawn error.
     if (target.deployed) {
-      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv, testEnv.QA_RUN_ID, limits.checkMs);
+      const cleanup = await verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv, testEnv.QA_RUN_ID, limits.checkMs);
       if (!cleanup.ok) {
         if (runnerError) console.error(`qa: ${runnerError.message}`);
         console.error(`qa: ${cleanup.reason}; no run evidence was written`);
+        process.exit(1);
+      }
+      if (treeStuck) {
+        if (runnerError) console.error(`qa: ${runnerError.message}`);
+        console.error(`qa: CLEANUP_UNVERIFIED: processes started by ${treeStuck} would not exit, so later writes to the target cannot be ruled out; no run evidence was written`);
         process.exit(1);
       }
     }

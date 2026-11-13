@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 
 // Deployed-run safeguards. Each applies only to a deployed target (see target-allowlist.mjs). Messages carry
@@ -75,25 +75,63 @@ export function resolveTimeouts(envConfig) {
   return { ok: true, testMs: test.ms, checkMs: check.ms };
 }
 
-/** Run an argv with a hard time limit; the child is killed on expiry and the result says so. */
-export function runBounded(argv, env, timeoutMs) {
+const sleep = ms => new Promise(done => setTimeout(done, ms));
+const alive = pid => { try { process.kill(-pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+
+/** Kill the whole process group and wait until no member is left. Returns false when the group will not die. */
+async function terminateGroup(pid, waitMs = 10000) {
+  try { process.kill(-pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') return false; }
+  const deadline = Date.now() + waitMs;
+  while (alive(pid)) {
+    if (Date.now() > deadline) return false;
+    await sleep(25);
+  }
+  return true;
+}
+
+/** Process groups are the only way to stop a command's descendants here; Windows has no equivalent that can be confirmed. */
+export const TREE_KILL_SUPPORTED = process.platform !== 'win32';
+
+/**
+ * Run an argv in its own process group with a hard time limit. When the command ends for any reason (exit, non-zero, timeout, spawn
+ * error) the whole group is killed and awaited, so no worker it left behind can write to the target afterwards. `treeGone: false` means
+ * the group would not die; the caller must fail the run. A process that leaves the group on purpose (setsid, a double fork) is out of reach.
+ */
+export async function runBounded(argv, env, timeoutMs) {
   const [exe, ...rest] = argv;
-  const r = spawnSync(exe, rest, { encoding: 'utf8', env, shell: false, timeout: timeoutMs, killSignal: 'SIGKILL' });
-  const timedOut = r.error?.code === 'ETIMEDOUT';
-  return { status: r.error ? 1 : (r.status ?? 1), stdout: r.stdout ?? '', stderr: r.stderr ?? '', timedOut, error: r.error };
+  if (!TREE_KILL_SUPPORTED) return { status: 1, stdout: '', stderr: '', timedOut: false, treeGone: false, error: new Error('TREE_KILL_UNSUPPORTED: process-tree termination cannot be confirmed on this platform') };
+  const child = spawn(exe, rest, { env, shell: false, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  const CAP = 10 * 1024 * 1024; // keep at most 10 MB of each stream
+  child.stdout.setEncoding('utf8').on('data', chunk => { if (stdout.length < CAP) stdout += chunk; });
+  child.stderr.setEncoding('utf8').on('data', chunk => { if (stderr.length < CAP) stderr += chunk; });
+  let timedOut = false;
+  const outcome = await new Promise(done => {
+    const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }, timeoutMs);
+    child.once('error', error => { clearTimeout(timer); done({ status: 1, error }); });
+    child.once('exit', (code, signal) => { clearTimeout(timer); done({ status: code ?? (signal ? 1 : 1) }); });
+  });
+  const treeGone = child.pid ? await terminateGroup(child.pid) : true;
+  child.stdout.destroy();
+  child.stderr.destroy();
+  return { status: outcome.status, stdout, stderr, timedOut, treeGone, error: outcome.error };
 }
 
 const runArgv = (argv, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) => runBounded(argv, env, timeoutMs);
 
 /** Run each needed argv check once. A failed or undefined check yields BLOCKED, never PASS or a misleading FAIL. */
-export function runPreflights(names, checks, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
-  const results = names.map(name => {
+export async function runPreflights(names, checks, env, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
+  const results = [];
+  for (const name of names) {
     const argv = checks?.[name];
-    if (!Array.isArray(argv) || !argv.length) return { name, ok: false, reason: 'check is not defined in config.checks' };
-    const r = runArgv(argv, env, timeoutMs);
-    if (r.timedOut) return { name, ok: false, reason: `timed out after ${timeoutMs / 1000}s` };
-    return r.status === 0 ? { name, ok: true } : { name, ok: false, reason: `exit ${r.status}` };
-  });
+    if (!Array.isArray(argv) || !argv.length) { results.push({ name, ok: false, reason: 'check is not defined in config.checks' }); continue; }
+    const r = await runArgv(argv, env, timeoutMs);
+    if (r.error && !r.treeGone) results.push({ name, ok: false, reason: String(r.error.message).split('\n')[0] });
+    else if (!r.treeGone) results.push({ name, ok: false, reason: 'its process tree would not exit' });
+    else if (r.timedOut) results.push({ name, ok: false, reason: `timed out after ${timeoutMs / 1000}s` });
+    else results.push(r.status === 0 ? { name, ok: true } : { name, ok: false, reason: `exit ${r.status}` });
+  }
   const blocked = results.some(r => !r.ok);
   return { ok: !blocked, code: blocked ? 'PREFLIGHT_BLOCKED' : undefined, results };
 }
@@ -110,7 +148,7 @@ export function checkCleanupDeclared(envConfig) {
  * with QA_RUN_ID) that the tests never recorded. It prints `{"gone":["kind:id"], "residue":["..."]}`: every ledger row must be in `gone`
  * and `residue` must be empty, or the run fails.
  */
-export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
+export async function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID, timeoutMs = DEFAULT_CHECK_TIMEOUT_SECONDS * 1000) {
   const fail = reason => ({ ok: false, code: 'CLEANUP_UNVERIFIED', reason: `CLEANUP_UNVERIFIED: ${reason}` });
   const invalid = reason => ({ ok: false, code: 'CLEANUP_CHECK_INVALID', reason: `CLEANUP_CHECK_INVALID: ${reason}` });
   // `qa test` creates the ledger before the tests start, so a missing one was removed.
@@ -119,7 +157,8 @@ export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_
   try { owned = readFileSync(ledgerPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)); }
   catch { return fail('ownership ledger is unreadable'); }
   if (owned.some(r => typeof r?.kind !== 'string' || typeof r?.id !== 'string')) return fail('ownership ledger has a malformed row');
-  const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) }, timeoutMs);
+  const r = await runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) }, timeoutMs);
+  if (!r.treeGone) return fail('a process the cleanup check started would not exit, so the target is not proven clean');
   if (r.timedOut) return invalid(`the cleanup check timed out after ${timeoutMs / 1000}s, so the target is not proven clean`);
   if (r.status !== 0) return invalid(`the cleanup check exited ${r.status}`);
   let reported;
