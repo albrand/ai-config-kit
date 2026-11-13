@@ -21,7 +21,7 @@ Install a second workflow inside the QA-owned repo. Trigger `pull_request` for c
 
 ## Release stages and tiers
 
-Carry one candidate SHA and linked-work-item set unchanged through protected GitHub Environments `DEV` → `STAGING` → `PROD`. Require approval on STAGING/PROD as policy dictates; run deployment smoke after DEV, full release tier after STAGING, and production sanity after PROD. Release promotion depends on green PR plan/test/judge/report and names the same SHA in every stage.
+Carry one candidate SHA and linked-work-item set unchanged through protected GitHub Environments `DEV` → `STAGING` → `PROD`. Require approval on STAGING/PROD as policy dictates; run deployment smoke after DEV, full release tier after STAGING, and production sanity after PROD. Release promotion depends on green PR plan/test/judge/report and names the same SHA in every stage. The STAGING and PROD jobs run `qa test --env <name>` and map each `credentials.userEnv` / `credentials.passwordEnv` of `qa.config.json` from that protected environment's secrets (`NAME: ${{ secrets.NAME }}`); add a mapping for every identity you add, and never echo the values or enable `set -x`.
 
 - Pre-push tier: changed work-item scenarios + relevant fast component tests, run locally before publishing a branch.
 - PR tier: all linked and related scenarios + full base regression set + API/browser smoke, token-free.

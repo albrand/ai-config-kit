@@ -22,6 +22,8 @@ Place `templates/qa-kit/ci/qa-repository-pr-azure.yml` in the QA repository as i
 
 ## Release stages and tiers
 
+The STAGING and PROD stages load a variable group of secret variables and map each `credentials.userEnv` / `credentials.passwordEnv` of `qa.config.json` explicitly into the `qa test --env <name>` step `env` as `NAME: $(NAME)`, because Azure does not expose secret variables to scripts by default. Names must match; add a mapping for every identity you add; never echo the values or enable `set -x`.
+
 Promote the exact tested candidate SHA and work-item set through deployment jobs with environments `DEV`, `STAGING`, `PROD`. Configure approvals/checks on STAGING and PROD, pin artifact version, and make later stages depend on successful earlier stages. Run pre-push changed-scenario tests; PR linked+related+base-regression tests; release candidate tests and deployed smoke/sanity walks. Every stage uploads evidence and links it only after artifact confirmation.
 
 Configure pipeline variables/secrets by stage and scope them only to report/deploy jobs; keep test job variables explicitly empty for board tokens and upload credentials. Set a required build-validation policy using the pipeline's stable definition name and “Policy requirement: Required”. Add QA repo read authorization explicitly; do not give application contributors write access to authoritative scenarios.

@@ -542,14 +542,77 @@ test('skill and references state each ported rule and its reason code', () => {
   assert.match(read('references/pitfalls.md'), /import alias/);
 });
 
-test('CI release templates name the environment and set CI with every deployed qa test', () => {
-  for (const file of ['github-actions.yml', 'azure-pipelines.yml']) {
-    const lines = readFileSync(join(import.meta.dirname, '../ci', file), 'utf8').split('\n');
-    const deployedRuns = lines.map((line, i) => [line, lines[i + 1] ?? '']).filter(([line]) => /qa\.mjs test .*--base-url/.test(line));
-    assert.equal(deployedRuns.length, 2, file);
-    for (const [line, next] of deployedRuns) {
-      assert.match(line, /--env (?:staging|production)\b/, `${file}: ${line.trim()}`);
-      assert.match(next, /env: \{ CI: 'true' \}/, file);
+// The credential names come from the example config, never from a hard-coded copy.
+const exampleConfig = JSON.parse(readFileSync(resolve(import.meta.dirname, '../qa.config.example.json'), 'utf8'));
+const deployedEnvironments = Object.entries(exampleConfig.environments).map(([name, env]) => ({ name, names: env.credentials.identities.flatMap(i => [i.userEnv, i.passwordEnv]) }));
+const templates = {
+  'github-actions.yml': name => `: \${{ secrets.${name} }}`,
+  'azure-pipelines.yml': name => `: $(${name})`,
+};
+
+/** The step block (the `qa.mjs test ... --env <env>` line and its env mapping) of a rendered release workflow. */
+function releaseStep(text, env) {
+  const lines = text.split('\n');
+  const start = lines.findIndex(line => new RegExp(`qa\\.mjs test .*--env ${env}\\b`).test(line));
+  if (start < 0) return '';
+  const indent = lines[start].match(/^\s*/)[0].length;
+  const end = lines.findIndex((line, i) => i > start && /^\s*- (?:run|script|name):/.test(line) && line.match(/^\s*/)[0].length <= indent);
+  return lines.slice(start, end < 0 ? lines.length : end).join('\n');
+}
+
+/** Credential names of `env` that the rendered workflow does not map from a secret. */
+function unmappedCredentials(file, text, env, names) {
+  const step = releaseStep(text, env);
+  return names.filter(name => !step.includes(`${name}${templates[file](name)}`));
+}
+
+test('every declared credential of every deployed environment is mapped from a secret in each rendered release workflow', () => {
+  assert.ok(deployedEnvironments.length >= 2);
+  for (const file of Object.keys(templates)) {
+    const text = readFileSync(join(import.meta.dirname, '../ci', file), 'utf8');
+    for (const { name, names } of deployedEnvironments) {
+      assert.ok(releaseStep(text, name), `${file}: a release step for ${name}`);
+      assert.deepEqual(unmappedCredentials(file, text, name, names), [], `${file}/${name}`);
+      assert.match(releaseStep(text, name), /CI: 'true'/, `${file}/${name} sets CI`);
+      assert.doesNotMatch(releaseStep(text, name), /\bset -x\b|\becho\b/, `${file}/${name} never echoes`);
     }
   }
+});
+
+test('removing one credential mapping from a release workflow makes the mapping check fail', () => {
+  for (const file of Object.keys(templates)) {
+    const text = readFileSync(join(import.meta.dirname, '../ci', file), 'utf8');
+    for (const { name, names } of deployedEnvironments) {
+      for (const missing of names) {
+        const broken = text.split('\n').filter(line => !line.includes(`${missing}${templates[file](missing)}`)).join('\n');
+        assert.notEqual(broken, text, `${file}: a mapping line for ${missing}`);
+        assert.deepEqual(unmappedCredentials(file, broken, name, names), [missing], `${file}/${name}: ${missing}`);
+      }
+    }
+  }
+});
+
+test('a deployed run with the declared credentials set passes preflight, reaches the cleanup check, and leaks no credential value', () => {
+  const environment = { ...deployed.staging, preflights: ['ready'], cleanupCheck: ['node', 'cleanup.mjs'] };
+  const needsCredentials = `process.exit(process.env.QA_U && process.env.QA_P ? 0 : 7);`;
+  const tests = `${writeJunit} if (!process.env.QA_U || !process.env.QA_P) process.exit(9); writeFileSync('tests-saw-credentials.marker', '1');`;
+  const cleanup = `import { writeFileSync } from 'node:fs'; writeFileSync('cleanup-ran.marker', '1'); console.log(JSON.stringify({ gone: [], residue: [] }));`;
+  const files = { tests, other: { 'preflight.mjs': needsCredentials, 'cleanup.mjs': cleanup } };
+  const project = runProject({ environments: { staging: environment }, checks: { ready: ['node', 'preflight.mjs'] } }, files);
+  const without = runProject({ environments: { staging: environment }, checks: { ready: ['node', 'preflight.mjs'] } }, files);
+  try {
+    const r = project.run(deployedArgs, ciEnv);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(project.has('tests-saw-credentials.marker'), true, 'the tests received the credentials');
+    assert.equal(project.has('cleanup-ran.marker'), true, 'the run reached the cleanup check');
+    assert.equal(JSON.parse(project.read('preflights.json')).ok, true);
+    const everythingWritten = r.stdout + r.stderr + everything(project.root);
+    assert.doesNotMatch(everythingWritten, new RegExp(`${SECRET_PASSWORD}|${SECRET_USER}`), 'no credential value in output, logs, run-v1.json or evidence files');
+    assert.equal(project.has('run-v1.json'), true);
+    // Without the mapping (the old templates) the same run stops before any test.
+    const blocked = without.run(deployedArgs, { CI: 'true' });
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr, /CREDENTIALS_NOT_FROM_CI/);
+    assert.equal(without.has('cleanup-ran.marker'), false);
+  } finally { for (const p of [project, without]) rmSync(p.root, { recursive: true, force: true }); }
 });

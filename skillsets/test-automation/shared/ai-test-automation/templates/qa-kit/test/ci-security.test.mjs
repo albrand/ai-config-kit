@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+// Credential variables a deployed environment declares. A release job that names a protected `environment:` may map exactly these from secrets.
+const exampleConfig = JSON.parse(readFileSync(new URL('../qa.config.example.json', import.meta.url), 'utf8'));
+const credentialNames = new Set(Object.values(exampleConfig.environments).flatMap(env => (env.credentials?.identities ?? []).flatMap(i => [i.userEnv, i.passwordEnv])));
+
 const ci = new URL('../ci/', import.meta.url);
 const githubYaml = readFileSync(process.env.QA_GITHUB_TEMPLATE ?? new URL('github-actions.yml', ci), 'utf8');
 const azureYaml = readFileSync(process.env.QA_AZURE_TEMPLATE ?? new URL('azure-pipelines.yml', ci), 'utf8');
@@ -51,7 +55,10 @@ function auditGithub(source) {
     for (const step of githubCheckoutSteps(job.source)) {
       if (!/persist-credentials:\s*false/.test(step)) violations.push(`github:${job.name}: checkout credentials not disabled`);
     }
-    if (/\$\{\{\s*secrets\.|\b(?:QA_BOARD_\w*TOKEN|QA_READ_TOKEN|SYSTEM_ACCESSTOKEN)\b/.test(job.source)) {
+    const allowed = /^    environment:\s*\S+/m.test(job.source)
+      ? job.source.replace(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g, (match, name) => (credentialNames.has(name) ? '' : match))
+      : job.source;
+    if (/\$\{\{\s*secrets\.|\b(?:QA_BOARD_\w*TOKEN|QA_READ_TOKEN|SYSTEM_ACCESSTOKEN)\b/.test(allowed)) {
       violations.push(`github:${job.name}: secret or board token reaches PR-code job`);
     }
   }
@@ -77,6 +84,17 @@ function auditAzure(source) {
 test('PR-code CI jobs have read-only permissions, no persisted credentials, and no secrets', () => {
   const violations = [...auditGithub(githubYaml), ...auditAzure(azureYaml)];
   assert.deepEqual(violations, [], `unsafe PR-code jobs: ${violations.join('; ')}`);
+});
+
+test('only declared credential secrets are allowed in a release job, and only with a protected environment', () => {
+  const staging = githubJobs(githubYaml).find(job => job.name === 'staging').source;
+  assert.match(staging, /secrets\.QA_STAGING_USER/);
+  assert.deepEqual(auditGithub(githubYaml), []);
+  const stolen = githubYaml.replace('QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}', 'QA_STAGING_PASSWORD: ${{ secrets.QA_STAGING_PASSWORD }}\n          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}');
+  assert.match(auditGithub(stolen).join(';'), /github:staging: secret/);
+  const unprotected = githubYaml.replace('    environment: STAGING\n    steps:\n      - run: ./deploy.sh STAGING', '    steps:\n      - run: ./deploy.sh STAGING');
+  assert.notEqual(unprotected, githubYaml);
+  assert.match(auditGithub(unprotected).join(';'), /github:staging: secret/);
 });
 
 test('trusted publishers consume validated data without checking out or installing PR code', () => {
