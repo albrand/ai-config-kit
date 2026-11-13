@@ -17,6 +17,7 @@ TESTS ARE HUMAN BEHAVIORAL DRIVEN, WHICH MEANS IF THE UI DOES NOT WORK AS DESCRI
 - **Priority 4:** Mocked APIs and fixtures are fine; mocks must not encode the answer. Return mixed data and let application logic produce the outcome (`mockPolicy: mixed-source` when steps use mocks). Every mock refuses a write the scenario does not declare (see the mock write policy in `references/gate-rules.md`).
 - **Priority 5:** Found bugs stay red: `status: bug`, `bugKey`, never weaken expected to match broken code.
 - **Priority 6:** A red test is never made green by `skip`, `fixme`, `test.fail`, `test.slow`, a retry, a longer timeout, an inverted assertion or `--allow-draft-pass`.
+- **Priority 7:** A scenario is bound only when a runnable test carries its tag (title or `scenario_id` label); a tag in a comment, a string or a skipped test never counts. The gate proves it still fails known-bad input on every run (`SANITY_CANARY_FAILED`). A run against a deployed URL needs the origin declared (`TARGET_NOT_ALLOWED`), identities only from declared CI variables with a deny list for personal and admin accounts, secrets never printed, preflights that report BLOCKED when a prerequisite is missing, and a cleanup ledger that proves every created record gone. See `references/gate-rules.md`.
 - Design from the ticket only, never from current implementation source.
 - Unhandled mock calls and undeclared writes fail the test, so an accidental empty or accepted response cannot green a test (adopter test harness; it complements the intent above and does not replace it).
 
@@ -82,7 +83,7 @@ Use `references/scenario-schema.md` and version every artifact: work-item snapsh
 
 ## 4. Generate and bind tests
 
-Use one deterministic test binding per automated scenario. Build/compile and test discovery must produce machine-readable evidence. Add Allure custom label `scenario_id` and keep a native runner result file. Follow `references/allure.md` for Playwright, Vitest, Jest, pytest, xUnit, NUnit or JUnit 5. A test title or source string alone is never evidence.
+Use one deterministic test binding per automated scenario. Build/compile and test discovery must produce machine-readable evidence. Add Allure custom label `scenario_id` and keep a native runner result file. Follow `references/allure.md` for Playwright, Vitest, Jest, pytest, xUnit, NUnit or JUnit 5. A test title or source string alone is never evidence, and a tag counts as a binding only on a runnable test (`check-scenarios --source` fails a changed automated scenario no runnable test carries). For a deployed environment declare `environments.<name>` (`origins`, `credentials`, `preflights`, `cleanupCheck`) in `qa.config.json` and run `qa test --env <name> --base-url <url>`; see `references/gate-rules.md`.
 
 - Create test source, runner config, `allure-results/`, native result output and `run-v1.json` containing compiled=true, discovered IDs, executed status and screenshot evidence.
 - Check: run the actual compile, discovery and test commands; `node -e "const r=require('./run-v1.json');if(r.compiled!==true||!r.discoveredIds?.length)process.exit(1);console.log('compile/discovery evidence: PASS')"` → PASS. Parse results and require exact ID/status.

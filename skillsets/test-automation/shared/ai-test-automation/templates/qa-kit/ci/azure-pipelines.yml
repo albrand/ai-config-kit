@@ -170,7 +170,8 @@ stages:
         deploy:
           steps:
           - script: ./deploy.sh STAGING "$(Build.SourceVersion)"
-          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --base-url "$(STAGING_URL)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"
+            env: { CI: 'true' }
 - stage: PROD
   dependsOn: STAGING
   condition: and(succeeded(), eq('${{ parameters.release }}', 'true'))
@@ -182,4 +183,5 @@ stages:
         deploy:
           steps:
           - script: ./deploy.sh PROD "$(Build.SourceVersion)"
-          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --base-url "$(PROD_URL)"
+          - script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --env production --base-url "$(PROD_URL)"
+            env: { CI: 'true' }

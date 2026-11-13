@@ -13,6 +13,10 @@ import { html, markdown, reportBlocks, reportMarker, reportRows } from '../lib/r
 import { publishFromEvidence, recomputeTrustedVerdict, validatePublishPayload } from '../lib/publish-payload.mjs';
 import { buildPlan, extractWorkItemHints, resolveBoardAssociations } from '../lib/associations.mjs';
 import { checkAiPack, installAiPack } from '../lib/ai-pack.mjs';
+import { assertCanaries, runCanaries } from '../lib/canaries.mjs';
+import { unboundScenarios } from '../lib/bound-tests.mjs';
+import { checkTarget } from '../lib/target-allowlist.mjs';
+import { resolveCredentials, runPreflights, verifyCleanup } from '../lib/deployed-run.mjs';
 
 const [command, ...rest] = process.argv.slice(2);
 const args = parseArgs(rest);
@@ -101,7 +105,12 @@ try {
     result.ok = result.errors.length === 0;
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exitCode = 1;
+  } else if (command === 'canary') {
+    const outcome = runCanaries();
+    console.log(JSON.stringify(outcome, null, 2));
+    if (!outcome.ok) process.exitCode = 1;
   } else if (command === 'judge') {
+    assertCanaries();
     const scenarios = scenariosFrom(last('scenarios', config().scenarioFile ?? 'qa/scenarios.json'));
     const results = readResults(last('results', 'results.json'));
     const baseScenarios = last('base-scenarios') ? unwrap(json(last('base-scenarios'))) : [];
@@ -163,6 +172,7 @@ try {
     if (safe.request?.headers?.authorization) safe.request.headers.authorization = '[redacted]';
     console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', result: safe }, null, 2));
   } else if (command === 'publish-evidence') {
+    assertCanaries();
     const cfg = config();
     const apply = args.apply === true;
     const tokenName = cfg.boardTokenEnv ?? 'QA_BOARD_TOKEN';
@@ -219,6 +229,7 @@ try {
       console.log(JSON.stringify({ ok: true, target, written }, null, 2));
     } else throw new Error('ai-pack requires --write or --check');
   } else if (command === 'check-scenarios') {
+    assertCanaries();
     const scenarioPath = last('file', config().scenarioFile ?? 'qa/scenarios.json');
     const head = unwrap(json(last('head', scenarioPath)));
     const baseRef = last('base');
@@ -233,15 +244,43 @@ try {
     const headById = new Map(head.map(s => [s.id, s]));
     const changedIds = new Set(result.filter(r => r.changed && r.id.startsWith('QAS-')).map(r => r.id));
     for (const row of validateSourcesForScenarios(sources, headById, changedIds)) result.push({ id: row.id, ok: row.ok, changed: true, reason: row.reason });
+    // A changed automated scenario counts as bound only when a runnable test in a --source file carries its tag.
+    if (sources.length) {
+      const sourceTexts = sources.map(path => readFileSync(path, 'utf8'));
+      const changedAutomated = head.filter(s => changedIds.has(s.id) && s.kind === 'automated');
+      for (const id of unboundScenarios(sourceTexts, changedAutomated)) result.push({ id, ok: false, changed: true, reason: 'no runnable test in the --source files carries the scenario tag' });
+    }
     for (const path of unsafe) result.push({ id: path, ok: false, reason: 'source pre-check found disabled/skipped test pattern' });
     console.log(JSON.stringify(result, null, 2));
     if (result.some(row => !row.ok)) process.exitCode = 1;
   } else if (command === 'test') {
     const cfg = config();
     for (const field of ['compileCommand', 'discoverCommand', 'testCommand']) if (!Array.isArray(cfg[field]) || !cfg[field].length) throw new Error(`qa.config.json must define ${field} as [executable, ...args]`);
+    // Target allowlist first: a non-loopback base URL must belong to an environment that declares its origins.
+    const baseUrl = last('base-url', cfg.baseUrl);
+    const environment = last('env', cfg.environment ?? 'local');
+    const target = checkTarget({ baseUrl, environment, config: cfg });
+    if (!target.ok) throw new Error(target.reason);
+    const testEnv = { PATH: process.env.PATH, CI: 'true', ...(baseUrl ? { QA_BASE_URL: baseUrl } : {}) };
+    const envConfig = cfg.environments?.[environment] ?? {};
+    const ownsFile = resolve(last('owns-output', 'owns.jsonl'));
+    // Environment safeguards apply only to a deployed target; local, loopback and no-base-URL runs are unchanged.
+    if (target.deployed) {
+      const credentials = resolveCredentials(envConfig, process.env, { allowLocalCredentials: args['allow-local-credentials'] === true });
+      if (!credentials.ok) throw new Error(credentials.reason);
+      for (const name of credentials.names) testEnv[name] = process.env[name];
+      const preflight = runPreflights(envConfig.preflights ?? [], cfg.checks, testEnv);
+      if (envConfig.preflights?.length) writeJson(last('preflights-output', 'preflights.json'), preflight);
+      if (!preflight.ok) {
+        console.error(`qa: PREFLIGHT_BLOCKED: ${preflight.results.filter(r => !r.ok).map(r => `${r.name} (${r.reason})`).join(', ')}; no test was run`);
+        process.exitCode = 2;
+        process.exit();
+      }
+      if (envConfig.cleanupCheck) { writeFileSync(ownsFile, ''); testEnv.QA_OWNS_FILE = ownsFile; }
+    }
     const execute = command => {
       const [exe, ...argv] = command;
-      const result = spawnSync(exe, argv, { encoding: 'utf8', env: { PATH: process.env.PATH, CI: 'true' }, shell: false });
+      const result = spawnSync(exe, argv, { encoding: 'utf8', env: testEnv, shell: false });
       if (result.error) throw result.error;
       return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     };
@@ -252,6 +291,11 @@ try {
     const discoveredIds = [...new Set(discovery.stdout.match(/QAS-[\w-]+/g) ?? [])];
     if (!discoveredIds.length) throw new Error('discovery command returned no stable QAS IDs');
     const execution = execute(cfg.testCommand);
+    // Every record the run created must be proven gone, even when the tests failed.
+    if (target.deployed && envConfig.cleanupCheck) {
+      const cleanup = verifyCleanup(ownsFile, envConfig.cleanupCheck, testEnv);
+      if (!cleanup.ok) { console.error(`qa: ${cleanup.reason}; no run evidence was written`); process.exit(1); }
+    }
     const format = cfg.resultFormat;
     const resultPath = cfg.resultPath;
     if (!format || !resultPath) throw new Error('qa.config.json must define resultFormat and resultPath');
@@ -268,7 +312,7 @@ try {
     console.log(JSON.stringify({ run: output, compiled: true, discoveredIds: discoveredIds.length, results: results.length, testExitCode: execution.status }, null, 2));
     if (execution.status !== 0) process.exitCode = execution.status;
   } else {
-    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test|merge-base|ai-pack');
+    console.error('usage: qa.mjs plan|judge|report|board|publish-evidence|install-authoritative|check-scenarios|test|merge-base|ai-pack|canary');
     process.exitCode = 2;
   }
 } catch (error) {

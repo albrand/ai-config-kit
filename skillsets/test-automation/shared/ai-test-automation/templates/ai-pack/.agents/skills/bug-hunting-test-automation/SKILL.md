@@ -17,7 +17,8 @@ Read: parent skill **First principle** and `references/gate-rules.md`.
 
 ## Automation
 
-- One test per automated scenario; `scenario_id` label required.
+- One test per automated scenario; `scenario_id` label required. Put the whole scenario ID in the title of a runnable test or in its `scenario_id` label: a tag in a comment, a string or a skipped test does not bind the scenario.
+- Against a deployed environment use only the identities the config declares from CI variables, never a personal or admin account, and print no secret. Record every record the test creates with `recordOwned(kind, id)` so the cleanup ledger can prove it gone.
 - Do not copy expectations from component implementation; copy from scenario `expected` only. Visual values come from the design reference named in the scenario, never from the app source or from what the running app shows.
 - Fail unhandled mock calls with the HTTP method and URL, so an empty accidental response cannot green an empty-state test.
 

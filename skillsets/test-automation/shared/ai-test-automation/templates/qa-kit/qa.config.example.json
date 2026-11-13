@@ -9,9 +9,22 @@
   "dryRun": true,
   "scenarioFile": "scenarios.json",
   "resultsFile": "run-v1.json",
-  "compileCommand": ["npm", "run", "test:compile"],
-  "discoverCommand": ["npm", "run", "test:discover"],
-  "testCommand": ["npm", "test", "--", "--reporter=junit"],
+  "compileCommand": [
+    "npm",
+    "run",
+    "test:compile"
+  ],
+  "discoverCommand": [
+    "npm",
+    "run",
+    "test:discover"
+  ],
+  "testCommand": [
+    "npm",
+    "test",
+    "--",
+    "--reporter=junit"
+  ],
   "runner": "replace-with-runner-name",
   "resultFormat": "junit",
   "resultPath": "qa-results/junit.xml",
@@ -19,5 +32,54 @@
   "authoritativePaths": [
     "scenarios.json",
     "tests"
-  ]
+  ],
+  "environments": {
+    "staging": {
+      "origins": [
+        "https://staging.example.invalid"
+      ],
+      "credentials": {
+        "identities": [
+          {
+            "userEnv": "QA_STAGING_USER",
+            "passwordEnv": "QA_STAGING_PASSWORD"
+          }
+        ],
+        "deny": [
+          "admin*",
+          "*@personal.example.invalid"
+        ]
+      },
+      "preflights": [
+        "environment-ready"
+      ],
+      "cleanupCheck": [
+        "node",
+        "qa/cleanup-check.mjs"
+      ]
+    },
+    "production": {
+      "origins": [
+        "https://app.example.invalid"
+      ],
+      "credentials": {
+        "identities": [
+          {
+            "userEnv": "QA_PRODUCTION_USER",
+            "passwordEnv": "QA_PRODUCTION_PASSWORD"
+          }
+        ],
+        "deny": [
+          "admin*",
+          "*@personal.example.invalid"
+        ]
+      }
+    }
+  },
+  "checks": {
+    "environment-ready": [
+      "node",
+      "qa/preflight.mjs"
+    ]
+  }
 }
