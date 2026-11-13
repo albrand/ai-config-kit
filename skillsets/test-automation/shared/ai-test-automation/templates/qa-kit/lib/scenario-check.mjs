@@ -85,11 +85,10 @@ const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$
 // `,` `=` `!` `&` `|` `?` `:` or `if`, `while`, `for`, `return` (`(t = test);`, `((t = test))`, `if ((t = test))`, `x = (t = test)`); after an
 // identifier, `>`, `]`, `)` or `function` it opens a call or a parameter list of any generic depth, whose `name = test` is a local default or an
 // argument, not an alias of the file; so is a group followed by `=>` or `:`. An unmatched `{` is a BLOCK, which ends the walk as statement level
-// (`test('x', () => { t = test; t.skip(); })`), when it follows the start of the file, `;` `{` `}` `)` `=>` or `else`, `try`, `finally`, `do`;
-// anything else makes it an object literal and the walk goes on outward (`f({ a: (t = test) })` reaches the call). An unmatched `[` after an
+// (`test('x', () => { t = test; t.skip(); })`, `function (): void { ... }`) by default; it is an object literal, and the walk goes on
+// outward (`f({ a: (t = test) })` reaches the call), only when it follows `(` `,` `=` `:` `[` `?` `!` `&` `|` or `return`. An unmatched `[` after an
 // identifier, `)` or `]` is an index access, like a call; otherwise an array literal and the walk goes on. A call argument (`f(t = test)`), a
-// skip through a default parameter, the middle operand of a ternary and a TypeScript method body with a return type inside a literal are
-// therefore documented limits.
+// skip through a default parameter and the middle operand of a ternary are therefore documented limits.
 function assignmentIsAlias(code,index){
  let pos=index;
  for(;;){
@@ -102,7 +101,7 @@ function assignmentIsAlias(code,index){
   if(open<0)return true;
   const before=code.slice(0,open).trimEnd();
   if(code[open]==='{'){
-   if(!before||/(?:[;{})]|=>)$/.test(before)||/(?:^|[^\w$.])(?:else|try|finally|do)$/.test(before))return true;
+   if(!(/[(,=:\[?!&|]$/.test(before)||/(?:^|[^\w$.])return$/.test(before)))return true;
   }else if(code[open]==='['){
    if(/[\w$)\]]$/.test(before)&&!/(?:^|[^\w$.])(?:return|case|in|of|typeof|void|delete|await|yield|else|do)$/.test(before))return false;
   }else{
