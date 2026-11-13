@@ -82,8 +82,9 @@ const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
- const declarations=[...code.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
- const destructures=[...code.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
+ // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
+ const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
   for(const m of declarations){

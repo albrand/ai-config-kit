@@ -719,6 +719,13 @@ test('source precheck rejects a JS/TS skip reached by destructuring or by assign
     'const d = describe; d.skip': "const d = describe;\nd.skip('x', () => {});\n",
     'alias of an alias': "const t = test;\nconst u = t;\nu.fixme();\n",
     'a copy of a destructured skip': "const { skip } = test;\nconst later = skip;\nlater();\n",
+    'let t; t = test': "let t;\nt = test;\nt.skip('x');\n",
+    'var t; t = it': "var t;\nt = it;\nt.fixme();\n",
+    't = describe after a declaration': "let t;\nt = describe;\nt.skip('x', () => {});\n",
+    'a reassigned destructure target': "let s;\n({ skip: s } = test);\ns();\n",
+    'a reassigned alias of an alias': "let t, u;\nt = test;\nu = t;\nu.skip();\n",
+    'a reassigned copy of a skip callable': "const { skip } = test;\nlet later;\nlater = skip;\nlater();\n",
+    'reassigned to another object afterwards (kept conservative)': "let t;\nt = test;\nt = other;\nt.skip('x');\n",
   };
   for (const [name, source] of Object.entries(rejected)) assert.equal(sourcePrecheck(source), false, name);
 });
@@ -742,6 +749,11 @@ test('source precheck accepts same-name helpers, destructures from other objects
     'destructure of another property from test': "const { expect } = test;\nexpect(1).toBe(1);\n",
     'a plain reference after destructuring': "const { skip } = test;\nconst list = [skip];\n",
     'an alias of a non-test object': "const t = options;\nt.skip('x');\n",
+    'a reassignment from options': "let t;\nt = options;\nt.skip('x');\n",
+    'a reassignment from a call': "let t;\nt = makeThing();\nt.skip('x');\n",
+    'a reassigned destructure from options': "let s;\n({ skip: s } = options);\ns();\n",
+    'a property assignment named like the object': "holder.t = test;\nholder.t.step('a');\n",
+    'a comparison': "if (t == test) { log(t); }\n",
     'an alias of test used for something else': "const t = test;\nt.step('a', () => {});\n",
     'a string mentioning skip': "const note = 'const { skip } = test; skip()';\n",
     'a comment mentioning skip': "// const { skip } = test; skip();\nconst a = 1;\n",
