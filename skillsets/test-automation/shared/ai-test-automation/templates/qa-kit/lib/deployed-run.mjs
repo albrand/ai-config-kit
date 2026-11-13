@@ -69,6 +69,7 @@ export function checkCleanupDeclared(envConfig) {
  */
 export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_ID) {
   const fail = reason => ({ ok: false, code: 'CLEANUP_UNVERIFIED', reason: `CLEANUP_UNVERIFIED: ${reason}` });
+  const invalid = reason => ({ ok: false, code: 'CLEANUP_CHECK_INVALID', reason: `CLEANUP_CHECK_INVALID: ${reason}` });
   // `qa test` creates the ledger before the tests start, so a missing one was removed.
   if (!existsSync(ledgerPath)) return fail('ownership ledger is missing');
   let owned;
@@ -76,11 +77,14 @@ export function verifyCleanup(ledgerPath, cleanupCheck, env, runId = env.QA_RUN_
   catch { return fail('ownership ledger is unreadable'); }
   if (owned.some(r => typeof r?.kind !== 'string' || typeof r?.id !== 'string')) return fail('ownership ledger has a malformed row');
   const r = runArgv(cleanupCheck, { ...env, QA_OWNS_FILE: ledgerPath, ...(runId ? { QA_RUN_ID: runId } : {}) });
-  if (r.status !== 0) return fail(`cleanup check exited ${r.status}`);
+  if (r.status !== 0) return invalid(`the cleanup check exited ${r.status}`);
   let reported;
-  try { reported = JSON.parse(r.stdout); } catch { return fail('cleanup check wrote no JSON result'); }
-  const gone = new Set((Array.isArray(reported?.gone) ? reported.gone : []).map(String));
-  const residue = (Array.isArray(reported?.residue) ? reported.residue : []).map(String);
+  try { reported = JSON.parse(r.stdout); } catch { return invalid('the cleanup check did not print JSON'); }
+  // Strict result: an object whose `gone` and `residue` are both arrays of strings. A missing or wrongly typed field is never read as empty.
+  const stringArray = value => Array.isArray(value) && value.every(item => typeof item === 'string');
+  if (!reported || typeof reported !== 'object' || Array.isArray(reported) || !stringArray(reported.gone) || !stringArray(reported.residue)) return invalid('the result must be a JSON object with `gone` and `residue`, both arrays of strings');
+  const gone = new Set(reported.gone);
+  const residue = reported.residue;
   if (residue.length) return fail(`the cleanup check found ${residue.length} residual record(s) on the target: ${residue.slice(0, 20).join(', ')}`);
   const missing = owned.filter(rec => !gone.has(`${rec.kind}:${rec.id}`));
   if (missing.length) return fail(`${missing.length} owned record(s) not proven gone: ${missing.map(m => `${m.kind}:${m.id}`).join(', ')}`);
