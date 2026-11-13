@@ -726,7 +726,8 @@ test('source precheck rejects a JS/TS skip reached by destructuring or by assign
     'an assignment followed by a comma and a test call': "let t;\nt = test, test('c', () => { t.skip(); });\n",
     'a parenthesised assignment': "let t;\n(t = test);\nt.skip();\n",
     'a sequence of assignments': "let t, u;\nt = test, u = it;\nu.skip();\n",
-    'a default parameter (kept conservative)': "function f(t = test) { t.skip('x'); }\n",
+    'an assignment inside an if condition': "let t;\nif (t = test) { t.skip('x'); }\n",
+    'a call argument assignment to test': "let t;\nf(t = test);\nt.skip('x');\n",
     'a reassigned alias of an alias': "let t, u;\nt = test;\nu = t;\nu.skip();\n",
     'a reassigned copy of a skip callable': "const { skip } = test;\nlet later;\nlater = skip;\nlater();\n",
     'reassigned to another object afterwards (kept conservative)': "let t;\nt = test;\nt = other;\nt.skip('x');\n",
@@ -757,6 +758,9 @@ test('source precheck accepts same-name helpers, destructures from other objects
     'a reassignment from a call': "let t;\nt = makeThing();\nt.skip('x');\n",
     'a reassigned destructure from options': "let s;\n({ skip: s } = options);\ns();\n",
     'a property assignment named like the object': "holder.t = test;\nholder.t.step('a');\n",
+    'a default parameter does not alias an unrelated t': "function f(t = test) {}\nfunction g(t) { t.skip(); }\n",
+    'an arrow default parameter does not alias an unrelated t': "const f = (t = test) => 1;\nfunction g(t) { t.skip(); }\n",
+    'a method default parameter does not alias an unrelated t': "class A { m(t = test) {} }\nfunction g(t) { t.skip(); }\n",
     'a reassignment from options followed by a comma': "let t;\nt = options, test('c', () => { t.skip(); });\n",
     'a call argument assignment to a non-test value': "let t;\nf(t = 1, test);\nlog(t);\n",
     'a strict comparison followed by a comma': "const ok = (t === test, 1);\n",
@@ -774,6 +778,8 @@ test('source precheck accepts same-name helpers, destructures from other objects
 test('source precheck leaves the forms that need a parser unresolved, as documented', () => {
   const unresolved = {
     'a helper imported from another file': "import { later } from './helpers';\ntest('a', () => { later(); });\n",
+    'a skip through a default parameter': "function f(t = test) { t.skip('x'); }\n",
+    'a skip through an arrow default parameter': "const f = (t = test) => t.skip('x');\n",
     'computed property access': "test['sk' + 'ip']('x');\n",
     'computed destructuring': "const name = 'skip';\nconst { [name]: later } = test;\nlater();\n",
     'a skip passed as a value and called elsewhere': "const { skip } = test;\n[skip].forEach(fn => fn('x'));\n",

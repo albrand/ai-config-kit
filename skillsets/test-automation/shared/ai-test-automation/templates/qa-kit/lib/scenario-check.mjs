@@ -80,12 +80,26 @@ function aliasedHiddenRed(code){
 // (`test["sk"+"ip"]`, `const { [name]: x } = test`) cannot be resolved here and is a documented limit.
 const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
+// True when the assignment at `index` sits directly inside a function parameter list (`function f(t = test)`, `function (t = test)`,
+// `(t = test) => ...`, a method signature): that is a default parameter, which binds a name local to the function, not an alias of the
+// file. A parenthesised expression, a call argument and a condition (`if (t = test)`) are not parameter lists.
+function inParamList(code,index){
+ let depth=0,open=-1;
+ for(let i=index-1;i>=0;i--){const c=code[i];if(c===')')depth++;else if(c==='('){if(depth===0){open=i;break;}depth--;}}
+ if(open<0)return false;
+ let close=open+1;for(depth=1;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
+ const before=code.slice(0,open),after=code.slice(close);
+ if(/\bfunction\s*\*?\s*[\w$]*\s*$/.test(before))return true;
+ if(/^\s*=>/.test(after))return true;
+ const name=/([\w$]+)\s*$/.exec(before)?.[1];
+ return /^\s*\{/.test(after)&&Boolean(name)&&!/^(?:if|while|for|switch|catch|with)$/.test(name);
+}
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
  // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); a default parameter
- // (`function f(t = test) {}`) is matched too, deliberately conservative. `==`, `===` and `=>` never match.
+ // (`function f(t = test) {}`) is skipped: it names a local, and treating it as a file-wide alias would reject an unrelated `t`. `==`, `===` and `=>` never match.
  // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)];
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>!inParamList(code,m.index));
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
