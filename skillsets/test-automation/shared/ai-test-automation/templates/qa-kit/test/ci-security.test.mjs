@@ -100,12 +100,47 @@ const APPROVED_AZURE_COMMANDS = {
   STAGING: 'node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"',
   PROD: 'node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier production-sanity --env production --base-url "$(PROD_URL)"',
 };
+// The release jobs and stages that carry credentials are an allowlist, not a scan: the whole job or stage must equal the template's, so an
+// extra step, a `uses:` action or reusable workflow, a `template:` import, a second job, `services`, `container` or any other key fails.
+// If you change a deploy or qa step, or add an identity, update this list in the same PR on purpose.
+const APPROVED_GITHUB_RELEASE_STEPS = {
+  staging: { needs: 'release', deploy: './deploy.sh STAGING "${{ github.sha }}"', qa: APPROVED_GITHUB_COMMANDS.staging },
+  production: { needs: 'staging', deploy: './deploy.sh PROD "${{ github.sha }}"', qa: APPROVED_GITHUB_COMMANDS.production },
+};
+const APPROVED_AZURE_RELEASE_STEPS = {
+  STAGING: { dependsOn: 'DEV', group: 'qa-staging-credentials', deployment: 'deploy_staging', deploy: './deploy.sh STAGING "$(Build.SourceVersion)"', qa: APPROVED_AZURE_COMMANDS.STAGING },
+  PROD: { dependsOn: 'STAGING', group: 'qa-production-credentials', deployment: 'deploy_prod', deploy: './deploy.sh PROD "$(Build.SourceVersion)"', qa: APPROVED_AZURE_COMMANDS.PROD },
+};
+
+function githubExpectedJob(name) {
+  const rule = GITHUB_RELEASE_JOBS[name];
+  const steps = APPROVED_GITHUB_RELEASE_STEPS[name];
+  const names = [...credentialsOf(rule.config)];
+  return [`  ${name}:`, `    needs: ${steps.needs}`, '    runs-on: ubuntu-latest', `    environment: ${rule.environment}`, '    steps:',
+    `      - run: ${steps.deploy}`, `      - run: ${steps.qa}`, '        env:', "          CI: 'true'",
+    ...names.map(n => `          ${n}: \${{ secrets.${n} }}`)];
+}
+
+function azureExpectedStage(name) {
+  const rule = AZURE_RELEASE_STAGES[name];
+  const steps = APPROVED_AZURE_RELEASE_STEPS[name];
+  const names = [...credentialsOf(rule.config)];
+  return [`  dependsOn: ${steps.dependsOn}`, `  condition: ${APPROVED_AZURE_CONDITION}`, '  variables:', `  - group: ${steps.group}`, '  jobs:',
+    `  - deployment: ${steps.deployment}`, `    environment: ${rule.environment}`, '    strategy:', '      runOnce:', '        deploy:', '          steps:',
+    `          - script: ${steps.deploy}`, `          - script: ${steps.qa}`, '            env:', "              CI: 'true'",
+    ...names.map(n => `              ${n}: $(${n})`)];
+}
+
+const meaningfulLines = source => source.split('\n').map(line => line.trimEnd()).filter(line => line.trim() && !line.trim().startsWith('#'));
+const sameLines = (source, expected) => JSON.stringify(meaningfulLines(source)) === JSON.stringify(expected);
+
 const GITHUB_STEP = { commandKey: 'run', optional: ['name'], commands: APPROVED_GITHUB_COMMANDS };
 const AZURE_STEP = { commandKey: 'script', optional: ['displayName'], commands: APPROVED_AZURE_COMMANDS };
 
 // Line numbers (0-based, within `source`) of the credential mappings that are allowed: the own-name mapping lines in the env block of the
 // single, exactly approved step that runs `qa.mjs test`.
-function allowedStepLines(source, ownNames, mapping, shape, approved) {
+function allowedStepLines(source, ownNames, mapping, shape, approved, expected) {
+  if (!sameLines(source, expected)) return new Set();
   const lines = source.split('\n');
   const testLines = lines.map((line, index) => (/qa\.mjs\s+test\b/.test(line) && !line.trim().startsWith('#') ? index : -1)).filter(index => index >= 0);
   if (testLines.length !== 1) return new Set();
@@ -148,8 +183,8 @@ function stray(label, lines, allowed) {
   return violations;
 }
 
-function credentialStepViolations(label, source, ownNames, mapping, shape, approved) {
-  return [...new Set(stray(label, source.split('\n'), allowedStepLines(source, ownNames, mapping, shape, approved)))];
+function credentialStepViolations(label, source, ownNames, mapping, shape, approved, expected) {
+  return [...new Set(stray(label, source.split('\n'), allowedStepLines(source, ownNames, mapping, shape, approved, expected)))];
 }
 
 const lineOffset = (source, part) => { const at = source.indexOf(part.trimEnd()); assert.notEqual(at, -1, 'part of the file'); return source.slice(0, at).split('\n').length - 1; };
@@ -179,9 +214,12 @@ function auditGithub(source) {
   for (const job of jobs) {
     if (!githubCredentialJobAllowed(jobs, job)) continue;
     const base = lineOffset(source, job.source);
-    for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name])) allowedLines.add(base + index);
+    for (const index of allowedStepLines(job.source, credentialsOf(GITHUB_RELEASE_JOBS[job.name].config), githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name], githubExpectedJob(job.name))) allowedLines.add(base + index);
   }
   violations.push(...stray('github', source.split('\n'), allowedLines));
+  for (const job of jobs) {
+    if (GITHUB_RELEASE_JOBS[job.name] && !sameLines(job.source, githubExpectedJob(job.name))) violations.push(`github:${job.name}: release job differs from the approved steps`);
+  }
   const rootLines = top.split('\n');
   rootLines.forEach(line => {
     if (!line.trim().startsWith('#') && /\bsecrets\./.test(line)) violations.push('github: a secret in the workflow root reaches every job');
@@ -194,7 +232,7 @@ function auditGithub(source) {
     const own = GITHUB_RELEASE_JOBS[job.name] ? credentialsOf(GITHUB_RELEASE_JOBS[job.name].config) : new Set();
     const eligible = githubCredentialJobAllowed(jobs, job);
     let scanned = job.source;
-    if (eligible) violations.push(...credentialStepViolations(`github:${job.name}`, job.source, own, githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name]));
+    if (eligible) violations.push(...credentialStepViolations(`github:${job.name}`, job.source, own, githubMapping, GITHUB_STEP, APPROVED_GITHUB_COMMANDS[job.name], githubExpectedJob(job.name)));
     for (const [, name] of job.source.matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g)) {
       if (!credentialNames.has(name)) continue;
       if (eligible && own.has(name)) scanned = scanned.replace(new RegExp(`\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`, 'g'), '');
@@ -255,9 +293,15 @@ function auditAzureCredentials(source) {
   for (const stage of stages) {
     if (!azureCredentialStageAllowed(stages, stage)) continue;
     const base = lineOffset(source, stage.source);
-    for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name])) allowedLines.add(base + index);
+    for (const index of allowedStepLines(stage.source, credentialsOf(AZURE_RELEASE_STAGES[stage.name].config), azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name], azureExpectedStage(stage.name))) allowedLines.add(base + index);
   }
   violations.push(...stray('azure', source.split('\n'), allowedLines));
+  for (const stage of stages) {
+    if (AZURE_RELEASE_STAGES[stage.name] && !sameLines(stage.source, azureExpectedStage(stage.name))) violations.push(`azure:${stage.name}: release stage differs from the approved steps`);
+  }
+  source.split('\n').forEach(line => {
+    if (/^\s*-?\s*template:/.test(line) || /^extends:/.test(line)) violations.push('azure: a template import or extends can read the stage variable groups');
+  });
   source.split('\n').forEach((line, index) => {
     const group = line.match(/^\s*-?\s*group:\s*(\S+)/)?.[1];
     if (!group) return;
@@ -267,7 +311,7 @@ function auditAzureCredentials(source) {
   for (const stage of stages) {
     const own = AZURE_RELEASE_STAGES[stage.name] ? credentialsOf(AZURE_RELEASE_STAGES[stage.name].config) : new Set();
     const allowed = azureCredentialStageAllowed(stages, stage);
-    if (allowed) violations.push(...credentialStepViolations(`azure:${stage.name}`, stage.source, own, azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name]));
+    if (allowed) violations.push(...credentialStepViolations(`azure:${stage.name}`, stage.source, own, azureMapping, AZURE_STEP, APPROVED_AZURE_COMMANDS[stage.name], azureExpectedStage(stage.name)));
     for (const name of credentialNames) {
       if (allowed && own.has(name)) continue;
       if (!new RegExp(`\\b${name}\\b`).test(stage.source)) continue;
@@ -414,6 +458,45 @@ test('Azure audit rejects any change to the approved qa test step', () => {
     'continueOnError': mutate(script, '          - continueOnError: true\n            script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n'),
     'a condition on the step': mutate(script, '          - condition: always()\n            script: node qaAuthority/qa/bin/qa.mjs test --config qaAuthority/qa/qa.config.json --tier release-smoke --env staging --base-url "$(STAGING_URL)"\n'),
     'a changed tier': mutate('--tier release-smoke --env staging', '--tier everything --env staging'),
+  };
+  assert.deepEqual(auditAzure(azureYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditAzure(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('GitHub audit rejects any step, import or key added to a release job', () => {
+  const mutate = (from, to) => { assert.ok(githubYaml.includes(from), from); return githubYaml.replace(from, to); };
+  const beforeProduction = extra => mutate('  production:\n    needs: staging\n', `${extra}  production:\n    needs: staging\n`);
+  const fixtures = {
+    'an extra uses: action step': beforeProduction('      - uses: example/send@v1\n'),
+    'a composite action step': beforeProduction('      - uses: ./.github/actions/notify\n'),
+    'a job-level reusable workflow': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    uses: ./.github/workflows/other.yml\n    steps:\n'),
+    'a services block': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    services:\n      db:\n        image: postgres\n    steps:\n'),
+    'a container block': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    container: node:22\n    steps:\n'),
+    'a job-level env with no credential': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    env:\n      NODE_OPTIONS: --require ./hook.js\n    steps:\n'),
+    'a second run step that does not mention credentials': beforeProduction('      - run: ./collect.sh\n'),
+    'a changed deploy step': mutate('./deploy.sh STAGING "${{ github.sha }}"', './deploy.sh STAGING "${{ github.sha }}" && ./extra.sh'),
+    'a job outputs block': mutate('    environment: STAGING\n    steps:\n', '    environment: STAGING\n    outputs:\n      x: ${{ steps.a.outputs.x }}\n    steps:\n'),
+  };
+  assert.deepEqual(auditGithub(githubYaml), []);
+  for (const [name, yaml] of Object.entries(fixtures)) {
+    assert.ok(auditGithub(yaml).length > 0, `rejected: ${name}`);
+  }
+});
+
+test('Azure audit rejects any step, job, import or extends added around a release stage', () => {
+  const mutate = (from, to) => { assert.ok(azureYaml.includes(from), from); return azureYaml.replace(from, to); };
+  const afterStaging = extra => mutate('- stage: PROD\n', `${extra}- stage: PROD\n`);
+  const fixtures = {
+    'a job template import in the STAGING stage': mutate('  jobs:\n  - deployment: deploy_staging\n', '  jobs:\n  - template: jobs/send.yml@qaAuthority\n  - deployment: deploy_staging\n'),
+    'a template step inside the deployment job': mutate('          - script: ./deploy.sh STAGING "$(Build.SourceVersion)"\n', '          - template: steps/send.yml@qaAuthority\n          - script: ./deploy.sh STAGING "$(Build.SourceVersion)"\n'),
+    'a second job in STAGING': afterStaging('  - job: other\n    steps:\n    - script: echo hi\n'),
+    'a root extends': mutate('trigger: none\n', 'trigger: none\nextends:\n  template: base.yml@qaAuthority\n'),
+    'a template import in another stage': mutate('- stage: Plan\n', '- stage: Plan\n  jobs:\n  - template: jobs/x.yml\n'),
+    'an extra script step in the deployment job': mutate('          - script: ./deploy.sh STAGING "$(Build.SourceVersion)"\n', '          - script: ./deploy.sh STAGING "$(Build.SourceVersion)"\n          - script: ./collect.sh\n'),
+    'a second variable group': mutate('  - group: qa-staging-credentials\n', '  - group: qa-staging-credentials\n  - group: other-group\n'),
+    'a changed deploy step': mutate('./deploy.sh STAGING "$(Build.SourceVersion)"', './deploy.sh STAGING "$(Build.SourceVersion)" && ./extra.sh'),
   };
   assert.deepEqual(auditAzure(azureYaml), []);
   for (const [name, yaml] of Object.entries(fixtures)) {
