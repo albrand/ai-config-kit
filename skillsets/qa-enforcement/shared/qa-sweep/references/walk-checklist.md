@@ -8,7 +8,7 @@ At every page/state:
 - console errors and failed requests, not just visible breakage
 - empty states, loading states, error states — each must say what happened
   and what to do next; a bare spinner or blank panel is a defect
-- clipped/misaligned text, placeholder text left in, wrong labels
+- At every element the ticket or design names, compare the exact text and letter case, colour, background, font family, size, weight and the specific icon against the design reference. Any difference is a row.
 
 At every interactive control:
 - invalid input: submit wrong data and READ the error (a rejection that

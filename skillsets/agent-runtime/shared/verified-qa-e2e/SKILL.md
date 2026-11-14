@@ -24,13 +24,14 @@ publish. There is no low-effort bypass and no high-effort exception.
 
 ## Load the right source of truth
 
+Expected behaviour comes from the ticket, its acceptance criteria and the design reference only. The target environment is where you observe *actual* behaviour. Code is never a source of expected values.
+
 Use current evidence in this order:
 
-1. The target environment as the intended tester persona.
-2. The authoritative ticket and accepted behavior.
-3. Repository-owned setup, seed, role, and test-data documentation.
-4. Current code and tests as supporting evidence.
-5. Prior comments, memory, designs, or inferred routes only as leads.
+1. The authoritative ticket and accepted behavior, plus the design reference.
+2. Repository-owned setup, seed, role, and test-data documentation.
+3. The target environment as the place to observe actual behavior.
+4. Prior comments, memory, or inferred routes only as leads.
 
 Code, old screenshots, another tenant, or another persona cannot prove that a
 control is currently reachable.
@@ -102,8 +103,8 @@ Advance in order. Do not draft or publish early and validate afterward.
      into a technical QA step.
 5. `FLOW_WALKED`
    - Walk the requested journey on the same persona, environment, and surface.
-   - Capture page titles, menu names, buttons, visible states, and expected
-     results from that walk. A visible label counts only on the intended surface.
+   - Capture *actual* titles, controls and states from the walk. Write expected results from the ticket/design. Record expected and actual side by side, and any difference is FAILED. A visible label counts only on the intended surface.
+   - Walk each criterion's negative path (invalid input, wrong role, denied permission) and the previously working flows next to it (regression), each with expected vs actual.
 6. `DRAFTED`
    - Write concise screen actions and visible expected results from the captured
      evidence. Keep internal validation provenance out of the external comment.
@@ -138,7 +139,7 @@ validation provenance.
 
 ## Allowed terminal states
 
-- `PASSED`: the requested journey was walked and the gate passed.
+- `PASSED` requires `match: true` on every step, including text in its letter case, colour, font family, font size and icon. The gate compares actual with expected.value exactly; match is a cross-check, never a substitute. Any `false` is `FAILED`.
 - `FAILED`: the intended journey reached a reproducible product failure with
   evidence from the correct actor and surface.
 - `BLOCKED`: the first missing prerequisite is named and the relevant discovery
@@ -208,7 +209,7 @@ Runtime behavior, provider-neutral:
   out, or a snapshot contradicts the assumed state.
 
 The evidence packet is self-attested JSON. It checks required evidence shape
-and ordering only; it cannot prove runtime ownership or authorization. Adapter
+and ordering; it cannot prove runtime ownership or authorization. Adapter
 control-plane and tool evidence remain authoritative over any packet claim.
 
 For `publish_qa_instructions` or `claim_e2e_complete` packets that include

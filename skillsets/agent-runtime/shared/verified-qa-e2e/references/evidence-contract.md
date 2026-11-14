@@ -62,6 +62,9 @@ vendor-specific secret links.
         "control": "Accept Dispatch",
         "surface": "Vendor Portal",
         "observed": true,
+        "expected": { "value": "Button text 'Accept Dispatch' is shown", "source": "ticket acceptance criterion AC-1" },
+        "actual": "Button text 'Accept Dispatch' is shown",
+        "match": true,
         "evidence": "private observation reference"
       }
     ]
@@ -80,6 +83,7 @@ vendor-specific secret links.
 ```
 
 For `claim_e2e_complete`, omit `external`. The remaining evidence is identical.
+The gate compares actual with expected.value exactly; match is a cross-check, never a substitute.
 The `reasoning_effort` field is accepted for auditability but is never consulted
 when deciding pass or fail. When `initial_state` is `authenticated`, test-identity
 discovery may be omitted. When it is `logged_out`, discovery evidence is required
@@ -251,6 +255,7 @@ A broken or missing product control that the user needs is a `FAILED` journey,
 not a `BLOCKED` prerequisite. The gate checks evidence shape, not whether a
 browser action truly occurred or whether a defect was classified honestly;
 compare every reference with the browser trace before reporting the verdict.
+A step whose actual differs from expected makes the claim a failure, not a block.
 
 ## Manual browser login handoff
 
