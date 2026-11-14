@@ -82,7 +82,7 @@ const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
 // An assignment inside brackets is an alias only when EVERY enclosing bracket, walked outward to statement level, is an expression or a
 // condition, decided by what stands before it and without parsing types. A `(` passes when it follows the start of the file, `;` `{` `}` `(` `[`
-// `,` `=` `!` `&` `|` `?` `:` or `if`, `while`, `for`, `return` (`(t = test);`, `((t = test))`, `if ((t = test))`, `x = (t = test)`); after an
+// `,` `=` `!` `&` `|` `?` `:`, `=>` (a concise arrow body: `() => (t = test)`) or `if`, `while`, `for`, `return` (`(t = test);`, `((t = test))`, `if ((t = test))`, `x = (t = test)`); after an
 // identifier, `>`, `]`, `)` or `function` it opens a call or a parameter list of any generic depth, whose `name = test` is a local default or an
 // argument, not an alias of the file; so is a group followed by `=>` or `:`. An unmatched `{` is a BLOCK, which ends the walk as statement level
 // (`test('x', () => { t = test; t.skip(); })`, `function (): void { ... }`) by default; it is an object literal, and the walk goes on
@@ -118,7 +118,7 @@ function assignmentIsAlias(code,index){
   }else{
    let depth=1,close=open+1;for(;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
    if(/^\s*(?:=>|:)/.test(code.slice(close)))return false;
-   if(before&&!(/[;{}(\[,=!&|?:]$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before)))return false;
+   if(before&&!(/[;{}(\[,=!&|?:]$/.test(before)||/=>$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before)))return false;
   }
   pos=open;
  }
