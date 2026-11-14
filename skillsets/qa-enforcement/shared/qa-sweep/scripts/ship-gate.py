@@ -3151,7 +3151,8 @@ def selftest(v4_gate=None, v4_templates=None):
                    "prerequisites": {"verified": True, "evidence": "shot", "items": []},
                    "journey": {"walked": True, "same_actor": True, "same_surface": True, "evidence": "shot",
                                "steps": [{"page": "Login", "control": "Submit", "surface": "Web",
-                                          "observed": True, "evidence": "shot"}]},
+                                          "observed": True, "expected": {"value": "Submit button is shown", "source": "selftest acceptance criterion"},
+                                          "actual": "Submit button is shown", "match": True, "evidence": "shot"}]},
                    "terminal": {"status": "passed", "evidence": "shot"}}, fh)
     commit_qa(r1)  # v3: evidence must be committed; head is a .qa-only commit over sha1
     p = hookrun(r1, "git push origin main")
