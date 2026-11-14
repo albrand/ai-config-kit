@@ -114,7 +114,22 @@ function arrowParamsBind(head,name){
   if('([{'.includes(c))depth++;else if(')]}'.includes(c))depth--;
   else if(c==='='&&depth===0&&eq<0&&inner[i+1]!=='>'&&inner[i+1]!=='='&&inner[i-1]!=='='&&inner[i-1]!=='!')eq=i;}
  const bound=new RegExp(`(?:^|[{\\[,]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,}\\]=:]|$)`);
- return bindings.some(b=>bound.test(b.replace(/=[^,}\]]*/g,'')));
+ return bindings.some(b=>bound.test(dropDefaults(b)));
+}
+// Remove each `= default` (to the next `,` `}` `]` at its own depth), balancing brackets inside the default:
+// `{ a = g(1, t, 2) }` becomes `{ a }`, so a name used only inside a default never reads as bound.
+function dropDefaults(b){
+ let out='';
+ for(let i=0;i<b.length;i++){
+  const c=b[i];
+  if(c==='='&&b[i+1]!=='>'&&b[i+1]!=='='&&b[i-1]!=='='&&b[i-1]!=='!'){
+   let depth=0;
+   for(i++;i<b.length;i++){const d=b[i];if('([{'.includes(d))depth++;else if(')]}'.includes(d)){if(depth===0)break;depth--;}else if(d===','&&depth===0)break;}
+   i--;continue;
+  }
+  out+=c;
+ }
+ return out;
 }
 function assignmentIsAlias(code,index,name){
  let pos=index;

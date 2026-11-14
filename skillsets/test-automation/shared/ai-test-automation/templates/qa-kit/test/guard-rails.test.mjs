@@ -800,6 +800,10 @@ test('source precheck accepts same-name helpers, destructures from other objects
     'a concise arrow body assigning an array parameter': "let t;\nconst f = ([t]) => (t = test);\nt.skip();\n",
     'a concise arrow body assigning a rest parameter': "let t;\nconst f = (...t) => (t = test);\nt.skip();\n",
     'a concise arrow body assigning a later defaulted parameter': "let t;\nconst f = (x, t = 1) => (t = test);\nt.skip();\n",
+    'a concise arrow body assigning a parameter after a numeric default': "let t;\nconst f = ({ a = 1, t }) => (t = test);\nt.skip();\n",
+    'a concise arrow body assigning a parameter after a call default': "let t;\nconst f = ({ a = g(1, 2), t }) => (t = test);\nt.skip();\n",
+    'a concise arrow body assigning an array parameter after a default': "let t;\nconst f = ([a = 1, t]) => (t = test);\nt.skip();\n",
+    'a concise arrow body assigning a destructured parameter with its own default': "let t;\nconst f = ({ t = 1 }) => (t = test);\nt.skip();\n",
     'a concise arrow body assigning a typed parameter': "let t;\nconst f = (t: T) => (t = test);\nt.skip();\n",
     'an arrow parameter default': "const f = (t = test) => {};\nfunction g(t) { t.skip(); }\n",
     'an async arrow parameter default': "const f = async (t = test) => {};\nfunction g(t) { t.skip(); }\n",
@@ -838,6 +842,10 @@ test('source precheck does not take a name used in a parameter default for a bou
     'a default that is a parenthesised reference': "let t;\nconst f = (x = (t)) => (t = test);\nf();\nt.skip();\n",
     'a default that is a bare reference': "let t;\nconst f = (x = t) => (t = test);\nf();\nt.skip();\n",
     'a destructured default that references the name': "let t;\nconst f = ({ a = t }) => (t = test);\nf({});\nt.skip();\n",
+    'a destructured default that is a call with the name among several arguments': "let t;\nconst f = ({ a = g(1, t, 2) }) => (t = test);\nf({});\nt.skip();\n",
+    'an array default that is an array holding the name': "let t;\nconst f = ([a = [t, 1]]) => (t = test);\nf([]);\nt.skip();\n",
+    'a destructured default that is an object holding the name': "let t;\nconst f = ({ a = { b: t } }) => (t = test);\nf({});\nt.skip();\n",
+    'a default call followed by another parameter': "let t;\nconst f = (x = h(t), y) => (t = test);\nf();\nt.skip();\n",
     'a default that is a call with the name as an argument': "let t;\nconst f = (x = g(t, 1)) => (t = test);\nf();\nt.skip();\n",
   };
   for (const [name, source] of Object.entries(rejected)) assert.equal(sourcePrecheck(source), false, name);
