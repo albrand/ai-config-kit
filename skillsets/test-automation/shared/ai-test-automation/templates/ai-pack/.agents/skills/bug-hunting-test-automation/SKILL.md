@@ -9,7 +9,7 @@ Read: parent skill **First principle** and `references/gate-rules.md`.
 
 ## Priority
 
-1. Assert every `expected` line with rendered text (exact, case-sensitive—CSS `text-transform` counts), computed colour, background, font family, font size, font weight, and named icon identity; visibility alone never satisfies a line.
+1. Assert every `expected` line with rendered text (exact, case-sensitive—CSS `text-transform` counts), computed colour, background, font family, font size, font weight, and named icon identity; visibility alone never satisfies a line. A mocked test proves UI logic only; accept a criterion only when its e2e scenario passes against a deployed target. Mock data must not encode the expected answer.
 2. Red when the criterion is broken; green when met; new tests red on merge base.
 3. Cover positive, negative, regression per criterion.
 4. Mocks OK — return mixed data; the app under test performs filter/empty-state logic; the mock refuses every write the scenario does not declare.

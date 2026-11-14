@@ -62,6 +62,9 @@ vendor-specific secret links.
         "control": "Accept Dispatch",
         "surface": "Vendor Portal",
         "observed": true,
+        "expected": { "value": "Button text 'Accept Dispatch' is shown", "source": "ticket acceptance criterion AC-1" },
+        "actual": "Button text 'Accept Dispatch' is shown",
+        "match": true,
         "evidence": "private observation reference"
       }
     ]

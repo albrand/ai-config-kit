@@ -575,6 +575,10 @@ export function evaluateEvidence(packet, options = {}) {
         requireText(step?.surface, "STEP_SURFACE_MISSING", `${base}.surface`, "step surface is required");
         requireTrue(step?.observed, "CONTROL_NOT_OBSERVED", `${base}.observed`, "every referenced control must be observed");
         requireText(step?.evidence, "STEP_EVIDENCE_MISSING", `${base}.evidence`, "step evidence is required");
+        requireText(step?.expected?.value, "STEP_EXPECTED_MISSING", `${base}.expected.value`, "expected result is required");
+        requireText(step?.expected?.source, "STEP_EXPECTED_SOURCE_MISSING", `${base}.expected.source`, "expected result source is required");
+        requireText(step?.actual, "STEP_ACTUAL_MISSING", `${base}.actual`, "actual result is required");
+        if (step?.match !== true) failures.push(failure("STEP_MISMATCH", `${base}.match`, "every journey step must match its expected result"));
         if (nonEmpty(packet.actor?.surface) && nonEmpty(step?.surface)
             && packet.actor.surface !== step.surface) {
           failures.push(

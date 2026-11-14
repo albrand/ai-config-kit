@@ -30,6 +30,15 @@ for (const fixture of fixtures) {
 }
 
 const manualIncident = fixtures.find((fixture) => fixture.id === "manual-login-incident-replay");
+const completeFixture = fixtures.find((fixture) => fixture.id === "valid-vendor-portal");
+assert.ok(completeFixture, "valid complete journey fixture present");
+const mismatchedStep = structuredClone(completeFixture.packet);
+mismatchedStep.journey.steps[0].match = false;
+assert.equal(evaluateEvidence(mismatchedStep).ok, false, "a journey step mismatch must fail completion");
+assert.ok(evaluateEvidence(mismatchedStep).failures.some((item) => item.code === "STEP_MISMATCH"));
+const matchingSteps = structuredClone(completeFixture.packet);
+assert.ok(matchingSteps.journey.steps.every((step) => step.match === true), "every step in the passing packet matches");
+assert.equal(evaluateEvidence(matchingSteps).ok, true, "a complete matching journey passes");
 assert.ok(manualIncident, "incident replay fixture present");
 const manualRequest = fixtures.find((fixture) => fixture.id === "manual-login-request-valid");
 assert.ok(manualRequest, "valid manual request fixture present");

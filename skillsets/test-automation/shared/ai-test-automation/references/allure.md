@@ -67,9 +67,11 @@ addopts = --alluredir=allure-results --junitxml=qa-results/junit.xml
 import allure
 @allure.label("scenario_id", "QAS-WI-123-02")
 def test_coupon_rejected(page):
-    # ...
+    expect(page.get_by_role("alert")).to_have_text("Coupon expired.", use_inner_text=True)
     allure.attach(page.screenshot(full_page=True), name="scenario screenshot", attachment_type=allure.attachment_type.PNG)
 ```
+
+A screenshot is evidence, never an assertion.
 
 The runner emits `allure-results/*-result.json`; the starter parser extracts the custom label from `labels`. Keep JUnit XML for cross-checking discovery and execution.
 
@@ -144,10 +146,13 @@ import * as allure from 'allure-js-commons';
 
 test('QAS-WI-123-04 profile page loads', async () => {
   await allure.label('scenario_id', 'QAS-WI-123-04');
+  await expect(page.getByRole('heading')).toHaveText('Profile', { useInnerText: true });
   const png = await browser.screenshot();
   await allure.attachment('scenario screenshot', png, 'image/png');
 });
 ```
+
+A screenshot is evidence, never an assertion.
 
 Confirm the installed Jest adapter exposes the same runtime API; if its version uses a different runtime entry point, keep the equivalent label and binary attachment calls and assert the resulting JSON label in a parser fixture. The parser consumes each `allure-results/*-result.json`; it does not infer the ID from the test title.
 

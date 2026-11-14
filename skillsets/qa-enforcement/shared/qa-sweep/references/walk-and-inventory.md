@@ -39,4 +39,4 @@ One JSON object per line:
 `status` is `open` until fixed and verified, then `closed`; or `fail_escalated`
 with an `escalation` reference (ticket/user decision) when you are not
 authorized to fix it. Zero rows is a valid inventory only if the walk reached
-the outcome.
+the outcome and every step's expected result (from the ticket) was compared with the actual one.
