@@ -88,7 +88,17 @@ const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$
 // (`test('x', () => { t = test; t.skip(); })`, `function (): void { ... }`) by default; it is an object literal, and the walk goes on
 // outward (`f({ a: (t = test) })` reaches the call), only when it follows `(` `,` `=` `:` `[` `?` `!` `&` `|` or `return`. An unmatched `[` after an
 // identifier, `)` or `]` is an index access, like a call; otherwise an array literal and the walk goes on. A call argument (`f(t = test)`), a
-// skip through a default parameter and the middle operand of a ternary are therefore documented limits.
+// skip through a default parameter and the middle operand of a ternary are therefore documented limits. An enclosing `{` or `[` that closes into `=` is a destructuring pattern, whose `name = test` is a default, not an alias.
+// True when the `{` or `[` at `open` closes into `=` (not `==`, `===` or `=>`): a destructuring pattern, whose `name = test` is a default.
+function closerIsAssigned(code,open){
+ const stack=[];
+ for(let i=open;i<code.length;i++){
+  const c=code[i];
+  if(c==='('||c==='['||c==='{')stack.push(c);
+  else if(c===')'||c===']'||c==='}'){stack.pop();if(!stack.length)return /^\s*=(?![=>])/.test(code.slice(i+1));}
+ }
+ return false;
+}
 function assignmentIsAlias(code,index){
  let pos=index;
  for(;;){
@@ -99,6 +109,7 @@ function assignmentIsAlias(code,index){
    else if(c==='('||c==='['||c==='{'){if(stack.length)stack.pop();else{open=i;break;}}
   }
   if(open<0)return true;
+  if(code[open]!=='('&&closerIsAssigned(code,open))return false;
   const before=code.slice(0,open).trimEnd();
   if(code[open]==='{'){
    if(!(/[(,=:\[?!&|]$/.test(before)||/(?:^|[^\w$.])return$/.test(before)))return true;
