@@ -106,7 +106,15 @@ function arrowParamsBind(head,name){
  if(head.endsWith(')')){let depth=0,i=head.length-1;for(;i>=0;i--){if(head[i]===')')depth++;else if(head[i]==='('&&--depth===0)break;}if(i<0)return false;params=head.slice(i);}
  else params=(head.match(/[\w$]+$/)||[''])[0];
  if(params===name)return true;
- return new RegExp(`(?:^|[(,{\\[]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,)}\\]=:]|$)`).test(params);
+ // Split the list at its own top-level commas and keep each parameter's binding part (before its top-level `=` default):
+ // `(x = (t))` binds only `x`, while `({ t })`, `([t])`, `({ a: t })` and `(...t)` bind `t`.
+ const inner=params.startsWith('(')?params.slice(1,-1):params;const bindings=[];let depth=0,start=0,eq=-1;
+ for(let i=0;i<=inner.length;i++){const c=inner[i];
+  if(i===inner.length||(c===','&&depth===0)){bindings.push(inner.slice(start,eq<0?i:eq));start=i+1;eq=-1;continue;}
+  if('([{'.includes(c))depth++;else if(')]}'.includes(c))depth--;
+  else if(c==='='&&depth===0&&eq<0&&inner[i+1]!=='>'&&inner[i+1]!=='='&&inner[i-1]!=='='&&inner[i-1]!=='!')eq=i;}
+ const bound=new RegExp(`(?:^|[{\\[,]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,}\\]=:]|$)`);
+ return bindings.some(b=>bound.test(b.replace(/=[^,}\]]*/g,'')));
 }
 function assignmentIsAlias(code,index,name){
  let pos=index;
