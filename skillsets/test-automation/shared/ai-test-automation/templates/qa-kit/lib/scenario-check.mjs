@@ -106,7 +106,30 @@ function arrowParamsBind(head,name){
  if(head.endsWith(')')){let depth=0,i=head.length-1;for(;i>=0;i--){if(head[i]===')')depth++;else if(head[i]==='('&&--depth===0)break;}if(i<0)return false;params=head.slice(i);}
  else params=(head.match(/[\w$]+$/)||[''])[0];
  if(params===name)return true;
- return new RegExp(`(?:^|[(,{\\[]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,)}\\]=:]|$)`).test(params);
+ // Split the list at its own top-level commas and keep each parameter's binding part (before its top-level `=` default):
+ // `(x = (t))` binds only `x`, while `({ t })`, `([t])`, `({ a: t })` and `(...t)` bind `t`.
+ const inner=params.startsWith('(')?params.slice(1,-1):params;const bindings=[];let depth=0,start=0,eq=-1;
+ for(let i=0;i<=inner.length;i++){const c=inner[i];
+  if(i===inner.length||(c===','&&depth===0)){bindings.push(inner.slice(start,eq<0?i:eq));start=i+1;eq=-1;continue;}
+  if('([{'.includes(c))depth++;else if(')]}'.includes(c))depth--;
+  else if(c==='='&&depth===0&&eq<0&&inner[i+1]!=='>'&&inner[i+1]!=='='&&inner[i-1]!=='='&&inner[i-1]!=='!')eq=i;}
+ const bound=new RegExp(`(?:^|[{\\[,]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,}\\]=:]|$)`);
+ return bindings.some(b=>bound.test(dropDefaults(b)));
+}
+// Remove each `= default` (to the next `,` `}` `]` at its own depth), balancing brackets inside the default:
+// `{ a = g(1, t, 2) }` becomes `{ a }`, so a name used only inside a default never reads as bound.
+function dropDefaults(b){
+ let out='';
+ for(let i=0;i<b.length;i++){
+  const c=b[i];
+  if(c==='='&&b[i+1]!=='>'&&b[i+1]!=='='&&b[i-1]!=='='&&b[i-1]!=='!'){
+   let depth=0;
+   for(i++;i<b.length;i++){const d=b[i];if('([{'.includes(d))depth++;else if(')]}'.includes(d)){if(depth===0)break;depth--;}else if(d===','&&depth===0)break;}
+   i--;continue;
+  }
+  out+=c;
+ }
+ return out;
 }
 function assignmentIsAlias(code,index,name){
  let pos=index;
