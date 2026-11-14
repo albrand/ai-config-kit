@@ -80,10 +80,58 @@ function aliasedHiddenRed(code){
 // (`test["sk"+"ip"]`, `const { [name]: x } = test`) cannot be resolved here and is a documented limit.
 const JS_TEST_OBJECTS=['test','it','describe','suite'];
 const JS_SKIP_PROP=/^(?:skip|skipIf|runIf|todo|fixme|fail|only|slow|setTimeout)$/;
+// An assignment inside brackets is an alias only when EVERY enclosing bracket, walked outward to statement level, is an expression or a
+// condition, decided by what stands before it and without parsing types. A `(` passes when it follows the start of the file, `;` `{` `}` `(` `[`
+// `,` `=` `!` `&` `|` `?` `:` or `if`, `while`, `for`, `return` (`(t = test);`, `((t = test))`, `if ((t = test))`, `x = (t = test)`); after an
+// identifier, `>`, `]`, `)` or `function` it opens a call or a parameter list of any generic depth, whose `name = test` is a local default or an
+// argument, not an alias of the file; so is a group followed by `=>` or `:`. An unmatched `{` is a BLOCK, which ends the walk as statement level
+// (`test('x', () => { t = test; t.skip(); })`, `function (): void { ... }`) by default; it is an object literal, and the walk goes on
+// outward (`f({ a: (t = test) })` reaches the call), only when it follows `(` `,` `=` `:` `[` `?` `!` `&` `|` or `return`. An unmatched `[` after an
+// identifier, `)` or `]` is an index access, like a call; otherwise an array literal and the walk goes on. A call argument (`f(t = test)`), a
+// skip through a default parameter and the middle operand of a ternary are therefore documented limits. An enclosing `{` or `[` that closes into `=` is a destructuring pattern, whose `name = test` is a default, not an alias.
+// True when the `{` or `[` at `open` closes into `=` (not `==`, `===` or `=>`): a destructuring pattern, whose `name = test` is a default.
+function closerIsAssigned(code,open){
+ const stack=[];
+ for(let i=open;i<code.length;i++){
+  const c=code[i];
+  if(c==='('||c==='['||c==='{')stack.push(c);
+  else if(c===')'||c===']'||c==='}'){stack.pop();if(!stack.length)return /^\s*=(?![=>])/.test(code.slice(i+1));}
+ }
+ return false;
+}
+function assignmentIsAlias(code,index){
+ let pos=index;
+ for(;;){
+  const stack=[];let open=-1;
+  for(let i=pos-1;i>=0;i--){
+   const c=code[i];
+   if(c===')'||c===']'||c==='}')stack.push(c);
+   else if(c==='('||c==='['||c==='{'){if(stack.length)stack.pop();else{open=i;break;}}
+  }
+  if(open<0)return true;
+  if(code[open]!=='('&&closerIsAssigned(code,open))return false;
+  const before=code.slice(0,open).trimEnd();
+  if(code[open]==='{'){
+   if(!(/[(,=:\[?!&|]$/.test(before)||/(?:^|[^\w$.])return$/.test(before)))return true;
+  }else if(code[open]==='['){
+   if(/[\w$)\]]$/.test(before)&&!/(?:^|[^\w$.])(?:return|case|in|of|typeof|void|delete|await|yield|else|do)$/.test(before))return false;
+  }else{
+   let depth=1,close=open+1;for(;close<code.length&&depth>0;close++){if(code[close]==='(')depth++;else if(code[close]===')')depth--;}
+   if(/^\s*(?:=>|:)/.test(code.slice(close)))return false;
+   if(before&&!(/[;{}(\[,=!&|?:]$/.test(before)||/(?:^|[^\w$.])(?:if|while|for|return)$/.test(before)))return false;
+  }
+  pos=open;
+ }
+}
 function jsAliasedHiddenRed(code){
  const objects=new Set(JS_TEST_OBJECTS);const callable=new Set();
+ // The right-hand name may end at `;`, a newline, `,` (sequence expression, `t = test, u = it`) or `)` (`(t = test)`); an assignment inside
+ // a call or a parameter list is not an alias (see assignmentIsAlias). `==`, `===` and `=>` never match.
  // An initializer and a plain reassignment (`let t; t = test`) are treated alike; a name once bound to a test object stays one (conservative).
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)];
+ // An assignment that main already matched (ended by `;`, a newline or the end of the file) stays an alias unconditionally, so this scan only
+ // adds detections; the outward walk judges only the forms added here, an assignment ended by `,` or `)`.
+ const sinceMain=new Set([...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)].map(m=>m.index));
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>sinceMain.has(m.index)||assignmentIsAlias(code,m.index));
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
