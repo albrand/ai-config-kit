@@ -99,7 +99,16 @@ function closerIsAssigned(code,open){
  }
  return false;
 }
-function assignmentIsAlias(code,index){
+// A concise arrow body assigns its own parameter, not an outer alias, when `name` is bound in the arrow's parameter list:
+// `(t) => (t = test)`, `t => (t = test)`, `({ t }) => (t = test)`. A name used only in a default (`(x = t) =>`) is not bound.
+function arrowParamsBind(head,name){
+ let params;
+ if(head.endsWith(')')){let depth=0,i=head.length-1;for(;i>=0;i--){if(head[i]===')')depth++;else if(head[i]==='('&&--depth===0)break;}if(i<0)return false;params=head.slice(i);}
+ else params=(head.match(/[\w$]+$/)||[''])[0];
+ if(params===name)return true;
+ return new RegExp(`(?:^|[(,{\\[]|\\.\\.\\.|:)\\s*${name}\\s*(?=[,)}\\]=:]|$)`).test(params);
+}
+function assignmentIsAlias(code,index,name){
  let pos=index;
  for(;;){
   const stack=[];let open=-1;
@@ -111,6 +120,7 @@ function assignmentIsAlias(code,index){
   if(open<0)return true;
   if(code[open]!=='('&&closerIsAssigned(code,open))return false;
   const before=code.slice(0,open).trimEnd();
+  if(code[open]==='('&&/=>$/.test(before)&&arrowParamsBind(before.slice(0,-2).trimEnd(),name))return false;
   if(code[open]==='{'){
    if(!(/[(,=:\[?!&|]$/.test(before)||/(?:^|[^\w$.])return$/.test(before)))return true;
   }else if(code[open]==='['){
@@ -131,7 +141,7 @@ function jsAliasedHiddenRed(code){
  // An assignment that main already matched (ended by `;`, a newline or the end of the file) stays an alias unconditionally, so this scan only
  // adds detections; the outward walk judges only the forms added here, an assignment ended by `,` or `)`.
  const sinceMain=new Set([...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?:;|\n|$)/g)].map(m=>m.index));
- const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>sinceMain.has(m.index)||assignmentIsAlias(code,m.index));
+ const declarations=[...code.matchAll(/(?<![\w.$])(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(\w+)\s*(?=[;,)\n]|$)/g)].filter(m=>sinceMain.has(m.index)||assignmentIsAlias(code,m.index,m[1]));
  const destructures=[...code.matchAll(/(?:(?:const|let|var)\s*|\(\s*)\{([^}]*)\}\s*=\s*(\w+)\s*(?:\)\s*)?(?:;|\n|$)/g)];
  for(let changed=true;changed;){
   changed=false;
