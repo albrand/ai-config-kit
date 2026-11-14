@@ -83,6 +83,7 @@ vendor-specific secret links.
 ```
 
 For `claim_e2e_complete`, omit `external`. The remaining evidence is identical.
+The gate compares actual with expected.value exactly; match is a cross-check, never a substitute.
 The `reasoning_effort` field is accepted for auditability but is never consulted
 when deciding pass or fail. When `initial_state` is `authenticated`, test-identity
 discovery may be omitted. When it is `logged_out`, discovery evidence is required

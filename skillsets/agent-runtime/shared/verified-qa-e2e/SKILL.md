@@ -139,7 +139,7 @@ validation provenance.
 
 ## Allowed terminal states
 
-- `PASSED` requires `match: true` on every step, including text in its letter case, colour, font family, font size and icon. Any `false` is `FAILED`.
+- `PASSED` requires `match: true` on every step, including text in its letter case, colour, font family, font size and icon. The gate compares actual with expected.value exactly; match is a cross-check, never a substitute. Any `false` is `FAILED`.
 - `FAILED`: the intended journey reached a reproducible product failure with
   evidence from the correct actor and surface.
 - `BLOCKED`: the first missing prerequisite is named and the relevant discovery

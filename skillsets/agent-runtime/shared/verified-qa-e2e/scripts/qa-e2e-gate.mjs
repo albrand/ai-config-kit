@@ -578,7 +578,12 @@ export function evaluateEvidence(packet, options = {}) {
         requireText(step?.expected?.value, "STEP_EXPECTED_MISSING", `${base}.expected.value`, "expected result is required");
         requireText(step?.expected?.source, "STEP_EXPECTED_SOURCE_MISSING", `${base}.expected.source`, "expected result source is required");
         requireText(step?.actual, "STEP_ACTUAL_MISSING", `${base}.actual`, "actual result is required");
+        const same = typeof step?.expected?.value === "string"
+          && typeof step?.actual === "string"
+          && step.expected.value.trim() === step.actual.trim();
+        if (!same) failures.push(failure("STEP_MISMATCH", `${base}.actual`, "actual result differs from the expected result"));
         if (step?.match !== true) failures.push(failure("STEP_MISMATCH", `${base}.match`, "every journey step must match its expected result"));
+        if (step?.match === true && !same) failures.push(failure("STEP_MATCH_CONTRADICTED", `${base}.match`, "match is true but actual differs from expected"));
         if (nonEmpty(packet.actor?.surface) && nonEmpty(step?.surface)
             && packet.actor.surface !== step.surface) {
           failures.push(
