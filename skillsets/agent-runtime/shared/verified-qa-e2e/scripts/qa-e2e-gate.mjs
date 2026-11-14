@@ -679,7 +679,7 @@ function validFixture(operation = "publish_qa_instructions") {
       same_actor: true,
       same_surface: true,
       evidence: "trace-journey",
-      steps: [{ page: "Work", control: "Accept Dispatch", surface: "Vendor Portal", observed: true, evidence: "snapshot-work" }],
+      steps: [{ page: "Work", control: "Accept Dispatch", surface: "Vendor Portal", observed: true, expected: { value: "Button text 'Accept Dispatch' is shown", source: "ticket acceptance criterion AC-1" }, actual: "Button text 'Accept Dispatch' is shown", match: true, evidence: "snapshot-work" }],
     },
     terminal: { status: "passed", evidence: "snapshot-finished" },
   };
@@ -745,7 +745,7 @@ function manualLoginFixture(operation = "request_manual_browser_login") {
       same_actor: true,
       same_surface: true,
       evidence: "trace-journey",
-      steps: [{ page: "Work", control: "Accept Dispatch", surface: "Vendor Portal", observed: true, evidence: "snapshot-work" }],
+      steps: [{ page: "Work", control: "Accept Dispatch", surface: "Vendor Portal", observed: true, expected: { value: "Button text 'Accept Dispatch' is shown", source: "ticket acceptance criterion AC-1" }, actual: "Button text 'Accept Dispatch' is shown", match: true, evidence: "snapshot-work" }],
     };
     packet.terminal = { status: "passed", evidence: "snapshot-finished" };
     if (operation === "publish_qa_instructions") {
@@ -761,6 +761,15 @@ function selftest() {
     const good = validFixture();
     good.reasoning_effort = effort;
     if (!evaluateEvidence(good).ok) throw new Error(`valid fixture failed at ${effort}`);
+
+    const wrongCase = validFixture();
+    wrongCase.reasoning_effort = effort;
+    wrongCase.journey.steps[0].actual = "Button text 'Accept dispatch' is shown";
+    wrongCase.journey.steps[0].match = true;
+    const wrongCaseResult = evaluateEvidence(wrongCase);
+    if (wrongCaseResult.ok || !wrongCaseResult.failures.some(({ code }) => code === "STEP_MISMATCH")) {
+      throw new Error(`case-mismatched journey step was not rejected at ${effort}`);
+    }
 
     const bad = validFixture();
     bad.reasoning_effort = effort;
