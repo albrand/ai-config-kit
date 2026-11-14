@@ -5,7 +5,7 @@ All files use JSON Schema draft 2020-12 semantics. Store each artifact with its 
 Every automated scenario is behavioural, not implementation-driven:
 
 - `polarity`: `positive` or `negative` (regression cases set `regressionCase: true`).
-- `layer`: `e2e`, `api`, `unit`, or `component`. `e2e` means the real backend. Mocked HTTP is allowed for `component`/`unit`, and for extra frontend scenarios. Each criterion keeps at least one unmocked e2e scenario.
+- `layer`: `e2e`, `api`, `unit`, or `component`. Mocked HTTP is allowed at any layer, but a mocked pass proves UI logic only and is never end-to-end acceptance: each criterion is accepted only when its e2e scenario also passes against a deployed target. Mock data must not encode the expected answer. List each write the scenario expects (method, path, body) in `steps`; the mock accepts those and refuses every other write.
 - `mockPolicy`: `mixed-source` when steps use mocks/fixtures — mixed input, application logic must produce the filtered or empty outcome.
 - `expected`: one specific observable outcome per line; automation must assert each line (no loose “any element” wording).
 - Binding: an automated scenario is bound by a runnable test whose title (or `scenario_id` label) carries the whole scenario ID; a comment, an unrelated string or a skipped test does not bind it.
