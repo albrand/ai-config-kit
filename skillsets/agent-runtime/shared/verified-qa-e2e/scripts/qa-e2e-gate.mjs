@@ -525,6 +525,23 @@ export function evaluateEvidence(packet, options = {}) {
   }
 
   if (isBlocked) {
+    const journey = packet.journey;
+    if (journey?.walked === true && (!Array.isArray(journey.steps) || journey.steps.length === 0)) {
+      failures.push(failure("JOURNEY_STEPS_MISSING", "journey.steps", "a walked blocked journey must validate each observed step"));
+    }
+    if (Array.isArray(journey?.steps)) {
+      for (const [index, step] of journey.steps.entries()) {
+        const base = `journey.steps[${index}]`;
+        requireText(step?.expected?.value, "STEP_EXPECTED_MISSING", `${base}.expected.value`, "expected result is required");
+        requireText(step?.expected?.source, "STEP_EXPECTED_SOURCE_MISSING", `${base}.expected.source`, "expected result source is required");
+        requireText(step?.actual, "STEP_ACTUAL_MISSING", `${base}.actual`, "actual result is required");
+        const same = typeof step?.expected?.value === "string" && typeof step?.actual === "string"
+          && step.expected.value === step.actual;
+        if (!same) failures.push(failure("STEP_MISMATCH", `${base}.actual`, "actual result differs from the expected result"));
+        if (step?.match !== true) failures.push(failure("STEP_MISMATCH", `${base}.match`, "every journey step must match its expected result"));
+        if (step?.match === true && !same) failures.push(failure("STEP_MATCH_CONTRADICTED", `${base}.match`, "match is true but actual differs from expected"));
+      }
+    }
     const blocker = packet.blocker;
     requireText(blocker?.goal, "BLOCKER_GOAL_MISSING", "blocker.goal", "name the user outcome that could not be attempted");
     requireText(blocker?.point, "BLOCKER_POINT_MISSING", "blocker.point", "name the visible screen and control where progress stopped");
@@ -761,6 +778,20 @@ function selftest() {
     const good = validFixture();
     good.reasoning_effort = effort;
     if (!evaluateEvidence(good).ok) throw new Error(`valid fixture failed at ${effort}`);
+
+    const blockedMismatch = validFixture("claim_e2e_blocked");
+    blockedMismatch.reasoning_effort = effort;
+    delete blockedMismatch.prerequisites;
+    delete blockedMismatch.external;
+    blockedMismatch.blocker = { goal: "complete setup", point: "Setup screen, Continue", evidence: "screen snapshot", visible_route: "attempted", attempt_evidence: "click and validation result", stop_reason: "required provider unavailable" };
+    blockedMismatch.terminal = { status: "blocked", evidence: "provider failure" };
+    blockedMismatch.journey.steps[0].expected.value = "Success";
+    blockedMismatch.journey.steps[0].actual = "Validation error";
+    blockedMismatch.journey.steps[0].match = false;
+    const blockedMismatchResult = evaluateEvidence(blockedMismatch);
+    if (blockedMismatchResult.ok || !blockedMismatchResult.failures.some(({ code }) => code === "STEP_MISMATCH")) {
+      throw new Error(`a reached mismatch was reported as blocked at ${effort}`);
+    }
 
     const wrongCase = validFixture();
     wrongCase.reasoning_effort = effort;

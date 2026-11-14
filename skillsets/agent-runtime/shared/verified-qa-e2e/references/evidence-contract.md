@@ -255,6 +255,7 @@ A broken or missing product control that the user needs is a `FAILED` journey,
 not a `BLOCKED` prerequisite. The gate checks evidence shape, not whether a
 browser action truly occurred or whether a defect was classified honestly;
 compare every reference with the browser trace before reporting the verdict.
+A step whose actual differs from expected makes the claim a failure, not a block.
 
 ## Manual browser login handoff
 
