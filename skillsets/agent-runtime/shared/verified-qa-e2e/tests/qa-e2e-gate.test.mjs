@@ -46,6 +46,14 @@ assert.ok(contradictedResult.failures.some((item) => item.code === "STEP_MATCH_C
 const mismatchFalse = structuredClone(contradictedStep);
 mismatchFalse.journey.steps[0].match = false;
 assert.equal(evaluateEvidence(mismatchFalse).ok, false, "unequal values with match false must fail");
+const trailingSpaceMismatch = structuredClone(completeFixture.packet);
+trailingSpaceMismatch.journey.steps[0].expected.value = "Accept";
+trailingSpaceMismatch.journey.steps[0].actual = "Accept ";
+trailingSpaceMismatch.journey.steps[0].match = true;
+const trailingSpaceResult = evaluateEvidence(trailingSpaceMismatch);
+assert.equal(trailingSpaceResult.ok, false, "trailing whitespace must be compared exactly");
+assert.ok(trailingSpaceResult.failures.some((item) => item.code === "STEP_MISMATCH"));
+assert.ok(trailingSpaceResult.failures.some((item) => item.code === "STEP_MATCH_CONTRADICTED"));
 const matchingSteps = structuredClone(completeFixture.packet);
 assert.ok(matchingSteps.journey.steps.every((step) => step.match === true), "every step in the passing packet matches");
 assert.equal(evaluateEvidence(matchingSteps).ok, true, "a complete matching journey passes");

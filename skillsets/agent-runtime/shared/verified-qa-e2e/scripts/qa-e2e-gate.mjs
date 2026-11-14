@@ -580,7 +580,7 @@ export function evaluateEvidence(packet, options = {}) {
         requireText(step?.actual, "STEP_ACTUAL_MISSING", `${base}.actual`, "actual result is required");
         const same = typeof step?.expected?.value === "string"
           && typeof step?.actual === "string"
-          && step.expected.value.trim() === step.actual.trim();
+          && step.expected.value === step.actual;
         if (!same) failures.push(failure("STEP_MISMATCH", `${base}.actual`, "actual result differs from the expected result"));
         if (step?.match !== true) failures.push(failure("STEP_MISMATCH", `${base}.match`, "every journey step must match its expected result"));
         if (step?.match === true && !same) failures.push(failure("STEP_MATCH_CONTRADICTED", `${base}.match`, "match is true but actual differs from expected"));
