@@ -740,6 +740,7 @@ INSTALLED_HOME_SHA256: dict[str, str] = {
     "26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48": "codex",
     "846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651": "opencode",
     "1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5": "bb",
+    "b63bdb73c26ca1814eca36582266db9d7711d4b1a33139f31c055bf4ea7aad5f": "bb",
 }
 RENDERED_HOME_SHA256 = {
     "f0a9f7aa81e68a5f522f8e3847428849da0bbc43d4f032826af5d5e0afa5b919": "proposal-claude",
@@ -751,6 +752,7 @@ RENDERED_HOME_SHA256 = {
     "26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48": "proposal-codex",
     "846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651": "proposal-opencode",
     "1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5": "proposal-bb",
+    "b63bdb73c26ca1814eca36582266db9d7711d4b1a33139f31c055bf4ea7aad5f": "proposal-bb",
 }
 
 

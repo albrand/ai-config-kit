@@ -162,9 +162,9 @@ def main():
         if not decision.get("matched"):
             return 0
         mode = Path(MODE_FILE).read_text(encoding="utf-8").strip()
-        provider_class = decision["provider"] if decision["provider"] in {"claude-code", "claude", "codex", "openai"} else "other"
+        provider_class = "gemini" if decision["provider"] == "acp-antigravity-acp" else decision["provider"] if decision["provider"] in {"claude-code", "claude", "codex", "openai"} else "other"
         model_value = str(decision["model"]).lower()
-        model_class = "claude-1m" if "claude" in model_value and "1m" in model_value else "claude-standard" if "claude" in model_value else "codex" if model_value.startswith("gpt-") else "other"
+        model_class = "claude-1m" if "claude" in model_value and "1m" in model_value else "claude-standard" if "claude" in model_value else "codex" if model_value.startswith("gpt-") else "gemini" if model_value.startswith("gemini-") else "other"
         record = {"at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                   "tool": decision["tool"], "provider": provider_class, "model": model_class,
                   "lane": decision["lane"], "route_deny": decision["route_deny"], "oversized": decision["oversized"], "would_deny": decision["would_deny"], "mode": mode}

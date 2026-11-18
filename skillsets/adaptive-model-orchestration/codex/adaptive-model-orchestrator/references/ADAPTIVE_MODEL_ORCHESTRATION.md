@@ -10,6 +10,11 @@ validation truth. Hermes keeps its current working review route until Codex
 ## Routing Policy
 
 - Bounded and bulk execution goes to the verified Codex route.
+- Gemini (provider `acp-antigravity-acp`, owner decision 2026-11-17) comes
+  after Codex and before Cursor: `bb fleet route` ranks Claude, Codex,
+  Gemini, Cursor when Claude goes first, and Codex, Gemini, Cursor
+  otherwise. Gemini is routed only while an account-pool Gemini account is
+  below the switch mark. It never displaces Claude from the work above.
 - Architecture, security, authentication, data-loss, release, and final-review
   work stays on Claude. Do not send bulk work to Claude.
 - Hermes PR reviews use Codex (model set in Hermes's own config) through
@@ -76,11 +81,11 @@ Elsewhere (Codex, Claude Code, Elyra cards), name the model and reasoning
 explicitly when you start an agent. Never leave it to a default: Codex's config
 default is the GPT ceiling, and Claude's is Opus.
 
-| Role | Claude | GPT (Codex) |
-| --- | --- | --- |
-| Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high |
-| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna`; low, medium or high by complexity |
-| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for low-complexity research and bulk work (their default complexity); low | `gpt-6-luna`; low, medium or high by complexity |
+| Role | Claude | GPT (Codex) | Gemini |
+| --- | --- | --- | --- |
+| Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high | `gemini-pro-orchestrator`; `gemini-4-hydrogen-xhigh` at high complexity |
+| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna`; low, medium or high by complexity | `gemini-3.8-flash-low` |
+| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for low-complexity research and bulk work (their default complexity); low | `gpt-6-luna`; low, medium or high by complexity | `gemini-4-carbon-low`, `-medium` or `-high` by complexity; `gemini-3.8-flash-low` for low-complexity research and bulk work |
 
 - **Claude children and reviewers.** Reasoning goes from low to high if and
   only if the work keeps being sent back: two rejections in a row, counting
@@ -101,6 +106,15 @@ default is the GPT ceiling, and Claude's is Opus.
   there Fleet enforces nothing, and only the model you named keeps the turn
   off astra. The ceiling also excludes
   `max` and `ultra` (which delegates on its own).
+- **Gemini.** Effort is the model id's suffix, so Gemini takes no separate
+  reasoning level. It climbs one step for each rejection in a row and for
+  the same 2- and 6-hour marks as GPT. Reviewers climb within Flash
+  (`gemini-3.8-flash-low` → `-medium` → `-high`). Children climb
+  `gemini-4-carbon-low` → `-medium` → `-high` → `gemini-4-hydrogen-high` →
+  `gemini-4-hydrogen-xhigh`, the ceiling; light Flash work moves onto
+  `gemini-4-carbon-low` on its first step. The Argon models
+  (`gemini-pro-orchestrator-argon`, `gemini-4-argon-low|medium|high`) are
+  available but not routed.
 - **Re-route before rework.** A running agent keeps its spawn model. When work
   is rejected, start its next attempt on the route the new count gives.
 - **Precedence.** This table takes precedence over the Max And Ultra Decision

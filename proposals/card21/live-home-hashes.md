@@ -287,18 +287,19 @@ owner edited all four live homes on 2026-10-28 without re-rendering the kit.
 | OpenCode | `95a4a0d9b9a9709ffb9df05558ba4277cd148d9daf559cc2395ef1543e70c5ed` |
 | bb | `b72137f23aaba31ac6fef1843458227968d6829e0d4e09341e6fa55b81bddc5b` |
 
-### Current rendered profile: live backport 2026-10-31 (RULES-BACKPORT)
+### Current rendered profile: Gemini routing 2026-11-17 (GEMINI-FLEET-ROUTING)
 
 Generated with `python3 scripts/render-standing-homes.py`; digests below are the
 output of `shasum -a 256` on the files in `proposals/card21/rendered-homes`.
-They match the owner live homes edited on 2026-10-28.
+Only the bb home changed from the live backport of 2026-10-31, which stays
+installable as the accepted owner live edit of 2026-10-28 above.
 
 | Home | SHA-256 |
 |---|---|
 | Claude | `c3f18c447ed62af7b2695491bfa22740795381fb974a54eeb8ce8a58ca18a376` |
 | Codex | `26ff0fef76a3a35df9747c9acf3035a537f0701b6318485142f9e77520dd3e48` |
 | OpenCode | `846008495690e33235986a8874a77bba958daf00112cd8a4ae7ee5d9f4856651` |
-| bb | `1c05c12bfdd6facdb40afe5647ea41ff7ba365a282c2c3f78174db0509fee2b5` |
+| bb | `b63bdb73c26ca1814eca36582266db9d7711d4b1a33139f31c055bf4ea7aad5f` |
 
 ### Superseded profile: pre-#46 render at dbf21b72 (history only)
 
