@@ -490,6 +490,11 @@ scope_shape_deny=1
 scope_dispatch_denied && scope_shape_deny=0
 LATE="the hook chain could not finish within $GATE_DEADLINE s of starting (the host's hook timeout is 15 s, and a timed-out hook lets the command run)"
 
+if [ -x "$H/thread-wait-guard.py" ]; then
+  printf '%s' "$input" | run "$GATE_DEADLINE" "$H/thread-wait-guard.py"
+  wait_rc=$?
+  [ "$wait_rc" -eq 0 ] || exit "$wait_rc"
+fi
 printf '%s' "$input" | run "$GATE_DEADLINE" "$H/qa-ship-gate-hook.sh"
 rc=$?
 [ "$rc" = 2 ] && exit 2
