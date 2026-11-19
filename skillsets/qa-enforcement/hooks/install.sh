@@ -19,6 +19,7 @@ cp "$STAGE/hooks/qa-ship-gate-hook.sh" "$HOME/.agent-hooks/qa-ship-gate-hook.sh"
 cp "$STAGE/hooks/qa-stop-hook.sh" "$HOME/.agent-hooks/qa-stop-hook.sh"
 cp "$STAGE/hooks/keepgoing-stop.py" "$HOME/.agent-hooks/keepgoing-stop.py"
 cp "$STAGE/hooks/thread-wait-guard.py" "$HOME/.agent-hooks/thread-wait-guard.py"
+cp "$STAGE/hooks/qa-bindings-push-gate.py" "$HOME/.agent-hooks/qa-bindings-push-gate.py"
 cp "$STAGE/hooks/codex-hook-trust.py" "$HOME/.agent-hooks/codex-hook-trust.py"
 mkdir -p "$HOME/.config/opencode/plugin"
 cp "$STAGE/hooks/plugin/opencode-qa-evidence.js" "$HOME/.config/opencode/plugin/qa-evidence-gate.js"
@@ -30,6 +31,7 @@ cp "$STAGE/hooks/coordinator-hook-pretool.sh" "$HOME/.agent-hooks/coordinator-ho
 chmod +x "$HOME/.agent-hooks/qa-ship-gate-hook.sh" "$HOME/.agent-hooks/qa-stop-hook.sh" \
          "$HOME/.agent-hooks/coordinator-hook-pretool.sh"
 chmod +x "$HOME/.agent-hooks/thread-wait-guard.py"
+chmod +x "$HOME/.agent-hooks/qa-bindings-push-gate.py"
 # 4. host timeout on the chain entry (a timed-out PreToolUse hook lets the
 #    command run); hook-timeouts.py backs up both configs before writing
 python3 "$STAGE/hooks/hook-timeouts.py" apply

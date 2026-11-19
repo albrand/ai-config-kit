@@ -501,6 +501,19 @@ rc=$?
 if [ "$rc" = 124 ] && [ "$ship_shape_deny" = 0 ]; then
   deny "[qa-ship-gate] Ship denied: $LATE; this command is ship-shaped in a QA opted-in repo, so it is denied. Retry it."
 fi
+# A push or `gh pr create` from a repository with QA scenarios is denied while
+# a bound scenario's test is missing
+# from the pushed commit (BOUND_TEST_MISSING; --no-verify does not skip it).
+# Only push-shaped payloads start python. It fails open, with a note, when the
+# repository cannot be read, and when it is cut at the deadline: CI still checks.
+case $input in
+  *push*|*"pr create"*)
+    if [ -x "$H/qa-bindings-push-gate.py" ]; then
+      printf '%s' "$input" | run "$GATE_DEADLINE" "$H/qa-bindings-push-gate.py"
+      [ $? = 2 ] && exit 2
+    fi
+    ;;
+esac
 if [ -x "$H/scope-gate-hook.sh" ]; then
   printf '%s' "$input" | run "$GATE_DEADLINE" "$H/scope-gate-hook.sh"
   rc=$?

@@ -52,6 +52,7 @@ import re
 import shutil
 import signal
 import subprocess
+import functools
 import sys
 import tempfile
 import time
@@ -325,7 +326,60 @@ def qa_reader(root, sha=None):
             if p.returncode != 0:
                 raise FileNotFoundError(rel)
             return p.stdout
-        return {"exists": exists, "read": read}
+
+        def read_many(rels):
+            result, safe = {}, []
+            for rel in rels:
+                # Never put control-character paths in a line-framed request.
+                if any(c in rel for c in "\n\r\0"):
+                    try:
+                        result[rel] = read(rel)
+                    except FileNotFoundError:
+                        result[rel] = None
+                else:
+                    safe.append(rel)
+            if not safe:
+                return result
+            tree = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-z",
+                                   "--full-tree", sha, "--", *safe],
+                                  capture_output=True, timeout=GIT_TIMEOUT_S)
+            if tree.returncode != 0:
+                raise RuntimeError(tree.stderr.strip() or "git ls-tree failed")
+            oids = {}
+            for entry in tree.stdout.split(b"\0"):
+                if not entry:
+                    continue
+                meta, path = entry.split(b"\t", 1)
+                _, kind, oid = meta.split()
+                if kind == b"blob":
+                    oids[path.decode("utf-8")] = oid
+            requests = [(rel, oids[rel]) for rel in safe if rel in oids]
+            result.update((rel, None) for rel in safe if rel not in oids)
+            if not requests:
+                return result
+            proc = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
+                input=b"".join(oid + b"\n" for _, oid in requests),
+                capture_output=True, timeout=GIT_TIMEOUT_S)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "git cat-file --batch failed")
+            pos = 0
+            for rel, oid in requests:
+                end = proc.stdout.find(b"\n", pos)
+                if end < 0:
+                    raise RuntimeError("truncated git cat-file --batch header")
+                header = proc.stdout[pos:end].split()
+                pos = end + 1
+                if len(header) != 3 or header[0] != oid or header[1] != b"blob":
+                    raise RuntimeError("unexpected git cat-file --batch header")
+                size = int(header[2])
+                if size < 0 or pos + size >= len(proc.stdout) or proc.stdout[pos + size:pos + size + 1] != b"\n":
+                    raise RuntimeError("truncated git cat-file --batch blob")
+                result[rel] = proc.stdout[pos:pos + size].decode("utf-8")
+                pos += size + 1
+            if pos != len(proc.stdout):
+                raise RuntimeError("unexpected trailing git cat-file --batch output")
+            return result
+        return {"exists": exists, "read": read, "read_many": read_many}
 
     def exists(rel):
         return os.path.isfile(os.path.join(root, rel))
@@ -343,12 +397,13 @@ def qa_run_dirs(root, sha=None, rd=None):
     from that commit's tree."""
     dirs = []
     if sha:
-        p = run_git(root, "ls-tree", "--name-only", sha, "--", ".qa/runs/")
+        p = subprocess.run(["git", "-C", root, "ls-tree", "-z", "--name-only",
+                            sha, "--", ".qa/runs/"],
+                           capture_output=True, timeout=GIT_TIMEOUT_S)
         if p.returncode == 0:
-            for line in p.stdout.splitlines():
-                name = line.strip().rstrip("/").split("/")[-1]
-                if name:
-                    dirs.append(".qa/runs/" + name)
+            for path in p.stdout.split(b"\0"):
+                if path:
+                    dirs.append(path.decode("utf-8").rstrip("/"))
         legacy_has = run_git(root, "cat-file", "-e", "%s:.qa/rewalk.json" % sha).returncode == 0
     else:
         runs = os.path.join(root, ".qa", "runs")
@@ -374,9 +429,19 @@ def resolve_run(root, sha, rd, equiv=False, listing=None):
     if len(cands) == 1:
         return cands[0], None
     seen, matches, equiv_matches = [], [], []
-    for d in cands:
+    rels = [d + "/rewalk.json" for d in cands]
+    many = rd.get("read_many")
+    try:
+        contents = many(rels) if many else {}
+    except Exception:
+        many = None
+        contents = {}
+    for d, rel in zip(cands, rels):
         try:
-            walked = str(json.loads(rd["read"](d + "/rewalk.json")).get("sha") or "")
+            content = contents[rel] if many else rd["read"](rel)
+            if content is None:
+                raise FileNotFoundError(rel)
+            walked = str(json.loads(content).get("sha") or "")
         except Exception:
             walked = ""
         seen.append("%s@%s" % (d, walked[:12] or "-"))
@@ -544,18 +609,19 @@ def check_plan(qa, rd, clusters, fails):
     return True
 
 
-def rewalk_parent_ok(root, head, walked):
-    """True when `head` (any sha present in the local repo) is exactly one
-    .qa/-only commit on top of `walked`."""
-    if not head:
-        return False
-    if run_git(root, "cat-file", "-e", head + "^{commit}").returncode != 0:
-        return False  # shipped head not present locally: cannot verify
+@functools.lru_cache(maxsize=None)
+def qa_only_parent(root, head):
+    if not head or run_git(root, "cat-file", "-e", head + "^{commit}").returncode != 0:
+        return ""
     parent = run_git(root, "rev-parse", head + "~1").stdout.strip()
-    if not parent or parent != walked:
-        return False
+    if not parent:
+        return ""
     diff = run_git(root, "diff", "--name-only", head + "~1", head).stdout.split()
-    return bool(diff) and all(d == ".qa" or d.startswith(".qa/") for d in diff)
+    return parent if diff and all(d == ".qa" or d.startswith(".qa/") for d in diff) else ""
+
+
+def rewalk_parent_ok(root, head, walked):
+    return bool(head) and bool(walked) and qa_only_parent(root, head) == walked
 
 
 def tree_equiv_outside_qa(root, shipped, walked):
@@ -2881,6 +2947,81 @@ def main():
     return 2
 
 
+def selftest_batch_framing(expect):
+    """Real git framing regression, also runnable against the previous reader."""
+    with tempfile.TemporaryDirectory(prefix="qa-batch-framing-") as root:
+        def git(*args):
+            return subprocess.run(["git", "-C", root, *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "fixture@example.invalid")
+        git("config", "user.name", "fixture")
+        with open(os.path.join(root, "code.txt"), "w") as fh:
+            fh.write("code\n")
+        git("add", ".")
+        git("commit", "-qm", "code")
+        walked = git("rev-parse", "HEAD")
+        files = {
+            ".qa/runs/a\n/rewalk.json": json.dumps({"sha": "not-the-walked-sha"}),
+            ".qa/runs/z/rewalk.json": json.dumps({"sha": walked}),
+            ".qa/acentuação.txt": "sessões disponíveis\n",
+            ".qa/carriage\r.txt": "carriage return path\n",
+        }
+        for rel, content in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        git("add", ".qa")
+        git("commit", "-qm", "records")
+        records = git("rev-parse", "HEAD")
+        rd = qa_reader(root, records)
+        normal = [".qa/runs/z/rewalk.json", ".qa/acentuação.txt"]
+        expect(rd["read_many"](normal) == {rel: rd["read"](rel) for rel in normal},
+               "batch reader matches per-file reads on normal and accented UTF-8 paths")
+        expect(rd["read_many"](list(files)) == files,
+               "batch framing: newline run and sibling keep their own rewalk content")
+        expect(resolve_run(root, walked, rd, listing=records) == (".qa/runs/z", None),
+               "batch framing: resolve_run selects the sibling with the actual walked SHA")
+        # Also select the control-character candidate itself: quoting the tree
+        # listing must not hide it or let its sibling inherit its metadata.
+        for rel, value in ((".qa/runs/a\n/rewalk.json", walked),
+                           (".qa/runs/z/rewalk.json", "not-the-walked-sha")):
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                json.dump({"sha": value}, fh)
+        git("add", ".qa")
+        git("commit", "-qm", "swap walked candidate")
+        swapped = git("rev-parse", "HEAD")
+        expect(resolve_run(root, walked, qa_reader(root, swapped), listing=swapped) ==
+               (".qa/runs/a\n", None),
+               "batch framing: resolve_run selects the newline candidate with its own walked SHA")
+        expect(rd["read_many"]([".qa/absent", *normal]) ==
+               {".qa/absent": None, **{rel: files[rel] for rel in normal}},
+               "batch reader preserves missing-file and subsequent-file results")
+        expect(rd["read_many"]([]) == {}, "batch reader accepts an empty request")
+
+        # Corrupt only the protocol boundary; tree lookup and fallback stay real.
+        real_run = subprocess.run
+        for header in (b"0" * 40 + b" blob 1\nx\n", b"x missing\n", b"x ambiguous\n"):
+            def corrupt(args, **kwargs):
+                if args[-1:] == ["--batch"]:
+                    return subprocess.CompletedProcess(args, 0, header, b"")
+                return real_run(args, **kwargs)
+
+            subprocess.run = corrupt
+            try:
+                try:
+                    rd["read_many"](normal[:1])
+                    raised = False
+                except RuntimeError:
+                    raised = True
+                expect(raised, "batch reader rejects mismatched/missing/ambiguous header %r" % header)
+                expect(resolve_run(root, walked, rd, listing=records) == (".qa/runs/z", None),
+                       "resolve_run falls back to per-file reads after a bad batch header")
+            finally:
+                subprocess.run = real_run
+
+
 def selftest(v4_gate=None, v4_templates=None):
     """Prove each deny/allow path on scratch repos. A check that cannot go red proves nothing."""
     import shutil
@@ -2930,6 +3071,8 @@ def selftest(v4_gate=None, v4_templates=None):
         print(("ok   " if cond else "FAIL ") + name)
         if not cond:
             fails.append(name)
+
+    selftest_batch_framing(expect)
 
     def sh(cmd, cwd=None, inp=""):
         return subprocess.run(cmd, shell=True, cwd=cwd, input=inp, capture_output=True, text=True)

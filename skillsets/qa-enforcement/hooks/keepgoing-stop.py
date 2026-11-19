@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """One-turn nudge when a final message stops with runnable work still open."""
+import importlib.util
 import json
+import os
 import re
 import sys
+import time
 
 
 OWNER_LINE = re.compile(r"^[\s>*-]*(?:NEEDS-OWNER:|STATUS:\s*needs-owner)", re.IGNORECASE | re.MULTILINE)
@@ -36,9 +39,21 @@ CLAUSE = re.compile(
 UNFINISHED = re.compile(
     r"\b(?:remain(?:s|ing)?\s+(?:unrun|untested|unverified|undone|to\s+(?:run|do))|"
     r"(?:not|never|\w+n't)\s+(?:yet\s+)?(?:been\s+)?(?:yet\s+)?(?:run|tested|verified|done|finished)|"
-    r"needs?\s+to\s+be\s+(?:run|tested|verified|done|finished)|left\s+to\s+do)\b",
+    r"needs?\s+to\s+be\s+(?:run|tested|verified|done|finished)|left\s+to\s+do|"
+    # First person, not a status: "I have not completed the work", "but have not implemented or tested it yet".
+    r"(?:(?:have|has|had)\s+(?:not|never)|haven't|hasn't|hadn't)\s+(?:yet\s+)?(?:been\s+)?"
+    r"(?:completed?|finished|implemented|tested|committed|verified|started|run|done))\b",
     re.IGNORECASE,
 )
+# Work the turn leaves behind. Unlike UNFINISHED, "blocked" or "because" beside it does not excuse it.
+ABANDONED = re.compile(
+    r"\b(?:still\s+outstanding|remain(?:s|ing)?\s+outstanding|"
+    r"blocked\s+from\s+(?:completing|finishing)\b[^\n]{0,100}?\b(?:this|the)\s+turn|"
+    r"leav(?:e|es|ing)\s+(?:the\s+)?work\b[^\n]{0,80}?\bfor\s+(?:later\s+)?continuation|"
+    r"began\b[^\n]{0,160}?\bbut\s+(?:have|has|had)\s+not)\b",
+    re.IGNORECASE,
+)
+NO_ITEMS = re.compile(r"\b(?:no|none|nothing|zero|0)\b", re.IGNORECASE)
 NAMED_BLOCKER = re.compile(r"\b(?:block\w*|because|running|until|owner|hold)\b", re.IGNORECASE)
 # "because I haven't run them" names no outside blocker.
 SELF_CAUSED = re.compile(r"\bbecause\s+(?:i|we)\b", re.IGNORECASE)
@@ -55,9 +70,92 @@ QUOTED = re.compile(r"\"[^\"\n]{1,300}\"|“[^”\n]{1,300}”")
 IMMEDIATE = re.compile(r"\b(?:now|next|right\s+away|immediately)\b", re.IGNORECASE)
 PERMISSION = re.compile(
     r"\b(?:(?:do\s+you\s+)?want\s+me\s+to|would\s+you\s+like\s+me\s+to|(?:should|shall)\s+i|"
-    r"if\s+you(?:'d|\s+would)?\s+(?:like|want),?\s+i\s+(?:can|could|will|'ll))\b",
+    # "If you want it finished, I can ...": up to 6 words between the want and the offer.
+    r"if\s+you(?:'d|\s+would)?\s+(?:like|want)(?:\s+[^\s,.;!?]+){0,6}\s*,?\s*i(?:\s+(?:can|could|will)|'ll)|"
+    r"your\s+call\s+on|say\s+the\s+word|let\s+me\s+know\s+if\s+you(?:\s+want|'d\s+like|\s+would\s+like)\s+me\s+to)\b",
     re.IGNORECASE,
 )
+# A wait for the owner's go-ahead on work. It never covers an approval for a delete, install, workflow, merge or
+# spend (OWNER_ONLY_INPUT), an owner review, or a real-world action by a person.
+WAIT_FOR_OK = re.compile(
+    r"\b(?:wait(?:ing)?\s+(?:on|for)|awaiting|pending)\s+(?:your|the\s+owner'?s?|alexandre'?s?)\s+"
+    r"(?:go[- ]?ahead|ok(?:ay)?|confirmation|green\s+light|call|decision)\b",
+    re.IGNORECASE,
+)
+# A mention of the owner as the one a wait is for. It is never a stop by itself; a wait on the owner is no
+# wait a thread or task can serve, so it is also left out of the dead-wait check.
+OWNER_WAIT = re.compile(
+    r"\b(?:wait(?:ing)?\s+(?:on|for)|awaiting|pending|need(?:s|ing)?)\s+"
+    r"(?:you|your|the\s+owner(?:'s)?|owner(?:'s)?|alexandre(?:'s)?|the\s+user(?:'s)?)\b",
+    re.IGNORECASE,
+)
+# A wait on something the hook can't see: a scheduled automation, a cron, a routine.
+SCHEDULED = re.compile(r"\b(?:automations?|cron|crontab|schedul\w*|routines?|timers?)\b", re.IGNORECASE)
+# A claim that the work continues somewhere else; it holds only while a child or spawned thread is alive.
+HANDOFF = re.compile(
+    r"\b(?:continues?\s+in\s+a\s+(?:fresh|new)\s+(?:session|thread)|hand(?:over|off)\s+note|"
+    r"hand(?:s|ed|ing)?[- ]?(?:off|over)\s+to\s+a\s+(?:fresh|new)\s+(?:session|thread))\b",
+    re.IGNORECASE,
+)
+# Spend changes the route, never whether owner-requested work gets done.
+SPEND = re.compile(
+    r"\b(?:weekly[- ](?:limit|usage|quota|budget|cap)|usage[- ]limit|spend(?:ing)?[- ](?:limit|cap|budget|concern)|"
+    r"token[- ](?:budget|limit|spend)|quota)",
+    re.IGNORECASE,
+)
+SPEND_STOP = re.compile(
+    r"\b(?:stop\w*|paus\w*|hold(?:ing)?|wait\w*|defer\w*|not\s+(?:continu|proceed|start|run)\w*|given|"
+    r"because\s+of|due\s+to|out\s+of\s+caution)\b",
+    re.IGNORECASE,
+)
+# A wait the final message claims, as opposed to work the thread does itself.
+WAIT_CLAIM = re.compile(
+    # Present and future forms only: a done report says "CI finished" or "the watcher reported", not "finishes".
+    r"\b(?:wait(?:s|ing)?\s+(?:on|for)|awaiting|(?:i(?:'m|\s+am)|we(?:'re|\s+are)|still|currently)\s+watching|"
+    r"watching\s+(?:for|on)|watchers?\s+(?:\S+\s+)?(?:will|is|are|reports|notifies|runs|running)|"
+    r"(?:still|currently)\s+(?:running|in\s+progress|pending)|(?:monitor|child|worker)\s+will|"
+    r"until\b[^.\n]{0,80}?\b(?:lands?|arrives?|returns?|finish(?:es)?|completes?|comes\s+back)|"
+    r"when\b[^.\n]{0,80}?\b(?:returns?|lands?|arrives?|finish(?:es)?|completes?|reports|comes\s+back))\b",
+    re.IGNORECASE,
+)
+CAP = 3
+LIVE_CHILD = ("active", "starting", "pending")
+CLOSEOUT = os.path.expanduser("~/.agents/skills/scope-ledger/scripts/closeout-stop.py")
+STATE_DIR = os.path.expanduser("~/.local/state/agent-quality")
+THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
+SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def record_native_session(payload):
+    """Map this thread to its Claude session and transcript, for the fleet plugin's stopped-thread resumer.
+
+    Written on every Stop-hook run that has a thread id and a session id: exactly {session, transcript_path, ts},
+    no message text. Atomic (temp file, then os.replace). Never raises and never touches the hook's decision.
+    """
+    try:
+        thread = os.environ.get("BB_THREAD_ID", "")
+        session = payload.get("session_id") or payload.get("sessionId")
+        if not THREAD_ID.match(thread) or not isinstance(session, str) or not SESSION_ID.match(session):
+            return
+        path = payload.get("transcript_path") or payload.get("transcriptPath")
+        directory = os.path.join(STATE_DIR, "native-sessions")
+        os.makedirs(directory, exist_ok=True)
+        target = os.path.join(directory, thread + ".json")
+        temp = os.path.join(directory, f".{thread}.{os.getpid()}.tmp")
+        try:
+            with open(temp, "w", encoding="utf-8") as stream:
+                json.dump({"session": session, "transcript_path": path if isinstance(path, str) else None,
+                           "ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}, stream)
+            os.replace(temp, target)
+        except Exception:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+    except Exception:
+        return
+
+
 BLOCKED = re.compile(
     r"\b(?:(?:i(?:'m|\s+am)|we(?:'re|\s+are)|am|is|are|still|currently)\s+blocked|blocked\s+(?:on|by)|"
     r"cannot\s+proceed|can(?:'|no)t\s+continue|unable\s+to\s+proceed)\b",
@@ -180,41 +278,223 @@ def excused(clause):
     return all(STATE_WAIT.search(part) for part in clause.split(",") if PROMISE.search(part))
 
 
+def sentences(text):
+    return [s for s in re.split(r"(?<=[.!?])\s+|\n", text) if s.strip()]
+
+
 def runnable_open(text):
+    """The class of runnable work a final message leaves open, or None."""
     if open_promise(text):
-        return True
+        return "promise"
     tail = last_paragraph(text)
     # Only a closing owner ask ends the turn; one earlier on must not hide a later promise.
     rest = clean_owner_stop(tail)
     if rest is None and OWNER_LINE.search(tail):
-        return True  # an owner label with no stated owner-only ask is not a stop
+        return "owner-label"  # an owner label with no stated owner-only ask is not a stop
     if rest is not None:
         if not rest.strip():
-            return False
+            return None
         tail = rest
-    if PERMISSION.search(tail):
-        return True
+    if PERMISSION.search(tail) or any(WAIT_FOR_OK.search(s) and not OWNER_ONLY_INPUT.search(s) for s in sentences(tail)):
+        return "permission"
+    # Spend changes the route, never whether owner-requested work gets done.
+    if any(SPEND.search(s) and SPEND_STOP.search(s) for s in sentences(tail)):
+        return "spend"
+    # The turn ends with the work left for later; no outside blocker excuses that.
+    if any(ABANDONED.search(c) and not NO_ITEMS.search(c) for c in sentences(tail)):
+        return "abandoned"
     # Work stated as not done, with no blocker named beside it, is still runnable.
     if any(UNFINISHED.search(c) and (SELF_CAUSED.search(c) or not (NAMED_BLOCKER.search(c) or WAITING.search(c)))
            for c in CLAUSE.split(tail)):
+        return "unfinished"
+    return "blocked" if BLOCKED.search(tail) and "?" not in tail else None
+
+
+_closeout = []
+
+
+def closeout():
+    """closeout-stop.py's module, or None. Imported lazily and inside a try: any failure leaves state unknown."""
+    if not _closeout:
+        try:
+            spec = importlib.util.spec_from_file_location("closeout_stop", CLOSEOUT)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _closeout.append(module)
+        except (Exception, SystemExit):
+            _closeout.append(None)
+    return _closeout[0]
+
+
+def store_provider(module, thread):
+    """The thread's provider_id from bb's store, read-only; None when the store or the row can't be read."""
+    try:
+        db = module.sqlite3.connect(f"file:{module.BB_DB}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = db.execute("SELECT provider_id FROM threads WHERE id = ?", (thread,)).fetchone()
+        finally:
+            db.close()
+        return str(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def provider_of(payload):
+    """The provider for an event: the store's provider_id, else which native session the transcript belongs to."""
+    thread = os.environ.get("BB_THREAD_ID")
+    module = closeout() if thread else None
+    provider = store_provider(module, thread) if module else None
+    if provider:
+        return provider
+    path = str(payload.get("transcript_path") or payload.get("transcriptPath") or "")
+    return "claude-native" if "/.claude/" in path else "codex-native" if "/.codex/" in path else ""
+
+
+def liveness(payload):
+    """What will wake this thread: {"children": bool, "other": bool}, or None when the state can't be read."""
+    thread = os.environ.get("BB_THREAD_ID")
+    module = closeout() if thread else None
+    if module is None:
+        return None
+    try:
+        # A thread id the store doesn't hold reads as "nothing alive"; that is unknown, not a verdict.
+        provider = store_provider(module, thread)
+        if provider is None:
+            return None
+        state = module.thread_state(thread)
+        children = state.get("children") if isinstance(state, dict) else None
+        if children is None:
+            return None
+        own = state.get("self") if isinstance(state.get("self"), dict) else {}
+        live_children = any(c.get("status") in LIVE_CHILD and not c.get("archivedAt") for c in children)
+        other = bool(own.get("queuedMessageCount") or own.get("background"))
+        transcript = payload.get("transcript_path") or payload.get("transcriptPath")
+        if not (live_children or other) and transcript:
+            other = bool(module.transcript_background(transcript))
+        # Only Claude Code threads record their background tasks in the store (Codex, Cursor and OpenCode record
+        # none), so for any other provider a task that isn't there proves nothing.
+        return {"children": live_children, "other": other, "sees_tasks": provider.startswith("claude-code")}
+    except Exception:
+        return None
+
+
+def claim_class(text, payload):
+    """A wait or handoff the final message claims that nothing alive carries, or None.
+
+    Only the last paragraph counts, less any real owner ask: a done report that mentions a past watcher earlier
+    on must pass. An unknown state never blocks.
+    """
+    tail = last_paragraph(text)
+    rest = clean_owner_stop(tail)
+    # A wait on the owner is judged by the phrasing checks (OWNER_WAIT): no thread or task can serve it.
+    body = " ".join(s for s in sentences(QUOTED.sub("", rest if rest is not None else tail))
+                    if not OWNER_WAIT.search(s))
+    # The hook can't see a scheduled automation or cron, so a wait on one falls back to the phrasing checks.
+    waits = WAIT_CLAIM.search(" ".join(s for s in sentences(body) if not SCHEDULED.search(s)))
+    handoff = HANDOFF.search(body)
+    if not (waits or handoff):
+        return None
+    alive = liveness(payload)
+    if alive is None:
+        return None
+    if handoff and not alive["children"]:
+        return "handoff"
+    if waits and alive["sees_tasks"] and not (alive["children"] or alive["other"]):
+        return "unserved-wait"
+    return None
+
+
+def classify(text, payload):
+    """Why this final message must not end the turn: a class name, or None."""
+    if owner_menu(text):
+        return "owner-menu"
+    para = last_paragraph(text)
+    if re.search(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", para, re.IGNORECASE | re.MULTILINE) and clean_owner_stop(para) is None:
+        return "owner-ask"
+    return claim_class(text, payload) or runnable_open(text)
+
+
+def turn_key(payload):
+    """Timestamp of the transcript's last real user prompt, which marks the turn; None when unreadable."""
+    path = payload.get("transcript_path") or payload.get("transcriptPath")
+    module = closeout() if path else None
+    try:
+        return module.last_human_input_at(path) if module else None
+    except Exception:
+        return None
+
+
+def may_block(payload, cls):
+    """True to block this stop. Up to CAP blocks per turn; after that the stop goes through and one event is kept."""
+    active = bool(payload.get("stop_hook_active") or payload.get("stopHookActive"))
+    session = payload.get("session_id") or payload.get("sessionId")
+    if not isinstance(session, str) or not session:
+        return not active  # no counter without a session: keep the one-shot behaviour
+    try:
+        path = os.path.join(STATE_DIR, "keepgoing", re.sub(r"[^A-Za-z0-9_.-]", "_", session) + ".json")
+        key = turn_key(payload)
+        try:
+            with open(path, encoding="utf-8") as stream:
+                data = json.load(stream)
+            data = data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            data = {}
+        # A hook retry is always the same turn, whatever the transcript shows. Otherwise a new user prompt starts
+        # a turn; with no readable prompt, any stop outside a retry does.
+        same = active or (key is not None and data.get("turn") == key)
+        count = int(data.get("count", 0)) if same else 0
+        capped = bool(data.get("capped")) if same else False
+        # The turn's start: the user prompt's own timestamp, else the time of its first block.
+        started = (data.get("started") if same else None) or key or time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if count >= CAP:
+            if not capped:
+                event = {"schema_version": 1, "ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                         "event": "keepgoing-cap-reached", "thread": os.environ.get("BB_THREAD_ID", ""),
+                         "session": session, "class": cls, "turn_started_at": started,
+                         "provider": provider_of(payload)}
+                with open(os.path.join(STATE_DIR, "events.jsonl"), "a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(event) + "\n")
+                with open(path, "w", encoding="utf-8") as stream:
+                    json.dump({"turn": key, "count": count, "capped": True, "started": started}, stream)
+            return False
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"turn": key, "count": count + 1, "started": started}, stream)
         return True
-    return bool(BLOCKED.search(tail)) and "?" not in tail
+    except Exception:
+        return not active
+
+
+REASONS = {
+    "owner-menu": MENU_NUDGE,
+    "owner-ask": OWNER_ASK_NUDGE,
+    "unserved-wait": (
+        "[keep-going] You say you are waiting, but nothing is running that will wake you: no background task, "
+        "no active child, no queued message. Start the watcher, check the child, or do the work now."
+    ),
+    "handoff": (
+        "[keep-going] You claim the work continues in another session, but no child or spawned thread is alive. "
+        "Start that thread now, or do the work yourself."
+    ),
+    "spend": (
+        "[keep-going] A weekly limit or spend concern changes the route, never whether work the owner asked for "
+        "gets done. Pick a cheaper route and finish it."
+    ),
+}
 
 
 def main():
     try:
         payload = json.load(sys.stdin)
-        if not isinstance(payload, dict) or payload.get("stop_hook_active") or payload.get("stopHookActive"):
+        if not isinstance(payload, dict):
             return 0
+        record_native_session(payload)
         text = payload.get("last_assistant_message") or payload.get("lastAssistantMessage") or payload.get("text")
         if not isinstance(text, str) or not text:
             text = transcript_text(payload.get("transcript_path") or payload.get("transcriptPath"))
-        if text and owner_menu(text):
-            print(json.dumps({"decision": "block", "reason": MENU_NUDGE}))
-        elif text and re.search(r"^[\s>*-]*NEEDS-OWNER:\s*\S.{7,}", last_paragraph(text), re.IGNORECASE | re.MULTILINE) and clean_owner_stop(last_paragraph(text)) is None:
-            print(json.dumps({"decision": "block", "reason": OWNER_ASK_NUDGE}))
-        elif text and runnable_open(text):
-            print(json.dumps({"decision": "block", "reason": NUDGE}))
+        cls = classify(text, payload) if text else None
+        if cls and may_block(payload, cls):
+            print(json.dumps({"decision": "block", "reason": REASONS.get(cls, NUDGE)}))
     except Exception:
         return 0
     return 0

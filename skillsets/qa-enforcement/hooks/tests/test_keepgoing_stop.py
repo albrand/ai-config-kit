@@ -97,10 +97,12 @@ class KeepGoingTests(unittest.TestCase):
     def assertAllowed(self, result):
         self.assertNotEqual(result.get("decision"), "block", result)
 
-    def test_promise_is_nudged_once(self):
+    def test_promise_retries_are_capped(self):
         text = "Tests are written.\n\nI'll run the tests next."
         for build in (self.claude, self.codex):
             self.assertNudged(self.stop(build(text)))
+            self.assertNudged(self.stop(build(text, active=True)))
+            self.assertNudged(self.stop(build(text, active=True)))
             self.assertAllowed(self.stop(build(text, active=True)))
 
     def test_conditional_wait_is_allowed_but_unconditional_promise_is_not(self):
@@ -231,7 +233,7 @@ class KeepGoingTests(unittest.TestCase):
         for build in (self.claude, self.codex):
             self.assertAllowed(self.stop(build(text), "keepgoing-stop.py"))
 
-    def test_needs_owner_menu_is_nudged_once(self):
+    def test_needs_owner_menu_retries_are_capped(self):
         menus = (
             "Stopped before building.\n\nNEEDS-OWNER: Alexandre to choose how the backend reaches staging:\n"
             "- (a) Approve a CI change to the backend deploy.\n- (b) Ship backend main as it is.\n"
@@ -244,6 +246,8 @@ class KeepGoingTests(unittest.TestCase):
                 result = self.stop(build(text))
                 self.assertNudged(result)
                 self.assertIn("already asked for", result["reason"])
+                self.assertNudged(self.stop(build(text, active=True), "keepgoing-stop.py"))
+                self.assertNudged(self.stop(build(text, active=True), "keepgoing-stop.py"))
                 self.assertAllowed(self.stop(build(text, active=True), "keepgoing-stop.py"))
 
     def test_needs_owner_earlier_does_not_hide_a_later_promise(self):

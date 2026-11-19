@@ -56,6 +56,7 @@ tools; and every inventory row records whether it predates this change.
 - Cluster by root cause, validate repros, create one plan, and fix per cluster; after three failed attempts, stop and escalate with repro output.
 - Re-walk the complete workflow once at the aggregate batch head; every step needs a verdict and evidence.
 - Protected shipping remains blocked until inventory, re-walk, evidence, and commit freshness requirements pass. Never delete `.qa/config.json` to bypass the gate.
+- Bound QA scenarios ship with their tests. In a repository with committed QA scenarios (`qa/scenarios/*.json`, the Seahaven qa-framework), a scenario with `binding.status` `draft` or `ready` must have its `binding.file` committed in the same push, naming the scenario the way the runner matches it (`qaCase("QAS-…")` in Playwright, `@QAS-…` in a Vitest test name, `DisplayName = "@QAS-… …"` in xUnit). A scenario whose test is not written yet is `binding.status: "awaiting-implementation"` with `binding.file: null` and a non-empty `binding.awaiting` (the branch, PR or ticket that delivers it), never a binding to a file that does not exist. Run `node scripts/qa-check-bindings.mjs` (or `qa check-bindings`) before every push; the pre-push hook, the agent push gate and the CI `qa-gate` (`BOUND_TEST_MISSING`) all refuse a missing or untagged bound test, and `--no-verify` does not get past the last two.
 
 ## Steps
 
