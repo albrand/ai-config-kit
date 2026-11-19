@@ -24,6 +24,52 @@ def command_from(payload):
     return command if isinstance(command, str) else None
 
 
+def shell_tokens(command):
+    """Return shell words/operators, ignoring quoted text and comments as syntax."""
+    tokens = []
+    i = 0
+    operators = ";&|()\n"
+    while i < len(command):
+        if command[i].isspace():
+            i += 1
+            continue
+        if command[i] == "#":
+            newline = command.find("\n", i)
+            i = len(command) if newline < 0 else newline + 1
+            continue
+        if command[i] in operators:
+            tokens.append((command[i], i, i + 1, True))
+            i += 1
+            continue
+
+        start = i
+        pieces = []
+        bare = True
+        while i < len(command) and not command[i].isspace() and command[i] not in operators:
+            char = command[i]
+            if char in "'\"":
+                bare = False
+                quote = char
+                i += 1
+                while i < len(command) and command[i] != quote:
+                    if quote == '"' and command[i] == "\\" and i + 1 < len(command):
+                        i += 1
+                    pieces.append(command[i])
+                    i += 1
+                if i < len(command):
+                    i += 1
+            elif char == "\\" and i + 1 < len(command):
+                bare = False
+                i += 1
+                pieces.append(command[i])
+                i += 1
+            else:
+                pieces.append(char)
+                i += 1
+        tokens.append(("".join(pieces), start, i, bare))
+    return tokens
+
+
 def reason(command):
     # Status is checked without invoking bb; hook execution must remain local and fast.
     for match in re.finditer(r"\bbb\s+thread\s+wait\b([^;&|\n]*)", command):
@@ -36,24 +82,31 @@ def reason(command):
     # only when the loop body sleeps or the wait has an explicit poll interval.
     loops = []
     stack = []
-    for token in re.finditer(r"\b(?:until|while|do|done)\b", command, re.I):
-        word = token.group(0).lower()
+    tokens = shell_tokens(command)
+    for word, token_start, token_end, bare in tokens:
+        word = word.lower()
+        if not bare:
+            continue
         if word in {"until", "while"}:
-            stack.append({"start": token.start(), "do": None})
+            stack.append({"start": token_start, "do": None})
         elif word == "do":
             pending = next((loop for loop in reversed(stack) if loop["do"] is None), None)
             if pending is not None:
-                pending["do"] = token.end()
-        elif stack:
+                pending["do"] = token_end
+        elif word == "done" and stack:
             loop = stack.pop()
             if loop["do"] is not None:
-                loops.append((loop["start"], loop["do"], token.start(), token.end()))
+                loops.append((loop["start"], loop["do"], token_start, token_end))
 
     for start, body_start, body_end, end in loops:
         whole_loop = command[start:end]
         body = command[body_start:body_end]
-        if re.search(r"\bbb\s+thread\s+(?:wait|show)\b", whole_loop):
-            if not re.search(r"\bsleep\b", body) and not re.search(r"--poll-interval(?:=|\s)", whole_loop):
+        words = [word for word, _, _, _ in shell_tokens(whole_loop)]
+        has_wait = any(words[index:index + 3] in (["bb", "thread", "wait"], ["bb", "thread", "show"]) for index in range(len(words) - 2))
+        has_sleep = any(word == "sleep" for word, _, _, _ in shell_tokens(body))
+        has_poll_interval = any(word == "--poll-interval" or word.startswith("--poll-interval=") for word in words)
+        if has_wait:
+            if not has_sleep and not has_poll_interval:
                 return f"This bb thread wait/show loop has no delay and can spin at full CPU. {SUGGESTION}"
     return None
 
