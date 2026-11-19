@@ -42,6 +42,16 @@ class ThreadWaitGuardTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
 
+    def test_quoted_done_does_not_end_loop_detection(self):
+        code, result = self.decide('while true; do echo "done"; bb thread show thr_x; done')
+        self.assertEqual(code, 2)
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_comment_done_does_not_end_loop_detection(self):
+        code, result = self.decide('while true; do echo "x # done"; bb thread wait thr_x --status idle; done')
+        self.assertEqual(code, 2)
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_poll_interval_allows_single_wait(self):
         self.assertEqual(self.decide("bb thread wait thr_x --status active --timeout 1h --poll-interval 120000")[0], 0)
 
