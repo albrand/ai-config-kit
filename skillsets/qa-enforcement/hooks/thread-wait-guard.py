@@ -32,13 +32,13 @@ def reason(command):
         if status and status.group(1).strip("'\"\\") not in STATUSES:
             return f"Invalid bb thread status {status.group(1)!r}. Valid statuses are pending, idle, starting, active, stopping, error. {SUGGESTION}"
 
-    # Identify shell loop bodies. A wait/show loop is safe only when its body
-    # contains an explicit sleep or a bb polling interval.
+    # A wait/show can run in either the loop condition or body. It is safe
+    # only when the loop body sleeps or the wait has an explicit poll interval.
     loops = re.finditer(r"\b(?:until|while)\b(.*?)(?:\bdo\b)(.*?)(?:\bdone\b)", command, re.I | re.S)
     for loop in loops:
-        body = loop.group(2)
-        if re.search(r"\bbb\s+thread\s+(?:wait|show)\b", body):
-            if not re.search(r"\bsleep\b|--poll-interval(?:=|\s)", body):
+        whole_loop, body = loop.group(0), loop.group(2)
+        if re.search(r"\bbb\s+thread\s+(?:wait|show)\b", whole_loop):
+            if not re.search(r"\bsleep\b", body) and not re.search(r"--poll-interval(?:=|\s)", whole_loop):
                 return f"This bb thread wait/show loop has no delay and can spin at full CPU. {SUGGESTION}"
     return None
 

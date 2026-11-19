@@ -27,6 +27,16 @@ class ThreadWaitGuardTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
 
+    def test_wait_in_until_condition_without_delay_denied(self):
+        code, result = self.decide("until bb thread wait thr_x --status active --timeout 1h; do :; done")
+        self.assertEqual(code, 2)
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_negated_wait_in_while_condition_without_delay_denied(self):
+        code, result = self.decide("while ! bb thread wait thr_x --status idle; do :; done")
+        self.assertEqual(code, 2)
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_poll_interval_allows_single_wait(self):
         self.assertEqual(self.decide("bb thread wait thr_x --status active --timeout 1h --poll-interval 120000")[0], 0)
 
