@@ -34,9 +34,24 @@ def reason(command):
 
     # A wait/show can run in either the loop condition or body. It is safe
     # only when the loop body sleeps or the wait has an explicit poll interval.
-    loops = re.finditer(r"\b(?:until|while)\b(.*?)(?:\bdo\b)(.*?)(?:\bdone\b)", command, re.I | re.S)
-    for loop in loops:
-        whole_loop, body = loop.group(0), loop.group(2)
+    loops = []
+    stack = []
+    for token in re.finditer(r"\b(?:until|while|do|done)\b", command, re.I):
+        word = token.group(0).lower()
+        if word in {"until", "while"}:
+            stack.append({"start": token.start(), "do": None})
+        elif word == "do":
+            pending = next((loop for loop in reversed(stack) if loop["do"] is None), None)
+            if pending is not None:
+                pending["do"] = token.end()
+        elif stack:
+            loop = stack.pop()
+            if loop["do"] is not None:
+                loops.append((loop["start"], loop["do"], token.start(), token.end()))
+
+    for start, body_start, body_end, end in loops:
+        whole_loop = command[start:end]
+        body = command[body_start:body_end]
         if re.search(r"\bbb\s+thread\s+(?:wait|show)\b", whole_loop):
             if not re.search(r"\bsleep\b", body) and not re.search(r"--poll-interval(?:=|\s)", whole_loop):
                 return f"This bb thread wait/show loop has no delay and can spin at full CPU. {SUGGESTION}"
