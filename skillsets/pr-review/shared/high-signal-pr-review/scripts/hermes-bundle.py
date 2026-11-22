@@ -1,0 +1,1090 @@
+#!/usr/bin/env python3
+"""Build the complete Hermes review bundle for a PR in one command.
+
+Writes pr.diff (split into pr.diff.partN plus pr.diff.index.md over the cap),
+pr-body.md, head.json, tests/ (changed test files fetched at head) and MANIFEST.md, then
+prints the `bb fleet validate` command line. It never runs that command.
+
+Usage: python3 -I hermes-bundle.py --repo OWNER/NAME --pr N [--out DIR]
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path, PurePosixPath
+
+DIFF_BUDGET = 64 * 1024
+TOTAL_BUDGET = 128 * 1024
+PR_BODY_CAP = 8 * 1024
+CHANGED_ASSERTIONS_CAP = 16 * 1024
+NEW_TESTS_CAP = 4 * 1024
+SENSITIVE_GLOBS = (".env*", "*.pem", "*.key", "*id_rsa*", "*id_ed25519*", "*id_ecdsa*", "*secret*", "*credential*")
+PROVENANCE_SECRET = re.compile(
+    rb"(?i)(?:^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]+_)*(?:api[_-]?key|secret|password|token|credential)\s*[:=]|BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY"
+)
+PEM_BEGIN = re.compile(rb"^\s*-----BEGIN (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+PEM_END = re.compile(rb"^\s*-----END (?:RSA |OPENSSH |EC |ENCRYPTED )?PRIVATE KEY-----")
+REDACT_LINE = b"[redacted: secret-like content]\n"
+
+
+def _pem_stays_open(payload: bytes, in_block: bool) -> bool:
+    if in_block:
+        return not PEM_END.search(payload)
+    if PEM_BEGIN.search(payload):
+        return not PEM_END.search(payload)
+    return False
+
+
+def redact_secret_bytes(data: bytes) -> bytes:
+    out: list[bytes] = []
+    in_block = False
+    for line in data.splitlines(keepends=True):
+        if in_block:
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, True)
+            continue
+        if PEM_BEGIN.search(line):
+            out.append(REDACT_LINE)
+            in_block = _pem_stays_open(line, False)
+            continue
+        if PROVENANCE_SECRET.search(line):
+            out.append(REDACT_LINE)
+        else:
+            out.append(line)
+    return b"".join(out)
+
+
+def redact_secret_diff_text(diff_text: str) -> str:
+    out: list[str] = []
+    in_block = False
+    for line in diff_text.splitlines(keepends=True):
+        raw = line.encode("utf-8")
+        if raw.startswith(b"@@"):
+            in_block = False
+            out.append(line)
+            continue
+        if raw.startswith(b"+++") or raw.startswith(b"---") or raw[:1] not in (b"+", b"-", b" "):
+            out.append(line)
+            continue
+        prefix, payload = raw[:1], raw[1:]
+        if in_block:
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, True)
+            continue
+        if PEM_BEGIN.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+            in_block = _pem_stays_open(payload, False)
+            continue
+        if PROVENANCE_SECRET.search(payload):
+            out.append(prefix.decode() + "[redacted: secret-like content]\n")
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def refuse_secret_content(data: bytes, label: str) -> None:
+    if PROVENANCE_SECRET.search(data):
+        raise BundleError(f"refusing bundle with secret-like content: {label}")
+
+
+def refuse_secret_provenance(data: bytes, label: str) -> None:
+    refuse_secret_content(data, label)
+
+
+TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "__mocks__", "testing"}
+EVIDENCE_DIRS = {"__fixtures__", "fixtures", "__snapshots__", "snapshots", "testdata", "recordings", "golden"}
+EVIDENCE_EXTENSIONS = {".snap", ".golden", ".ndjson", ".jsonl"}
+TEST_NAME = re.compile(
+    r"(^test_|_test\.|\.test\.|\.spec\.|_spec\.|^test\.|^tests\.|(Test|Tests|Spec)\.[A-Za-z]+$|^conftest\.py$)"
+)
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+GH_TIMEOUT = 120
+HUNK_NEW = re.compile(r"^@@ .* \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+class BundleError(Exception):
+    pass
+
+
+def gh(*args: str, binary: bool = False) -> bytes | str:
+    try:
+        proc = subprocess.run(["gh", *args], capture_output=True, timeout=GH_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BundleError(f"gh {args[0]} failed to run: {exc}") from exc
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", "replace").strip()[:500]
+        raise BundleError(f"gh {' '.join(args[:3])} exited {proc.returncode}: {err}")
+    return proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
+
+
+def collect_sensitive_paths(files: list[dict]) -> list[str]:
+    names: set[str] = set()
+    for entry in files:
+        path = entry["path"]
+        if is_sensitive(path):
+            names.add(path)
+        prev = entry.get("previous_filename") or ""
+        if prev and is_sensitive(prev):
+            names.add(path)
+            names.add(prev)
+    return sorted(names)
+
+
+def is_sensitive(path: str) -> bool:
+    name = PurePosixPath(path).name.lower()
+    return any(fnmatch.fnmatch(name, g) for g in SENSITIVE_GLOBS)
+
+
+def decode_git_diff_path(raw: str) -> str:
+    if raw.startswith('"') and raw.endswith('"'):
+        inner = raw[1:-1]
+        out = bytearray()
+        i = 0
+        while i < len(inner):
+            if inner[i] == "\\":
+                if i + 1 < len(inner) and "0" <= inner[i + 1] <= "7":
+                    j = i + 1
+                    while j < len(inner) and j < i + 4 and "0" <= inner[j] <= "7":
+                        j += 1
+                    out.append(int(inner[i + 1 : j], 8))
+                    i = j
+                elif i + 1 < len(inner):
+                    out.extend(inner[i + 1].encode("utf-8"))
+                    i += 2
+                else:
+                    i += 1
+            else:
+                out.extend(inner[i].encode("utf-8"))
+                i += 1
+        raw = out.decode("utf-8")
+    if raw.startswith("a/") or raw.startswith("b/"):
+        raw = raw[2:]
+    return raw
+
+
+def parse_diff_git_header(line: str) -> tuple[str, str] | None:
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[len("diff --git ") :].strip()
+    quoted = re.match(r'"((?:\\.|[^"\\])*)" "((?:\\.|[^"\\])*)"$', rest)
+    if quoted:
+        a = decode_git_diff_path('"' + quoted.group(1) + '"')
+        b = decode_git_diff_path('"' + quoted.group(2) + '"')
+        return a, b
+    plain = re.match(r"a/(.+?) b/(.+)$", rest)
+    if plain:
+        return plain.group(1), plain.group(2)
+    return None
+
+
+def parse_diff_name_line(prefix: str, line: str) -> str | None:
+    if not line.startswith(prefix):
+        return None
+    raw = line[len(prefix) :].strip()
+    if raw == "/dev/null":
+        return None
+    if raw.startswith('"'):
+        return decode_git_diff_path(raw)
+    if raw.startswith("a/") or raw.startswith("b/"):
+        return raw[2:]
+    return None
+
+
+def diff_block_repo_path(block: str) -> str | None:
+    for line in block.splitlines():
+        if line.startswith("+++ "):
+            path = parse_diff_name_line("+++ ", line)
+            if path:
+                return path
+    for line in block.splitlines():
+        if line.startswith("--- "):
+            path = parse_diff_name_line("--- ", line)
+            if path:
+                return path
+    first = block.split("\n", 1)[0]
+    parsed = parse_diff_git_header(first)
+    return parsed[1] if parsed else None
+
+
+def is_test_path(path: str) -> bool:
+    p = PurePosixPath(path)
+    return bool({x.lower() for x in p.parts[:-1]} & TEST_DIRS) or bool(TEST_NAME.search(p.name))
+
+
+def is_evidence_path(path: str) -> bool:
+    p = PurePosixPath(path)
+    dirs = {x.lower() for x in p.parts[:-1]}
+    return bool(dirs & EVIDENCE_DIRS) or (p.suffix.lower() in EVIDENCE_EXTENSIONS and bool(dirs & (TEST_DIRS | EVIDENCE_DIRS)))
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def normalize_check(item: dict) -> dict:
+    # CheckRun carries name/status/conclusion; StatusContext carries context/state.
+    return {
+        "name": item.get("name") or item.get("context") or "",
+        "state": item.get("status") or item.get("state") or "",
+        "conclusion": item.get("conclusion") or (item.get("state") if "context" in item else "") or "",
+    }
+
+
+def fetch_head(repo: str, pr: int) -> dict:
+    fields = "headRefOid,baseRefOid,title,url,mergeable,state,statusCheckRollup,body"
+    raw = json.loads(gh("pr", "view", str(pr), "-R", repo, "--json", fields))
+    head = raw.get("headRefOid") or ""
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise BundleError("gh returned no valid head SHA")
+    return {
+        "head_sha": head,
+        "base_sha": raw.get("baseRefOid") or "",
+        "title": raw.get("title") or "",
+        "url": raw.get("url") or "",
+        "mergeable": raw.get("mergeable") or "",
+        "pr_state": raw.get("state") or "",
+        "statusCheckRollup": [normalize_check(i) for i in raw.get("statusCheckRollup") or []],
+        "body": raw.get("body") or "",
+    }
+
+
+def changed_files(repo: str, pr: int) -> list[dict]:
+    out = gh("api", "--paginate", f"repos/{repo}/pulls/{pr}/files?per_page=100")
+    files: list[dict] = []
+    # --paginate concatenates JSON arrays; decode them one after another.
+    dec, i = json.JSONDecoder(), 0
+    while True:
+        while i < len(out) and out[i].isspace():
+            i += 1
+        if i >= len(out):
+            break
+        page, i = dec.raw_decode(out, i)
+        files.extend(page)
+    return [{"path": f["filename"], "status": f.get("status", ""), "previous_filename": f.get("previous_filename") or ""} for f in files]
+
+
+def _block_touches_sensitive_path(block: str, sensitive: set[str]) -> bool:
+    path = diff_block_repo_path(block)
+    if path and path in sensitive:
+        return True
+    for name in sensitive:
+        if f"--- a/{name}\n" in block or f"+++ b/{name}\n" in block:
+            return True
+        esc = name.replace('"', '\\"')
+        if f'--- "a/{esc}"\n' in block or f'+++ "b/{esc}"\n' in block:
+            return True
+    return False
+
+
+def redact_diff(diff: str, sensitive: set[str]) -> str:
+    if not sensitive:
+        return diff
+    kept = []
+    for b in re.split(r"(?m)^(?=diff --git )", diff):
+        first = b.split("\n", 1)[0]
+        if _block_touches_sensitive_path(b, sensitive):
+            kept.append(first + "\n[content omitted: sensitive file name]\n")
+        else:
+            kept.append(b)
+    return "".join(kept)
+
+
+def split_diff(data: bytes, cap: int) -> list[bytes]:
+    """Split at file boundaries; a single file block over the cap is cut by bytes."""
+    text = data.decode("utf-8", "replace")
+    blocks = [b.encode("utf-8") for b in re.split(r"(?m)^(?=diff --git )", text) if b]
+    parts: list[bytes] = []
+    cur = b""
+    for b in blocks:
+        while len(b) > cap:
+            if cur:
+                parts.append(cur)
+                cur = b""
+            cut = b[:cap]
+            nl = cut.rfind(b"\n")
+            if nl > 0:
+                cut = cut[: nl + 1]
+            parts.append(cut)
+            b = b[len(cut):]
+        if cur and len(cur) + len(b) > cap:
+            parts.append(cur)
+            cur = b""
+        cur += b
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+TEST_DECL = re.compile(rb"^\s*(?:(?:describe|it|test)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test\w*|class\s+Test\w*)")
+ASSERT_LINE = re.compile(
+    rb"(?i)(?:\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\b|\bassert_\w+|\.\s*toBe\s*\(|\.\s*toEqual\s*\(|\.toThrow|\.rejects|\.resolves|toHaveBeenCalled|pytest\.raises|\bshould\b)"
+)
+CHANGED_ASSERTIONS_INSTRUCTION = (
+    "For each entry, state whether it encodes a deliberate product change that the PR body names and justifies. "
+    "A weakened, inverted, renamed-away or removed assertion in a pre-existing test is a regression candidate: "
+    "report it as a defect unless the PR body justifies that exact behaviour change."
+)
+
+
+def write_pr_body(out: Path, body: str, written: list[Path]) -> None:
+    raw = body.encode("utf-8")
+    note = b""
+    if len(raw) > PR_BODY_CAP:
+        cut = raw[:PR_BODY_CAP]
+        nl = cut.rfind(b"\n")
+        if nl > PR_BODY_CAP // 2:
+            cut = cut[: nl + 1]
+        note = f"\n\n[truncated: PR body was {len(raw)} bytes, capped at {PR_BODY_CAP}]\n".encode()
+        raw = cut
+    raw = redact_secret_bytes(raw + note)
+    dest = out / "pr-body.md"
+    write(dest, raw + note, out)
+    written.append(dest)
+
+
+def _interesting_diff_line(raw: bytes) -> bool:
+    payload = raw[1:] if raw[:1] in (b"-", b"+") else raw
+    return bool(TEST_DECL.match(payload) or ASSERT_LINE.search(payload))
+
+
+NEW_TESTS_INSTRUCTION = (
+    "These tests are new in this PR. Review them as new code; the changed-assertion rule does not apply."
+)
+
+
+def _test_decl_summary(line: str) -> str:
+    s = line.strip()
+    m = re.match(
+        r"((?:describe|it|test)(?:\.\w+)*\s*\(\s*(['\"]))([^'\"]+)\2",
+        s,
+    )
+    if m:
+        return f"{m.group(1)}{m.group(3)}{m.group(2)})"
+    return s[:120]
+
+def _quoted_expectation_diff_line(raw: bytes) -> bool:
+    """Quoted string literals in test diffs (rule tuples, assert operands)."""
+    if raw[:1] not in (b"-", b"+") or raw.startswith(b"---") or raw.startswith(b"+++"):
+        return False
+    payload = raw[1:].strip()
+    if not payload or payload[:1] not in b"\"'":
+        return False
+    return len(payload) >= 10
+
+
+def _removed_test_or_assertion(raw: bytes) -> bool:
+    if not raw.startswith(b"-") or raw.startswith(b"---"):
+        return False
+    payload = raw[1:]
+    return bool(TEST_DECL.match(payload) or ASSERT_LINE.search(payload))
+
+
+SAFETY_PATH_COMPONENT_RE = re.compile(
+    r"quarantin|incident|guard|safety|settle|lease|(?<![a-z])lock(?![a-z])",
+    re.I,
+)
+SAFETY_DIFF_LINE_RE = re.compile(
+    r"quarantin|incident|recordIncident|settl|in[-_ ]?flight|unknown[-_ ]?(outcome|delivery)",
+    re.I,
+)
+SAFETY_LOCKFILE_BASENAMES = frozenset({"pnpm-lock.yaml", "package-lock.json", "yarn.lock"})
+
+
+def is_safety_lockfile_path(path: str) -> bool:
+    name = PurePosixPath(path).name
+    lower = name.lower()
+    if lower in SAFETY_LOCKFILE_BASENAMES:
+        return True
+    return lower.endswith(".lock")
+
+
+def _safety_path_component_matches(part: str) -> bool:
+    return bool(SAFETY_PATH_COMPONENT_RE.search(part))
+
+
+def collect_safety_state_files(
+    files: list[dict], diff_text: str, sensitive: set[str]
+) -> list[str]:
+    matched: set[str] = set()
+    for f in files:
+        path = f["path"]
+        if (
+            is_test_path(path)
+            or is_sensitive(path)
+            or path in sensitive
+            or is_safety_lockfile_path(path)
+        ):
+            continue
+        if PurePosixPath(path).suffix.lower() in {".md", ".txt", ".rst"}:
+            continue
+        if path.endswith("hermes-bundle.py"):
+            continue
+        for part in PurePosixPath(path).parts:
+            if _safety_path_component_matches(part):
+                matched.add(path)
+                break
+    for block in re.split(r"(?m)^(?=diff --git )", diff_text):
+        path = diff_block_repo_path(block)
+        if not path:
+            continue
+        if (
+            is_test_path(path)
+            or is_sensitive(path)
+            or path in sensitive
+            or is_safety_lockfile_path(path)
+        ):
+            continue
+        if PurePosixPath(path).suffix.lower() in {".md", ".txt", ".rst"}:
+            continue
+        if path.endswith("hermes-bundle.py"):
+            continue
+        for line in block.splitlines():
+            if not line or line[0] not in "+-":
+                continue
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if path.endswith("hermes-bundle.py") and (
+                "SAFETY_" in line or "re.compile" in line or "build_safety_state" in line
+            ):
+                continue
+            if SAFETY_DIFF_LINE_RE.search(line):
+                matched.add(path)
+                break
+    return sorted(matched)
+
+
+def build_safety_state_durability_section(paths: list[str]) -> str:
+    if not paths:
+        return ""
+    listed = paths[:10]
+    rest = len(paths) - len(listed)
+    file_list = ", ".join(listed) + (f", and {rest} more" if rest > 0 else "")
+    return (
+        "## Safety-state durability\n"
+        f"This PR changes quarantine, incident, guard or settlement code: {file_list}.\n"
+        "Rule on each: is every unknown-outcome or in-flight state persisted durably before the code "
+        "yields or awaits, and does it survive a process restart, plugin reload or new session as an "
+        "incident or quarantine (never silently cleared)? A state held only in memory across an await "
+        "is a defect."
+    )
+
+
+def build_changed_assertions_section(
+    diff_text: str,
+    files: list[dict],
+    sensitive: set[str],
+) -> tuple[str, int, str]:
+    status_by_path = {f["path"]: f.get("status", "") for f in files}
+    blocks: list[str] = []
+    new_by_path: dict[str, list[str]] = {}
+    cut = 0
+    new_cut = 0
+
+    for block in re.split(r"(?m)^(?=diff --git )", diff_text):
+        if not block.strip():
+            continue
+        path = diff_block_repo_path(block)
+        if not path:
+            continue
+        if path in sensitive or status_by_path.get(path) in ("", "added"):
+            continue
+        if not is_test_path(path):
+            continue
+        file_lines: list[str] = []
+        lines = block.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if not line.startswith("@@"):
+                i += 1
+                continue
+            hm = HUNK_NEW.match(line + "\n")
+            old_m = re.match(r"^@@ -(\d+)(?:,(\d+))?", line)
+            old_ln = int(old_m.group(1)) if old_m else 1
+            new_ln = int(hm.group(1)) if hm else old_ln
+            hunk_header = line
+            hunk_entries: list[str] = []
+            plus_lines: list[str] = []
+            new_in_hunk: list[str] = []
+            has_removed = False
+            i += 1
+            while i < len(lines) and not lines[i].startswith("@@"):
+                raw = lines[i].encode("utf-8")
+                if raw.startswith(b"-") and not raw.startswith(b"---"):
+                    if _removed_test_or_assertion(raw) or _quoted_expectation_diff_line(raw):
+                        has_removed = True
+                        hunk_entries.append(f"L{old_ln}: {lines[i]}")
+                    old_ln += 1
+                elif raw.startswith(b"+") and not raw.startswith(b"+++"):
+                    payload = raw[1:]
+                    if TEST_DECL.match(payload):
+                        plus_lines.append(f"L{new_ln}: {lines[i]}")
+                        new_in_hunk.append(f"L{new_ln}: {_test_decl_summary(lines[i][1:])}")
+                    elif _interesting_diff_line(raw) or _quoted_expectation_diff_line(raw):
+                        plus_lines.append(f"L{new_ln}: {lines[i]}")
+                    new_ln += 1
+                elif lines[i].startswith("\\"):
+                    pass
+                else:
+                    old_ln += 1
+                    new_ln += 1
+                i += 1
+            if has_removed:
+                hunk_entries.extend(plus_lines)
+                if hunk_entries:
+                    file_lines.append(hunk_header)
+                    file_lines.extend(hunk_entries)
+            elif new_in_hunk:
+                new_by_path.setdefault(path, []).extend(new_in_hunk)
+            continue
+        if file_lines:
+            blocks.append("### " + path + "\n\n```\n" + "\n".join(file_lines) + "\n```")
+
+    title = "## Changed assertions in tests this PR did not create"
+    if not blocks:
+        changed_md = f"{title}\n\nNo assertions changed in pre-existing tests.\n"
+    else:
+        body_parts = [title, "", CHANGED_ASSERTIONS_INSTRUCTION, ""]
+        used = len("\n".join(body_parts).encode())
+        for b in blocks:
+            chunk = b + "\n\n"
+            if used + len(chunk.encode()) > CHANGED_ASSERTIONS_CAP:
+                cut += 1
+                continue
+            body_parts.extend([b, ""])
+            used += len(chunk.encode())
+        if cut:
+            body_parts.append(
+                f"[truncated: {cut} file block(s) omitted to stay within {CHANGED_ASSERTIONS_CAP} bytes]"
+            )
+            body_parts.append("")
+        changed_md = "\n".join(body_parts).rstrip() + "\n"
+
+    new_md = ""
+    if new_by_path:
+        new_parts = ["## New tests added to existing files", "", NEW_TESTS_INSTRUCTION, ""]
+        used_new = len("\n".join(new_parts).encode())
+        for path in sorted(new_by_path):
+            entries = new_by_path[path]
+            block = "### " + path + "\n\n" + "\n".join(f"- {e}" for e in entries) + "\n"
+            if used_new + len(block.encode()) > NEW_TESTS_CAP:
+                new_cut += 1
+                continue
+            new_parts.extend([block, ""])
+            used_new += len(block.encode())
+        if new_cut:
+            new_parts.append(
+                f"[truncated: {new_cut} file block(s) omitted to stay within {NEW_TESTS_CAP} bytes]"
+            )
+            new_parts.append("")
+        new_md = "\n".join(new_parts).rstrip() + "\n"
+
+    return changed_md, cut, new_md
+
+
+
+
+
+
+def split_lines(data: bytes, cap: int) -> list[tuple[bytes, int, int]]:
+    """Split at line ends into parts of at most cap bytes: (part, first line, last line)."""
+    parts: list[tuple[bytes, int, int]] = []
+    cur, first, n = b"", 1, 0
+    for n, line in enumerate(data.splitlines(keepends=True), 1):
+        while len(line) > cap:
+            if cur:
+                parts.append((cur, first, n - 1 if n > first else n))
+                cur, first = b"", n
+            parts.append((line[:cap], n, n))
+            line, first = line[cap:], n
+        if cur and len(cur) + len(line) > cap:
+            parts.append((cur, first, n - 1))
+            cur, first = b"", n
+        cur += line
+    if cur:
+        parts.append((cur, first, max(n, first)))
+    return parts
+
+
+def write(path: Path, data: bytes, out: Path) -> None:
+    try:
+        rel_parts = path.relative_to(out).parts
+    except ValueError as exc:
+        raise BundleError(f"refusing write outside bundle output dir: {path}") from exc
+    if not rel_parts:
+        raise BundleError(f"refusing write outside bundle output dir: {path}")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
+    out_fd = os.open(out, dir_flags)
+    dir_fd = out_fd
+    try:
+        for part in rel_parts[:-1]:
+            try:
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except FileNotFoundError:
+                os.mkdir(part, mode=0o755, dir_fd=dir_fd)
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+            except OSError as exc:
+                raise BundleError(f"refusing write to {path}: {exc}") from exc
+            if dir_fd != out_fd:
+                os.close(dir_fd)
+            dir_fd = next_fd
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
+        try:
+            file_fd = os.open(rel_parts[-1], file_flags, dir_fd=dir_fd, mode=0o644)
+        except OSError as exc:
+            raise BundleError(f"refusing write to {path}: {exc}") from exc
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(file_fd, view) :]
+        finally:
+            os.close(file_fd)
+    finally:
+        if dir_fd != out_fd:
+            os.close(dir_fd)
+        os.close(out_fd)
+
+
+def changed_line_ranges(diff_text: str, repo_path: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for block in re.split(r"(?m)^(?=diff --git )", diff_text):
+        path = diff_block_repo_path(block)
+        if not path or path != repo_path:
+            continue
+        for hunk in HUNK_NEW.finditer(block):
+            start = int(hunk.group(1))
+            count = int(hunk.group(2) or 1)
+            if count == 0:
+                continue
+            ranges.append((start, start + count - 1))
+    return ranges
+
+
+def test_decl_lines(body: bytes) -> list[str]:
+    return [
+        f"- line {i}: {line.strip().decode('utf-8', 'replace')[:160]}"
+        for i, line in enumerate(body.splitlines(), 1)
+        if TEST_DECL.match(line)
+    ]
+
+
+def build_omitted_md(repo_path: str, body: bytes, diff_text: str) -> bytes:
+    lines = [
+        f"# {repo_path} (omitted for bundle size)",
+        "",
+        f"Size: {len(body)} bytes. sha256: {sha256(body)}",
+        "",
+        "## Changed line ranges (from pr.diff)",
+        "",
+    ]
+    ranges = changed_line_ranges(diff_text, repo_path)
+    if ranges:
+        lines += [f"- lines {lo}-{hi}" for lo, hi in ranges]
+    else:
+        lines.append("- (no hunks for this path in pr.diff)")
+    decls = test_decl_lines(body)
+    if decls:
+        lines += ["", "## Test declarations", ""] + decls
+    lines += [
+        "",
+        "Every changed line is in pr.diff; the full file is not in this bundle.",
+        "",
+    ]
+    return "\n".join(lines).encode()
+
+
+def projected_split_size(body: bytes, cap: int) -> int:
+    if len(body) <= cap:
+        return len(body)
+    parts = split_lines(body, cap)
+    index_overhead = 512 + len(body) // 10
+    return sum(len(p[0]) for p in parts) + index_overhead
+
+
+class SourcePlan:
+    __slots__ = ("repo_path", "body", "is_fixture", "mode")
+
+    def __init__(self, repo_path: str, body: bytes, is_fixture: bool, mode: str):
+        self.repo_path = repo_path
+        self.body = body
+        self.is_fixture = is_fixture
+        self.mode = mode  # full | split | omitted
+
+
+def bundle_file_paths(out: Path) -> list[Path]:
+    return sorted(p for p in out.rglob("*") if p.is_file())
+
+
+def bundle_byte_total(out: Path, manifest_size_hint: int = 4096) -> int:
+    total = manifest_size_hint
+    for p in bundle_file_paths(out):
+        if p.name != "MANIFEST.md":
+            total += p.stat().st_size
+    return total
+
+
+def plan_source_modes(
+    sources: list[SourcePlan],
+    cap: int,
+    total_budget: int,
+    fixed_size: int,
+    manifest_hint: int,
+    diff_text: str,
+) -> None:
+    """Mutate sources.mode so the projected bundle fits total_budget."""
+    for s in sources:
+        if s.mode == "omitted":
+            continue
+        if len(s.body) <= cap:
+            s.mode = "full"
+        else:
+            s.mode = "split"
+
+    over_cap = [s for s in sources if len(s.body) > cap]
+    if len(over_cap) > 1:
+        raw = fixed_size + manifest_hint + sum(len(s.body) for s in over_cap)
+        if raw > total_budget:
+            for s in over_cap:
+                s.mode = "omitted"
+
+    def projected() -> int:
+        size = fixed_size + manifest_hint
+        for s in sources:
+            if s.mode == "omitted":
+                size += len(build_omitted_md(s.repo_path, s.body, diff_text))
+            elif s.mode == "full":
+                size += len(s.body)
+            else:
+                size += projected_split_size(s.body, cap)
+        return size
+
+    while projected() > total_budget:
+        pool = [s for s in sources if s.mode == "split" and not s.is_fixture]
+        if not pool:
+            pool = [s for s in sources if s.mode != "omitted" and not s.is_fixture]
+        if pool:
+            pick = max(pool, key=lambda s: len(s.body))
+            pick.mode = "omitted"
+            continue
+        pool = [s for s in sources if s.mode != "omitted" and s.is_fixture]
+        if not pool:
+            break
+        pick = max(pool, key=lambda s: len(s.body))
+        pick.mode = "omitted"
+
+
+def write_source(out: Path, plan: SourcePlan, cap: int, diff_text: str, written: list[Path]) -> None:
+    plan.body = redact_secret_bytes(plan.body)
+    root = "fixtures" if plan.is_fixture else "tests"
+    base = out / root / plan.repo_path
+    if plan.mode == "omitted":
+        dest = base.with_name(base.name + ".omitted.md")
+        write(dest, build_omitted_md(plan.repo_path, plan.body, diff_text), out)
+        written.append(dest)
+        return
+    if plan.mode == "full":
+        write(base, plan.body, out)
+        written.append(base)
+        return
+    index = [
+        f"# {plan.repo_path} index\n\n{len(plan.body)} bytes, over the {cap}-byte cap; split at line ends.\n",
+        "| part | lines | bytes |",
+        "|---|---|---|",
+    ]
+    for n, (part, lo, hi) in enumerate(split_lines(plan.body, cap), 1):
+        name = base.with_name(f"{base.name}.part{n}")
+        write(name, part, out)
+        written.append(name)
+        index.append(f"| {name.name} | {lo}-{hi} | {len(part)} |")
+    index += ["", "## Test declarations", ""]
+    index += test_decl_lines(plan.body)
+    idx_path = base.with_name(base.name + ".index.md")
+    write(idx_path, ("\n".join(index) + "\n").encode(), out)
+    written.append(idx_path)
+
+
+def remove_source_artifacts(out: Path, repo_path: str, is_fixture: bool) -> None:
+    root = "fixtures" if is_fixture else "tests"
+    base = out / root / repo_path
+    if base.is_file():
+        base.unlink()
+    parent = base.parent
+    stem = base.name
+    if parent.is_dir():
+        for p in parent.glob(f"{stem}.part*"):
+            p.unlink()
+        for suffix in (".index.md", ".omitted.md"):
+            extra = parent / f"{stem}{suffix}"
+            if extra.is_file():
+                extra.unlink()
+
+
+
+
+def _remove_prior_stamp_artifacts(out: Path, prior: list) -> None:
+    root = out.resolve()
+    parents_for_rmdir: set[Path] = set()
+    for rel in prior:
+        if rel is None:
+            continue
+        rel_str = str(rel)
+        if not rel_str or PurePosixPath(rel_str).is_absolute() or ".." in PurePosixPath(rel_str).parts:
+            continue
+        candidate = out / rel_str
+        try:
+            candidate.relative_to(out)
+        except ValueError:
+            continue
+        if candidate.is_symlink():
+            candidate.unlink()
+            parents_for_rmdir.add(candidate.parent)
+            continue
+        resolved = candidate.resolve()
+        if resolved == root:
+            continue
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            resolved.unlink()
+            parents_for_rmdir.add(resolved.parent)
+    for parent in sorted(parents_for_rmdir, key=lambda p: len(p.parts), reverse=True):
+        try:
+            parent.relative_to(out)
+        except ValueError:
+            continue
+        if not parent.is_dir():
+            continue
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+
+def build(
+    repo: str,
+    pr: int,
+    out: Path | None,
+    allow_sensitive: bool,
+    cap: int,
+    total_budget: int,
+    provenance: list[Path] | None = None,
+) -> tuple[Path, list[str]]:
+    head = fetch_head(repo, pr)
+    sha = head["head_sha"]
+    files = changed_files(repo, pr)
+    sensitive = collect_sensitive_paths(files)
+    if sensitive and not allow_sensitive:
+        raise BundleError(
+            "refusing: changed files with sensitive names: "
+            + ", ".join(sensitive)
+            + " (rerun with --allow-sensitive-names to list them without content)"
+        )
+    out = out or Path("/tmp/hermes-bundle") / f"{repo.split('/')[1]}-{pr}-{sha[:12]}"
+    if out.exists() and out.is_symlink():
+        raise BundleError(f"refusing bundle output symlink: {out}")
+    out.mkdir(parents=True, exist_ok=True)
+    if not out.is_dir():
+        raise BundleError(f"refusing bundle output path: {out}")
+    stamp_path = out / ".hermes-bundle-artifacts.json"
+    if stamp_path.is_file():
+        try:
+            prior = json.loads(stamp_path.read_text())
+        except json.JSONDecodeError:
+            prior = []
+        if isinstance(prior, list):
+            _remove_prior_stamp_artifacts(out, prior)
+    written: list[Path] = []
+
+    def bundle_artifacts() -> list[Path]:
+        return sorted(set(written), key=lambda path: str(path))
+
+    diff_text = redact_diff(gh("pr", "diff", str(pr), "-R", repo), set(sensitive))
+    diff_text = redact_secret_diff_text(diff_text)
+    diff = diff_text.encode("utf-8")
+    split_note = ""
+    if len(diff) > cap:
+        parts = split_diff(diff, cap)
+        index = [f"# pr.diff index\n\nDiff is {len(diff)} bytes, over the {cap}-byte cap; read parts in order.\n"]
+        for n, part in enumerate(parts, 1):
+            name = f"pr.diff.part{n}"
+            write(out / name, part, out)
+            written.append(out / name)
+            index.append(f"- {name}: {len(part)} bytes, sha256 {sha256(part)}")
+        write(out / "pr.diff.index.md", ("\n".join(index) + "\n").encode(), out)
+        written.append(out / "pr.diff.index.md")
+        split_note = f"pr.diff split into {len(parts)} parts"
+    else:
+        write(out / "pr.diff", diff, out)
+        written.append(out / "pr.diff")
+
+    write_pr_body(out, head.get("body", ""), written)
+
+    tests: list[str] = []
+    fixtures: list[str] = []
+    skipped: list[str] = []
+    sources: list[SourcePlan] = []
+    for f in files:
+        if f["status"] == "removed" or not (is_test_path(f["path"]) or is_evidence_path(f["path"])) or f["path"] in sensitive:
+            continue
+        try:
+            body = gh("api", "-H", "Accept: application/vnd.github.raw",
+                      f"repos/{repo}/contents/{f['path']}?ref={sha}", binary=True)
+        except BundleError as exc:
+            skipped.append(f"{f['path']} ({exc})")
+            continue
+        is_fixture = is_evidence_path(f["path"])
+        (fixtures if is_fixture else tests).append(f["path"])
+        sources.append(SourcePlan(f["path"], body, is_fixture, "full"))
+
+    fixed_size = sum(p.stat().st_size for p in written)
+    plan_source_modes(sources, cap, total_budget, fixed_size, manifest_hint=4096, diff_text=diff_text)
+    omitted_for_size: list[tuple[str, int]] = []
+    for plan in sources:
+        if plan.mode == "omitted":
+            omitted_for_size.append((plan.repo_path, len(plan.body)))
+        remove_source_artifacts(out, plan.repo_path, plan.is_fixture)
+        write_source(out, plan, cap, diff_text, written)
+
+    # Bind to one head: if the PR moved while we were fetching, the parts disagree.
+    if fetch_head(repo, pr)["head_sha"] != sha:
+        raise BundleError("PR head moved while the bundle was built; rerun")
+
+    write(out / "head.json", json.dumps(head, indent=2, sort_keys=True).encode() + b"\n", out)
+    written.append(out / "head.json")
+
+    for src in provenance or []:
+        if is_sensitive(src.name):
+            raise BundleError(f"refusing sensitive provenance filename: {src.name}")
+        if not src.is_file():
+            raise BundleError(f"provenance file not found: {src}")
+        data = src.read_bytes()
+        refuse_secret_provenance(data, src.name)
+        dest = out / "provenance" / src.name
+        write(dest, data, out)
+        written.append(dest)
+
+    lines = [
+        f"# Hermes review bundle: {repo} PR #{pr}",
+        "",
+        f"**Bound to head `{sha}`.** Base `{head['base_sha']}`. Do not reuse this bundle after the head moves.",
+        "",
+        f"- Title: {head['title']}",
+        f"- URL: {head['url']}",
+        f"- Changed files: {len(files)}; test files included: {len(tests)}",
+        "",
+        "**The files listed below are the only files you have.** There is no repository checkout. Do not read paths"
+        " outside this bundle; a path that is not listed, or that a note says was omitted, is unavailable, so do not"
+        " retry it. A test file over the per-file cap is split into `.partN` files with an `.index.md` of line ranges"
+        " and test names, or replaced by a `.omitted.md` summary when the total bundle budget requires it. Review"
+        " from these files and the diff.",
+    ]
+    pr_body_note = (
+        "`pr-body.md` is context for judging behaviour changes. Do not report the PR body's wording or"
+        " repository-required markers (for example `> AGENT GENERATED`) as defects."
+    )
+    lines.append("")
+    lines.append(f"- {pr_body_note}")
+    changed_assertions_md, _assert_cut, new_tests_md = build_changed_assertions_section(
+        diff_text, files, set(sensitive)
+    )
+    safety_files = collect_safety_state_files(files, diff_text, set(sensitive))
+    safety_md = build_safety_state_durability_section(safety_files)
+    lines.append("")
+    lines.append(changed_assertions_md.rstrip())
+    if safety_md:
+        lines.append("")
+        lines.append(safety_md)
+    if new_tests_md:
+        lines.append("")
+        lines.append(new_tests_md.rstrip())
+    if split_note:
+        lines.append(f"- {split_note}; see pr.diff.index.md")
+    over_note = ""
+    pre_manifest_total = sum(p.stat().st_size for p in bundle_artifacts())
+    if pre_manifest_total + 4096 > total_budget:
+        over_note = f"bundle is at least {pre_manifest_total} bytes before MANIFEST.md, over the {total_budget}-byte total budget"
+        lines.append(f"- **Warning:** {over_note}")
+    lines += ["", "## Files", "", "| file | bytes | sha256 |", "|---|---|---|"]
+    on_disk = bundle_artifacts()
+    for p in sorted(on_disk):
+        if p.name == "MANIFEST.md":
+            continue
+        data = p.read_bytes()
+        lines.append(f"| {p.relative_to(out)} | {len(data)} | {sha256(data)} |")
+    if omitted_for_size:
+        lines += ["", "## Omitted for size", ""]
+        for path, size in sorted(omitted_for_size):
+            lines.append(f"- {path} ({size} bytes)")
+    if sensitive:
+        lines += ["", "## Sensitive-name files (listed, content withheld)", ""] + [f"- {s}" for s in sensitive]
+    if skipped:
+        lines += ["", "## Test files that could not be fetched", ""] + [f"- {s}" for s in skipped]
+    if fixtures and not provenance:
+        lines += ["", "fixtures changed; no provenance supplied"]
+    lines += ["", f"Reminder: this bundle is bound to head {sha}; rebuild it if the PR head changes.", ""]
+    write(out / "MANIFEST.md", "\n".join(lines).encode(), out)
+
+    final_total = bundle_byte_total(out, manifest_size_hint=0)
+    if final_total > total_budget and not over_note:
+        over_note = f"bundle is {final_total} bytes, over the {total_budget}-byte total budget"
+
+    stamp_paths = sorted(str(p.relative_to(out)) for p in bundle_artifacts())
+    write(stamp_path, (json.dumps(stamp_paths, indent=2) + "\n").encode(), out)
+
+    evidence_paths = bundle_artifacts() + [out / "MANIFEST.md", stamp_path]
+    claim = (
+        f"Review {repo} PR #{pr} at head {sha}: report defects only; "
+        "rule on every entry under 'Changed assertions in tests this PR did not create'"
+    )
+    if safety_files:
+        claim += "; rule on 'Safety-state durability'"
+    topic = f"{repo.split('/')[1]}-pr-{pr}"
+    cmd = ["bb", "fleet", "validate", claim, "--topic", topic,
+           "--scope", f"Review PR #{pr} at head {sha[:12]} for defects"]
+    for p in evidence_paths:
+        cmd += ["--evidence", str(p)]
+    return out, cmd, over_note
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--repo", required=True, help="OWNER/NAME")
+    ap.add_argument("--pr", required=True, type=int)
+    ap.add_argument("--out", type=Path)
+    ap.add_argument("--allow-sensitive-names", action="store_true")
+    ap.add_argument("--provenance", action="append", type=Path, default=[], metavar="FILE")
+    ap.add_argument("--diff-cap", type=int, default=DIFF_BUDGET, help=argparse.SUPPRESS)
+    ap.add_argument("--total-budget", type=int, default=TOTAL_BUDGET, help=argparse.SUPPRESS)
+    a = ap.parse_args(argv)
+    if not REPO_RE.match(a.repo) or a.pr < 1:
+        print("error: bad --repo or --pr", file=sys.stderr)
+        return 2
+    try:
+        out, cmd, over_note = build(
+            a.repo, a.pr, a.out, a.allow_sensitive_names, a.diff_cap, a.total_budget, a.provenance
+        )
+        if "fixtures changed; no provenance supplied" in (out / "MANIFEST.md").read_text():
+            print("fixtures changed; no provenance supplied", file=sys.stderr)
+        if over_note:
+            print(f"warning: {over_note}", file=sys.stderr)
+    except (BundleError, json.JSONDecodeError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"bundle: {out}\n")
+    print("Not run. Start the Hermes round with:\n")
+    print(shlex.join(cmd))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

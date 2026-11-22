@@ -1,0 +1,13 @@
+name: inspect-run
+on: workflow_dispatch
+permissions:
+  contents: read
+  actions: read
+env:
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - env: { NOTE: 'hello - harmless', GH_TOKEN: '' }
+        run: gh run view "$RUN_ID"

@@ -42,7 +42,7 @@ in the orchestrator:
 2. **Loaded by reading the file** — the agent Reads `.../<name>/SKILL.md`. That
    read is the only trace. Attribute it to the skill rather than to `tool:Read`,
    or it disappears among file access. Require a `skill`-ish ancestor directory:
-   matching the last directory alone turns a stray `/Users/me/SKILL.md` into a
+   matching the last directory alone turns a stray `$HOME/SKILL.md` into a
    skill named after the home directory.
 3. **Injected into context by the harness** — the common case, and it leaves
    **no event at all**. Not a tool call, not a read, nothing.

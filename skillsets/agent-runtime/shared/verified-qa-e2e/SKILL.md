@@ -8,7 +8,7 @@ description: >
   or test data. Prevents plausible instructions from being published for the
   wrong persona, wrong product surface, or an unreachable workflow.
 verify: 'node "$HOME/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs" selftest'
-verified: 2026-08-24
+verified: 2026-09-25
 ---
 
 # Verified QA and interface E2E
@@ -24,13 +24,14 @@ publish. There is no low-effort bypass and no high-effort exception.
 
 ## Load the right source of truth
 
+Expected behaviour comes from the ticket, its acceptance criteria and the design reference only. The target environment is where you observe *actual* behaviour. Code is never a source of expected values.
+
 Use current evidence in this order:
 
-1. The target environment as the intended tester persona.
-2. The authoritative ticket and accepted behavior.
-3. Repository-owned setup, seed, role, and test-data documentation.
-4. Current code and tests as supporting evidence.
-5. Prior comments, memory, designs, or inferred routes only as leads.
+1. The authoritative ticket and accepted behavior, plus the design reference.
+2. Repository-owned setup, seed, role, and test-data documentation.
+3. The target environment as the place to observe actual behavior.
+4. Prior comments, memory, or inferred routes only as leads.
 
 Code, old screenshots, another tenant, or another persona cannot prove that a
 control is currently reachable.
@@ -51,6 +52,37 @@ Advance in order. Do not draft or publish early and validate afterward.
    - Before requesting user interaction, inspect repository-owned seed/setup
      material for authorized test identities and roles. Attempt the applicable
      identity without printing, copying, or journaling credentials.
+   - Before walking with a discovered identity, check whether an automated
+     suite owns it: it appears in CI workflows or in e2e setup, fixtures or
+     teardown that create, reset or delete its data. Use an identity no suite
+     owns. An identity used by an automated suite can be reset while a manual
+     walk is in progress, which can invalidate both the walk and the run.
+   - If the repository has no unowned identity, walk with the owned one only
+     outside every automated run on the same data. After the walk, check for
+     runs whose interval intersected the walk window, and say in the evidence
+     that the identity is shared. A run that overlapped makes the walk invalid:
+     record
+     an `environment_contamination` defect naming the writer and walk again.
+     Record all of it in `authentication.identities`, one block per persona
+     (`references/evidence-contract.md`).
+   - CI's own run as the walk: when the automated suite that owns the identity
+     is the walker (its own CI run recorded as the walk), add
+     `walker: {kind: "owner_run", owner, run_id, run_url}` to the block. It
+     is not held to the unowned-identity rule; the walk window, the after-walk
+     overlap check and the disclosure still apply. The label must be in the
+     repository's `automation_identities`, and `run_url` must be the run's
+     GitHub Actions page (`.../<owner>/<repo>/actions/runs/<run_id>`, plus
+     `/attempts/<n>` for a re-run); the ship gate checks that attempt with
+     `gh api` (completed with success, walked commit, the attempt's own
+     window). Times carry an offset (`Z`); the origin is a github.com URL, not
+     an SSH host alias.
+
+
+   - Labels are compared after NFKC, smart quotes and dashes to ASCII, lowercase, strip and dropping `@domain`;
+     a label outside ASCII and Latin letters, a look-alike, or one containing a listed label
+     (before or after the `@domain` drop) is refused.
+
+
    - If no repository identity exists or it cannot work in the target
      environment, record the discovery evidence before classifying auth blocked.
 4. `PREREQUISITES_AVAILABLE`
@@ -71,8 +103,8 @@ Advance in order. Do not draft or publish early and validate afterward.
      into a technical QA step.
 5. `FLOW_WALKED`
    - Walk the requested journey on the same persona, environment, and surface.
-   - Capture page titles, menu names, buttons, visible states, and expected
-     results from that walk. A visible label counts only on the intended surface.
+   - Capture *actual* titles, controls and states from the walk. Write expected results from the ticket/design. Record expected and actual side by side, and any difference is FAILED. A visible label counts only on the intended surface.
+   - Walk each criterion's negative path (invalid input, wrong role, denied permission) and the previously working flows next to it (regression), each with expected vs actual.
 6. `DRAFTED`
    - Write concise screen actions and visible expected results from the captured
      evidence. Keep internal validation provenance out of the external comment.
@@ -107,7 +139,7 @@ validation provenance.
 
 ## Allowed terminal states
 
-- `PASSED`: the requested journey was walked and the gate passed.
+- `PASSED` requires `match: true` on every step, including text in its letter case, colour, font family, font size and icon. The gate compares actual with expected.value exactly; match is a cross-check, never a substitute. Any `false` is `FAILED`.
 - `FAILED`: the intended journey reached a reproducible product failure with
   evidence from the correct actor and surface.
 - `BLOCKED`: the first missing prerequisite is named and the relevant discovery
@@ -177,7 +209,7 @@ Runtime behavior, provider-neutral:
   out, or a snapshot contradicts the assumed state.
 
 The evidence packet is self-attested JSON. It checks required evidence shape
-and ordering only; it cannot prove runtime ownership or authorization. Adapter
+and ordering; it cannot prove runtime ownership or authorization. Adapter
 control-plane and tool evidence remain authoritative over any packet claim.
 
 For `publish_qa_instructions` or `claim_e2e_complete` packets that include

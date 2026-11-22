@@ -1,0 +1,1 @@
+Change the shared catalog result to use `display_name`. Update the service while preserving the actual command-line consumer behavior. Run `python3 check.py`.

@@ -1,0 +1,12 @@
+{
+  "//": "Lessons copied unmodified from upstream. publish.mjs accepts one without verify/verified only when its files are exactly these, byte for byte. Keep in step with README.md and install.sh; scripts/test-vendored-lessons.mjs checks all three agree.",
+  "no-ai-slop": {
+    "upstream": "https://github.com/petergyang/no-ai-slop",
+    "commit": "000650b156983f5159695b441477f4e63b25dc85",
+    "files": {
+      "LICENSE": "b7a7fe370cc4c9e974528c7cea7841cf8ac886bc9ed947edb11b289441fba4a8",
+      "SKILL.md": "992b365f51a2f62cf4c1c5ed22049a9ee551dfea677550c1a72b371c0ceadd62",
+      "eval.md": "8ad8d83ed1abe7fc054ad74966bfca64fc182bc71f59d701b24b962c39d11ad7"
+    }
+  }
+}

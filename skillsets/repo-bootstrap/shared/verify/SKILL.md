@@ -1,0 +1,140 @@
+---
+name: verify
+description: >
+  Use in any repo, new or legacy, to decide whether a change works and to bring the repo up to
+  standard. `doctor` audits what is missing (tests, journeys that walk the real app, evals for
+  LLM output, dry runs for data-moving code, mutation testing, CI). `init` writes the repo's
+  definition of done. `run` executes it and reports pass, fail or NOT VERIFIED per stage.
+  `serve` is a self-hosted runner that needs no GitHub Actions. Use before reporting work done,
+  when onboarding or cleaning up a repo, and when a test suite looks green but users still hit bugs.
+verify: 'python3 -m unittest discover -s "$HOME/.agents/skills/verify/scripts/tests"'
+verify_timeout: 120
+verified: 2026-10-06
+---
+
+# verify
+
+One definition of done per repo, in `.verify/config.json`, run the same way by every agent,
+every human and the runner. Results are advisory commit statuses. Nothing here blocks a merge
+or a deploy.
+
+```
+V=~/.agents/skills/verify/scripts/verify.py
+python3 $V doctor .            # what is missing, by severity, with the fix
+python3 $V init . --write      # propose .verify/config.json from the stack
+python3 $V run . --strict      # run every per-change stage; artifact in .verify/runs/<sha>.json
+                               # reuses this host's runner result for HEAD when it exists (--fresh: don't)
+python3 $V status .            # last result for HEAD
+```
+
+## Done means
+
+`run` is green only when every stage is `pass` or `na` with a written reason. A stage with no
+command is `missing`, which reports **NOT VERIFIED** and names the stage. That is a status, not a
+stopping point: write the missing stage if you can, then run it.
+
+| Stage | Proves | Template |
+|---|---|---|
+| static | it builds, lints, typechecks | — |
+| unit | the logic users depend on | — |
+| integration | real database, queue, cache; no in-memory fakes | [README](templates/README.md#integration) |
+| journeys | a persona walks through the running app, frontend and backend, as a user would | [journeys](templates/journeys/README.md) |
+| evals | LLM output quality, measured over repeated runs (pass@1, pass^k, per-label recall) | [evals](templates/evals/README.md) |
+| rehearsal | backfills, crons and workers do the right thing on production-shaped data (read-only dry run) | [README](templates/README.md#rehearsal) |
+| mutation | the tests catch injected bugs (scheduled, changed files only) | [mutation](templates/mutation/README.md) |
+| postdeploy | the deployed URL is healthy and the @smoke journeys pass there | [postdeploy](templates/postdeploy/README.md) |
+
+## Rules that keep the result honest
+
+- Strict mode (the runner always uses it): a required env var that is missing fails the stage
+  instead of letting the suite skip itself, and more skips than `max_skipped` fail it.
+- Journeys hit the real backend. Blocking third-party origins is fine. Answering the app's own
+  API with `route.fulfill`, msw or nock belongs in a component test, and `doctor` flags it.
+- `weaken-check` fails a change that deletes tests, adds skip/only, removes assertions or edits
+  expected values, unless a commit says `test-change-reason: <why>`. The runner runs it on every PR job
+  and posts `verify/weaken`. A weakened PR fails the job even when every stage passes, and a stated
+  reason shows in the status.
+- Non-deterministic output is scored, not eyeballed: `eval-score --dataset --predictions`.
+- Production data is read only through the rehearsal stage, and only after the owner has
+  approved the source and the masking.
+
+## Bootstrapping a repo
+
+1. `doctor .`, then `init . --write`. Commit `.verify/config.json`.
+2. Fill each `todo` stage from its template, highest severity first. Mark a stage `na` only with a
+   reason that is true today.
+3. `housekeep .` lists merged branches, stale worktrees, large and cache files. `--apply` only
+   deletes merged local branches and prunes worktree records.
+4. Copy [templates/AGENTS.repo.md](templates/AGENTS.repo.md) to the repo's `AGENTS.md` and fill it in.
+5. Runner, on a machine you control: `verify.py serve --repo OWNER/NAME`, or `--once` from launchd
+   (`StartInterval`) or cron. A job can outlast a bb automation's 15-minute script limit, and launchd
+   never starts a tick while the last one runs. It runs open PR heads in throwaway clones and posts
+   `verify/<stage>` statuses.
+   - Give the launchd job `ProcessType` `Standard`, not `Background`. `launchd.plist(5)` applies
+     resource limits to `Background` jobs so they don't disrupt the user. On one busy Mac, a runner
+     set to `Background`, `LowPriorityIO` and Nice 10 hit the unit stage's 3600-second limit twice;
+     set to `Standard` and Nice 5, the same stage passed in about 18 minutes.
+   - On a loaded host the gh CLI can take over a minute to start. A runner status call, read or
+     post, gets 2 minutes and one retry while at least 4 minutes (that call's worst case) remain of
+     a 10-minute allowance shared by all of a tick's reads and posts. The allowance caps only those
+     long waits, not the tick: once less than 4 minutes of it remain, every later call still runs,
+     with the single short try that `run --post-status`, the hook and doctor always use. Posting is best-effort: a commit
+     left without a `verify` status is picked up again on the next tick.
+   - One failed status read skips that PR until the next tick. After two failed reads in a row,
+     whatever the cause (GitHub, the network, gh auth, the API refusing the host), the runner
+     leaves that repo's queue for the next tick. A successful read resets the count.
+   - On the runner's host, `run --strict` reuses the runner's sandboxed result for HEAD and runs
+     only the stages the runner reported `missing` (integration that needs an unconfined host, say).
+     That holds only when the runner checked exactly this commit: the branch already contains its
+     base, the commit edits no verifier path or config, and the worktree matches HEAD by content
+     (checked against a fresh index, so assume-unchanged, skip-worktree and fsmonitor can't hide an
+     edit). Ignored files aren't part of the tree and aren't checked. Otherwise every
+     stage runs here, and the first line says why. Each stage records whether it came from the
+     runner or ran here. Push the branch, keep it current with its base, and let the runner check it
+     while you work; `--fresh` runs everything here.
+   Add `--pr NUMBER` for one open PR; it reads that exact PR, refuses closed or mismatched replies,
+   and records its label with the result. This cannot be combined with `--branch`.
+   Owner-chosen branches (`--branch develop`) also run `mutation` when it has a command.
+   - PR code is untrusted. A PR runs its base branch's `.verify/config.json`, so it can't change what
+     is checked. A PR that adds the first config gets `missing` until that config is merged.
+   - List the files the stage commands run (helper scripts, suite lists, policy) in the config's
+     `verifier`, as repo-relative files or directories. A PR job runs the base branch's copy of each,
+     a directory replaced whole, and nothing in the job may write, replace or rename them. A PR that
+     edits one gets the base's result, and the status says so; the edit is checked once merged. A
+     listed path missing on the base fails the job. Run pinned Python helpers with `python3 -I`, so a
+     module the PR adds beside them can't shadow an import.
+   - A PR is checked merged into the base commit its verifier comes from, and the statuses go on the
+     PR's head. A branch that predates a base change is then not failed by it, and only edits made
+     since the branch left the base are named. A PR that conflicts with the base gets `missing` and
+     runs nothing until it is merged with or rebased on the base. Git in a PR job runs without the
+     host's git config, so a PR's `.gitattributes` can't pick a host merge driver or filter; Git LFS
+     files stay pointers there.
+   - A stage marked `"unconfined": "<why>"` needs a host without the runner's sandbox (it applies
+     its own sandbox, say). The runner reports it `missing`, so the PR stays NOT VERIFIED until it
+     runs with `verify.py run` on an unconfined host.
+   - Every command a repo controls runs in a macOS `sandbox-exec` profile. It can't read `/Users`,
+     `/Volumes`, `/tmp` or `/var/folders`, apart from its job dir and toolchains (`--allow-read`
+     adds one, e.g. a shared `node_modules`). It writes only its job dir. It can't reach the
+     keychain, the ssh-agent, Docker, or any port listening on the host when the job started
+     (`--allow-host-port` opens one, e.g. a test database). There is no supported sandbox
+     elsewhere, so the runner refuses to run PR code; `--unsandboxed` is for disposable machines, and
+     there the runner never posts a pass for a PR job: its code could rewrite the verifier between stages,
+     and with host access it could post a status itself, which no runner setting prevents.
+   - Jobs get an allowlisted environment, with HOME and TMPDIR inside the job, and forge tokens
+     never reach them. Network egress stays open (installs and journeys need it), so PR code can
+     send anything it sees. That is why PR jobs get no secrets. Values go in
+     `~/.cache/verify-runner/env/`, never in the repo:
+     - `<owner>__<name>.pr.env`: what every PR author may read, such as a throwaway local test
+       database or a seeded test persona. PR jobs get only this.
+     - `<owner>__<name>.env`: secrets. Only `--branch` jobs, which run merged code, get them. A
+       job counts as a branch job only if its commit is, at that moment, the head of a branch the
+       owner listed. List only branches PR authors can't push to directly.
+     - Forks get neither, and a PR that doesn't say whether it is a fork counts as one. A PR whose
+       base branch is missing or unknown doesn't run. Values are masked in statuses and run records.
+
+## Hook
+
+`verify.py hook` is a PostToolUse hook for Claude Code and Codex (same schema). After a merge,
+deploy or protected push in a repo that has `.verify/config.json`, it adds the commit's verify result
+to the agent's context and, unless it passed, asks the agent to run verify and fix what fails. In repos
+without a config it says nothing. It never denies.

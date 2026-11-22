@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -85,6 +86,32 @@ class LeaseTest(unittest.TestCase):
         self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.root / ".lock").stat().st_mode & 0o777, 0o600)
         self.assertEqual(list(self.root.glob(".lease-*.tmp")), [])
+
+    def test_lock_initialization_avoids_nonexclusive_create_race(self):
+        real_open = os.open
+        def open_with_create_race(path, flags, *args, **kwargs):
+            if path == '.lock' and flags & os.O_CREAT and not flags & os.O_EXCL:
+                raise FileNotFoundError(2, 'concurrent create race', '.lock')
+            return real_open(path, flags, *args, **kwargs)
+        with mock.patch.object(module.os, 'open', side_effect=open_with_create_race):
+            acquired = self.store.acquire(self.target)
+            self.assertEqual(acquired['status'], 'acquired')
+            inode = (self.root / '.lock').stat().st_ino
+            other = module.LeaseStore(self.root, stale_after=30)
+            self.assertEqual(other.acquire(self.target)['status'], 'held')
+            self.assertEqual((self.root / '.lock').stat().st_ino, inode)
+            self.store.release(self.target, acquired['owner_id'])
+
+    def test_existing_lock_symlink_is_refused_without_touching_target(self):
+        self.root.mkdir()
+        victim = self.tmp / 'lock-victim'
+        victim.write_text('untouched')
+        (self.root / '.lock').symlink_to(victim)
+        with self.assertRaises(module.LeaseError) as error:
+            self.store.acquire(self.target)
+        self.assertEqual(error.exception.code, 'lock_error')
+        self.assertEqual(victim.read_text(), 'untouched')
+        self.assertFalse(self.store.lease_path(self.target).exists())
 
     def test_heartbeat_renews_owner(self):
         acquired = self.store.acquire(self.target)

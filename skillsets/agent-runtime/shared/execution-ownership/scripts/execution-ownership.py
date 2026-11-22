@@ -215,9 +215,17 @@ class LeaseStore:
         try:
             if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
                 raise LeaseError("unsafe_root", "lease root is not a directory")
-            lock_flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            lock_flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
             try:
-                lock_fd = os.open(".lock", lock_flags, FILE_MODE, dir_fd=root_fd)
+                try:
+                    # Concurrent non-exclusive O_CREAT|O_NOFOLLOW can return
+                    # ENOENT on macOS. One creator initializes the inode; every
+                    # subsequent owner opens that same existing lock without
+                    # creating or replacing it.
+                    lock_fd = os.open(".lock", lock_flags | os.O_CREAT | os.O_EXCL,
+                                      FILE_MODE, dir_fd=root_fd)
+                except FileExistsError:
+                    lock_fd = os.open(".lock", lock_flags, dir_fd=root_fd)
             except OSError as exc:
                 raise LeaseError("lock_error", f"cannot safely open lease lock: {exc}") from exc
             try:

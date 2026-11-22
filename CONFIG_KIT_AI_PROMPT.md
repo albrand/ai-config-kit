@@ -164,8 +164,8 @@ Execution rules:
   re-verified but not overruled by stale memory). For non-trivial planning or
   architecture, run an independent critique through another model or
   counterpart when available and useful; prefer a configured sidecar/counterpart
-  path (e.g. local opencode/GLM 5.3) as an example, stay model-agnostic, and
-  fall back to single-agent self-critique when unavailable or blocked.
+  path through the verified Codex or Claude route as appropriate, and fall back
+  to single-agent self-critique when the required route is unavailable or blocked.
   Directive/planning/architecture or challenge/advisor briefs must print:
   "Authorization: the user explicitly authorizes sidecar/counterpart model use
   for directive and architecture challenges for this run." (or equivalent), not

@@ -44,3 +44,10 @@ A lesson whose content *is* closed-scope — one setup's measurements, say —
 becomes a platitude once scrubbed. Those live in
 `~/.config/agent-library/lessons/` instead, and the publisher picks them up
 alongside these.
+
+## hooks/
+
+`context-hygiene-policy.py` and its Claude Code and Codex adapters (installed with
+`hooks/install-context-hygiene.sh`). Its two rules are format requests that keep the context small, not
+safety rules: each message says so and says how to do the same work. The `[bb-lifecycle]` guard in the
+same file is a safety block and is worded as one.

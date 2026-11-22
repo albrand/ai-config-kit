@@ -1,0 +1,30 @@
+{
+  "thread_id": "thr_coordfixture",
+  "purposes": [
+    {
+      "id": "P1",
+      "text": "how improve the overall agentic work with high trust QA skills/harnesses",
+      "done_when": "scope-drift enforcement and a coordinator-starvation guard exist and are measured",
+      "status": "open",
+      "evidence": [],
+      "status_marked_at": "2026-09-25T15:00:00Z",
+      "ask": null
+    },
+    {
+      "id": "P2",
+      "text": "paperclip evaluation for marketing and autonomous agentic management over this marketing 'virtual agency'",
+      "done_when": "a Paperclip instance runs and the agency has produced a first campaign",
+      "status": "blocked-on-user",
+      "evidence": [],
+      "status_marked_at": "2026-09-25T15:00:00Z",
+      "ask": "Which Paperclip host should the agency run on?"
+    }
+  ],
+  "accepted_revisions": [
+    {
+      "quote": "Add this to your current task; it's the same class of harness defect.",
+      "accepted_at": "2026-09-25T14:10:00Z",
+      "source": "thr_coordfixture"
+    }
+  ]
+}

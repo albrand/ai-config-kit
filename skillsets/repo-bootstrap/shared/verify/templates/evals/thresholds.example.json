@@ -1,0 +1,6 @@
+{
+  "pass_at_1": 0.9,
+  "pass_all_k": 0.8,
+  "labels": { "urgent": { "recall": 0.98 } },
+  "judge_min": 0.85
+}

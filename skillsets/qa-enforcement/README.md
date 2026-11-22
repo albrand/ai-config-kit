@@ -12,14 +12,54 @@ from the qa-speed-quality research report §2 (report at
   `clusters`, `record`, `selftest`) and templates (git pre-push, GitHub
   Actions job, .qa/config example).
 - `hooks/` — host wiring: `qa-ship-gate-hook.sh` (PreToolUse),
-  `qa-stop-hook.sh` (Stop), the extended `coordinator-hook-pretool.sh`, and
-  `install.sh`.
+  `qa-stop-hook.sh` (Stop), `opencode-qa-evidence.js` (OpenCode session.idle),
+  and the plugin's `lib/qa-evidence-policy.mjs` helper,
+  the extended `coordinator-hook-pretool.sh`, and `install.sh`.
+
+Pallium production-data changes also use `shared/qa-sweep/scripts/realdata-replay-gate.py`.
+Its reviewed, editable path inventory is `shared/qa-sweep/realdata-paths.json`.
+The gate reads and validates `REALDATA-REPLAY.md` from the reviewed commit,
+not from an unstaged working-tree copy; it denies every gated action if the report is
+missing from that commit or a present worktree copy differs. Hermes
+submission requires the report itself attached as `--evidence` with its digest;
+`pre-review.py` adds the artifact path and SHA-256 to both review packets. PR
+creation requires the report committed and its name and digest in the creation
+request. The hook never denies a PR merge or `gh pr ready` (owner decision
+2026-10-08), whatever the merge's subject or body says; a command chained to a
+merge, or run in its `$(...)`, is still gated. `check --action pr` verifies on
+request that the current PR body cites the committed report's name and
+digest. Release requests require the
+committed report and a citation in the request. For each checked range, every
+non-merge production-data commit and every merge commit whose `--remerge-diff`
+shows a production-path resolution difference must be an ancestor of the newest
+report-changing commit. The report blob at the checked head must differ from the
+report blob at the checked base; an unchanged report inherited through a merge
+or a moved base is denied. A merge owns a report only when its merge-resolution
+comparison shows a change to `REALDATA-REPLAY.md`; path history alone does not
+establish ownership. Clean merges and resolutions limited to non-production
+paths do not make the report stale. If Git cannot compute a merge-resolution
+comparison, the gate denies the action. Install with
+`hooks/install-realdata-replay-gate.sh`; it backs up and updates only the new
+gate files, installed pre-review runners, and QA ship-hook adapter, preserving
+each home's existing QA sweep gate.
+
+The replay report uses these machine-checked fields: `Copy time (UTC)`,
+`Control SHA`, `Candidate SHA`, `Local copy`, `Production source`, `Privacy`,
+`Blocked rows`, and a per-goal Markdown table with `Goal`, `Target rows`,
+`Control count`, `Candidate count`, `Reason`, and `Error class` columns. Finish
+the report with `Artifact SHA-256 (excluding this line)`. Run the repository's
+formatter on the report first, then compute and append the digest over the
+formatted report bytes with that digest line omitted. Finally, confirm the
+formatter leaves the completed report bytes unchanged (use its check mode or
+compare the file bytes before and after formatting). If formatting changes the
+report, format it first and recompute the digest footer last. External
+provider/model/key boundaries remain in the report as blocked rows.
 
 ## How it enforces
 
 A repo opts in by committing `.qa/config.json`; from then the gate is ALWAYS
 ON for that repo (no flag, no off switch short of removing the opt-in — that
-is the design). Ship commands — v2: merges (`gh pr merge`/`gh pr ready`), pushes to protected
+is the design). Ship commands — v2: pushes to protected
 refs (default branch + `protected_branches`; refspec, `HEAD:dev`, upstream,
 `--all`/`--mirror`), production deploys (`--prod`/promote/fly), plus
 repo-configured regexes — are denied unless: every inventory row closed or fail-escalated with a
@@ -31,16 +71,37 @@ crashes allow except on ship commands in opted-in repos (fail closed).
 
 Layers: host PreToolUse (Claude Code + Codex via coordinator-hook-pretool.sh,
 which keeps its coordinator block unchanged), git pre-push template, CI
-required-check template (the unforgeable layer; agents self-attest the .qa
-files), and a Stop hook that keeps a turn alive while inventory rows are open
+check template (the layer agents cannot edit, since they self-attest the .qa
+files; required or advisory per repo, admin bypass kept), and a Stop hook that keeps a turn alive while inventory rows are open
 (Claude honors stop_hook_active + 8-block cap; Codex trust recorded 2026-09-24).
 
-Events: gate_denied / gate_passed / inventory_closed / rewalk / escape append
-to ~/.local/state/agent-quality/events.jsonl (schema_version 1; no secrets).
+The final-claim evidence nudge is default-on at Stop for every repository. It
+requires a persona, target, attempted user outcomes, and a verdict per outcome;
+or the explicit `implemented; workflow NOT RUN` status with remaining work.
+For repositories without `.qa/config.json`, this nudge is the only QA gate:
+there are no tool denials and no generated `.qa/` files. OpenCode lacks a
+blocking Stop callback, so direct OpenCode CLI uses
+`opencode-qa-evidence.js` to observe `session.idle` (or idle `session.status`)
+and inject one continuation through `session.promptAsync`; the marker prevents
+another continuation in that turn. In the BB ACP probe on this host, the
+temporary plugin-load diagnostic produced no ACP initialization or idle-event
+record, and the bare completion reply received no nudge. ACP coverage through
+this plugin is therefore unestablished. A BB fleet `message.dispatch`
+final-claim check with one follow-up message is the proposed ACP path; it
+remains unimplemented pending review. The Stop adapter runs the opted-in
+inventory gate first and preserves its block before considering the default
+evidence nudge.
+
+Events: gate_denied / gate_passed / inventory_closed / rewalk / escape,
+`closeout-stop`, and metadata-only `evidence-claim` and `request-contract`
+records append to ~/.local/state/agent-quality/events.jsonl (schema_version 1;
+no message text). `request-contract` records contain only a timestamp, thread
+id, row count, and counts by row status.
 
 ## Install / rollback on the host
 
-Install: `hooks/install.sh <staging>` (backs up replaced files). Rollback:
+Install: `hooks/install.sh <staging>` (backs up replaced files and refreshes
+Codex hook trust after the final hook-config write). Rollback:
 ```
 cp ~/.agent-hooks/backups/qa-ship-gate-2026-09-24/coordinator-hook-pretool.sh ~/.agent-hooks/coordinator-hook-pretool.sh
 cp ~/.agent-hooks/backups/qa-ship-gate-2026-09-24/claude-settings.json ~/.claude/settings.json
@@ -54,11 +115,21 @@ for h in ~/.agents ~/.bb ~/.claude ~/.codex; do rm -rf "$h/skills/qa-sweep"; don
 1. `mkdir .qa && cp <config.example.json> .qa/config.json` (edit personas,
    workflows, deployed_check) and `cp <skill>/scripts/ship-gate.py .qa/bin/ship-gate.py`.
 2. Commit both; the gate is now on for everyone.
-3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`
-   as a required check).
+3. Adopt `templates/pre-push` into .git/hooks (and CI from `templates/qa-ci.yml`;
+   required or not is the owner's call, and a required one keeps admin bypass on).
 4. `.qa/` task artifacts (workflow, inventory, clusters, plan, rewalk,
    evidence) are COMMITTED with each task branch: reviewers see the inventory
    and CI re-checks it at the pushed SHA; staleness is impossible to carry
    because rewalk.sha must equal the pushed SHA.
 
 `meaningful-tests` points here instead of carrying the pipeline as prose.
+
+## Scope gate (2026-09-25)
+
+`shared/scope-ledger/` holds the scope ledger skill and `scripts/scope-gate.py`, and
+`hooks/scope-gate-hook.sh` is chained in `coordinator-hook-pretool.sh` after the ship gate.
+From a thread that has a ledger (`~/.local/state/agent-quality/scope/<thread>.json`), a
+spawn or tell must carry `serves: P<n>` for an open purpose, or `serves: revision "<quote>"`.
+Threads without a ledger are never gated. Install with `hooks/install-scope-gate.sh`; it
+does not reinstall qa-sweep. The fleet plugin reads the same ledger for its idle guard and
+archive hold (fleet `lib/scope.ts`).

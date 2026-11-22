@@ -1,0 +1,58 @@
+Usage: bb [options] [command]
+
+BB CLI - manage your AI coding agents
+
+Options:
+  -V, --version                      output the version number
+  -h, --help                         display help for command
+
+Commands:
+  device                             Hand off text and URLs to a device viewing
+                                     the origin
+  browser                            Experimental built-in desktop browser
+                                     control
+  status [options]                   Show current context
+  settings                           Inspect and update BB settings
+  project                            Inspect and manage projects
+  prompt-history                     List prompt history across threads and
+                                     projects
+  provider                           Manage providers and inspect their models
+  spend                              Token and usage totals recorded by the
+                                     server
+  manager                            Compatibility notice for removed manager
+                                     commands
+  machine                            Inspect execution machines
+  server                             Move, export, and import the bb server
+  updates                            Inspect and apply bb and provider CLI
+                                     updates
+  terminal                           Manage terminal sessions across threads,
+                                     environments, and machines
+  thread                             Manage threads
+  environment                        Inspect and operate on first-class
+                                     environments
+  file                               Read and manage files on BB machines
+  theme                              Manage the app theme and favicon color
+  plugin                             Manage BB plugins
+  marketplace                        Manage the plugin marketplaces bb reads
+                                     catalogs from
+  skill                              List, inspect, edit, install, and remove
+                                     skills
+  guide [options] [chapter] [group]  Show the BB system overview and CLI guide;
+                                     `bb guide commands [group]` lists every
+                                     core command on one page
+  diagnostics                        Inspect local bb CLI diagnostics
+  voice                              Voice input utilities
+  help [command]                     display help for command
+
+
+Current context:
+  BB_PROJECT_ID: <unset>
+  BB_THREAD_ID: <unset>
+  BB_SERVER_URL: https://claramente.getbb.app
+
+Quick start:
+  bb status
+  bb project list
+  bb thread show <id>
+  bb thread spawn --project <id> --provider codex --prompt "..."
+

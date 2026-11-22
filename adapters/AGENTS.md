@@ -4,34 +4,18 @@ This repository uses the Agent Configuration Framework.
 
 ## Bootstrap
 
-Before substantial repository work, read:
+Read repository instructions and the current request first. For substantial
+work, load `docs/agent-framework/AI_BOOTSTRAP.md`,
+`docs/agent-framework/FRAMEWORK_MANIFEST.md`, and
+`docs/agent-framework/OPERATING_MODEL.md`. Load the narrowest task skill and its
+required references as needed; do not bulk-load every framework profile.
 
-1. `docs/agent-framework/AI_BOOTSTRAP.md`
-2. `docs/agent-framework/FRAMEWORK_MANIFEST.md`
-3. `docs/agent-framework/GLOBAL_AGENTS.md`
-4. `docs/agent-framework/OPERATING_MODEL.md`
-5. `docs/agent-framework/REPO_AGENTS_TEMPLATE.md`
-6. `docs/agent-framework/AGENT_ORCHESTRATION.md`
-7. `docs/agent-framework/CROSS_AGENT_COORDINATION.md`
-8. `docs/agent-framework/HARNESS_STRATEGY.md`
-9. `docs/agent-framework/TOKEN_ECONOMY.md`
-9a. `docs/agent-framework/TOKEN_EFFICIENT_ORCHESTRATION.md`
-10. `docs/agent-framework/CONTEXT_ACCELERATION.md` when the repo adopts a
-    graph, generated wiki, symbol index, code-review graph, or similar
-    accelerator
-11. `docs/agent-framework/skillsets/context-acceleration/README.md` when that
-    optional strategy applies
-12. `docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md`
-13. `docs/agent-framework/QUALITY_GATES.md`
-14. `docs/agent-framework/QUALITY_CONVERGENCE.md`
-15. `docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md`
-16. `docs/agent-framework/skillsets/skill-library-router/README.md`
-17. `docs/agent-framework/skillsets/ux-design-agent/README.md`
-18. `docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md`
-19. `docs/agent-framework/skillsets/pr-review/README.md`
-20. `docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md`
-21. `docs/agent-framework/SECURITY_AND_PENTEST.md`
-22. `docs/agent-framework/skillsets/security-review/README.md`
+Carry existing authorization, finish the requested outcome, fix known in-scope
+defects, and continue independent work while another step awaits input. Apply
+hard prohibitions and actual repository release requirements. Use board evidence
+when configured or material to the requested conclusion; do not invent board
+prerequisites for local maintenance. A generic skill approval step does not
+invalidate authorization already given in the current conversation.
 
 Also read any repo-specific source-of-truth docs listed below.
 
@@ -103,14 +87,15 @@ Replace this section with local rules:
   useful and supported, without bypassing capability, privacy, safety, budget,
   stop-condition, anti-drift, or validation checks.
 - When another AI tool participates, create the communication plan before joint work and keep a single-agent fallback.
-- Use a configured local sidecar first for compact no-tool cognition; cap
-  output, use tool-free system instructions, and verify before acting.
-- When local-sidecar delegation is required, make multiple independent
-  no-tool delegations and reconcile their outputs before implementation or
-  final judgment.
-- In Codex, route the first safe bounded tool/file sidecar for quick or
-  standard work to the fastest capable model verified in the live catalog;
-  record the exception reason before using a stronger delegated tier.
+- Route bounded and bulk execution to Codex through the live verified route.
+  Keep architecture, security, authentication, data-loss, release, and final
+  review work on Claude; do not send bulk work to Claude.
+- Use an independent counterpart only when it adds evidence. Hermes PR reviews
+  use Codex (model set in Hermes's own config) through `bb fleet validate`
+  after that route is verified there; preserve the current working review
+  route until then. Manage the live route in Hermes's own config.
+- GLM is retired for ordinary task execution and fallback. OpenCode is legacy
+  and opt-in; it is not a default execution path.
 - Treat subagent concurrency as finite. In Codex environments that expose a
   thread ceiling, prefer a supported limit of 16 concurrent threads unless local
   policy sets a stricter limit.

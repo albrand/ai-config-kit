@@ -16,40 +16,9 @@ const policySummaryPath = path.join(referencesDir, 'applied-policy-summary.json'
 // External agent skills root (e.g. ~/.agents/skills), surfaced read-only with
 // source 'agent'. These skills remain vendor policy-controlled: the router
 // indexes them but NEVER writes a policy file into them and NEVER passes them
-// to ensurePolicyFalse. Overrides via AGENT_SKILLS_HOME; default ~/.agents/skills.
+// to a policy writer. Overrides via AGENT_SKILLS_HOME; default ~/.agents/skills.
 const agentSkillsHome = process.env.AGENT_SKILLS_HOME || path.join(os.homedir(), '.agents', 'skills');
 
-const explicitOnlyUserSkillNames = new Set([
-  // Specialized / heavy workflows — router-accessible on demand.
-  'adaptive-model-orchestrator',
-  'ai-config-kit-core',
-  'assess-then-harden',
-  'figma',
-  'plan-module-delivery',
-  'roadmap-terraform',
-  'tech-terraform',
-  'ux-design-agent',
-  // Behavioral framework skills: their always-on behavior is already encoded in
-  // the root directive (AGENTS.md / GLOBAL_AGENTS.md, loaded every prompt), so
-  // preloading their metadata is redundant. Keep them router-accessible as
-  // detailed expansions. Names not present in a given install are harmless.
-  'always-deep-plan-delegate',
-  'harness-routing',
-  'mcp-routing',
-  'token-efficiency',
-  'big-change-planning',
-  'quality-convergence',
-  'verification-before-completion',
-  'systematic-debugging',
-  'cross-agent-coordination',
-  'high-signal-pr-review',
-  'preparing-prs',
-  'repo-agents-discovery',
-  'repo-session-journal',
-]);
-
-const explicitOnlySystemSkillNames = new Set(['plugin-creator', 'skill-installer']);
-const pluginImplicitExceptions = new Set(['knowledge-update']);
 // 'upstream' skips the bundled upstream SKILL.md copies some plugins ship
 // (e.g. Vercel) which otherwise create duplicate-named, ambiguous router entries.
 const skippedDirectoryNames = new Set(['.git', 'node_modules', 'upstream']);
@@ -467,49 +436,6 @@ function skillRecord(file) {
   };
 }
 
-function shouldBeExplicit(skill) {
-  if (skill.name === 'skill-library-router') return false;
-  // Read-only roots remain vendor policy-controlled. Their current policy is
-  // indexed as-is, but they are never candidates for mutation.
-  if (!skill.writable) return false;
-  if (skill.source === 'plugin') return !pluginImplicitExceptions.has(skill.name);
-  if (skill.source === 'system') return explicitOnlySystemSkillNames.has(skill.name);
-  if (skill.source === 'user') return explicitOnlyUserSkillNames.has(skill.name);
-  return false;
-}
-
-function ensurePolicyFalse(skill) {
-  if (!skill || skill.writable !== true) {
-    throw new Error('refusing policy write outside a writable skill root');
-  }
-  const agentPath = path.join(path.dirname(skill.path), 'agents', 'openai.yaml');
-  ensureDir(path.dirname(agentPath));
-
-  if (!fs.existsSync(agentPath)) {
-    writeFile(agentPath, 'policy:\n  allow_implicit_invocation: false\n');
-    return 'created';
-  }
-
-  const text = fs.readFileSync(agentPath, 'utf8');
-
-  if (/allow_implicit_invocation:\s*false/.test(text)) return 'unchanged';
-
-  if (/allow_implicit_invocation:\s*true/.test(text)) {
-    fs.writeFileSync(
-      agentPath,
-      text.replace(/allow_implicit_invocation:\s*true/, 'allow_implicit_invocation: false'),
-      'utf8',
-    );
-
-    return 'updated';
-  }
-
-  const separator = text.endsWith('\n') ? '\n' : '\n\n';
-  fs.writeFileSync(agentPath, `${text}${separator}policy:\n  allow_implicit_invocation: false\n`, 'utf8');
-
-  return 'updated';
-}
-
 function sortSkills(files) {
   return files
     .map(skillRecord)
@@ -545,10 +471,7 @@ function skillIndexMarkdown(skills) {
 function policySummary(skills, policyChanges) {
   return {
     generatedAt: new Date().toISOString(),
-    explicitOnlyUserSkillNames: Array.from(explicitOnlyUserSkillNames).sort(),
-    explicitOnlySystemSkillNames: Array.from(explicitOnlySystemSkillNames).sort(),
-    pluginImplicitExceptions: Array.from(pluginImplicitExceptions).sort(),
-    explicitPluginSkillsExceptExceptions: true,
+    invocationPolicies: 'preserved; refresh only writes router indexes',
     implicitSkills: skills.filter((skill) => skill.implicit).map((skill) => skill.name).sort(),
     explicitSkills: skills.filter((skill) => !skill.implicit).map((skill) => skill.name).sort(),
     policyChanges,
@@ -569,23 +492,15 @@ function compareSkills(leftSkills, rightSkills) {
 
 function checkIndex(skills) {
   const missingFiles = [indexJsonPath, indexMdPath, policySummaryPath].filter((file) => !fs.existsSync(file));
-  const explicitPolicyIssues = skills.filter((skill) => shouldBeExplicit(skill) && skill.implicit);
   const existing = fs.existsSync(indexJsonPath) ? readJson(indexJsonPath) : { skills: [] };
   const staleIndex = !compareSkills(existing.skills || [], skills);
 
   const status = {
-    ok: missingFiles.length === 0 && explicitPolicyIssues.length === 0 && !staleIndex,
+    ok: missingFiles.length === 0 && !staleIndex,
     totalSkills: skills.length,
     implicitCount: skills.filter((skill) => skill.implicit).length,
     explicitCount: skills.filter((skill) => !skill.implicit).length,
     missingFiles,
-    explicitPolicyIssues: explicitPolicyIssues.map((skill) => ({
-      name: skill.name,
-      source: skill.source,
-      plugin: skill.plugin,
-      path: skill.path,
-      policyPath: skill.policyPath,
-    })),
     staleIndex,
   };
 
@@ -595,21 +510,7 @@ function checkIndex(skills) {
 }
 
 function refreshIndex() {
-  const initialSkills = sortSkills(scanSkillFiles());
   const policyChanges = [];
-
-  for (const skill of initialSkills) {
-    if (!shouldBeExplicit(skill)) continue;
-
-    const result = ensurePolicyFalse(skill);
-    policyChanges.push({
-      name: skill.name,
-      source: skill.source,
-      plugin: skill.plugin,
-      path: skill.path,
-      result,
-    });
-  }
 
   const skills = sortSkills(scanSkillFiles());
   const payload = indexPayload(skills);
@@ -647,8 +548,6 @@ module.exports = {
   sourceFor,
   rootDescriptors,
   rootDescriptorFor,
-  shouldBeExplicit,
-  ensurePolicyFalse,
   isBackupDirectoryName,
   refreshIndex,
   checkIndex,

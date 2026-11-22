@@ -1,0 +1,1 @@
+- R14/CL-10 remains unresolved: the case-map button overlaps the orb.

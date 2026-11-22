@@ -20,10 +20,38 @@ const descendantPidPath = path.join(temp, 'descendant.pid');
 const databasePath = path.join(temp, 'opencode.db');
 const configDir = path.join(temp, 'config');
 const worktree = path.join(temp, 'worktree');
+const invocationPath = path.join(temp, 'invocation.json');
+const sqliteCli = path.join(binDir, 'sqlite3');
 
 fs.mkdirSync(binDir);
 fs.mkdirSync(configDir);
 fs.mkdirSync(worktree);
+fs.writeFileSync(
+  sqliteCli,
+  `#!/usr/bin/env python3
+import sqlite3
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+read_only = bool(args and args[0] == '-readonly')
+if read_only:
+    args = args[1:]
+if len(args) < 2:
+    sys.exit(2)
+database_path, query = args[0], ' '.join(args[1:])
+try:
+    target = Path(database_path).resolve()
+    connection = sqlite3.connect(target.as_uri() + '?mode=ro', uri=True) if read_only else sqlite3.connect(target)
+    for row in connection.execute(query):
+        print('|'.join('' if value is None else str(value) for value in row))
+    connection.close()
+except (OSError, sqlite3.Error) as error:
+    print(error, file=sys.stderr)
+    sys.exit(1)
+`,
+);
+fs.chmodSync(sqliteCli, 0o700);
 fs.writeFileSync(path.join(configDir, 'opencode.json'), '{}');
 fs.writeFileSync(path.join(worktree, '.ai-config-kit-sidecar-write-scope'), 'test only\n');
 fs.writeFileSync(
@@ -45,6 +73,7 @@ if (args[0] === 'session' && args[1] === 'delete') {
   process.exit(0);
 }
 if (args[0] !== 'run') process.exit(2);
+if (process.env.FAKE_ARGS_PATH) fs.writeFileSync(process.env.FAKE_ARGS_PATH, JSON.stringify(args));
 const id = process.env.FAKE_SESSION_ID || 'ses_test123';
 fs.writeFileSync(statePath, JSON.stringify([{ id, parentID: null }]));
 const emit = (event) => process.stdout.write(JSON.stringify({ sessionID: id, ...event }) + '\\n');
@@ -56,7 +85,7 @@ if (process.env.FAKE_MODE?.startsWith('provider-error')) {
   else process.exit(1);
 }
 if (process.env.FAKE_MODE === 'hang') {
-  const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
   fs.writeFileSync(process.env.FAKE_DESCENDANT_PID_PATH, String(descendant.pid));
   emit({ type: 'step_start', part: {} });
   setInterval(() => {}, 1000);
@@ -94,21 +123,58 @@ if (process.env.FAKE_MODE === 'hang') {
 fs.chmodSync(fake, 0o700);
 fs.copyFileSync(fake, customFake);
 fs.chmodSync(customFake, 0o700);
-const database = spawnSync('sqlite3', [
+const database = spawnSync('python3', [
+  '-c',
+  [
+    'import sqlite3, sys',
+    'connection = sqlite3.connect(sys.argv[1])',
+    'connection.execute("create table session(id text primary key,parent_id text)")',
+    'connection.executemany("insert into session values(?, ?)", [("ses_test123", None),',
+    '("ses_existing123", None), ("ses_parent123", None), ("ses_child123", "ses_parent123")])',
+    'connection.commit()',
+    'connection.close()',
+  ].join('\n'),
   databasePath,
-  "create table session(id text primary key,parent_id text); insert into session values('ses_test123',null); insert into session values('ses_existing123',null); insert into session values('ses_parent123',null); insert into session values('ses_child123','ses_parent123');",
-]);
+], { encoding: 'utf8' });
 assert.equal(database.status, 0, database.stderr?.toString());
 
-function runManaged(extraArgs = [], env = {}, executable = fake) {
-  return spawnSync(
+const DEFAULT_SPAWN_TIMEOUT_MS = 60_000;
+const EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS = 15_000;
+
+function assertExplicitDeadlineHarness(result, startedMs) {
+  const elapsedMs = result.spawnElapsedMs ?? Date.now() - startedMs;
+  if (result.error?.code === 'ETIMEDOUT' || result.status === null) {
+    throw new Error(
+      `explicit-deadline harness exceeded ${EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS}ms spawn cap (elapsed ${elapsedMs}ms)`,
+    );
+  }
+  assert.equal(result.status, 124, result.stderr);
+  assert.equal(readTelemetry(result).stop_reason, 'explicit_deadline');
+  assert.equal(readTelemetry(result).deleted, false);
+  assert.equal(readTelemetry(result).process_quiescent, true);
+  assert.ok(
+    elapsedMs < EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS,
+    `explicit deadline kill took ${elapsedMs}ms`,
+  );
+}
+
+function runManaged(
+  extraArgs = [],
+  env = {},
+  executable = fake,
+  { timeoutMs = DEFAULT_SPAWN_TIMEOUT_MS } = {},
+) {
+  const spawnStartedMs = Date.now();
+  const result = spawnSync(
     process.execPath,
     [runner, ...extraArgs, '--', executable, 'run', 'test', '--format', 'json'],
     {
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
       env: {
         ...process.env,
+        PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
         OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
         OPENCODE_DB_PATH: databasePath,
         FAKE_STATE_PATH: statePath,
@@ -118,6 +184,8 @@ function runManaged(extraArgs = [], env = {}, executable = fake) {
       },
     },
   );
+  result.spawnElapsedMs = Date.now() - spawnStartedMs;
+  return result;
 }
 
 function readTelemetry(result) {
@@ -140,14 +208,18 @@ function runWrapper(env = {}) {
     timeout: 10_000,
     env: {
       ...process.env,
+      PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
       OPENCODE_ALLOW_WRITES: '1',
       OPENCODE_BIN: fake,
       OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
       OPENCODE_DB_PATH: databasePath,
       OPENCODE_SIDECAR_CONFIG_DIR: configDir,
+      OPENCODE_MODEL: 'openai/test-model',
+      OPENCODE_AGENT: 'test-agent',
       FAKE_STATE_PATH: statePath,
       FAKE_DELETE_LOG: deleteLog,
       FAKE_DESCENDANT_PID_PATH: descendantPidPath,
+      FAKE_ARGS_PATH: invocationPath,
       ...env,
     },
   });
@@ -161,6 +233,7 @@ function runAndCancel() {
       {
         env: {
           ...process.env,
+          PATH: [binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
           OPENCODE_CONTEXT_DIR: path.join(temp, 'context'),
           OPENCODE_DB_PATH: databasePath,
           FAKE_STATE_PATH: statePath,
@@ -234,13 +307,21 @@ try {
   assert.equal(readTelemetry(emptySessionListing).deleted, false);
 
   fs.rmSync(statePath, { force: true });
-  const deadline = runManaged(['--deadline-ms', '50', '--termination-grace-ms', '100'], {
-    FAKE_MODE: 'hang',
-  });
-  assert.equal(deadline.status, 124, deadline.stderr);
-  assert.equal(readTelemetry(deadline).stop_reason, 'explicit_deadline');
-  assert.equal(readTelemetry(deadline).deleted, false);
-  assert.equal(readTelemetry(deadline).process_quiescent, true);
+  const deadlineStartedMs = Date.now();
+  const deadline = runManaged(
+    [
+      '--deadline-ms',
+      '200',
+      '--termination-grace-ms',
+      '500',
+      '--quiescence-wait-ms',
+      '2000',
+    ],
+    { FAKE_MODE: 'hang' },
+    fake,
+    { timeoutMs: EXPLICIT_DEADLINE_SPAWN_TIMEOUT_MS },
+  );
+  assertExplicitDeadlineHarness(deadline, deadlineStartedMs);
 
   fs.rmSync(statePath, { force: true });
   const stubborn = runManaged(
@@ -326,6 +407,12 @@ try {
   assert.equal(readTelemetry(childSession).root_session, false);
   assert.equal(readTelemetry(childSession).deleted, false);
 
+  fs.rmSync(statePath, { force: true });
+  const missingDatabase = runManaged([], { OPENCODE_DB_PATH: path.join(temp, 'missing.db') });
+  assert.equal(missingDatabase.status, 0, missingDatabase.stderr);
+  assert.equal(readTelemetry(missingDatabase).root_session, false);
+  assert.equal(readTelemetry(missingDatabase).deleted, false);
+
   const oversizedDeadline = runManaged(['--deadline-ms', '2147483648']);
   assert.notEqual(oversizedDeadline.status, 0);
   assert.match(oversizedDeadline.stderr, /Invalid --deadline-ms/);
@@ -344,6 +431,29 @@ try {
   assert.equal(wrapped.status, 0, wrapped.stderr);
   assert.equal(readTelemetry(wrapped).success_contract, 'structured');
   assert.equal(readTelemetry(wrapped).deleted, true);
+  const invocation = JSON.parse(fs.readFileSync(invocationPath, 'utf8'));
+  assert.ok(invocation.includes('openai/test-model'));
+  assert.ok(invocation.includes('test-agent'));
+
+  const rejectedGlm = runWrapper({ OPENCODE_MODEL: 'zai-coding-plan/glm-5.3-flash' });
+  assert.equal(rejectedGlm.status, 64);
+  assert.match(rejectedGlm.stderr, /GLM routing is retired/);
+  for (const glmModel of ['Z.AI/GLM-5', 'zhipu/GLM-4.6', 'openrouter/z-ai/glm-4.7', 'ZAI/whatever']) {
+    const rejected = runWrapper({ OPENCODE_MODEL: glmModel });
+    assert.equal(rejected.status, 64, `${glmModel} should be refused`);
+    assert.match(rejected.stderr, /GLM routing is retired/);
+  }
+  // The legacy OpenCode procedure keeps its written no-GLM rule in both copies.
+  for (const doc of [path.join(scripts, '..', 'references', 'OPENCODE_DELEGATION.md'),
+                     path.join(scripts, '..', '..', '..', '..', '..', 'OPENCODE_DELEGATION.md')]) {
+    const text = fs.readFileSync(doc, 'utf8');
+    assert.match(text, /Never select GLM\./, doc);
+    assert.match(text, /existing non-GLM OpenCode setup/, doc);
+  }
+
+  const missingModel = runWrapper({ OPENCODE_MODEL: '' });
+  assert.equal(missingModel.status, 64);
+  assert.match(missingModel.stderr, /OPENCODE_MODEL must name an operator-verified non-GLM model/);
 
   fs.writeFileSync(statePath, JSON.stringify([{ id: 'ses_existing123', parentID: null }]));
   const resumed = runWrapper({

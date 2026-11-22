@@ -18,6 +18,8 @@
 //   node publish.mjs --check      report differences without writing
 //   node publish.mjs --remote vps also publish to a machine over ssh
 //   node publish.mjs --force      also replace copies edited in place (backed up first)
+//   node publish.mjs --lesson NAME limit rollout to a named lesson (repeatable)
+//   node publish.mjs --lesson NAME --resource PATH  update one maintained resource only
 //
 // Publishing is idempotent and one-directional: the repo is the source of
 // truth. A target holding an earlier library version is updated; a target
@@ -30,8 +32,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { collectLessons } from "./lib/lessons.mjs";
-import { loadOverlay, OVERLAY_PATH, substitute } from "./lib/substitute.mjs";
+import { collectLessons, selectLessons, vendoredPins, vendoredProblems } from "./lib/lessons.mjs";
+import { loadOverlay, OVERLAY_PATH, placeholdersIn, substitute } from "./lib/substitute.mjs";
 
 const SCRIPTS = path.dirname(new URL(import.meta.url).pathname);
 const ROOT = path.dirname(SCRIPTS);
@@ -54,6 +56,22 @@ const OVERLAY = loadOverlay();
 const args = new Set(process.argv.slice(2));
 const check = args.has("--check");
 const force = args.has("--force");
+
+function selectedValues(flag) {
+  const argv = process.argv.slice(2);
+  const values = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== flag) continue;
+    const value = argv[++i];
+    if (!value || value.startsWith("--")) {
+      console.error(`${flag} needs a value`);
+      process.exit(2);
+    }
+    values.push(value);
+  }
+  return new Set(values);
+}
+const selectedResources = selectedValues("--resource");
 
 const md5 = (buf) => createHash("md5").update(buf).digest("hex");
 
@@ -148,7 +166,7 @@ const TEXT_RESOURCE_EXTENSIONS = new Set([
   ".yaml", ".yml",
 ]);
 
-function lessonFiles(lesson) {
+function lessonFiles(lesson, selectedOnly = false) {
   const files = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -165,7 +183,9 @@ function lessonFiles(lesson) {
     }
   };
   walk(lesson.dir);
-  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+  return files
+    .filter((file) => !selectedOnly || !selectedResources.size || selectedResources.has(file.relative))
+    .sort((a, b) => a.relative.localeCompare(b.relative));
 }
 
 function renderedResource(file) {
@@ -188,7 +208,20 @@ function validate(list) {
       problems.push(`${lesson.name}: no frontmatter`);
       continue;
     }
-    for (const key of ["name", "description", "verify", "verified"]) {
+    // A vendored lesson is published byte for byte as pinned, so it is checked
+    // against its pins instead of carrying verify/verified (see vendoredPins).
+    const pins = vendoredPins(lesson);
+    if (pins) {
+      problems.push(...vendoredProblems(lesson, pins));
+      for (const resource of lessonFiles(lesson)) {
+        if (!TEXT_RESOURCE_EXTENSIONS.has(path.extname(resource.relative))) continue;
+        if (placeholdersIn(fs.readFileSync(resource.absolute, "utf8")).length > 0) {
+          problems.push(`${lesson.name}/${resource.relative}: a vendored file has a placeholder, so it would not publish as pinned`);
+        }
+      }
+    }
+    const required = pins ? ["name", "description"] : ["name", "description", "verify", "verified"];
+    for (const key of required) {
       if (!new RegExp(`^${key}:`, "m").test(front[1])) {
         problems.push(`${lesson.name}: missing "${key}"`);
       }
@@ -237,7 +270,7 @@ function publishLocal(list) {
       const destDir = path.join(target.dir, lesson.name);
       const existed = fs.existsSync(path.join(destDir, "SKILL.md"));
       let lessonChanged = false;
-      for (const resource of lessonFiles(lesson)) {
+      for (const resource of lessonFiles(lesson, true)) {
         const dest = path.join(destDir, resource.relative);
         const next = renderedResource(resource);
         const current = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
@@ -268,6 +301,12 @@ function publishLocal(list) {
   return changes;
 }
 
+// sshd runs a command as one `sh -c` argument, and Linux caps a single argument
+// at 128 KiB (MAX_ARG_STRLEN), counted in bytes. One line per file for the whole
+// library passed that on 2026-10-22 ("Argument list too long"), so the reads go
+// in batches measured in UTF-8 bytes; a multibyte path counts at its real size.
+const REMOTE_SCRIPT_MAX = 64 * 1024;
+
 /**
  * Push to a remote machine over ssh.
  *
@@ -280,21 +319,43 @@ function publishLocal(list) {
  * for an agent working there to do — is destroyed with nobody told. So we hash
  * what is there first, write only what differs, and report drift loudly.
  *
- * The hashing is one ssh round trip for the whole machine, not one per file.
+ * The hashing is a few ssh round trips for the whole machine (one per batch
+ * under REMOTE_SCRIPT_MAX), not one per file.
  */
+// `md5sum` on Linux, `md5 -q` on a Mac without it. Chosen once per batch: in
+// `md5sum f | cut ... || md5 -q f` the pipeline's status is cut's, so a missing
+// md5sum gave an empty hash and an existing file read as absent (Hermes 2026-10-22).
+const REMOTE_HASHER =
+  `if command -v md5sum >/dev/null 2>&1; then __ph() { md5sum "$1" | cut -d' ' -f1; }; ` +
+  `else __ph() { md5 -q "$1"; }; fi`;
+
 function remoteHashes(host, targets) {
-  // `md5 -q` on macOS, `md5sum` on Linux; emit "<path> <hash>" or nothing.
-  const script = targets
-    .map(
-      (t) =>
-        `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(md5sum ${t} 2>/dev/null | cut -d' ' -f1 || md5 -q ${t})"; fi`,
-    )
-    .join("\n");
-  const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+  // Emit "<path> <hash>" for each target that exists.
+  const lines = targets.map(
+    (t) => `if [ -f ${t} ]; then printf '%s %s\n' '${t}' "$(__ph ${t})"; fi`,
+  );
+  const batches = [];
+  let size = 0;
+  for (const line of lines) {
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (batches.length && size + 1 + bytes <= REMOTE_SCRIPT_MAX) {
+      batches[batches.length - 1].push(line);
+      size += 1 + bytes;
+    } else {
+      batches.push([REMOTE_HASHER, line]);
+      size = Buffer.byteLength(REMOTE_HASHER, "utf8") + 1 + bytes;
+    }
+  }
   const map = new Map();
-  for (const line of out.split("\n")) {
-    const [file, hash] = line.trim().split(/\s+/);
-    if (file && hash) map.set(file, hash);
+  for (const script of batches.map((b) => b.join("\n"))) {
+    const out = execFileSync("ssh", [host, script], { encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      const [file, hash] = line.trim().split(/\s+/);
+      if (!file) continue;
+      // An existing file with no hash must not read as absent: it would be overwritten unchecked.
+      if (!hash) throw new Error(`Could not hash ${host}:${file}: the remote has neither md5sum nor md5 -q.`);
+      map.set(file, hash);
+    }
   }
   return map;
 }
@@ -310,7 +371,7 @@ function publishRemote(list, host) {
 
   const targets = dirs.flatMap((dir) =>
     list.flatMap((lesson) =>
-      lessonFiles(lesson).map((resource) => `${dir}/${lesson.name}/${resource.relative}`),
+      lessonFiles(lesson, true).map((resource) => `${dir}/${lesson.name}/${resource.relative}`),
     ),
   );
   const existing = remoteHashes(host, targets);
@@ -321,7 +382,7 @@ function publishRemote(list, host) {
     for (const lesson of list) {
       let lessonChanged = false;
       let lessonExisted = true;
-      for (const resource of lessonFiles(lesson)) {
+      for (const resource of lessonFiles(lesson, true)) {
         const body = renderedResource(resource);
         const want = createHash("md5").update(body).digest("hex");
         const target = `${dir}/${lesson.name}/${resource.relative}`;
@@ -362,10 +423,30 @@ function publishRemote(list, host) {
   return changes;
 }
 
-const list = lessons();
+let list;
+try {
+  list = selectLessons(lessons(), process.argv.slice(2));
+} catch (error) {
+  console.error(`Refusing to publish: ${error.message}`);
+  process.exit(1);
+}
 if (list.length === 0) {
   console.error("No lessons found.");
   process.exit(1);
+}
+
+if (selectedResources.size) {
+  if (!args.has("--lesson") || list.length !== 1) {
+    console.error("--resource requires exactly one --lesson");
+    process.exit(2);
+  }
+  const resources = new Set(lessonFiles(list[0]).map((file) => file.relative));
+  for (const resource of selectedResources) {
+    if (!resources.has(resource)) {
+      console.error(`Unknown resource: ${resource}`);
+      process.exit(2);
+    }
+  }
 }
 
 const problems = validate(list);

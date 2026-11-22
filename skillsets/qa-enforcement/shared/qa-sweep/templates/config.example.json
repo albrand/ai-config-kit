@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
-  "personas": ["admin", "member"],
+  "personas": [
+    "admin",
+    "member"
+  ],
   "workflows": [
     {
       "name": "invite-and-accept",
@@ -8,6 +11,10 @@
       "outcome": "invited member accepts from the email link and lands in the workspace with member rights"
     }
   ],
+  "automation_identities": [
+    "e2e.member"
+  ],
+  "_automation_identities_note": "identities a CI workflow or e2e setup/fixtures/teardown signs in as or resets; interactive walks use others, and the gate refuses an evidence packet that declares one of these unowned",
   "deployed_check": {
     "url": "https://ci.example.com/deployments/status/{sha}",
     "_or_command": "curl -fsS https://app.example.com/healthz",

@@ -1,0 +1,2413 @@
+#!/usr/bin/env python3
+"""Scope ledger and the spawn/tell gate.
+
+Operator complaint (2026-09-25): "agents are deviating and drifting from the
+original focus and there is nothing enforcing this scope". Scope rules were
+prose; nothing checked a dispatch against what the user asked for.
+
+A coordinator thread's ledger lives at
+    ~/.local/state/agent-quality/scope/<thread_id>.json
+and holds the user's purposes in the user's own words:
+    {"thread_id": "thr_...",
+     "purposes": [{"id": "P1", "text": "<verbatim>", "done_when": "...",
+                   "status": "open|done|blocked-on-user", "evidence": [],
+                   "status_marked_at": "<iso>", "ask": null}],
+     "accepted_revisions": [{"quote": "<the user's approval, verbatim>",
+                             "accepted_at": "<iso>", "source": "..."}],
+     "released_children": [{"thread_id": "thr_...", "evidence": "<why done>",
+                            "released_at": "<iso>"}]}
+
+`hook` is the PreToolUse gate. From a thread that HAS a ledger, every
+dispatch -- a bb verb that hands a thread text (shell_dispatch.py), or an
+agent tool that does (MCP_FIELDS: fleet_member_spawn|tell, fleet_delegate,
+fleet_task_create|update, fleet_advise, fleet_context_set, bb_workflow_run) --
+must carry
+    serves: P<n>                  (an OPEN purpose), or
+    serves: revision "<quote>"    (equal to an accepted revision's quote)
+or it is denied with the open purposes listed. Threads without a ledger are
+never touched. A ledger that exists but cannot be read denies dispatches
+(fail closed); everything that is not a dispatch is allowed.
+
+Subcommands:
+    hook                                    PreToolUse (stdin payload, env BB_THREAD_ID)
+    check <thread> <text|->                 the decision for a brief, without a tool call
+    init <thread> --from <ledger.json>      create a ledger (refuses to overwrite)
+    add <thread> --text T --done-when D     append a purpose in the user's words
+    mark <thread> <Pn> <status> [--ask Q] [--evidence E]
+    revise <thread> --quote Q [--source S]  record a user-approved scope change
+    release <thread> <child> --evidence E   a finished child: fleet stops holding it
+                                            from archive (only the child's parent
+                                            ledger counts; its own ledger still holds)
+    show <thread>
+    map <thread> --artifact PATH            record the gap map work is staffed from
+    nudge                                   PostToolUse (env BB_THREAD_ID): after
+                                            GAP_MAP_DISPATCHES passed dispatches in
+                                            GAP_MAP_WINDOW_H hours with no map, shows
+                                            the delivery contract once; never denies
+    shape                                 the deadline (shape) decision for a stdin
+                                            payload: allow, deny or none (tests)
+    selftest
+
+SCOPE_LEDGER_DIR overrides the ledger directory (tests only).
+"""
+import datetime
+import json
+import os
+import re
+import shlex
+import stat
+import sys
+import tempfile
+import time
+
+sys.dont_write_bytecode = True  # no __pycache__: the four skill homes stay identical
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shell_dispatch import MAX_DEPTH, SHELLS, changes_dir, dispatches, words  # noqa: E402
+
+LEDGER_DIR = os.environ.get("SCOPE_LEDGER_DIR") or os.path.expanduser("~/.local/state/agent-quality/scope")
+DECISIONS = os.path.expanduser("~/.local/state/agent-quality/scope-decisions.jsonl")
+THREAD_ID = re.compile(r"^thr_[a-z0-9]+$")
+STATUSES = ("open", "done", "blocked-on-user")
+OWNER_ONLY = ("hard-prohibition-approval", "owner-decision", "material-new-fact")
+FIX_REVIEW_PATH_LIMIT = 20
+FIX_REPO_HINT_LIMIT = 20
+FIX_CITATION_LIMIT = 20
+FIX_GIT_CALL_TIMEOUT_S = 0.5
+FIX_GIT_DEADLINE_RESERVE_S = 0.25
+FIX_GIT_BLOB_LIMIT = 8 * 1024 * 1024
+FIX_BRIEF_CHECK_PENDING = False
+FIX_REVIEW_PATH = re.compile(
+    r"""(?<![\w./~$}{-])(/(?:[^\s<>]|\\[ \t])+?\.md)"""
+    r"""(?=$|[\s)\]},;:!?\"'`#]|[.,;:)\]]+(?=$|[\s)\]},;:!?\"'`#]))"""
+)
+FIX_REVIEW_PATH_ANGLE = re.compile(r"<(/[^>\r\n]+?\.md)(?:#[^>\r\n]*)?>")
+FIX_REVIEW_PATH_QUOTED = re.compile(
+    r"(?P<quote>[\"'`])(?P<path>/[^\"'`\r\n]+?\.md)(?:#[^\"'`\r\n]*)?(?P=quote)"
+)
+FIX_CHECKED_SHA = re.compile(r"^\s*Checked against\s+([0-9a-fA-F]{40})\s*$", re.M)
+FIX_CITATION = re.compile(
+    r"(?<![\w.-])(?P<path>/?(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9_-]+):(?P<line>[0-9]+)(?![A-Za-z0-9_])"
+)
+# Gap-map nudge (owner-approved 2026-10-22): a coordinator that keeps staffing work with no gap
+# map is shown the delivery contract after a dispatch. It never denies.
+GAP_MAP_DISPATCHES = 8   # passed dispatches ...
+GAP_MAP_WINDOW_H = 6     # ... within this many hours
+GAP_MAP_FRESH_H = 24     # a map recorded this recently counts
+GAP_MAP_REPEAT_H = 6     # shown at most once per this many hours
+
+FILE_FLAG = re.compile(r"""--(?:prompt|message)-file(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))""")
+CAT_SUB = re.compile(r"""\$\(\s*cat\s+(?:"([^"]+)"|'([^']+)'|([^\s)]+))\s*\)""")
+REDIRECT_IN = re.compile(r"""(?<![<0-9])<\s*(?:"([^"]+)"|'([^']+)'|([^\s<;&|)]+))""")
+# Agent tools that hand an agent text, and the fields the text is in (review
+# r2b D6, 2026-09-26: the task, advise and context twins of gated CLI verbs
+# were allowed). fleet_context_set entries and a member's concern go into
+# every group member's instructions; bb_workflow_run's script prompts the
+# subagents it starts (its scriptPath file is read like a brief file).
+# MCP_EXEMPT below lists every other registered tool with the reason; the
+# selftest fails on a registered tool in neither.
+MCP_FIELDS = {
+    "fleet_member_spawn": ("prompt", "concern"),
+    "fleet_member_tell": ("message",),
+    "fleet_delegate": ("task", "context"),
+    "fleet_task_create": ("title", "body"),
+    "fleet_task_update": ("title", "body", "blockedReason"),
+    "fleet_advise": ("question", "context"),
+    "fleet_context_set": ("key", "content"),
+    "bb_workflow_run": ("script", "source", "args"),
+}
+# Gated only when one of these is set: a status or priority update hands
+# nobody new work; a new title, body or blocked reason, or an assignee, does.
+# The blocked reason is read as work: fleet_task_list returns it to members
+# (the assignee included), and the orchestrator's stall briefing quotes it
+# with "clear it, re-scope it, or escalate it" (fleet orchestrator.ts).
+MCP_WHEN = {"fleet_task_update": ("title", "body", "blockedReason", "assigneeMemberId")}
+MCP_TOOL = re.compile(r"(?:^|[^a-z])(" + "|".join(MCP_FIELDS) + r")$")
+# A file edit writes text; it runs nothing, so it dispatches nothing. Codex's apply_patch carries
+# its patch in `command`, and read as shell its `+sha=$(...)` lines looked like a run-time-built
+# bb verb ("bb substituted"), denying a read-only script write (2026-10-22). Same set as
+# ship-gate.py. A shell command is not one of these and is still parsed in full.
+FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
+# The decision must land before the host's hook timeout, because a timed-out
+# hook lets the command run (Claude Code 2.1.282, probed live 2026-09-25;
+# Codex 0.157.0, codex-rs/hooks pre_tool_use.rs). The clock starts with the
+# hook chain (HOOK_T0 from coordinator-hook-pretool.sh), so start-up and the
+# ship gate before this stage count. At HOOK_HARD_S a dispatch-shaped payload
+# from a ledger thread with no `serves:` is denied by shape; anything else is
+# allowed, as when the gate crashes. Same constants as qa-sweep's ship gate;
+# hooks/check-hook-timeouts.sh holds the host config to them.
+HOOK_HOST_TIMEOUT_S = 15.0
+# Below the chain supervisor's GATE_DEADLINE (11 s, coordinator-hook-pretool.sh),
+# which kills a stage still running then; this gate's own deny usually wins.
+HOOK_HARD_S = 10.0
+# Matched against the payload with quotes and backslashes removed, so
+# `bb thr"ead" tell` reads as the dispatch the shell will run.
+COARSE_DISPATCH = re.compile(r'fleet_member_(spawn|tell)|fleet_delegate|fleet_task_(create|update)|fleet_advise|fleet_context_set|bb_workflow_run|'
+                             r'thread.{0,40}(spawn|create|fork|tell|message|edit-message|queue|interactions.{0,60}(answer|respond))|'
+                             r'fleet.{0,20}(group-create|task-add|advise|member-add)|'
+                             r'automation.{0,40}(create|update|run|resume)|instructions.{0,20}set|'
+                             r'settings.{0,20}writing.{0,20}(correct|transcribe)|plugin.{0,20}rpc.{0,20}call', re.I)
+SERVES_P = re.compile(r"serves:\s*((?:P\d+\b[\s,/&+]*(?:and\s+)?)+)", re.I)
+SERVES_REV = re.compile(r"""serves:\s*revision\s*["“]([^"”]+)["”]""", re.I)
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def collapse(s):
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# ---------------------------------------------------------------- the ledger
+
+class LedgerError(Exception):
+    pass
+
+
+def ledger_path(thread):
+    if not THREAD_ID.match(thread or ""):
+        raise LedgerError(f"not a thread id: {thread!r}")
+    return os.path.join(LEDGER_DIR, f"{thread}.json")
+
+
+def validate(ledger, thread):
+    if not isinstance(ledger, dict):
+        raise LedgerError("ledger is not an object")
+    if ledger.get("thread_id") != thread:
+        raise LedgerError(f"thread_id {ledger.get('thread_id')!r} != {thread}")
+    purposes = ledger.get("purposes")
+    if not isinstance(purposes, list) or not purposes:
+        raise LedgerError("no purposes")
+    seen = set()
+    for p in purposes:
+        if not isinstance(p, dict) or not re.match(r"^P\d+$", str(p.get("id", ""))):
+            raise LedgerError(f"bad purpose id {p.get('id') if isinstance(p, dict) else p!r}")
+        if p["id"] in seen:
+            raise LedgerError(f"duplicate purpose {p['id']}")
+        seen.add(p["id"])
+        if not isinstance(p.get("text"), str) or not p["text"].strip():
+            raise LedgerError(f"{p['id']} has no text")
+        if p.get("status") not in STATUSES:
+            raise LedgerError(f"{p['id']} status {p.get('status')!r}")
+    revisions = ledger.setdefault("accepted_revisions", [])
+    if not isinstance(revisions, list) or any(not isinstance(r, dict) or not str(r.get("quote", "")).strip() for r in revisions):
+        raise LedgerError("accepted_revisions must be a list of {quote}")
+    released = ledger.get("released_children", [])
+    if not isinstance(released, list) or any(
+            not isinstance(r, dict) or not THREAD_ID.match(str(r.get("thread_id", "")))
+            or not isinstance(r.get("evidence"), str) or not r["evidence"].strip() for r in released):
+        raise LedgerError("released_children must be a list of {thread_id, evidence}")
+    return ledger
+
+
+def read_ledger(thread):
+    """None when absent; raises LedgerError when present but unusable."""
+    path = ledger_path(thread)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise LedgerError(f"unreadable: {e}")
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise LedgerError(f"unparseable: {e}")
+    return validate(data, thread)
+
+
+def write_ledger(thread, ledger):
+    validate(ledger, thread)
+    os.makedirs(LEDGER_DIR, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=LEDGER_DIR, prefix=".ledger-", suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(ledger, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, ledger_path(thread))
+
+
+# ---------------------------------------------------------------- the decision
+
+def decide(ledger, texts):
+    """(allow, reason, serves) for dispatch texts against a ledger."""
+    purposes = {p["id"]: p for p in ledger["purposes"]}
+    revisions = {collapse(r["quote"]) for r in ledger.get("accepted_revisions", [])}
+    served = []
+    for text in texts:
+        ok = None
+        for m in SERVES_P.finditer(text):
+            for pid in re.findall(r"P\d+", m.group(1), re.I):
+                pid = pid.upper()
+                p = purposes.get(pid)
+                if p and p["status"] == "open":
+                    ok = pid
+                    break
+                served.append(f"{pid} ({'unknown' if not p else p['status']})")
+            if ok:
+                break
+        if not ok:
+            for m in SERVES_REV.finditer(text):
+                if collapse(m.group(1)) in revisions:
+                    ok = "revision"
+                    break
+                served.append("revision (no accepted revision has that exact quote)")
+        if not ok:
+            return False, served, None
+    return True, served, ok
+
+
+def deny_reason(ledger, thread, served):
+    lines = [f"[scope-gate] Dispatch from {thread} denied: the brief must say which of the user's purposes it serves."]
+    if served:
+        lines.append("It named: " + ", ".join(served) + " -- only an OPEN purpose or an accepted revision counts.")
+    opened = [p for p in ledger["purposes"] if p["status"] == "open"]
+    lines.append("Open purposes (the user's words):" if opened else "No purpose is open.")
+    for p in opened:
+        lines.append(f'  serves: {p["id"]}   "{p["text"]}"')
+    for p in ledger["purposes"]:
+        if p["status"] == "blocked-on-user":
+            lines.append(f'  ({p["id"]} is blocked-on-user: {p.get("ask") or "no ask recorded"})')
+    for r in ledger.get("accepted_revisions", []):
+        lines.append(f'  serves: revision "{collapse(r["quote"])}"')
+    lines.append("Add one of those lines to the brief or message. If the work serves none of them, it is outside the request: ask the user, and record their approval with `scope-gate.py revise`.")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- the payload
+
+ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-)?([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+# Why a brief file could not be read, for the deny message; reset per payload.
+FILE_NOTES = []
+# What the call has to add, beyond a serves line, for the deny message.
+CALL_NOTES = []
+
+
+# Names a command assigns itself: `D=...;`, `export D=...`, `for D in`, `read D`.
+# The hook reads brief files before the command runs, so its value for such a
+# name is not the one the command will use (live miss, 2026-09-25 23:15Z:
+# `D=...; bb thread tell ... --message-file $D/x.md`). Over-approximates on
+# purpose (a prefix assignment, or `D=` inside a quoted argument, also counts):
+# the cost is a deny whose message says to use a literal path.
+ASSIGNED_NAME = re.compile(
+    r"(?:^|[\s;&|(){}`])(?:(?:export|local|declare|typeset|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]*)\+?="
+    r"|\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b"
+    r"|\bread\s+(?:-\w+\s+)*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def assigned_names(cmd):
+    return {n for g in ASSIGNED_NAME.findall(cmd or "") for n in g if n}
+
+
+def expand_path(path, assigned=frozenset()):
+    """`path` with $VAR, ${VAR}, ${VAR:-default} and a leading ~ expanded from
+    this hook's environment, which the host gives the hook and the command
+    alike; None when a variable is unset (the file cannot be known, so the
+    dispatch is denied) or is one the command assigns itself (`assigned`: the
+    hook would read another file than the command). A coordinator's brief in
+    $TMPDIR/m.txt was denied until 2026-09-25 because $TMPDIR was read as a
+    relative directory name."""
+    unset, inside = [], []
+
+    def sub(m):
+        name = m.group(1) or m.group(4)
+        op, rest = m.group(2), m.group(3) or ""
+        if name in assigned:
+            inside.append("$" + name)
+            return ""
+        val = os.environ.get(name)
+        if m.group(1) and op is None and rest:
+            unset.append(m.group(0))  # ${VAR/x/y} and friends: not expanded
+            return ""
+        if (op == ":-" and not val) or (op == "-" and val is None):
+            return ENV_REF.sub(sub, rest)
+
+        if val is None:
+            unset.append("$" + name)
+            return ""
+        return val
+
+    out = ENV_REF.sub(sub, path)
+    if inside:
+        FILE_NOTES.append(f"{path}: {', '.join(sorted(set(inside)))} is set by this same command, and the hook reads "
+                          f"the brief file before the command runs, so it cannot know which file that is: "
+                          f"name the brief file by a literal path")
+        return None
+    if unset:
+        FILE_NOTES.append(f"{path}: {', '.join(unset)} is not set in the hook's environment, so the file cannot be read")
+        return None
+    return os.path.expanduser(out)
+
+
+def read_file_text(path, cwd, assigned=frozenset(), after_cd=False):
+    """A brief file's text; "" (with a note for the deny) when it cannot be
+    known. Only a regular file is read: opening a FIFO blocks until a writer
+    comes, which is the command itself, so the gate ran into its deadline
+    (review r2b). A relative path in a command that changes directory is
+    relative to a directory the hook cannot know (after_cd)."""
+    shown = path
+    path = expand_path(path, assigned)
+    if path is None:
+        return ""
+    if not os.path.isabs(path):
+        if after_cd:
+            FILE_NOTES.append(f"{shown}: a relative path in a command that changes directory (cd, pushd); the hook "
+                              f"reads it before the command runs, so it cannot know which file that is: use an absolute path")
+            return ""
+        if cwd:
+            path = os.path.join(cwd, path)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except FileNotFoundError:
+        FILE_NOTES.append(f"{shown}: no such file when the hook ran. A file the same command writes does not exist "
+                          f"yet when the hook reads it: write the brief file in a separate step, then dispatch")
+        return ""
+    except OSError as e:
+        FILE_NOTES.append(f"{shown}: unreadable ({e.strerror})")
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            FILE_NOTES.append(f"{shown}: not a regular file (a FIFO, a device or a directory); only a plain brief file is read")
+            return ""
+        with os.fdopen(fd, encoding="utf-8", errors="replace") as f:
+            fd = None
+            return f.read(200_000)
+    except OSError as e:
+        FILE_NOTES.append(f"{shown}: unreadable ({e.strerror})")
+        return ""
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+class FixBriefCheckError(Exception):
+    pass
+
+
+def _absolute_markdown_paths(text):
+    paths = FIX_REVIEW_PATH.findall(text)
+    paths.extend(FIX_REVIEW_PATH_ANGLE.findall(text))
+    paths.extend(match.group("path") for match in FIX_REVIEW_PATH_QUOTED.finditer(text))
+    return list(dict.fromkeys(path.replace("\\ ", " ") for path in paths))
+
+
+def _fail_review_paths(paths):
+    found = []
+    for path in paths:
+        fd = None
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise FixBriefCheckError(f"could not read referenced review file `{path}`: not a regular file")
+            with os.fdopen(fd, encoding="utf-8", errors="replace") as report:
+                fd = None
+                first_line = report.readline(64).rstrip("\r\n")
+        except (FileNotFoundError, NotADirectoryError):
+            # Output paths named in a brief may not exist until the child writes them.
+            continue
+        except OSError as e:
+            raise FixBriefCheckError(f"could not read referenced review file `{path}`: {e.strerror}") from e
+        finally:
+            if fd is not None:
+                os.close(fd)
+        if re.match(r"^VERDICT: FAIL", first_line):
+            found.append(path)
+    return found
+
+
+def _brief_needs_fix_check(text):
+    """Whether this text is a FAIL-review fix brief or needs a fail-closed check."""
+    paths = _absolute_markdown_paths(text)
+    if len(paths) > FIX_REVIEW_PATH_LIMIT:
+        return True
+    try:
+        failed_reviews = _fail_review_paths(paths)
+    except FixBriefCheckError:
+        # Keep unreadable existing paths and other inspection failures fail closed.
+        return True
+    return bool(failed_reviews)
+
+
+def _deadline_payload_has_fix_brief(stdin_text):
+    try:
+        payload = json.loads(stdin_text or "{}")
+        _, inp = tool_and_input(payload) if isinstance(payload, dict) else ("", {})
+        command = command_text(inp) or ""
+        if (re.search(r"\bautomations?\s+(?:create|update|run|resume)\b", command, re.I)
+                and not re.search(r"--(?:prompt|script|script-file)(?:=|\s)", command)):
+            return True  # The saved brief cannot be read again safely at the deadline.
+        texts, _ = dispatch_texts(payload)
+        for text in texts:
+            if _brief_needs_fix_check(text):
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def _git_repo_candidates(text):
+    candidates = []
+    for label in ("Worktree", "Repo"):
+        pattern = re.compile(rf"^[ \t]*{label}:[ \t]*(.*?)[ \t]*$", re.I | re.M)
+        for match in pattern.finditer(text):
+            path = match.group(1).strip().strip("`\"")
+            if path.startswith("<") and path.endswith(">"):
+                path = path[1:-1].strip()
+            path = os.path.expanduser(path)
+            if os.path.isabs(path):
+                candidates.append((label, path))
+                if len(candidates) > FIX_REPO_HINT_LIMIT:
+                    return candidates
+    return candidates
+
+
+def _fix_git_call(repo, args, *, input_bytes=None, calls_left=1):
+    import subprocess
+
+    remaining = HOOK_HARD_S - hook_elapsed() - FIX_GIT_DEADLINE_RESERVE_S
+    if remaining <= 0:
+        raise FixBriefCheckError("the hook deadline left no time for the required git check")
+    timeout = min(FIX_GIT_CALL_TIMEOUT_S, remaining / max(1, calls_left))
+    if timeout <= 0.005:
+        raise FixBriefCheckError("the hook deadline left too little time for the required git check")
+    git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    git_env["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        result = subprocess.run(["git", *args], cwd=repo, input=input_bytes, capture_output=True,
+                                timeout=timeout, env=git_env)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise FixBriefCheckError(f"git could not answer within {timeout:.3f}s ({e})") from e
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        suffix = f": {detail[0][:180]}" if detail else ""
+        raise FixBriefCheckError(f"git could not verify the cited object{suffix}")
+    return result.stdout
+
+
+def _fix_brief_repo(text, calls_left):
+    last_error = None
+    candidates = _git_repo_candidates(text)
+    if len(candidates) > FIX_REPO_HINT_LIMIT:
+        raise FixBriefCheckError(f"the brief names more than {FIX_REPO_HINT_LIMIT} repository paths")
+    for i, (label, path) in enumerate(candidates):
+        if not os.path.isdir(path):
+            last_error = f"{label}: {path} is not a directory"
+            continue
+        try:
+            root = _fix_git_call(path, ["rev-parse", "--show-toplevel"],
+                                 calls_left=max(1, calls_left - i)).decode("utf-8", "replace").strip()
+        except FixBriefCheckError as e:
+            last_error = str(e)
+            continue
+        if root and os.path.isabs(root):
+            return os.path.realpath(root)
+        last_error = f"git did not return a repository root for {path}"
+    if not candidates:
+        raise FixBriefCheckError("the brief does not name a worktree; add `Repo: <absolute path>`")
+    raise FixBriefCheckError(f"could not find the brief's git repository; add `Repo: <absolute path>` ({last_error})")
+
+
+def _fix_line_citations(text):
+    found = [(m.group("path"), m.group("line")) for m in FIX_CITATION.finditer(text)]
+    if len(found) > FIX_CITATION_LIMIT:
+        raise FixBriefCheckError(f"the brief has {len(found)} citations; the gate checks at most {FIX_CITATION_LIMIT}")
+    citations = []
+    for path, line_text in found:
+        if path.startswith("/"):
+            raise FixBriefCheckError(f"citation `{path}:{line_text}` must be relative to the named repository")
+        if any(part in ("", ".", "..") for part in path.split("/")):
+            raise FixBriefCheckError(f"citation `{path}:{line_text}` is not a repository-relative path")
+        if len(line_text) > 10:
+            raise FixBriefCheckError(f"citation `{path}:{line_text[:24]}…` has an invalid line number")
+        line_number = int(line_text)
+        if line_number < 1:
+            raise FixBriefCheckError(f"citation `{path}:0` must use a positive line number")
+        citations.append((path, line_number))
+    if not citations:
+        raise FixBriefCheckError("a FAIL review brief needs at least one file:line citation")
+    return citations
+
+
+def _git_line_counts(repo, sha, paths, calls_left):
+    specs = [f"{sha}:{path}" for path in paths]
+    for i, path in enumerate(paths):
+        try:
+            _fix_git_call(repo, ["cat-file", "-e", specs[i]], calls_left=calls_left - i)
+        except FixBriefCheckError as e:
+            raise FixBriefCheckError(f"citation path `{path}` does not exist at {sha}: {e}") from e
+
+    batch_input = ("\n".join(specs) + "\n").encode("utf-8")
+    checks = _fix_git_call(repo, ["cat-file", "--batch-check"], input_bytes=batch_input,
+                           calls_left=max(1, calls_left - len(paths))).decode("utf-8", "replace").splitlines()
+    if len(checks) != len(specs):
+        raise FixBriefCheckError(f"git returned an incomplete line-count preflight for {sha}")
+    total_bytes, sizes = 0, []
+    for spec, result in zip(specs, checks):
+        fields = result.rsplit(" ", 2)
+        if len(fields) != 3 or fields[1] != "blob":
+            raise FixBriefCheckError(f"git could not read `{spec}` as a file at {sha}")
+        try:
+            size = int(fields[2])
+        except ValueError as e:
+            raise FixBriefCheckError(f"git returned an invalid size for `{spec}`") from e
+        if size < 0:
+            raise FixBriefCheckError(f"git returned an invalid size for `{spec}`")
+        sizes.append(size)
+        total_bytes += size
+    if total_bytes > FIX_GIT_BLOB_LIMIT:
+        raise FixBriefCheckError(f"the cited Git blobs total {total_bytes} bytes; the gate reads at most {FIX_GIT_BLOB_LIMIT}")
+
+    batch = _fix_git_call(repo, ["cat-file", "--batch"], input_bytes=batch_input,
+                          calls_left=max(1, calls_left - len(paths) - 1))
+    line_counts, offset = {}, 0
+    for spec, expected_size in zip(specs, sizes):
+        header_end = batch.find(b"\n", offset)
+        if header_end < 0:
+            raise FixBriefCheckError(f"git returned an incomplete blob header for `{spec}`")
+        header = batch[offset:header_end].decode("utf-8", "replace").rsplit(" ", 2)
+        if len(header) != 3 or header[1] != "blob":
+            raise FixBriefCheckError(f"git returned an invalid blob header for `{spec}`")
+        try:
+            actual_size = int(header[2])
+        except ValueError as e:
+            raise FixBriefCheckError(f"git returned an invalid blob size for `{spec}`") from e
+        if actual_size != expected_size:
+            raise FixBriefCheckError(f"git returned inconsistent blob sizes for `{spec}`")
+        start = header_end + 1
+        end = start + actual_size
+        if end >= len(batch) or batch[end:end + 1] != b"\n":
+            raise FixBriefCheckError(f"git returned a truncated blob for `{spec}`")
+        blob = batch[start:end]
+        line_ends = blob.count(b"\n") + blob.count(b"\r") - blob.count(b"\r\n")
+        line_counts[spec.split(":", 1)[1]] = line_ends + int(bool(blob) and not blob.endswith((b"\n", b"\r")))
+        offset = end + 1
+    return line_counts
+
+
+def fix_brief_problem(text):
+    """Return the reason to deny an ungrounded FAIL-review fix brief, if any."""
+    review_paths = _absolute_markdown_paths(text)
+    if len(review_paths) > FIX_REVIEW_PATH_LIMIT:
+        return f"the brief names {len(review_paths)} absolute Markdown files; the gate inspects at most {FIX_REVIEW_PATH_LIMIT}"
+    try:
+        failed_reviews = _fail_review_paths(review_paths)
+    except FixBriefCheckError as e:
+        return str(e)
+    if not failed_reviews:
+        return None
+
+    checked = FIX_CHECKED_SHA.findall(text)
+    if not checked:
+        return "a FAIL review brief needs a line `Checked against <40-hex sha>`"
+    if len({sha.lower() for sha in checked}) != 1:
+        return "the FAIL review brief has conflicting `Checked against` SHAs"
+    sha = checked[0].lower()
+    try:
+        citations = _fix_line_citations(text)
+    except FixBriefCheckError as e:
+        return str(e)
+    if len(citations) > FIX_CITATION_LIMIT:
+        return f"the FAIL review brief has more than {FIX_CITATION_LIMIT} citations"
+
+    unique_paths = list(dict.fromkeys(path for path, _ in citations))
+    candidate_count = len(_git_repo_candidates(text))
+    calls_left = max(1, candidate_count + len(unique_paths) + 3)
+    try:
+        repo = _fix_brief_repo(text, calls_left)
+        repo_head = _fix_git_call(repo, ["rev-parse", "--verify", "HEAD^{commit}"],
+                                  calls_left=max(1, calls_left - candidate_count)).decode("utf-8", "replace").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", repo_head):
+            raise FixBriefCheckError("git did not return a 40-hex commit for the named worktree HEAD")
+        if sha != repo_head:
+            raise FixBriefCheckError(f"Checked against {sha} does not match the named worktree HEAD {repo_head}")
+        line_counts = _git_line_counts(repo, sha, unique_paths,
+                                       max(1, len(unique_paths) + 2))
+    except FixBriefCheckError as e:
+        return str(e)
+    for path, line_number in citations:
+        count = line_counts.get(path)
+        if count is None:
+            return f"git did not return a line count for `{path}` at {sha}"
+        if line_number > count:
+            return f"citation `{path}:{line_number}` exceeds the {count} lines in that file at {sha}"
+    return None
+
+
+def command_text(inp):
+    cmd = inp.get("command") if isinstance(inp, dict) else None
+    if cmd is None and isinstance(inp, dict):
+        cmd = inp.get("cmd")
+    if isinstance(cmd, list):
+        # Codex: ["/bin/zsh", "-lc", "<script>"] -- the script is what runs.
+        parts = [str(c) for c in cmd]
+        if len(parts) >= 3 and parts[1] in ("-c", "-lc", "-ic"):
+            return parts[2]
+        return " ".join(shlex.quote(p) for p in parts)
+    return cmd if isinstance(cmd, str) else None
+
+
+def tool_and_input(payload):
+    tool = str(payload.get("tool_name") or payload.get("toolName") or "")
+    inp = payload.get("tool_input") or payload.get("toolInput") or payload.get("input") or {}
+    if isinstance(inp, str):
+        try:
+            inp = json.loads(inp)
+        except ValueError:
+            inp = {"command": inp}
+    if not isinstance(inp, dict):
+        inp = {}
+    if isinstance(inp.get("arguments"), dict):
+        inp = {**inp, **inp["arguments"]}
+    return tool, inp
+
+
+def mcp_text(kind, inp):
+    """The text an agent tool hands over, or None when this call hands over
+    nothing (MCP_WHEN). Non-string values (bb_workflow_run's args) as JSON."""
+    if kind in MCP_WHEN and not any(inp.get(k) not in (None, "") for k in MCP_WHEN[kind]):
+        return None
+    vals = (inp.get(k) for k in MCP_FIELDS[kind])
+    return "\n".join(v if isinstance(v, str) else json.dumps(v, separators=(",", ":"), ensure_ascii=False)
+                     for v in vals if v is not None)
+
+
+def dispatch_texts(payload):
+    """([texts], label) when the tool call dispatches work; ([], None) otherwise."""
+    del FILE_NOTES[:]
+    del CALL_NOTES[:]
+    tool, inp = tool_and_input(payload)
+    cwd = inp.get("workdir") or inp.get("cwd") or payload.get("cwd") or ""
+    m = MCP_TOOL.search(tool)
+    if m:
+        kind = m.group(1)
+        text = mcp_text(kind, inp)
+        if text is None:
+            return [], None
+        if kind == "bb_workflow_run" and isinstance(inp.get("scriptPath"), str):
+            text += "\n" + read_file_text(inp["scriptPath"], str(cwd))
+        if kind == "bb_workflow_run" and not any(isinstance(inp.get(k), str) for k in ("script", "source", "scriptPath")):
+            CALL_NOTES.append("A saved workflow's script is not read: pass the script (or scriptPath), or put the serves line in args.")
+        if kind == "fleet_task_update" and not (inp.get("title") or inp.get("body") or inp.get("blockedReason")):
+            CALL_NOTES.append("A task handed to a member carries its brief: set body (or title) with the serves line.")
+        return [text], kind
+    if tool.strip().lower() in FILE_EDIT_TOOLS:
+        return [], None
+    cmd = command_text(inp)
+    if not cmd:
+        return [], None
+    texts, verbs = dispatch_bodies(cmd, str(cwd))
+    if not texts:
+        return [], None
+    return texts, "bb " + "/".join(sorted(verbs))
+
+
+class _Every(frozenset):
+    """Every name: in a script bb runs later, no variable's value is known now."""
+    def __contains__(self, name):
+        return True
+
+
+def dispatch_bodies(cmd, cwd, depth=0, later=False):
+    """([body], {verb}) for the dispatches in a shell script: each body is one
+    dispatch's words, its heredocs and the brief files it reads, and must
+    carry its own serves line. `later`: a script bb runs when an automation
+    is due, in a directory and environment the hook cannot know."""
+    # Only a command whose command word is bb runs a dispatch; the same words
+    # inside a quoted argument (printf, echo, grep, git commit -m) are data.
+    texts, verbs = [], set()
+    found = dispatches(cmd)
+    if not found:
+        return texts, verbs
+    assigned = _Every() if later else assigned_names(cmd)
+    after_cd = later or changes_dir(cmd)
+    for text, heredocs, verb in found:
+        verbs.add(verb)
+        if verb.startswith("automation "):
+            texts += automation_bodies(text, heredocs, verb, cwd, assigned, after_cd, depth)
+            continue
+        body = "\n".join([text, *heredocs])
+        for rx in (FILE_FLAG, CAT_SUB, REDIRECT_IN):
+            for g in rx.findall(text):
+                path = next((x for x in g if x), "")
+                if path and path != "-":
+                    body += "\n" + read_file_text(path, cwd, assigned, after_cd)
+        texts.append(body)
+    return texts, verbs
+
+
+def _values(args, flag):
+    return [args[i + 1] if a == flag and i + 1 < len(args) else a[len(flag) + 1:] if a != flag else ""
+            for i, a in enumerate(args) if a == flag or a.startswith(flag + "=")]
+
+
+SCRIPT_EXT = {".js": "node", ".mjs": "node", ".cjs": "node", ".py": "python3"}
+
+
+def script_bodies(script, interpreter, cwd, depth):
+    """The dispatches in a script an automation runs. A shell script is parsed
+    like a command (each dispatch in it needs its own serves line); a node or
+    python3 script is not parsed, so one that reads like a dispatch needs the
+    serves line in its text."""
+    if interpreter in (None, "", *SHELLS):
+        if depth >= MAX_DEPTH:
+            return [script] if COARSE_DISPATCH.search(flatten(script)) else []
+        return dispatch_bodies(script, cwd, depth + 1, later=True)[0]
+    if COARSE_DISPATCH.search(flatten(script)):
+        CALL_NOTES.append(f"A {interpreter} automation script is not parsed: a script that dispatches needs the serves line in its text.")
+        return [script]
+    return []
+
+
+def automation_bodies(text, heredocs, verb, cwd, assigned, after_cd, depth):
+    """What an automation hands an agent: its --prompt (in the command's own
+    words), the dispatches in its --script or --script-file, or, for run,
+    resume and a retarget or reschedule without new text, the prompt or script
+    it already stores. Review r2c: `automation create --in 30s --prompt ...
+    --target-thread thr_x` re-prompted a thread with no serves line."""
+    w = words(text)
+    group = verb.split()[1]
+    k = next((i for i in range(len(w) - 1) if w[i] in ("automation", "automations") and w[i + 1] == group), None)
+    args = w[k + 2:] if k is not None else w
+    prompts, scripts, files = _values(args, "--prompt"), _values(args, "--script"), _values(args, "--script-file")
+    interpreter = (_values(args, "--interpreter") or [None])[-1]
+    out = []
+    if prompts:
+        body = "\n".join([text, *heredocs])
+        for g in CAT_SUB.findall(text):  # --prompt "$(cat brief.md)"
+            path = next((x for x in g if x), "")
+            if path:
+                body += "\n" + read_file_text(path, cwd, assigned, after_cd)
+        out.append(body)
+    for script in scripts:
+        out += script_bodies(script, interpreter, cwd, depth)
+    for path in files:
+        if _values(args, "--host"):
+            FILE_NOTES.append(f"{path}: --host names the machine holding the script file, so the file the hook would "
+                              f"read is not the one bb copies: pass the script inline with --script, or drop --host")
+            out.append(text)
+            continue
+        noted = len(FILE_NOTES)
+        body = read_file_text(path, cwd, assigned, after_cd)
+        if len(FILE_NOTES) > noted:
+            out.append(text)  # unreadable: only the command's own words can serve
+            continue
+        out += script_bodies(body, interpreter or SCRIPT_EXT.get(os.path.splitext(path)[1].lower()), cwd, depth)
+    if not (prompts or scripts or files) and group in ("run", "resume", "update"):
+        out += stored_automation(args)
+    return out
+
+
+def stored_automation(args):
+    """[the prompt], or the dispatches in the script, an existing automation
+    runs, read with `bb automation show <id> --json`; [""] (so the call is
+    denied, with a note) when it cannot be read."""
+    import subprocess
+    auto = args[0] if args and not args[0].startswith("-") else ""
+    project = (_values(args, "--project") or [None])[-1]
+    why = None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", auto):
+        why = "no automation id before the options"
+    else:
+        bb = os.environ.get("BB_CLI") or shutil_which("bb")
+        cmd = [bb or "bb", "automation", "show", auto, "--json"] + (["--project", project] if project else [])
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                               timeout=max(0.5, min(5.0, HOOK_HARD_S - hook_elapsed() - 1.5)))
+            ex = json.loads(p.stdout).get("execution") if p.returncode == 0 else None
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as e:
+            ex, why = None, type(e).__name__
+        if isinstance(ex, dict) and ex.get("mode") == "agent" and isinstance(ex.get("prompt"), str):
+            CALL_NOTES.append(f"Automation {auto} runs the prompt it stores: put the serves line in it "
+                              f"(`bb automation update {auto} --prompt ...`).")
+            return [ex["prompt"]]
+        if isinstance(ex, dict) and ex.get("mode") == "script" and isinstance(ex.get("script"), str):
+            found = script_bodies(ex["script"], ex.get("interpreter"), "", MAX_DEPTH - 1)
+            if found:
+                CALL_NOTES.append(f"Automation {auto} runs a script that dispatches: each dispatch in it needs its serves line.")
+            return found
+        why = why or f"`bb automation show` gave no prompt or script (exit {p.returncode})"
+    CALL_NOTES.append(f"Automation {auto or '?'}: the prompt or script it stores could not be read ({why}), "
+                      f"so the call is denied: it would run that text.")
+    return [""]
+
+
+def record(entry):
+    try:
+        os.makedirs(os.path.dirname(DECISIONS), exist_ok=True)
+        with open(DECISIONS, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"schema_version": 1, "at": now_iso(), **entry}) + "\n")
+    except OSError:
+        pass
+
+
+def deny(reason):
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+    print(reason, file=sys.stderr)
+    return 2
+
+
+def hook_elapsed(now=None):
+    """Seconds since the hook chain started (HOOK_T0). 0 when unset or
+    unreadable, never negative: a future T0 cannot buy more time."""
+    try:
+        t0 = float(os.environ.get("HOOK_T0", ""))
+    except ValueError:
+        return 0.0
+    return max(0.0, (datetime.datetime.now().timestamp() if now is None else now) - t0)
+
+
+# A shell comment outside quotes (keeping quoted strings, ANSI-C strings and
+# escapes). The same expressions are in the hooks' jq shape (SCOPE_SHAPE_JQ),
+# so the two deadline decisions read the same words.
+UNCOMMENT = re.compile(r"""(\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S])|(?:^|(?<=[\s;&|()]))(#[^\n]*)""", re.M)
+# Shape splits a command at EVERY ; & | ( ) and newline, quoted or not: more
+# stretches than the shell makes, so a serves line can only be cut off from
+# its dispatch (a deny), never carried into another one.
+SHAPE_SEP = re.compile(r"[;&|()\n]")
+# A stretch that runs a nested script (sh -c, eval, --script, a here-string,
+# env -S, node -e) is denied at the deadline even with a serves line: the line
+# could belong to the outer command, not to the dispatch inside (review r2c).
+NESTED_RUNNER = re.compile(r"(^|\s)-[A-Za-z]*[ce](\s|$)|(^|[\s/])eval(\s|$)|--script|<<<|(^|\s)(-[A-Za-z]*S|--split-string)", re.I)
+# An ANSI-C string with an escape can spell any word (`$'\x74ell'`): such a
+# stretch is dispatch-shaped whatever it reads like.
+ANSI_ESCAPED = re.compile(r"\$'[^']*\\")
+# A substitution glued into a word (review r2d: `bb automation$(echo) run a1`
+# read as no dispatch). The separator split eats a `$(...`'s parens, so that
+# form survives only as a word-final `$` (`bb automation$`): a `$` the shell
+# would expand, not one after a space, another `$` (a PID) or an `=` (an
+# assignment, `X=$(...)`: its `$` opens the substitution's parens, it is not
+# part of a word). A backtick or `${` glued to a word keeps the stretch whole
+# (`bb th`x`read tell`, `bb automation${X} run`). A `$(...)` as its own word
+# in the verb zone (`bb thread $(echo) tell`) leaves only a space before the
+# stretch's final `$`: that is dispatch-shaped when the stretch carries a
+# dispatch word too (bb, a path to it, or a group word) — `echo "$(date)"`
+# has none and stays allowed (r2d follow-up). Anything the shell builds at
+# run time is dispatch-shaped: what runs is unknown. The same expressions
+# are in the hooks' jq shape (SCOPE_SHAPE_JQ), so the two deadline decisions
+# read the same words.
+GLUED_SUBST = re.compile(r"[^\s](`|\$\{)")
+GLUED_DOLLAR = re.compile(r"[^\s$=]\$$")
+# A bare variable glued into a dispatch's group or verb word hides the word
+# the shell will run. Keep the match in those positions so ordinary `$VAR`
+# arguments remain readable.
+GLUED_VARIABLE = re.compile(
+    r"(?:^|\s)(?:[^\s;&|()]+/)?(?:bb|\$BB_CLI|\$\{BB_CLI[^}]*\})\s+"
+    r"(?:--[A-Za-z-]+(?:=\S+)?\s+)*(?:thread|fleet|automation|instructions)\$[A-Za-z0-9_]"
+    r"|(?:^|\s)(?:[^\s;&|()]+/)?(?:bb|\$BB_CLI|\$\{BB_CLI[^}]*\})\s+"
+    r"(?:--[A-Za-z-]+(?:=\S+)?\s+)*(?:thread\s+(?:spawn|create|fork|tell|message|edit-message)"
+    r"|thread\s+queue\s+(?:create|update|send)|thread\s+interactions\s+(?:answer|respond)"
+    r"|fleet\s+(?:group-create|task-add|advise|member-add)"
+    r"|automation\s+(?:create|update|run|resume)|instructions\s+set)\$[A-Za-z0-9_]",
+    re.I,
+)
+SPACED_DOLLAR = re.compile(r"\s\$$")
+DISPATCH_WORD = re.compile(r"(^|\s)(bb|\$BB_CLI|\$\{BB_CLI[^}]*\}|thread|fleet|automation|instructions)(\s|$)", re.I)
+
+
+def flatten(text):
+    return re.sub(r"[\\'\"]", "", text)
+
+
+def blank_comments(cmd):
+    """The command with each comment's characters turned into spaces, except
+    the separators, so it splits at the same places as the command itself."""
+    return UNCOMMENT.sub(lambda m: m.group(1) if m.group(1) is not None else re.sub(r"[^;&|()]", " ", m.group(2)), cmd)
+
+
+def shape_text(stdin_text):
+    """The deadline view of a call: the stretches that must each name an open
+    purpose, or None when nothing in it is dispatch-shaped. A gated agent
+    tool is one stretch, its text fields. A command is split at every
+    separator; a stretch that reads like a dispatch must carry its own serves
+    line, outside comments (a nested runner's stretch never serves). The tool
+    call's description is never read, and no brief file is (a FIFO would
+    block; review r2b). A stretch whose command, group or verb word carries a
+    glued substitution (`bb automation$(echo) run`, `bb th`x`read tell`) or a
+    substitution in the verb zone (`bb thread $(echo) tell`) is dispatch-
+    shaped: what runs is unknown (review r2d)."""
+    try:
+        payload = json.loads(stdin_text or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    tool, inp = tool_and_input(payload)
+    m = MCP_TOOL.search(tool)
+    if m:
+        text = mcp_text(m.group(1), inp)
+        return None if text is None else [flatten(text)]
+    if tool.strip().lower() in FILE_EDIT_TOOLS:
+        return None
+    cmd = command_text(inp)
+    if not cmd:
+        return None
+    cmd = cmd.replace("\\\n", "")
+    raws, owns = SHAPE_SEP.split(cmd), SHAPE_SEP.split(blank_comments(cmd))
+    if len(raws) != len(owns):
+        return [""]  # cannot happen (comments keep their separators); fail closed
+    out = []
+    for raw, own in zip(raws, owns):
+        flat = flatten(raw)
+        if (COARSE_DISPATCH.search(flat) or ANSI_ESCAPED.search(raw)
+                or GLUED_SUBST.search(flat) or GLUED_DOLLAR.search(flat)
+                or GLUED_VARIABLE.search(flat)
+                or (SPACED_DOLLAR.search(flat) and DISPATCH_WORD.search(flat))):
+            out.append("" if NESTED_RUNNER.search(flat) else flatten(own))
+    return out or None
+
+
+def revision_key(quote):
+    """What of an accepted revision's quote a stretch must contain: the quote,
+    or, when a separator splits it, its part before the first separator if
+    that is at least 20 characters (the rest is in the next stretch). The
+    user's words often hold a ; or a parenthesis."""
+    head = collapse(SHAPE_SEP.split(quote, maxsplit=1)[0])
+    return head if len(head) >= 20 else quote
+
+
+def shape_serves(thread, stretches):
+    """Shape mode: does every stretch name an OPEN purpose of the ledger, or
+    quote one of its accepted revisions? An unknown or blocked P-id does not
+    count; an unreadable ledger serves nothing."""
+    try:
+        led = read_ledger(thread)
+    except Exception:
+        return False
+    if not led:
+        return False
+    opened = {p["id"] for p in led["purposes"] if p["status"] == "open"}
+    quotes = [revision_key(q) for q in (collapse(flatten(r["quote"])) for r in led.get("accepted_revisions", [])) if q]
+
+    def serves(flat):
+        for m in SERVES_P.finditer(flat):
+            if {pid.upper() for pid in re.findall(r"P\d+", m.group(1), re.I)} & opened:
+                return True
+        return bool(re.search(r"serves:\s*revision", flat, re.I)) and any(q in collapse(flat) for q in quotes)
+    return all(serves(t) for t in stretches)
+
+
+def hook_under_deadline(thread, stdin=None):
+    """hook() with a hard deadline measured from the chain start."""
+    import signal
+    held = {"text": ""}
+
+    def expire(signum, frame):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        try:
+            has = bool(thread) and bool(THREAD_ID.match(thread)) and os.path.exists(ledger_path(thread))
+        except Exception:
+            has = False
+        if has:
+            try:
+                if FIX_BRIEF_CHECK_PENDING or _deadline_payload_has_fix_brief(held["text"]):
+                    deny(f"[scope-gate] fix brief denied: the required FAIL-review citation check could not finish "
+                         f"before the {HOOK_HARD_S:.0f} s gate deadline")
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    os._exit(2)
+            except Exception as e:
+                deny(f"[scope-gate] fix brief denied: citation check failed closed at the deadline ({e})")
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os._exit(2)
+        text = shape_text(held["text"]) if has else None
+        if text is not None and not shape_serves(thread, text):
+            deny(f"[scope-gate] the gate could not finish within {HOOK_HARD_S:.0f} s of the hook chain starting "
+                 f"(the host's hook timeout is {HOOK_HOST_TIMEOUT_S:.0f} s, and a timed-out hook lets the command "
+                 f"run); this dispatch names no purpose, so it is denied: add `serves: P<n>` and retry")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(2)
+        os._exit(0)
+
+    left = HOOK_HARD_S - hook_elapsed()
+    if left <= 0:  # the chain spent the budget before this stage: decide by shape now
+        held["text"] = (stdin or sys.stdin).read()
+        expire(None, None)
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, left)
+    try:
+        held["text"] = (stdin or sys.stdin).read()
+        return hook(held["text"], thread)
+    finally:
+
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def hook(stdin_text, thread):
+    global FIX_BRIEF_CHECK_PENDING
+    FIX_BRIEF_CHECK_PENDING = False
+    if not thread or not THREAD_ID.match(thread):
+        return 0
+    try:
+        payload = json.loads(stdin_text or "{}")
+    except ValueError:
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    texts, label = dispatch_texts(payload)
+    if not texts:
+        return 0
+    try:
+        ledger = read_ledger(thread)
+    except LedgerError as e:
+        record({"event": "scope_denied", "thread": thread, "tool": label, "why": f"ledger unusable: {e}"})
+        return deny(f"[scope-gate] {thread} has a scope ledger that cannot be used ({e}); dispatches are denied until it is fixed: {ledger_path(thread)}")
+    if ledger is None:
+        return 0
+    allow, served, via = decide(ledger, texts)
+    if allow:
+        FIX_BRIEF_CHECK_PENDING = any(_brief_needs_fix_check(text) for text in texts)
+        for text in texts:
+            try:
+                problem = fix_brief_problem(text)
+            except Exception as e:
+                problem = f"FAIL-review citation check failed closed: {e}"
+            if problem:
+                record({"event": "scope_denied", "thread": thread, "tool": label,
+                        "why": f"fix brief: {problem}"})
+                return deny(f"[scope-gate] fix brief denied: {problem}")
+        FIX_BRIEF_CHECK_PENDING = False
+        record({"event": "scope_passed", "thread": thread, "tool": label, "serves": via})
+        mark_passed(thread)
+        return 0
+    record({"event": "scope_denied", "thread": thread, "tool": label, "named": served})
+    notes = "".join("\nBrief file " + n + "." for n in FILE_NOTES) + "".join("\n" + n for n in CALL_NOTES)
+    return deny(deny_reason(ledger, thread, served) + notes)
+
+
+# ---------------------------------------------------------------- gap-map nudge
+
+def passed_marker(thread):
+    return os.path.join(os.path.dirname(DECISIONS), "scope-passed", thread)
+
+
+def passed_times(thread):
+    try:
+        with open(passed_marker(thread), encoding="utf-8") as f:
+            return [float(x) for x in f.read().split() if re.fullmatch(r"\d+(\.\d+)?", x)]
+    except OSError:
+        return []
+
+
+def mark_passed(thread, when=None):
+    """Record a passed dispatch in the thread's own marker: one epoch per line, pruned to
+    GAP_MAP_WINDOW_H. hooks/gap-map-hook.sh starts Python only when the file is fresh, and the
+    count comes from it. Per thread, because the shared decision log moves with the whole fleet
+    and can evict a thread's dispatches (Hermes review of #92, twice)."""
+    try:
+        when = time.time() if when is None else when
+        path = passed_marker(thread)
+        # Two dispatches passing at once must not drop one (Hermes review of #92, round 3): the
+        # read-prune-replace runs under the thread's own lock.
+        with marker_lock(thread):
+            keep = [t for t in passed_times(thread) if when - t <= GAP_MAP_WINDOW_H * 3600][-200:]
+            replace_text(path, "".join(f"{int(t)}\n" for t in sorted(keep + [when])))
+    except (OSError, LedgerError):
+        pass
+
+
+class marker_lock:
+    """Exclusive lock on scope-passed/<thread>.lock, around every read-modify-write of the
+    thread's gap-map state (its dispatch times and when the note was last shown)."""
+
+    def __init__(self, thread):
+        self.path = passed_marker(thread) + ".lock"
+
+    def __enter__(self):
+        import fcntl
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.f = open(self.path, "a")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        self.f.close()  # closing releases the lock
+
+
+def replace_text(path, text):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".passed-", suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def nudged_at(thread):
+    """Epoch the gap-map note was last shown to `thread`, or None."""
+    try:
+        with open(passed_marker(thread) + ".nudged", encoding="utf-8") as f:
+            return float(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def iso_age_h(at, now):
+    try:
+        t = datetime.datetime.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+    return (now - t).total_seconds() / 3600
+
+
+def passed_dispatches(thread, now, hours):
+    """Passed dispatches for `thread` in the last `hours`, from its own marker."""
+    ts = now.timestamp()
+    return sum(1 for t in passed_times(thread) if -60 <= ts - t <= hours * 3600)  # a minute of clock skew
+
+
+def gap_map_nudge(thread, now=None):
+    """The note to show a coordinator staffing work with no gap map, or None. Showing it is
+    recorded beside the thread's marker, under its lock, so concurrent hooks show it once per
+    GAP_MAP_REPEAT_H; the ledger is only read, so a coordinator's own `mark` or `release`
+    running at the same time is never overwritten (Hermes review of #92, round 4).
+
+    Owner, 2026-10-22, after a coordinator worked for hours without one: "so you HVE BEEN
+    WORKING FOR HOURS and never thought on doing a root cause analysis". The delivery contract
+    already required the map; text alone did not make it happen."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    ledger = read_ledger(thread)
+    if not ledger:
+        return None
+    for m in ledger.get("gap_maps") or []:
+        age = iso_age_h(m.get("at"), now) if isinstance(m, dict) else None
+        if age is not None and age <= GAP_MAP_FRESH_H:
+            return None
+    with marker_lock(thread):
+        last = nudged_at(thread)
+        if last is not None and now.timestamp() - last < GAP_MAP_REPEAT_H * 3600:
+            return None
+        n = passed_dispatches(thread, now, GAP_MAP_WINDOW_H)
+        if n < GAP_MAP_DISPATCHES:
+            return None
+        replace_text(passed_marker(thread) + ".nudged", f"{int(now.timestamp())}\n")
+    record({"event": "gap_map_nudge", "thread": thread, "dispatches": n})
+    gate = os.path.join(os.path.expanduser("~/.agents/skills/scope-ledger/scripts"), "scope-gate.py")
+    return (f"[scope-ledger] You have made {n} dispatches in {GAP_MAP_WINDOW_H}h and recorded no gap map. "
+            "Delivery contract: before staffing more work, trace one representative record end to end, "
+            "map every bucket x count to the first stage where it breaks, and staff only from that map. "
+            f"Record it: python3 {gate} map {thread} --artifact <path>. "
+            f"(This dispatch went through; shown at most once per {GAP_MAP_REPEAT_H}h.)")
+
+
+# ---------------------------------------------------------------- CLI
+
+def arg(args, name, default=None):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def main(argv):
+    if not argv:
+        print(__doc__)
+        return 2
+    cmd, args = argv[0], argv[1:]
+    if cmd == "hook":
+        try:
+            return hook_under_deadline(os.environ.get("BB_THREAD_ID", ""))
+        except Exception as e:  # a crash on a dispatch from a ledger thread denies
+            thread = os.environ.get("BB_THREAD_ID", "")
+            try:
+                has = bool(thread) and os.path.exists(ledger_path(thread))
+            except LedgerError:
+                has = False
+            if has:
+                return deny(f"[scope-gate] gate error, dispatch denied: {e}")
+            return 0
+    if cmd == "selftest":
+        return selftest()
+    if cmd == "nudge":
+        # PostToolUse, after a dispatch. Never denies; any failure is silent.
+        try:
+            sys.stdin.read()
+            note = gap_map_nudge(os.environ.get("BB_THREAD_ID", ""))
+        except Exception:
+            return 0
+        if note:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}))
+        return 0
+    if cmd == "shape":
+        thread = os.environ.get("BB_THREAD_ID", "")
+        text = shape_text(sys.stdin.read())
+        print("none" if text is None else ("allow" if shape_serves(thread, text) else "deny"))
+        return 0
+    if not args:
+        print(f"usage: scope-gate.py {cmd} <thread> ...", file=sys.stderr)
+        return 2
+    thread = args[0]
+    try:
+        if cmd == "show":
+            ledger = read_ledger(thread)
+            print(json.dumps(ledger, indent=2, ensure_ascii=False) if ledger else f"no ledger for {thread}")
+            return 0 if ledger else 1
+        if cmd == "check":
+            text = sys.stdin.read() if len(args) < 2 or args[1] == "-" else args[1]
+            ledger = read_ledger(thread)
+            if ledger is None:
+                print(f"ALLOW  {thread} has no ledger; the gate does not apply")
+                return 0
+            allow, served, via = decide(ledger, [text])
+            print(f"ALLOW  serves {via}" if allow else "DENY\n" + deny_reason(ledger, thread, served))
+            return 0 if allow else 2
+        if cmd == "init":
+            src = arg(args, "--from")
+            if not src:
+                raise LedgerError("init needs --from <ledger.json>")
+            if os.path.exists(ledger_path(thread)):
+                raise LedgerError(f"{ledger_path(thread)} exists; use add/mark/revise")
+            with open(src, encoding="utf-8") as f:
+                ledger = json.load(f)
+            ledger["thread_id"] = thread
+            write_ledger(thread, ledger)
+            print(f"wrote {ledger_path(thread)}")
+            return 0
+        ledger = read_ledger(thread)
+        if ledger is None:
+            raise LedgerError(f"no ledger for {thread}")
+        if cmd == "add":
+            text, done = arg(args, "--text"), arg(args, "--done-when", "")
+            if not text:
+                raise LedgerError("add needs --text (the user's words)")
+            n = 1 + max(int(p["id"][1:]) for p in ledger["purposes"])
+            ledger["purposes"].append({"id": f"P{n}", "text": text, "done_when": done, "status": "open", "evidence": [], "status_marked_at": now_iso(), "ask": None})
+            write_ledger(thread, ledger)
+            print(f"added P{n}")
+            return 0
+        if cmd == "mark":
+            if len(args) < 3:
+                raise LedgerError("mark <thread> <Pn> <open|done|blocked-on-user> [--ask Q] [--evidence E]")
+            pid, status = args[1].upper(), args[2]
+            if status not in STATUSES:
+                raise LedgerError(f"status must be one of {', '.join(STATUSES)}")
+            p = next((p for p in ledger["purposes"] if p["id"] == pid), None)
+            if not p:
+                raise LedgerError(f"no purpose {pid}")
+            ask = arg(args, "--ask")
+            if status == "blocked-on-user" and not (ask and ask.strip()):
+                raise LedgerError("blocked-on-user needs --ask with the exact question for the user")
+            why = arg(args, "--why-owner")
+            if status == "blocked-on-user" and why not in OWNER_ONLY:
+                raise LedgerError("blocked-on-user needs --why-owner " + "|".join(OWNER_ONLY) + ": an in-scope, reversible judgment call is yours to decide and log, not to park on the owner")
+            if status == "blocked-on-user" and p["status"] == "blocked-on-user":
+                raise LedgerError(f"{pid} is already blocked-on-user since {p.get('status_marked_at')} ({p.get('ask') or 'no ask'}); asking again adds nothing. Decide it, or keep working on what else is runnable")
+            p["status"], p["status_marked_at"] = status, now_iso()
+            p["ask"] = ask if status == "blocked-on-user" else None
+            ev = arg(args, "--evidence")
+            if ev:
+                p.setdefault("evidence", []).append({"at": now_iso(), "note": ev})
+            write_ledger(thread, ledger)
+            print(f"{pid} -> {status} at {p['status_marked_at']}")
+            return 0
+        if cmd == "revise":
+            quote = arg(args, "--quote")
+            if not quote or not quote.strip():
+                raise LedgerError("revise needs --quote with the user's approval, verbatim")
+            ledger["accepted_revisions"].append({"quote": quote, "accepted_at": now_iso(), "source": arg(args, "--source", "")})
+            write_ledger(thread, ledger)
+            print("revision recorded")
+            return 0
+        if cmd == "map":
+            path = arg(args, "--artifact")
+            if not path or not os.path.isfile(path) or os.path.getsize(path) == 0:
+                raise LedgerError("map needs --artifact <path> of an existing, non-empty gap map")
+            ledger.setdefault("gap_maps", []).append({"artifact": os.path.abspath(path), "at": now_iso()})
+            write_ledger(thread, ledger)
+            print(f"gap map recorded for {thread}")
+            return 0
+        if cmd == "release":
+            # The fleet archive guard restores every archive of a child whose
+            # parent ledger has an unfinished purpose. A release is the
+            # coordinator saying this one child is done, with the reason.
+            child, ev = (args[1] if len(args) > 1 else ""), arg(args, "--evidence")
+            if not THREAD_ID.match(child):
+                raise LedgerError("release <coordinator> <child thr_...> --evidence E")
+            if child == thread:
+                raise LedgerError("a coordinator is not its own child; mark its purposes done instead")
+            if not (ev and ev.strip()):
+                raise LedgerError("release needs --evidence saying why the child is done")
+            rel = [r for r in ledger.get("released_children", []) if r["thread_id"] != child]
+            rel.append({"thread_id": child, "evidence": ev, "released_at": now_iso()})
+            ledger["released_children"] = rel
+            write_ledger(thread, ledger)
+            print(f"released {child} from {thread}'s archive hold")
+            return 0
+
+    except (LedgerError, OSError, ValueError) as e:
+        print(f"scope-gate: {e}", file=sys.stderr)
+        return 1
+    print(f"unknown command {cmd}", file=sys.stderr)
+    return 2
+
+
+# ---------------------------------------------------------------- selftest
+
+# bb verbs whose help shows text but that dispatch no work, with the reason.
+VERB_EXEMPT = {
+    "fleet validate": "a claim sent to the reviewer, not work for a thread",
+    "fleet review": "a claim sent to the reviewer, not work for a thread",
+    "fleet hermes": "a claim sent to the reviewer, not work for a thread",
+    "terminal send": "types into a terminal session (a shell), not a thread's conversation",
+    "notify send": "a desktop notice to the person, not work for an agent",
+    "push-notifications send": "a push notice to the person, not work for an agent",
+    "terminal notify": "raises terminal attention for the person (title/body), not work for an agent",
+    "voice transcribe": "a hint for the speech-to-text model, not work for an agent",
+    "thread log": "read-only: its --message <seq> names a message to print, not text sent to a thread",
+}
+
+
+# Every other agent tool an enabled bb plugin registers, with why it hands no
+# agent work (a name ending in _ covers the prefix). The selftest reads the
+# plugins' sources and fails on a tool in neither MCP_FIELDS nor here.
+MCP_EXEMPT = {
+    "fleet_review": "a claim sent to the reviewer, not work for a thread (the CLI's fleet review is exempt too)",
+    "fleet_curate": "asks the reviewer to audit the knowledge library; carries no text",
+    "fleet_optimization": "records a cost hypothesis in fleet's own ledger; no agent is given it as work",
+    "fleet_member_retire": "stops a member; carries no text",
+    "fleet_group_status": "read-only",
+    "fleet_task_list": "read-only",
+    "fleet_context_list": "read-only",
+    "fleet_route": "read-only: which provider would run a kind of work",
+    "fleet_tokens": "read-only",
+    "fleet_provider_stats": "read-only",
+    "bb_workflow_result": "a workflow's own agent returning its result to the script, not work for a thread",
+    "AskUserQuestion": "asks the person a question; the answer returns to the asking agent",
+    "browser_": "drives the isolated browser; nothing reaches an agent",
+    "mcp_": "MCP server sign-in and management; nothing reaches an agent",
+}
+
+
+from shell_dispatch import RPC_EXEMPT, rpc_exempt  # noqa: E402  (the exempt reads; any other method is gated)
+
+
+def rpc_methods(bb="bb"):
+    """[(plugin id, method)] for every discoverable plugin RPC handler."""
+    import subprocess
+    try:
+        listing = json.loads(subprocess.run([bb, "plugin", "rpc", "list", "--json"], capture_output=True, text=True,
+                                            timeout=60).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    out = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            m = o.get("method") or o.get("name")
+            if isinstance(m, str) and ("pluginId" in o or "plugin" in o):
+                out.append((str(o.get("pluginId") or o.get("plugin")), m))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    return out
+
+
+def open_rpc(handlers):
+    """The (plugin id, method) pairs RPC_EXEMPT does not name exactly."""
+    return sorted({h for h in handlers if not rpc_exempt(*h)})
+
+
+def mcp_exempt(name):
+    return name in MCP_EXEMPT or any(k.endswith("_") and name.startswith(k) for k in MCP_EXEMPT)
+
+
+def loose_tools(tools):
+    """Swept tools neither gated nor exempt, and registrations whose name the
+    sweep could not read (`?<file>:<line>`)."""
+    return sorted(t for t in tools if t.startswith("?") or (t not in MCP_FIELDS and not mcp_exempt(t)))
+
+
+def _allowed_plugin_object_listing(listing):
+    """Allowlist for bb plugin list objects: plugins array plus optional ok:true only."""
+    if not isinstance(listing, dict):
+        return "invalid plugin listing: expected object"
+    extra = sorted(set(listing) - {"plugins", "ok"})
+    if extra:
+        return "invalid plugin listing: unexpected keys " + ", ".join(extra)
+    if "plugins" not in listing:
+        return "invalid plugin listing: missing plugins array"
+    if not isinstance(listing["plugins"], list):
+        return "invalid plugin listing: plugins is not an array"
+    if "ok" in listing and listing["ok"] is not True:
+        return f"invalid plugin listing: ok is {listing['ok']!r}"
+    return None
+
+
+def _positively_empty_plugin_listing(listing):
+    if listing == []:
+        return True
+    if isinstance(listing, dict) and _allowed_plugin_object_listing(listing) is None and not listing["plugins"]:
+        return True
+    return False
+
+
+def _valid_plugin_listing_shape(listing):
+    """Return an error string when the JSON is not a readable plugin registry listing."""
+    if isinstance(listing, list):
+        if not listing:
+            return None
+        if all(isinstance(x, dict) for x in listing):
+            return None
+        return "invalid plugin listing: expected array of plugin objects"
+    if isinstance(listing, dict):
+        return _allowed_plugin_object_listing(listing)
+    kind = "null" if listing is None else type(listing).__name__
+    return f"invalid plugin listing: expected array or object, got {kind}"
+
+
+def plugin_tools_from_bb(bb="bb"):
+    """Return ({tool: plugin}, error). On success error is None; tools may be empty."""
+    import subprocess
+    try:
+        p = subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, "timed out"
+    except OSError as e:
+        return None, str(e)
+    out = (p.stdout or "").strip()
+    err = (p.stderr or "").strip()
+    if p.returncode != 0:
+        detail = err or out or f"exit {p.returncode}"
+        return None, detail
+    if not out:
+        return None, "empty output from bb plugin list"
+    try:
+        listing = json.loads(out)
+    except ValueError as e:
+        return None, f"invalid JSON from bb plugin list: {e}"
+    shape_err = _valid_plugin_listing_shape(listing)
+    if shape_err:
+        return None, shape_err
+    roots = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("enabled") is True and isinstance(o.get("rootDir"), str) and isinstance(o.get("id"), str):
+                roots[o["id"]] = o["rootDir"]
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    if not roots and not _positively_empty_plugin_listing(listing):
+        return None, "plugin listing yielded no enabled plugins"
+    return _swept(roots), None
+
+
+def plugin_tools(bb="bb", roots=None):
+    """{tool: plugin} for every agent tool an enabled bb plugin registers,
+    read from the plugin's source at any depth (`bb plugin list --json` gives
+    rootDir; `roots` {id: dir} replaces it in tests)."""
+    if roots is not None:
+        return _swept(roots)
+    tools, err = plugin_tools_from_bb(bb)
+    return tools if err is None else {}
+
+
+def _swept(roots):
+    tools = {}
+    for pid, root in roots.items():
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "host-data", "test", "tests", "__tests__")]
+            for fn in files:
+                if (not fn.endswith((".ts", ".mts", ".js", ".mjs", ".cjs")) or fn.endswith(".d.ts")
+                        or ".test." in fn or ".spec." in fn):
+                    continue
+                path = os.path.join(dirpath, fn)
+                try:
+                    if os.path.getsize(path) > 30_000_000:
+                        continue
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                for name in registered_names(text, os.path.relpath(path, root)):
+                    tools.setdefault(name, pid)
+    return tools
+
+
+REGISTER = re.compile(r"agents\s*\.\s*registerTool\s*\(\s*(\{|[A-Za-z_$][\w$]*\s*[,)])")
+TOOL_NAME = re.compile(r"""\{\s*name\s*:\s*(?:(["'`])([A-Za-z0-9_.-]+)\1|([A-Za-z_$][\w$]*))|\{\s*(name)\s*[,}]""")
+
+
+def registered_names(text, where):
+    """Tool names in `bb.agents.registerTool({name: ...})` calls: a literal,
+    or a variable resolved from its assignment in the same file (review r2c:
+    `{name:L,...}` was missed). A registration whose name cannot be read is
+    returned as `?<file>:<line>`, so the sweep fails on it instead of
+    passing over it."""
+    out = []
+    for m in REGISTER.finditer(text):
+        line = text.count("\n", 0, m.start()) + 1
+        if m.group(1) != "{":
+            out.append(f"?{where}:{line} (a tool spec in a variable)")
+            continue
+        n = TOOL_NAME.match(text, m.start(1))
+        var = n and (n.group(3) or n.group(4))
+        if n and n.group(2):
+            out.append(n.group(2))
+            continue
+        if var:
+            vals = re.findall(r"(?:^|[^\w$.])" + re.escape(var) + r"""\s*=\s*(["'`])([A-Za-z0-9_.-]+)\1""", text[:m.start()])
+            if vals:
+                out.append(vals[-1][1])
+                continue
+        out.append(f"?{where}:{line} (name {var or 'not literal'})")
+    return out
+
+
+def shutil_which(name):
+    import shutil
+    return shutil.which(name)
+
+
+def gated_verbs():
+    from shell_dispatch import THREAD_VERBS, THREAD_MULTI_VERBS, FLEET_VERBS, CONDITIONAL_VERBS
+    return ({f"thread {v}" for v in THREAD_VERBS}
+            | {f"thread {group} {verb}" for group, verbs in THREAD_MULTI_VERBS.items() for verb in verbs}
+            | {f"fleet {v}" for v in FLEET_VERBS} | set(CONDITIONAL_VERBS))
+
+
+HELP_TEXT = re.compile(r"--prompt\b|--message\b|--prompt-file|--message-file|--text\b|--value\b|--script\b|--script-file"
+                       r"|--charter\b|--concern\b|--context\b|--body\b|--question\b|\[message\]|<message>|<prompt>"
+                       r"|<text\.\.\.>|\"<(title|question|claim)>\"")
+
+
+def bb_groups(bb="bb"):
+    """Every command group: the core ones in `bb --help` and each enabled
+    plugin's (`bb plugin list --json` cliCommand.name). Review r2c: the top
+    level help lists no plugin group, so `automation` was never scanned."""
+    import subprocess
+    groups = []
+    try:
+        top = subprocess.run([bb, "--help"], capture_output=True, text=True, timeout=60).stdout
+        section = re.split(r"\n(?=\S)", top.split("Commands:", 1)[-1].lstrip("\n"), maxsplit=1)[0]
+        groups += re.findall(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?(?:\s|$)", section, re.M)
+        listing = json.loads(subprocess.run([bb, "plugin", "list", "--json"], capture_output=True, text=True, timeout=60).stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        listing = None
+
+    def walk(o):
+        if isinstance(o, dict):
+            c = o.get("cliCommand")
+            if o.get("enabled") is True and isinstance(c, dict) and isinstance(c.get("name"), str):
+                groups.append(c["name"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(listing)
+    return [g for g in dict.fromkeys(groups) if g != "help"]
+
+
+def bb_text_verbs(bb="bb"):
+    """Every bb command, from every core and plugin group down through nested
+    groups, whose help shows a text-carrying option: a prompt, a message, a
+    script, a charter, a concern, a context, a free-text answer (--text) or
+    value (--value), a body, a question, a title or a claim, or free text
+    (<text...>). Review r2b: the scan stopped at `thread queue`; review r2c:
+    it read only `thread` and `fleet`, so it missed `automation create|update`.
+    Help calls run six at a time (about 0.25 s each)."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    def help_of(path):
+        try:
+            return subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=60,
+                                  stdin=subprocess.DEVNULL).stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    # commander style "  name|alias [options]  Desc", and bb style "  bb group name  Desc"
+    listed = re.compile(r"^  ([a-z][a-z-]*)(?:\|[a-z-]+)?(?:\s|$)", re.M)
+    bbstyle = re.compile(r"^\s+bb ([a-z-]+(?: [a-z-]+)*?)(?=\s{2,}|\s+[\[<\"-]|$)", re.M)
+    carries, seen, level = set(), set(), [(g,) for g in bb_groups(bb)]
+    for _depth in range(6):
+        with ThreadPoolExecutor(6) as ex:
+            helps = list(ex.map(help_of, level))
+        nxt = []
+        for path, out in zip(level, helps):
+            seen.add(path)
+            parts = out.split("Commands:", 1)
+            subs = listed.findall(parts[1]) if len(parts) > 1 else []
+            subs += [m.split()[-1] for m in bbstyle.findall(out)
+                     if tuple(m.split()[:len(path)]) == path and len(m.split()) == len(path) + 1]
+            subs = [v for v in dict.fromkeys(subs) if v != "help" and path + (v,) not in seen]
+            nxt += [path + (v,) for v in subs]
+            if not subs and len(path) > 1 and HELP_TEXT.search(parts[0]):
+                carries.add(" ".join(path))
+        if not nxt:
+            break
+        level = list(dict.fromkeys(nxt))
+    return carries
+
+
+HELP_PROBE_VERBS = frozenset({"thread queue create", "thread interactions answer", "thread interactions respond",
+                              "automation create", "automation update", "instructions set", "notify send"})
+HELP_PROBE_BUDGET_S = 10.0
+
+
+def help_probe_gaps(carries, bb="bb"):
+    """Verbs the integration selftest probes. Only bb's explicit unknown-command
+    answer counts as absent; timeouts and other failures are errors."""
+    import subprocess
+    unseen = HELP_PROBE_VERBS - carries
+    parser_gaps, absent, errors = [], [], []
+    deadline = time.monotonic() + HELP_PROBE_BUDGET_S
+    for verb in sorted(unseen):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            errors.append(f"{verb}: help probe timed out")
+            continue
+        path = verb.split()
+        try:
+            p = subprocess.run([bb, *path, "--help"], capture_output=True, text=True, timeout=remaining,
+                               stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            errors.append(f"{verb}: help probe timed out")
+            continue
+        except OSError as e:
+            errors.append(f"{verb}: {e}")
+            continue
+        out = (p.stdout or "") + (p.stderr or "")
+        if re.search(r"unknown command", out, re.I):
+            absent.append(verb)
+        elif p.returncode != 0:
+            detail = out.strip() or f"exit {p.returncode}"
+            errors.append(f"{verb}: {detail}")
+        else:
+            parser_gaps.append(verb)
+    return parser_gaps, absent, errors
+
+
+def selftest():
+
+    global LEDGER_DIR, DECISIONS
+    here = os.path.dirname(os.path.abspath(__file__))
+    fixture = os.path.join(here, "..", "tests", "fixtures", "scope-ledger.json")
+    with open(fixture, encoding="utf-8") as f:
+        base = json.load(f)
+    tmp = tempfile.mkdtemp(prefix="scope-gate-selftest-")
+    LEDGER_DIR, DECISIONS = tmp, os.path.join(tmp, "decisions.jsonl")
+    thread = base["thread_id"]
+    write_ledger(thread, base)
+    brief = os.path.join(tmp, "brief.md")
+    with open(brief, "w") as f:
+        f.write("[child of @thread:thr_coordfixture]\nserves: P1\nDo the thing.\n")
+    nobrief = os.path.join(tmp, "nobrief.md")
+    with open(nobrief, "w") as f:
+        f.write("Do the thing.\n")
+    # Automation fixtures (review r2c): script files, and a fake bb whose
+    # `automation show <id> --json` returns the stored prompt or script.
+    autos = os.path.join(here, "..", "tests", "fixtures", "automations.json")
+    with open(autos, encoding="utf-8") as f:
+        for name, body in json.load(f)["files"].items():
+            with open(os.path.join(tmp, name), "w") as g:
+                g.write(body)
+    fake_bb = os.path.join(tmp, "fake-bb")
+    with open(fake_bb, "w") as f:
+        f.write(f"#!{sys.executable}\nimport json, sys\nA = json.load(open({os.path.abspath(autos)!r}))['automations']\n"
+                "a = sys.argv[1:]\nif a[:2] == ['automation', 'show'] and len(a) > 2 and a[2] in A:\n"
+                "    print(json.dumps({'id': a[2], 'execution': A[a[2]]}))\n    sys.exit(0)\nsys.exit(1)\n")
+    os.chmod(fake_bb, 0o755)
+    saved_bb_cli = os.environ.get("BB_CLI")
+    os.environ["BB_CLI"] = fake_bb
+
+    def claude_bash(cmd):
+        return {"tool_name": "Bash", "tool_input": {"command": cmd}}
+
+    def codex_shell(cmd):
+        return {"tool_name": "shell", "tool_input": {"command": ["/bin/zsh", "-lc", cmd], "workdir": tmp}}
+
+    def mcp(tool, **args):
+        return {"tool_name": f"mcp__bb-bridge__{tool}", "tool_input": args}
+    # Codex's apply_patch carries the patch in `command`; read as shell, `+sha=$(...)` was a
+    # run-time-built bb verb ("bb substituted", 2026-10-22).
+    PATCH_WITH_SUBST = ("*** Begin Patch\n*** Add File: /tmp/collect.py\n+import subprocess\n"
+                        "+sha=$(gh api repos/o/r/pulls/1 --jq .head.sha)\n+out = f\"${sha}\"; print(out)\n*** End Patch\n")
+    fifo = os.path.join(tmp, "brief.fifo")
+    os.mkfifo(fifo)
+
+    rev = base["accepted_revisions"][0]["quote"]
+    cases = [
+        # (label, payload, thread, expected rc)
+        ("claude: bb thread spawn without serves", claude_bash('bb thread spawn --parent-self --prompt "fix the dashboard"'), thread, 2),
+        ("claude: bb thread spawn serving open P1", claude_bash('bb thread spawn --parent-self --prompt "serves: P1\nfix it"'), thread, 0),
+        ("claude: serving blocked-on-user P2 is denied", claude_bash('bb thread spawn --prompt "serves: P2 go"'), thread, 2),
+        ("claude: serving unknown P9 is denied", claude_bash('bb thread tell thr_abc "serves: P9 go"'), thread, 2),
+        ("claude: tell without serves", claude_bash('bb thread tell thr_abc "please also refactor the sparkline"'), thread, 2),
+        # VERB_EXEMPT `terminal notify` (review of #92): a notice for the person passes with no serves
+        # line; the exemption covers that verb only, not a dispatch chained after it.
+        ("claude: terminal notify without serves", claude_bash('bb terminal notify --title "build" --body "tests passed"'), thread, 0),
+        ("claude: terminal notify then tell without serves", claude_bash('bb terminal notify --title t --body b && bb thread tell thr_abc "refactor it"'), thread, 2),
+        ("codex: terminal notify without serves", codex_shell('bb terminal notify --title "build" --body "tests passed"'), thread, 0),
+        ("claude: draft set without serves", claude_bash('bb thread draft set thr_abc "revise the prompt"'), thread, 2),
+        ("claude: draft set serving open P1", claude_bash('bb thread draft set thr_abc "serves: P1\nrevise the prompt"'), thread, 0),
+        ("claude: draft set end-of-options message without serves", claude_bash('bb thread draft set thr_abc -- "--revise the prompt"'), thread, 2),
+        ("claude: draft set end-of-options message serving open P1", claude_bash('bb thread draft set thr_abc -- "serves: P1\n--revise the prompt"'), thread, 0),
+        ("claude: draft set --message-file with serves", claude_bash(f"bb thread draft set --message-file {brief} thr_abc"), thread, 0),
+        ("claude: \"$BB_CLI\" thread message without serves", claude_bash('"$BB_CLI" thread message thr_abc "hi"'), thread, 2),
+        ("claude: /abs/path/bb thread create without serves", claude_bash("/usr/local/bin/bb thread create --prompt x"), thread, 2),
+        ("claude: heredoc brief with serves", claude_bash("bb thread spawn --prompt-file - <<'EOF'\nserves: P1\nwork\nEOF"), thread, 0),
+        ("claude: --prompt-file brief with serves", claude_bash(f"bb thread spawn --parent-self --prompt-file {brief}"), thread, 0),
+        ("claude: --prompt-file brief without serves", claude_bash(f"bb thread spawn --parent-self --prompt-file {nobrief}"), thread, 2),
+        ("claude: $(cat brief) with serves", claude_bash(f'bb thread spawn --prompt "$(cat {brief})"'), thread, 0),
+        ("claude: tell < file with serves", claude_bash(f"bb thread tell thr_abc < {brief}"), thread, 0),
+        ("claude: accepted revision quoted exactly", claude_bash(f"bb thread tell thr_abc 'serves: revision \"{rev}\" go'"), thread, 0),
+        ("claude: revision that is only a substring", claude_bash("bb thread tell thr_abc 'serves: revision \"same class of harness defect\" go'"), thread, 2),
+        ("claude: not a dispatch (bb thread list)", claude_bash("bb thread list --parent-thread thr_x"), thread, 0),
+        ("claude: not a dispatch (git status)", claude_bash("git status"), thread, 0),
+        ("codex: apply_patch writing a script with $(...) lines is not a dispatch",
+         {"tool_name": "apply_patch", "tool_input": {"command": PATCH_WITH_SUBST}}, thread, 0),
+        ("claude: Write of a file that holds a bb command is not a dispatch",
+         {"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.sh", "content": "bb thread tell thr_x go\n"}}, thread, 0),
+        ("codex: a shell that runs apply_patch and then bb still dispatches",
+         codex_shell("apply_patch <<'EOF'\n+x\nEOF\nbb thread tell thr_x go"), thread, 2),
+        # An output redirect target is not a verb: after the `albrand/bb` slug, `> $L` read as
+        # a run-time-built bb verb ("bb substituted", 2026-10-22).
+        ("claude: owner/bb slug then an output redirect to $L is not a dispatch",
+         claude_bash("gh run view 1 -R albrand/bb --log-failed > $L 2>&1"), thread, 0),
+        ("claude: a dispatch inside a redirect target's substitution still dispatches",
+         claude_bash("echo hi > $(bb thread tell thr_x go)"), thread, 2),
+        ("claude: a redirect before the verb does not hide the dispatch",
+         claude_bash("bb --json > $L thread tell thr_x go"), thread, 2),
+        ("claude: a run-time verb after a redirect is still substituted",
+         claude_bash("bb > /tmp/o thread $(echo tell) thr_x go"), thread, 2),
+        # `>|` (noclobber override) is a redirection; its `|` was split as a pipe (Hermes #99 r1).
+        ("claude: a run-time verb after >| is still substituted",
+         claude_bash("bb >| /tmp/o thread $(echo tell) thr_x go"), thread, 2),
+        ("claude: a dispatch after an attached >|file still dispatches",
+         claude_bash("bb >|/tmp/o thread tell thr_x go"), thread, 2),
+        ("claude: owner/bb slug then >| $L is not a dispatch",
+         claude_bash("gh run view 1 -R albrand/bb --log-failed >| $L"), thread, 0),
+        # An escaped `\>` is a literal, so the `|` or `&` after it is a real separator (Hermes #99 r2).
+        ("claude: a dispatch after an escaped \\> and a real pipe still dispatches",
+         claude_bash("printf x \\>| bb thread tell thr_x go"), thread, 2),
+        ("claude: a dispatch after an escaped \\> and a real & still dispatches",
+         claude_bash("printf x \\>& bb thread tell thr_x go"), thread, 2),
+        ("claude: a run-time command word after an escaped \\> and a real pipe still dispatches",
+         claude_bash('printf x \\>| "$(echo bb)" thread tell thr_x go'), thread, 2),
+        # bb's first argument a literal `>|`: bb exits "unknown command '>|'" and sends nothing, so the
+        # scanner must not read past it to the later `thread tell` (Hermes #99 r4).
+        ("claude: a quoted '>|' first argument is not a dispatch",
+         claude_bash("bb '>|' thread tell thr_x go"), thread, 0),
+        # A quoted `>|` is a literal word, never a redirection: as an option's value it must not
+        # swallow the verb (Hermes #99 r3).
+        ("claude: a quoted '>|' option value does not hide the dispatch",
+         claude_bash("bb --host '>|' thread tell thr_x go"), thread, 2),
+        ("claude: a quoted \">\" option value does not hide the dispatch",
+         claude_bash('bb --host ">" thread tell thr_x go'), thread, 2),
+        ("claude: env's quoted '>|' option value does not hide the dispatch",
+         claude_bash("env bb --host '>|' thread tell thr_x go"), thread, 2),
+        ("claude: a quoted '>|' option value before a run-time verb is still substituted",
+         claude_bash("bb --host '>|' thread $(echo tell) thr_x go"), thread, 2),
+        ("claude: an escaped backslash before >| leaves the redirect intact",
+         claude_bash("printf x \\\\>| /tmp/o; gh run view 1 -R albrand/bb >| $L"), thread, 0),
+        ("claude mcp: fleet_member_spawn without serves", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "do x"}}, thread, 2),
+        ("claude mcp: fleet_member_spawn serving P1", {"tool_name": "mcp__bb-bridge__fleet_member_spawn", "tool_input": {"name": "x", "prompt": "serves: P1\ndo x"}}, thread, 0),
+        ("claude mcp: fleet_member_tell without serves", {"tool_name": "mcp__bb-bridge__fleet_member_tell", "tool_input": {"member": "x", "message": "also do y"}}, thread, 2),
+        ("claude mcp: fleet_delegate serving P1", {"tool_name": "mcp__bb-bridge__fleet_delegate", "tool_input": {"task": "serves: p1 -- do z"}}, thread, 0),
+        ("codex: shell argv spawn without serves", codex_shell("cd /tmp && bb thread spawn --prompt 'x'"), thread, 2),
+        ("codex: shell argv spawn with brief file (relative to workdir)", codex_shell("bb thread spawn --prompt-file brief.md"), thread, 0),
+        ("codex: bare fleet_member_tell without serves", {"tool_name": "fleet_member_tell", "tool_input": {"member": "x", "message": "go"}}, thread, 2),
+        ("codex: bare fleet_member_spawn serving P1", {"tool_name": "fleet_member_spawn", "tool_input": {"prompt": "serves: P1"}}, thread, 0),
+        # review r2b D6 (2026-09-26): the agent-tool twins of gated CLI verbs.
+        ("claude mcp: fleet_task_create without serves", mcp("fleet_task_create", title="refactor the sparkline", body="do it now"), thread, 2),
+        ("claude mcp: fleet_task_create serving P1 in the body", mcp("fleet_task_create", title="gates", body="serves: P1\nre-vendor"), thread, 0),
+        ("codex: bare fleet_task_create without serves", {"tool_name": "fleet_task_create", "tool_input": {"title": "refactor the sparkline"}}, thread, 2),
+        ("codex: fleet_task_create with arguments nested", {"tool_name": "fleet_task_create", "tool_input": {"arguments": {"title": "refactor"}}}, thread, 2),
+        ("claude mcp: fleet_task_update retitle without serves", mcp("fleet_task_update", task="#3", title="refactor the sparkline"), thread, 2),
+        ("claude mcp: fleet_task_update assign without serves", mcp("fleet_task_update", task="#3", assigneeMemberId="mem_1"), thread, 2),
+        ("claude mcp: fleet_task_update assign with a serving body", mcp("fleet_task_update", task="#3", assigneeMemberId="mem_1", body="serves: P1 gates"), thread, 0),
+        ("claude mcp: fleet_task_update status only (no new work)", mcp("fleet_task_update", task="#3", status="done"), thread, 0),
+        ("claude mcp: fleet_task_update priority only (no new work)", mcp("fleet_task_update", task="#3", priority=1), thread, 0),
+        ("claude mcp: fleet_task_update blocked reason without serves (read as work)", mcp("fleet_task_update", task="#3", status="blocked", blockedReason="rewrite it in Rust first"), thread, 2),
+        ("claude mcp: fleet_task_update blocked reason serving P1", mcp("fleet_task_update", task="#3", status="blocked", blockedReason="serves: P1 waiting on the user's host choice"), thread, 0),
+        ("codex: bare fleet_task_update body without serves", {"tool_name": "fleet_task_update", "tool_input": {"task": "#3", "body": "refactor"}}, thread, 2),
+        ("claude mcp: fleet_advise without serves", mcp("fleet_advise", question="refactor the sparkline?"), thread, 2),
+        ("claude mcp: fleet_advise serving P1 in the context", mcp("fleet_advise", question="which host?", context="serves: P1"), thread, 0),
+        ("codex: bare fleet_advise without serves", {"tool_name": "fleet_advise", "tool_input": {"question": "refactor?"}}, thread, 2),
+        ("claude mcp: fleet_context_set without serves", mcp("fleet_context_set", key="k", content="refactor the sparkline"), thread, 2),
+        ("claude mcp: fleet_context_set serving P1", mcp("fleet_context_set", key="k", content="serves: P1 the gate rules"), thread, 0),
+        ("codex: bare fleet_context_set without serves", {"tool_name": "fleet_context_set", "tool_input": {"key": "k", "content": "x"}}, thread, 2),
+        ("claude mcp: fleet_delegate serving P1 in the context", mcp("fleet_delegate", task="do z", context="serves: P1"), thread, 0),
+        ("claude mcp: bb_workflow_run script without serves", mcp("bb_workflow_run", script="agent('refactor the sparkline')"), thread, 2),
+        ("claude mcp: bb_workflow_run script serving P1", mcp("bb_workflow_run", script="// serves: P1\nagent('gates')"), thread, 0),
+        ("claude mcp: bb_workflow_run scriptPath to a serving file", mcp("bb_workflow_run", scriptPath=brief), thread, 0),
+        ("claude mcp: bb_workflow_run scriptPath to a file without serves", mcp("bb_workflow_run", scriptPath=nobrief), thread, 2),
+        ("claude mcp: bb_workflow_run a saved workflow by name", mcp("bb_workflow_run", name="review-changes"), thread, 2),
+        ("claude mcp: bb_workflow_run a saved workflow, serves in args", mcp("bb_workflow_run", name="review-changes", args={"q": "serves: P1"}), thread, 0),
+        ("claude mcp: fleet_review is exempt (a claim to the reviewer)", mcp("fleet_review", claim="refactor done"), thread, 0),
+        ("claude mcp: fleet_task_list is not a dispatch", mcp("fleet_task_list"), thread, 0),
+        ("no ledger: spawn without serves is allowed", claude_bash("bb thread spawn --prompt x"), "thr_noledger", 0),
+        ("no thread id: allowed", claude_bash("bb thread spawn --prompt x"), "", 0),
+        # 2026-09-25: a brief in $TMPDIR was denied, the variable read as a directory name.
+        ("claude: --message-file $TMPDIR/brief with serves", claude_bash("bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 0),
+        ("claude: --message-file \"${TMPDIR}/nobrief\" without serves", claude_bash('bb thread tell thr_x --message-file "${TMPDIR}/nobrief.md"'), thread, 2),
+        ("claude: --prompt-file ${UNSET:-$TMPDIR}/brief takes the default", claude_bash("bb thread spawn --prompt-file ${SCOPE_GATE_UNSET_VAR:-$TMPDIR}/brief.md"), thread, 0),
+        ("claude: --prompt-file ${UNSET:-/nonexistent}/brief takes the default and is denied", claude_bash("bb thread spawn --prompt-file ${SCOPE_GATE_UNSET_VAR:-/nonexistent}/brief.md"), thread, 2),
+        ("claude: --message-file $UNSET/brief is denied", claude_bash("bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR/brief.md"), thread, 2),
+        ("claude: an unset variable before a real path is denied", claude_bash("bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR$TMPDIR/brief.md"), thread, 2),
+
+        ("claude: $(cat $TMPDIR/brief) with serves", claude_bash('bb thread tell thr_x "$(cat $TMPDIR/brief.md)"'), thread, 0),
+        ("claude: tell < $TMPDIR/brief with serves", claude_bash("bb thread tell thr_x < $TMPDIR/brief.md"), thread, 0),
+        # 2026-09-25 23:15Z: a variable the command sets itself. The hook would
+        # read $TMPDIR/brief.md from its own environment, not /nonexistent.
+        ("claude: TMPDIR reassigned in the command, then --message-file $TMPDIR/brief", claude_bash("TMPDIR=/nonexistent; bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 2),
+        ("claude: D=... && --message-file $D/brief", claude_bash("D=$TMPDIR && bb thread tell thr_x --message-file $D/brief.md"), thread, 2),
+        ("claude: export D=...; --prompt-file ${D}/brief", claude_bash("export D=/x; bb thread spawn --prompt-file ${D}/brief.md"), thread, 2),
+        ("claude: for TMPDIR in ...; $(cat $TMPDIR/brief)", claude_bash('for TMPDIR in /nonexistent; do bb thread tell thr_x "$(cat $TMPDIR/brief.md)"; done'), thread, 2),
+        ("claude: read TMPDIR; tell < $TMPDIR/brief", claude_bash("read -r TMPDIR < /dev/null; bb thread tell thr_x < $TMPDIR/brief.md"), thread, 2),
+        ("claude: an assignment of another name leaves $TMPDIR/brief readable", claude_bash("X=1; bb thread tell thr_x --message-file $TMPDIR/brief.md"), thread, 0),
+        ("claude: --message-file ~/brief with serves (HOME)", claude_bash("bb thread tell thr_x --message-file ~/brief.md"), thread, 0),
+        # review r2b: a FIFO brief blocked the open until the deadline.
+        ("claude: --message-file FIFO is not read (denied at once)", claude_bash(f"bb thread tell thr_x --message-file {fifo}"), thread, 2),
+        ("claude: tell < FIFO is not read", claude_bash(f"bb thread tell thr_x < {fifo}"), thread, 2),
+        ("claude: --message-file directory is not read", claude_bash(f"bb thread tell thr_x --message-file {tmp}"), thread, 2),
+    ]
+    saved_env = {k: os.environ.get(k) for k in ("TMPDIR", "HOME", "SCOPE_GATE_UNSET_VAR")}
+    os.environ["TMPDIR"], os.environ["HOME"] = tmp, tmp
+    os.environ.pop("SCOPE_GATE_UNSET_VAR", None)
+
+    # Tokenizer cases, shared with the fail-before replay against an older gate.
+    with open(os.path.join(here, "..", "tests", "fixtures", "dispatch-cases.json"), encoding="utf-8") as f:
+        shared = json.load(f)["cases"]
+    for c in shared:
+        cmd = c["command"].replace("{brief}", brief).replace("{nobrief}", nobrief).replace("{tmp}", tmp)
+        cases.append((f"claude: {c['label']}", {**claude_bash(cmd), "cwd": tmp}, thread, c["want"]))
+        cases.append((f"codex: {c['label']}", codex_shell(cmd), thread, c["want"]))
+    failed = 0
+    for label, payload, t, want in cases:
+        out = sys.stdout
+        sys.stdout = open(os.devnull, "w")
+        err = sys.stderr
+        sys.stderr = open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(payload), t)
+        finally:
+            sys.stdout.close()
+            sys.stdout, sys.stderr = out, err
+        mark = "ok  " if got == want else "FAIL"
+        if got != want:
+            failed += 1
+        print(f"{mark} {label}: rc={got} want={want}")
+    import io, subprocess
+    with open(os.path.join(here, "..", "tests", "fixtures", "dispatch-cases.json"), encoding="utf-8") as f:
+        fix_brief_cases = json.load(f)["fix_brief_cases"]
+    real_git = shutil_which("git")
+    try:
+        if not real_git:
+            raise RuntimeError("git is not on PATH")
+        repo = os.path.join(tmp, "fixture-repo")
+        os.makedirs(repo)
+        fixture_git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        fixture_git_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                                "GIT_OPTIONAL_LOCKS": "0"})
+
+        def fixture_git(args):
+            return subprocess.run([real_git, "-C", repo, *args], check=True, capture_output=True,
+                                  text=True, timeout=1, env=fixture_git_env)
+
+        inherited_work_tree = os.environ.get("GIT_WORK_TREE")
+        os.environ["GIT_WORK_TREE"] = tmp
+        try:
+            fixture_git(["init", "--quiet"])
+        finally:
+            if inherited_work_tree is None:
+                os.environ.pop("GIT_WORK_TREE", None)
+            else:
+                os.environ["GIT_WORK_TREE"] = inherited_work_tree
+        print("ok   selftest Git fixture ignores inherited GIT_WORK_TREE")
+        fixture_git(["config", "user.name", "Scope Gate Selftest"])
+        fixture_git(["config", "user.email", "scope-gate-selftest@example.invalid"])
+        cited_file = os.path.join(repo, "skillsets", "qa-enforcement", "shared", "scope-ledger",
+                                  "scripts", "scope-gate.py")
+        os.makedirs(os.path.dirname(cited_file))
+        with open(cited_file, "w", encoding="utf-8") as f:
+            f.write("fixture citation line one\nfixture citation line two\n")
+        fixture_git(["add", "."])
+        fixture_git(["commit", "--quiet", "-m", "create scope gate citation fixture"])
+        fixture_git(["commit", "--quiet", "--allow-empty", "-m", "create current fixture head"])
+        sha = fixture_git(["rev-parse", "HEAD"]).stdout.strip()
+        parent_sha = fixture_git(["rev-parse", "HEAD^"]).stdout.strip()
+        for case in fix_brief_cases:
+            if case.get("exists_at_checked_sha"):
+                cited_path = case["citation"].rsplit(":", 1)[0]
+                fixture_git(["cat-file", "-e", f"{parent_sha}:{cited_path}"])
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        for c in fix_brief_cases:
+            failed += 1
+            print(f"FAIL {c['label']}: could not prepare a git fixture ({e})")
+    else:
+        git_bin = os.path.join(tmp, "git-bin")
+        os.makedirs(git_bin)
+        git_log = os.path.join(tmp, "git-calls.log")
+        git_wrapper = os.path.join(git_bin, "git")
+        with open(git_wrapper, "w", encoding="utf-8") as f:
+            f.write(f"#!{sys.executable}\nimport os, sys\n")
+            f.write(f"with open({git_log!r}, 'a', encoding='utf-8') as log: log.write(' '.join(sys.argv[1:]) + '\\n')\n")
+            f.write(f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n")
+        os.chmod(git_wrapper, 0o755)
+        saved_path, original_cwd = os.environ.get("PATH"), os.getcwd()
+        os.environ["PATH"] = git_bin + os.pathsep + (saved_path or "")
+        try:
+            for i, c in enumerate(fix_brief_cases):
+                if c.get("report_parent_is_file"):
+                    report_parent = os.path.join(tmp, f"not-a-directory-{i}")
+                    with open(report_parent, "w", encoding="utf-8") as f:
+                        f.write("not a directory\n")
+                    verdict_path = os.path.join(report_parent, "review.md")
+                    report_path = verdict_path
+                else:
+                    verdict_name = f"review {i}.md" if c.get("space_report") else f"review-{i}.md"
+                    verdict_path = os.path.join(tmp, verdict_name)
+                    if not c.get("missing_report"):
+                        with open(verdict_path, "w", encoding="utf-8") as f:
+                            f.write(f"VERDICT: {c['verdict']}\nReview fixture.\n")
+                    report_path = verdict_path + (c.get("report_anchor") or "")
+                if c.get("angle_report"):
+                    report_ref = f"<{report_path}>"
+                elif c.get("escaped_report"):
+                    report_ref = report_path.replace(" ", "\\ ")
+                else:
+                    report_ref = f'"{report_path}"' if c.get("quote_report") else report_path
+                report_ref += c.get("report_suffix", "")
+                lines = ["serves: P1"]
+                if "role_lines" in c:
+                    lines.extend(c["role_lines"])
+                elif c.get("role"):
+                    lines.append(f"Role: {c['role']}")
+                if c.get("read_only"):
+                    lines.append("Read-only" if c["read_only"] is True else f"Read-only: {c['read_only']}")
+                lines.append(f"Review verdict: {report_ref}")
+                if c.get("invalid_worktree"):
+                    lines.append(f"Worktree: {os.path.join(tmp, 'missing-worktree')}")
+                lines.append(f"{c['repo_field']}: {repo}")
+                checked_sha = parent_sha if c.get("checked_sha") == "parent" else sha
+                if c["checked"]:
+                    lines.append(f"Checked against {checked_sha}")
+                if c["citation"]:
+                    lines.append(f"Finding: {c['citation']}")
+                brief_path = os.path.join(tmp, f"fix-brief-{i}.md")
+                with open(brief_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+                with open(git_log, "w", encoding="utf-8"):
+                    pass
+                os.chdir(tmp)
+                out, err = sys.stdout, sys.stderr
+                captured_out, captured_err = io.StringIO(), io.StringIO()
+                sys.stdout, sys.stderr = captured_out, captured_err
+                saved_os_open = os.open
+                try:
+                    if c.get("unreadable_report"):
+                        def deny_report_open(path, *args, **kwargs):
+                            if os.fspath(path) == verdict_path:
+                                raise PermissionError(13, "Permission denied", os.fspath(path))
+                            return saved_os_open(path, *args, **kwargs)
+                        os.open = deny_report_open
+                    command = (f"bb thread spawn --parent-self --prompt-file {brief_path}"
+                               if c.get("spawn_prompt_file") else
+                               f"bb thread tell thr_fixbrief --message-file {brief_path}")
+                    got = hook(json.dumps(claude_bash(command)), thread)
+                finally:
+                    os.open = saved_os_open
+                    sys.stdout, sys.stderr = out, err
+                    os.chdir(original_cwd)
+                with open(git_log, encoding="utf-8") as f:
+                    git_calls = f.read()
+                if c.get("git_head_check"):
+                    checked_object = ("rev-parse --verify HEAD^{commit}" in git_calls
+                                      and "cat-file -e" not in git_calls)
+                elif c["git_spec"]:
+                    cited_path = c["git_spec"].rsplit(":", 1)[0]
+                    checked_object = f"cat-file -e {checked_sha}:{cited_path}" in git_calls
+                else:
+                    checked_object = not git_calls
+                needle = c.get("needle")
+                said = captured_out.getvalue() + captured_err.getvalue()
+                has_message = needle in said if needle else True
+                good = got == c["want"] and checked_object and has_message
+                failed += not good
+                print(f"{'ok  ' if good else 'FAIL'} fix brief: {c['label']}: rc={got} want={c['want']}"
+                      f"; git-check={'yes' if checked_object else 'no'}"
+                      f"; message={'yes' if has_message else 'no'}")
+        finally:
+            os.chdir(original_cwd)
+            if saved_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = saved_path
+    for label, cmd, needle in [
+        ("a missing brief file says to write it in a separate step",
+         "printf 'serves: P1' > $TMPDIR/late.md && bb thread tell thr_x --message-file $TMPDIR/late.md", "separate step"),
+        ("an unset variable is named", "bb thread tell thr_x --message-file $SCOPE_GATE_UNSET_VAR/b.md", "$SCOPE_GATE_UNSET_VAR is not set"),
+        ("a variable the command sets asks for a literal path",
+         "D=$TMPDIR; bb thread tell thr_x --message-file $D/brief.md", "$D is set by this same command"),
+        ("a relative brief after cd asks for an absolute path",
+         "cd $TMPDIR && bb thread tell thr_x --message-file brief.md", "use an absolute path"),
+        ("a FIFO brief says only a plain file is read",
+         f"bb thread tell thr_x --message-file {fifo}", "not a regular file"),
+        ("an automation --script-file on another host asks for an inline script",
+         f"bb automation create --name n --in 1m --script-file {tmp}/auto-tell-ok.sh --host other", "--host names the machine"),
+        ("a run of a stored prompt without serves says where the line goes",
+         "bb automation run auto_plain", "bb automation update auto_plain --prompt"),
+        ("a run whose automation cannot be read says so", "bb automation run auto_missing", "could not be read"),
+        ("a node automation script is not parsed, and the note says so",
+         "bb automation create --name n --in 1m --interpreter node --script \"exec('bb thread tell thr_x hi')\"", "is not parsed"),
+
+    ]:
+        out, err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(claude_bash(cmd)), thread)
+            said = sys.stdout.getvalue()
+        finally:
+            sys.stderr.close()
+            sys.stdout, sys.stderr = out, err
+        ok = got == 2 and needle in said
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} deny message: {label}: rc={got}")
+    for label, payload, needle in [
+        ("an assignment without a body asks for the brief", mcp("fleet_task_update", task="#3", assigneeMemberId="m"), "set body"),
+        ("a saved workflow says its script is not read", mcp("bb_workflow_run", name="w"), "script is not read"),
+    ]:
+        out, err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(payload), thread)
+            said = sys.stdout.getvalue()
+        finally:
+            sys.stderr.close()
+            sys.stdout, sys.stderr = out, err
+        ok = got == 2 and needle in said
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} deny message: {label}: rc={got}")
+    for k, v in saved_env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    # A broken ledger denies dispatches (fail closed) but not other tools.
+
+    with open(ledger_path("thr_broken"), "w") as f:
+        f.write("{ not json")
+    for label, payload, want in [
+        ("broken ledger: spawn denied", claude_bash("bb thread spawn --prompt 'serves: P1'"), 2),
+        ("broken ledger: git status allowed", claude_bash("git status"), 0),
+    ]:
+        out, err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = open(os.devnull, "w"), open(os.devnull, "w")
+        try:
+            got = hook(json.dumps(payload), "thr_broken")
+        finally:
+            sys.stdout.close()
+            sys.stdout, sys.stderr = out, err
+        failed += got != want
+        print(f"{'ok  ' if got == want else 'FAIL'} {label}: rc={got} want={want}")
+    # mark: blocked-on-user needs an ask and records when.
+    rc = main(["mark", thread, "P1", "blocked-on-user"])
+    failed += rc != 1
+    print(f"{'ok  ' if rc == 1 else 'FAIL'} mark blocked-on-user without --ask is refused: rc={rc}")
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?"])
+        rc_bad = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?", "--why-owner", "judgment"])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    good = rc == 1 and rc_bad == 1 and read_ledger(thread)["purposes"][0]["status"] != "blocked-on-user"
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} mark blocked-on-user without an owner-only --why-owner is refused: rc={rc},{rc_bad}")
+    rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host?", "--why-owner", "owner-decision"])
+    led = read_ledger(thread)
+    good = rc == 0 and led["purposes"][0]["status"] == "blocked-on-user" and led["purposes"][0]["ask"] == "Which host?" and led["purposes"][0]["status_marked_at"]
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} mark blocked-on-user records the ask and when")
+    first_marked = led["purposes"][0]["status_marked_at"]
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc = main(["mark", thread, "P1", "blocked-on-user", "--ask", "Which host, again?", "--why-owner", "owner-decision"])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    again = read_ledger(thread)["purposes"][0]
+    good = rc == 1 and again["ask"] == "Which host?" and again["status_marked_at"] == first_marked
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} re-marking a purpose already blocked-on-user is refused and keeps the first ask: rc={rc}")
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = open(os.devnull, "w"), open(os.devnull, "w")
+    try:
+        got = hook(json.dumps(claude_bash("bb thread spawn --prompt 'serves: P1'")), thread)
+    finally:
+        sys.stdout.close()
+        sys.stdout, sys.stderr = out, err
+    failed += got != 2
+    print(f"{'ok  ' if got == 2 else 'FAIL'} once P1 is blocked-on-user, serving it is denied: rc={got}")
+    # release: a finished child, with the reason; fleet's archive hold skips it.
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        refused = [main(["release", thread, "thr_child1"]),
+                   main(["release", thread, "thr_child1", "--evidence", "  "]),
+                   main(["release", thread, thread, "--evidence", "done"]),
+                   main(["release", thread, "not-a-thread", "--evidence", "done"])]
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    failed += refused != [1, 1, 1, 1]
+    print(f"{'ok  ' if refused == [1, 1, 1, 1] else 'FAIL'} release refuses no evidence, blank evidence, itself, a non-thread: {refused}")
+    rc1 = main(["release", thread, "thr_child1", "--evidence", "PR #22 merged"])
+    rc2 = main(["release", thread, "thr_child1", "--evidence", "PR #22 merged at d0ce389"])
+    rel = read_ledger(thread).get("released_children", [])
+    good = rc1 == rc2 == 0 and len(rel) == 1 and rel[0]["thread_id"] == "thr_child1" \
+        and rel[0]["evidence"] == "PR #22 merged at d0ce389" and rel[0]["released_at"]
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} release records the child, the evidence and when; a second release replaces it")
+    led = read_ledger(thread)
+    led["released_children"].append({"thread_id": "thr_child2"})
+    with open(ledger_path(thread), "w") as f:
+        json.dump(led, f)
+    try:
+        read_ledger(thread)
+        bad_ok = False
+    except LedgerError:
+        bad_ok = True
+    failed += not bad_ok
+    print(f"{'ok  ' if bad_ok else 'FAIL'} a release without evidence makes the ledger invalid (fleet holds, the gate denies)")
+    led["released_children"].pop()
+    with open(ledger_path(thread), "w") as f:
+        json.dump(led, f)
+
+    # Hard deadline on the chain clock (HOOK_T0): with the budget already
+    # spent, an undeclared dispatch is denied by shape at once, a serving one
+    # and a non-dispatch are allowed; a future T0 buys nothing extra and the
+    # normal decision runs.
+    import subprocess
+    import time
+    main(["mark", thread, "P1", "open"])
+    spent = "%.3f" % (time.time() - HOOK_HARD_S - 1)
+    future = "%.3f" % (time.time() + 3600)
+    deadline_review = os.path.join(tmp, "deadline-review.md")
+    with open(deadline_review, "w", encoding="utf-8") as f:
+        f.write("VERDICT: FAIL\nA failing review.\n")
+    deadline_brief = os.path.join(tmp, "deadline-fix-brief.md")
+    with open(deadline_brief, "w", encoding="utf-8") as f:
+        f.write(f"serves: P1\nReview: {deadline_review}\n")
+    for label, cmd, t0, want, text in [
+        # review r2b: at the deadline only the call's own words count; a
+        # comment or the tool call's description does not serve.
+        ("deadline: a '# serves: P1' comment does not serve", "bb thread tell thr_x hi # serves: P1", spent, 2, "could not finish"),
+        ("deadline: serves in the description does not serve",
+         {**claude_bash("bb thread tell thr_x hi"), "tool_input": {"command": "bb thread tell thr_x hi", "description": "serves: P1"}},
+         spent, 2, "could not finish"),
+        ("deadline: '#' inside the quoted brief is not a comment", "bb thread tell thr_x 'fix #3, serves: P1'", spent, 0, ""),
+        ("deadline: a FAIL-review fix brief is denied when citation checks cannot run",
+         f"bb thread tell thr_x --message-file {deadline_brief}", spent, 2, "fix brief denied"),
+        ("deadline: a FIFO brief is not opened", f"bb thread tell thr_x --message-file {fifo}", spent, 2, "could not finish"),
+        ("deadline: a description that mentions a tell is not a dispatch",
+         {"tool_name": "Bash", "tool_input": {"command": "ls", "description": "then bb thread tell thr_x"}}, spent, 0, ""),
+        ("deadline: fleet_task_create without serves", mcp("fleet_task_create", title="refactor"), spent, 2, "could not finish"),
+        ("deadline: fleet_task_create serving P1", mcp("fleet_task_create", title="x", body="serves: P1"), spent, 0, ""),
+        ("deadline: fleet_task_update status only", mcp("fleet_task_update", task="#3", status="done"), spent, 0, ""),
+        ("deadline: interactions answer --text", "bb thread interactions answer i thr_x --text q=go", spent, 2, "could not finish"),
+        ("deadline: undeclared tell denied by shape", "bb thread tell thr_x hi", spent, 2, "could not finish"),
+        ("deadline: a quote-split dispatch word is still one", 'bb thr"ea"d tell thr_x hi', spent, 2, "could not finish"),
+
+        ("deadline: tell with serves allowed", "bb thread tell thr_x 'serves: P1 hi'", spent, 0, ""),
+        ("deadline: a blocked purpose does not serve", "bb thread tell thr_x 'serves: P2 hi'", spent, 2, "could not finish"),
+        ("deadline: an unknown purpose does not serve", "bb thread tell thr_x 'serves: P9 hi'", spent, 2, "could not finish"),
+        ("deadline: an open id in a list serves", "bb thread tell thr_x 'serves: P9, P1 hi'", spent, 0, ""),
+        ("deadline: fork is a dispatch", "bb thread fork thr_x --prompt hi", spent, 2, "could not finish"),
+        ("deadline: non-dispatch allowed", "ls -la", spent, 0, ""),
+        ("deadline: apply_patch writing $(...) lines is not a dispatch",
+         {"tool_name": "apply_patch", "tool_input": {"command": PATCH_WITH_SUBST}}, spent, 0, ""),
+        # review r2c: each dispatch serves on its own at the deadline, too
+        ("deadline: only the first of two tells serves", "bb thread tell thr_a 'serves: P1 x'; bb thread tell thr_b hi", spent, 2, "could not finish"),
+        ("deadline: automation create --prompt without serves", "bb automation create --name n --in 1m --prompt hi", spent, 2, "could not finish"),
+        ("deadline: automation create --prompt serving P1", "bb automation create --name n --in 1m --prompt 'serves: P1 hi'", spent, 0, ""),
+        ("deadline: instructions set without serves", "bb instructions set be terse", spent, 2, "could not finish"),
+        ("deadline: sh -c cannot borrow the outer serves", "sh -c 'bb thread tell thr_a hi' 'serves: P1'", spent, 2, "could not finish"),
+        ("future HOOK_T0: normal decision", "bb thread tell thr_x hi", future, 2, "must say which"),
+    ]:
+        env = dict(os.environ, HOME=tmp, SCOPE_LEDGER_DIR=tmp, BB_THREAD_ID=thread, HOOK_T0=t0)
+        start = time.monotonic()
+        payload = cmd if isinstance(cmd, dict) else claude_bash(cmd)
+        p = subprocess.run([sys.executable, os.path.abspath(__file__), "hook"], env=env, text=True, capture_output=True,
+                           input=json.dumps(payload))
+        took = time.monotonic() - start
+        good = p.returncode == want and text in p.stderr and took < 2.0
+        failed += not good
+        print(f"{'ok  ' if good else 'FAIL'} {label}: rc={p.returncode} want={want} in {took:.2f} s")
+    # Every bb verb whose help says it hands a thread text to act on is gated
+    # (review r1 D3): a new prompt-carrying verb fails here until it is added
+    # to shell_dispatch or to VERB_EXEMPT with the reason.
+    # The sweep reads any depth and every way a name is given (review r2c:
+    # `{name:L}` and anything below 3 levels were missed).
+    deep = os.path.join(tmp, "plugin", "a", "b", "c", "d", "e")
+    os.makedirs(deep)
+    with open(os.path.join(deep, "server.js"), "w") as f:
+        f.write('bb.agents.registerTool({ name: "deep_tool" });\nconst L="var_tool";e.agents.registerTool({name:L,description:_});\n'
+                "bb.agents.registerTool({\n  name: 'quoted_tool',\n});\nbb.agents.registerTool(spec);\n"
+                "// prose: bb.agents.registerTool (static tools)\n")
+    swept = plugin_tools(roots={"p": os.path.join(tmp, "plugin")})
+    want_swept = {"deep_tool", "var_tool", "quoted_tool"}
+    good = (want_swept <= set(swept) and sum(t.startswith("?") for t in swept) == 1 and len(swept) == 4
+            and any(t.startswith("?") for t in loose_tools(swept)))
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} the sweep reads any depth, a variable name and a quoted name, and flags a spec it cannot read: {sorted(swept)}")
+    # The help scan's text flags: each option a text-carrying verb shows.
+    shown = ["--prompt <text>", "--message <text>", "--prompt-file <path>", "--message-file <path>", "--text <q=a>",
+             "--value <json>", "--script <inline>", "--script-file <path>", "--charter <text>", "--concern <text>",
+             "--context <text>", "--body <text>", "--question <text>", "tell <thread> [message]", "<message>",
+             "fork <thread> <prompt>", "set <text...> [--json]", 'task-add <group> "<title>"']
+    unmatched = [h for h in shown if not HELP_TEXT.search(h)]
+    failed += bool(unmatched)
+    print(f"{'ok  ' if not unmatched else 'FAIL'} the help scan matches every text flag{': misses ' + ', '.join(unmatched) if unmatched else ''}")
+    # Exact pairs don't cover siblings: a method bb adds later, or an exempt method name
+    # served by another plugin (#27 r6), is flagged until it is read.
+    good = open_rpc([("provider-codex", "provider-usage.v1.listResources"), ("fleet", "fleet.v1.tell"),
+                     ("bb-account", "bb-account.v1.status"), ("bb-account", "bb-account.v1.tellThread"),
+                     ("provider-codex", "provider-usage.v1.tellThread"),
+                     ("uninspected-plugin", "bb-account.v1.status")]) == [
+        ("bb-account", "bb-account.v1.tellThread"), ("fleet", "fleet.v1.tell"),
+        ("provider-codex", "provider-usage.v1.tellThread"), ("uninspected-plugin", "bb-account.v1.status")]
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} an RPC method that is not a known read is flagged")
+    # The fake bb served only the hook cases; the coverage scans read the real one.
+    if saved_bb_cli is None:
+        os.environ.pop("BB_CLI", None)
+    else:
+        os.environ["BB_CLI"] = saved_bb_cli
+    if shutil_which("bb"):
+        carries = bb_text_verbs()
+        missing = sorted(carries - gated_verbs() - set(VERB_EXEMPT))
+        failed += bool(missing) or not carries
+        print(f"{'ok  ' if carries and not missing else 'FAIL'} every prompt-carrying bb verb is gated "
+              f"({len(carries)} found in bb's help){': missing ' + ', '.join(missing) if missing else ''}")
+        # The scan itself reaches nested groups and free-text flags (review
+        # r2b: it stopped at `thread queue` and printed a pass on 12 verbs).
+        # bb removed `thread draft` (2026-09-30); its gating stays for older builds, but it can't be a probe.
+        parser_gaps, absent, probe_errors = help_probe_gaps(carries)
+        failed += bool(parser_gaps) or bool(probe_errors)
+        if probe_errors:
+            print("FAIL the help scan reaches nested and plugin groups and --text/--value/--script: "
+                  + "; ".join(probe_errors))
+        elif parser_gaps:
+            print(f"FAIL the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f": not found {', '.join(parser_gaps)}")
+        elif absent:
+            print(f"ok   the help scan reaches nested and plugin groups and --text/--value/--script"
+                  f" (not present in this bb: {', '.join(absent)})")
+        else:
+            print("ok   the help scan reaches nested and plugin groups and --text/--value/--script")
+        # Every agent tool an enabled plugin registers is gated or exempt with
+        # its reason (review r2b D6: task, advise and context tools were neither).
+        # Every discoverable plugin RPC method is an exempt read, or `bb plugin rpc
+        # call` of it is a dispatch (review r2d: it reaches a plugin without its
+        # CLI group; #27: bb-account.v1.fetch can't be shown to reach no thread).
+        handlers = rpc_methods()
+        unexempt = open_rpc(handlers or [])
+        loose_rpc = [h for h in unexempt if not dispatches(f"bb plugin rpc call {h[0]} {h[1]}")]
+        shown = lambda hs: ", ".join(f"{p} {m}" for p, m in hs)
+        failed += handlers is None or bool(loose_rpc)
+        print(f"{'ok  ' if handlers is not None and not loose_rpc else 'FAIL'} every plugin RPC method is an exempt "
+              f"read or gated ({len(handlers or [])} found, gated: {shown(unexempt) or 'none'})"
+              f"{': neither: ' + shown(loose_rpc) if loose_rpc else ''}")
+        tools, tools_err = plugin_tools_from_bb()
+        if tools_err is not None:
+            failed += True
+            print(f"FAIL every registered agent tool is gated or exempt: plugin listing unavailable ({tools_err})")
+        elif not tools:
+            print("ok   every registered agent tool is gated or exempt (none registered)")
+        else:
+            loose = loose_tools(tools)
+            failed += bool(loose)
+            print(f"{'ok  ' if not loose else 'FAIL'} every registered agent tool is gated or exempt "
+                  f"({len(tools)} found, {sum(t in MCP_FIELDS for t in tools)} gated)"
+                  f"{': neither: ' + ', '.join(f'{t} ({tools[t]})' for t in loose) if loose else ''}")
+    else:
+        print("skip bb verb coverage: no bb on PATH")
+    # gap-map nudge: shown after GAP_MAP_DISPATCHES passed dispatches, once, never with a map
+    good = os.path.isfile(passed_marker(thread))
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} a passed dispatch touches the thread's gap-map marker")
+    import contextlib, copy, io
+    gt = "thr_gapmapfixture"
+    write_ledger(gt, dict(copy.deepcopy(base), thread_id=gt))
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+
+    def passed(k, hours_ago=0):
+        for _ in range(k):
+            mark_passed(gt, utc_now.timestamp() - hours_ago * 3600)
+
+    def cli_nudge():
+        out, env = io.StringIO(), os.environ.get("BB_THREAD_ID")
+        os.environ["BB_THREAD_ID"] = gt
+        stdin, sys.stdin = sys.stdin, io.StringIO('{"tool_name": "Bash"}')
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = main(["nudge"])
+        finally:
+            sys.stdin = stdin
+            if env is None:
+                os.environ.pop("BB_THREAD_ID", None)
+            else:
+                os.environ["BB_THREAD_ID"] = env
+        return rc, out.getvalue()
+
+    passed(20, hours_ago=GAP_MAP_WINDOW_H + 1)  # old dispatches do not count
+    passed(GAP_MAP_DISPATCHES - 1)
+    below = gap_map_nudge(gt)
+    passed(1)
+    # Hermes review of #92: the rest of the fleet's traffic (here > 4 MB of other threads'
+    # dispatches in the shared log) must not evict this thread's count.
+    with open(DECISIONS, "a") as f:
+        line = json.dumps({"schema_version": 1, "at": now_iso(), "event": "scope_passed",
+                           "thread": "thr_otherfixture", "tool": "bb thread tell", "serves": "P1"}) + "\n"
+        f.write(line * (4 * 1024 * 1024 // len(line) + 1000))
+    for i in range(50):
+        mark_passed(f"thr_otherfixture{i}")
+    rc, out = cli_nudge()
+    shown = json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
+    again = gap_map_nudge(gt)
+    good = (below is None and rc == 0 and f"{GAP_MAP_DISPATCHES} dispatches" in shown
+            and "gap map" in shown and again is None)
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} gap-map nudge shows once after {GAP_MAP_DISPATCHES} dispatches in "
+          f"{GAP_MAP_WINDOW_H}h, never before: below={below is None} shown={bool(shown)} repeat={again is None}")
+    replace_text(passed_marker(gt) + ".nudged", f"{int(utc_now.timestamp() - (GAP_MAP_REPEAT_H + 1) * 3600)}\n")
+    quiet = sys.stderr
+    sys.stderr = open(os.devnull, "w")
+    try:
+        rc_bad = main(["map", gt, "--artifact", os.path.join(tmp, "absent.md")])
+    finally:
+        sys.stderr.close()
+        sys.stderr = quiet
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc_map = main(["map", gt, "--artifact", brief])
+    after_map = gap_map_nudge(gt)
+    good = rc_bad == 1 and rc_map == 0 and after_map is None
+    failed += not good
+    print(f"{'ok  ' if good else 'FAIL'} a recorded gap map (an existing file) silences the nudge: "
+          f"absent={rc_bad} map={rc_map} silent={after_map is None}")
+    with open(DECISIONS) as f:
+        n = sum(1 for _ in f)
+
+    failed += n == 0
+    print(f"{'ok  ' if n else 'FAIL'} decisions are recorded ({n} lines)")
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    print("scope-gate selftest: " + ("all pass" if not failed else f"{failed} FAIL"))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

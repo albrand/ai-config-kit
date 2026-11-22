@@ -19,6 +19,7 @@ concept quickly.
 | Install the Codex skill index/router | [Import The Skill Library Router](#import-the-skill-library-router), then `SKILL_LIBRARY_ROUTER_IMPORT_PROMPT.md` |
 | Install the UX design agent | [Import The UX Design Agent Skillset](#import-the-ux-design-agent-skillset), then `UX_DESIGN_AGENT_IMPORT_PROMPT.md` |
 | Search local UI/UX design intelligence | `skillsets/ux-design-intelligence/`, then invoke `$ui-ux-pro-max` |
+| Set up AI-assisted test automation with a board-backed QA gate and Allure | `skillsets/test-automation/shared/ai-test-automation/SKILL.md` |
 | Understand instruction precedence | [Core Mental Model](#core-mental-model), then `FRAMEWORK_MANIFEST.md` |
 | Understand anti-bias and causal-overfitting controls | `DIRECTIVE_CHALLENGE_AND_CAUSAL_INFERENCE.md` |
 | Configure portable workspace-root scans | [Core Mental Model](#core-mental-model), then `REPO_ADOPTION_PLAYBOOK.md` |
@@ -29,7 +30,7 @@ concept quickly.
 | Review security / find vulnerabilities | [Security Review Profile](#security-review-profile), then `SECURITY_AND_PENTEST.md` and `skillsets/security-review/` |
 | Bootstrap roadmap, tech, or hardening workflows | [Ecosystem Terraform Profile](#ecosystem-terraform-profile), then `ECOSYSTEM_TERRAFORM_GUIDE.md` |
 | Tune delegation, model routing, or sidecars | [Harness Redesign Profile](#harness-redesign-profile), then `HARNESS_STRATEGY.md` and `TOKEN_ECONOMY.md` |
-| Adopt GLM plus Sol/Terra/Luna-style adaptive routing | `ADAPTIVE_MODEL_ORCHESTRATION.md`, then `skillsets/adaptive-model-orchestration/` |
+| Route bounded or bulk work to Codex and quality-critical work to Claude | `ADAPTIVE_MODEL_ORCHESTRATION.md`, then `skillsets/adaptive-model-orchestration/` |
 | Orchestrate cmux (local) + Hermes (remote router on a Tailscale-only VPS) | `CMUX_HERMES_ORCHESTRATION.md`, then `skillsets/cmux-hermes-orchestration/` |
 | Discover/use native host surfaces (cmux, tmux, zellij, generic harnesses) | `NATIVE_AGENT_SURFACES.md`, then `skillsets/native-agent-surfaces/` (install via the preference-aware `scripts/install.py`) |
 | Reuse a workspace before creating one; coordinate agent sessions; browser E2E | `skillsets/native-agent-surfaces/codex/native-agent-surface/references/PROJECT_SETUP.md`, then `AGENT_SESSION_COORDINATION.md` and `BROWSER_E2E.md` |
@@ -57,8 +58,8 @@ It provides:
   generated-wiki, symbol-index, or code-review graph tools at full useful
   capability without treating generated output as source-of-truth.
 - A cross-agent coordination addendum for tool-neutral paired work where one AI coordinates another AI, peer reviewer, or external executor.
-- An adaptive multi-model doctrine and installable Codex/OpenCode profile for
-  risk-based effort selection, cross-family critique, and max/ultra escalation.
+- A Codex/Claude routing doctrine and installable Codex skill for bounded work,
+  quality-critical work, Hermes reviews, and effort escalation.
 - Quality gates for docs, code, UI, API, data, security, deployment, and review work.
 - A delivery-quality doctrine for acceptance-first examples, useful test evidence, rendered UI verification, and honest completion claims.
 - A quality convergence loop for work that needs measured improvement across iterations.
@@ -260,7 +261,7 @@ question.
 | `AGENT_ORCHESTRATION.md` | Delegation rules, agent roles, ownership boundaries, routing rules, integration checklist, and anti-patterns. |
 | `CROSS_AGENT_COORDINATION.md` | Addendum for coordinating multiple AI tools with capability gates, communication plans, output contracts, and single-agent fallback. |
 | `HARNESS_STRATEGY.md` | Master/sub-agent routing, model tiers, cache rules, anti-drift rules, escalation, validation, and delivery standards. |
-| `ADAPTIVE_MODEL_ORCHESTRATION.md` | Canonical capability-first multi-model routing, effort, max/ultra, and integration contract. |
+| `ADAPTIVE_MODEL_ORCHESTRATION.md` | Capability-first Codex/Claude routing, effort selection, and integration contract. |
 | `CMUX_HERMES_ORCHESTRATION.md` | Bounded, default-off orchestration between cmux (local UI/session transport) and Hermes (remote provider router on a Tailscale-only VPS) via a local deterministic broker; hard network boundary, reuse-first workspace creation, worktree write isolation, no reverse SSH, and report-only cleanup. |
 | `NATIVE_AGENT_SURFACES.md` | Capability-first, host-neutral doctrine for discovering and using native host software an agent runs in or through (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses); never serializes env values or socket capabilities. |
 | `SECOND_MAC_BOOTSTRAP.md` | Git-based second-Mac install from the public repo with explicit copy/install commands; configures its own SSH/Tailscale and never copies credentials. |
@@ -279,7 +280,7 @@ question.
 | `CONTEXT_ACCELERATION.md` | Optional directives for using a chosen Graphify-compatible knowledge graph/context map or OpenWiki-compatible generated agent wiki as advisory orientation, including the required operator documentation package; not a default dependency or source of truth. |
 | `ECOSYSTEM_TERRAFORM_GUIDE.md` | User-facing guide and prompt samples for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`. |
 | `skillsets/context-acceleration/` | Optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability. |
-| `skillsets/adaptive-model-orchestration/` | Installable Codex orchestration skill, OpenCode/GLM example profile, portable wrappers, and package manifest. |
+| `skillsets/adaptive-model-orchestration/` | Codex orchestration skill, legacy OpenCode safety boundary, and package manifest. |
 | `skillsets/core-framework/` | Self-contained Codex entrypoint with bundled ai-config-kit references. |
 | `skillsets/scope-advisory/` | Portable Codex and bb scope-advisor skill bundling the canonical `SCOPE_DISCIPLINE.md` contract. |
 | `skillsets/skill-library-router/` | Codex skillset that indexes large local skill libraries so specialized skills stay accessible without consuming always-on context. |
@@ -288,11 +289,14 @@ question.
 | `skillsets/ux-design-intelligence/` | MIT-licensed `ui-ux-pro-max` research layer with local datasets and search helpers; complements the UX design agent while preserving existing product tokens and brand authority. |
 | `skillsets/ecosystem-terraform/` | Executable AI-runbook skillset for `/roadmap-terraform`, `/tech-terraform`, and `/assess-then-harden`, with Claude Code commands and Codex skill mirrors. |
 | `skillsets/pr-review/` | Executable high-signal PR review skillset with Codex skill, Claude Code `/code-review` command, and output contract. |
+| `skillsets/qa-enforcement/` | QA ship gates, including the Pallium real-data replay gate. `REALDATA-REPLAY.md` must change in the checked committed range. The newest report-changing commit must be a descendant of every non-merge commit changing a production-data path in that range; a later data-path change requires a refreshed report. Commits already reachable from the checked base are outside the range. The report is validated from its committed blob and cited digest. Reasons and error classes may be aggregate descriptions or codes; the gate scans the whole report for ObjectId-like values, 12+ digit numeric identifiers, SSN-like numbers (`123-45-6789` or `123 45 6789`) and labelled SSN/social-security fields (including underscore and hyphen forms), international phone numbers with a leading `+` and at least 9 digits, `(555) 123-4567`, `555-123-4567` and `555.123.4567` shapes, emails, labelled personal/contact fields (`*_name`, `contact`, `email address`, `phone`, including underscore and hyphen forms), credentialed URIs, bearer tokens, JWTs, and secret assignments. Format the report first, append its SHA-256 footer last, then confirm formatting leaves the completed report bytes unchanged. Every release request touching production-data paths must name the post-release read-back offset and counts plus a rollback target, regardless of blocked rows. Release path checks always compare against `refs/remotes/origin/main`, the production branch, regardless of an explicit `--base`; the explicit base may add paths but cannot narrow the production diff. Deny release if `refs/remotes/origin/main` cannot be resolved; other actions keep their existing base behavior and use `refs/remotes/origin/develop` as the default diff base. |
 | `skillsets/security-review/` | Executable defensive-security skillset: the multi-pass `adversarial-security-sweep` (reinforced detection) and the authorization-gated `pentest-specialist`, with Codex skills, Claude Code commands, an output contract, and a supply-chain IoC / CI-guard reference. Paired with `SECURITY_AND_PENTEST.md`. |
 | `skillsets/cmux-hermes-orchestration/` | Executable, default-off orchestration skillset for cmux (local) + Hermes (remote router on a Tailscale-only VPS): stdlib-only deterministic broker, two explicit-only Codex skills (`cmux-hermes-orchestrator`, `plan-arbiter`), Claude Code commands, shared references, durable Hermes work journals, a no-secrets remote `AGENTS.md` template, and Builder.io MIT provenance. Paired with `CMUX_HERMES_ORCHESTRATION.md`. |
 | `skillsets/native-agent-surfaces/` | Portable, capability-first skillset for discovering/using native host surfaces (cmux first adapter; also tmux, zellij, generic agentic shells/harnesses, git, and Orca): explicit-only Codex skill (`native-agent-surface`), host-neutral adapter contract, stdlib detector that never serializes env values or socket capabilities, reuse-first workspace resolver (`resolve-workspace.py`), project-setup / browser-E2E / agent-session-coordination references, versioned model-neutral `bundle-manifest.json`, and a preference-aware model-agnostic global installer (`scripts/install.py`) with offline tests. Orca is detector-only (Darwin-gated `orca`; cross-platform `orca-ide`). Paired with `NATIVE_AGENT_SURFACES.md`. |
 | `skillsets/orca-workflow-automation/` | Explicit-only Codex skill for Orca-owned workflow automation. Orca owns schedule/worktree/terminal/browser-emulator lifecycle. Includes a disabled-first, idempotent per-repository PR-listener configurator for any Orca-registered GitHub repo, the read-only exact-SHA PR queue, privacy-safe execution telemetry, and the bounded Orca-to-Hermes bridge. No bulk activation, public review posting, or auto-merge. Offline unit tests included. |
 | `skillsets/orca-browser-safety/` | Portable Codex skill for Orca-embedded-only interactive browsing: isolated workspace profiles, full worktree targeting, explicit page IDs on page-scoped commands, and ownership-safe closure of only agent-created pages. |
+| `skillsets/marketing-advisor/` | Shared `marketing-advisor` skill: rubric-driven judge (cold-reader clarity, one idea, benefit first, concreteness, reading ease, truthfulness, CFP/CDC/LGPD compliance, audience value, owner principles) with a synthetic psychologist panel. It returns a typed accept/verify/revise decision computed in code, carries calibration numbers against the owner's past verdicts, and tracks accuracy against real outcomes (`rescore.py`). Brand profiles stay in the local overlay (`{{MARKETING_ADVISOR_BRANDS}}`). |
+| `skillsets/writing/` | Shared `no-ai-slop` skill: edits a draft to remove about 20 AI-writing patterns while keeping the writer's voice, or flags them without rewriting. Vendored from petergyang/no-ai-slop (MIT), pinned by commit and SHA-256; `install.sh` refuses a copy that differs |
 
 ## Load Profiles
 

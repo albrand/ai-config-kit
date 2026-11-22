@@ -30,6 +30,33 @@ for (const fixture of fixtures) {
 }
 
 const manualIncident = fixtures.find((fixture) => fixture.id === "manual-login-incident-replay");
+const completeFixture = fixtures.find((fixture) => fixture.id === "valid-vendor-portal");
+assert.ok(completeFixture, "valid complete journey fixture present");
+const mismatchedStep = structuredClone(completeFixture.packet);
+mismatchedStep.journey.steps[0].match = false;
+assert.equal(evaluateEvidence(mismatchedStep).ok, false, "a journey step mismatch must fail completion");
+assert.ok(evaluateEvidence(mismatchedStep).failures.some((item) => item.code === "STEP_MISMATCH"));
+const contradictedStep = structuredClone(completeFixture.packet);
+contradictedStep.journey.steps[0].expected.value = "REFUSE";
+contradictedStep.journey.steps[0].actual = "ACCEPT";
+contradictedStep.journey.steps[0].match = true;
+const contradictedResult = evaluateEvidence(contradictedStep);
+assert.equal(contradictedResult.ok, false, "match true cannot override unequal actual and expected values");
+assert.ok(contradictedResult.failures.some((item) => item.code === "STEP_MATCH_CONTRADICTED"));
+const mismatchFalse = structuredClone(contradictedStep);
+mismatchFalse.journey.steps[0].match = false;
+assert.equal(evaluateEvidence(mismatchFalse).ok, false, "unequal values with match false must fail");
+const trailingSpaceMismatch = structuredClone(completeFixture.packet);
+trailingSpaceMismatch.journey.steps[0].expected.value = "Accept";
+trailingSpaceMismatch.journey.steps[0].actual = "Accept ";
+trailingSpaceMismatch.journey.steps[0].match = true;
+const trailingSpaceResult = evaluateEvidence(trailingSpaceMismatch);
+assert.equal(trailingSpaceResult.ok, false, "trailing whitespace must be compared exactly");
+assert.ok(trailingSpaceResult.failures.some((item) => item.code === "STEP_MISMATCH"));
+assert.ok(trailingSpaceResult.failures.some((item) => item.code === "STEP_MATCH_CONTRADICTED"));
+const matchingSteps = structuredClone(completeFixture.packet);
+assert.ok(matchingSteps.journey.steps.every((step) => step.match === true), "every step in the passing packet matches");
+assert.equal(evaluateEvidence(matchingSteps).ok, true, "a complete matching journey passes");
 assert.ok(manualIncident, "incident replay fixture present");
 const manualRequest = fixtures.find((fixture) => fixture.id === "manual-login-request-valid");
 assert.ok(manualRequest, "valid manual request fixture present");
@@ -75,6 +102,19 @@ delete blockedBase.external;
 delete blockedBase.prerequisites;
 delete blockedBase.journey;
 assert.equal(evaluateEvidence(blockedBase).ok, true, "a reached and attempted prerequisite can be blocked");
+const blockedMismatch = structuredClone(blockedBase);
+blockedMismatch.journey = structuredClone(fixtures.find((fixture) => fixture.id === "valid-vendor-portal").packet.journey);
+blockedMismatch.journey.steps[0].expected.value = "Success";
+blockedMismatch.journey.steps[0].actual = "Validation error";
+blockedMismatch.journey.steps[0].match = false;
+assert.equal(evaluateEvidence(blockedMismatch).ok, false, "a reached mismatch cannot be reported as merely blocked");
+assert.ok(evaluateEvidence(blockedMismatch).failures.some(({ code }) => code === "STEP_MISMATCH"));
+const blockedNotWalked = structuredClone(blockedBase);
+blockedNotWalked.journey = { walked: false, evidence: "stopped before entering the journey", steps: [] };
+assert.equal(evaluateEvidence(blockedNotWalked).ok, true, "a blocker before any journey step may pass as blocked");
+const blockedMatchingWalk = structuredClone(blockedBase);
+blockedMatchingWalk.journey = structuredClone(fixtures.find((fixture) => fixture.id === "valid-vendor-portal").packet.journey);
+assert.equal(evaluateEvidence(blockedMatchingWalk).ok, true, "matching walked steps may precede a blocker");
 
 const codeOnlyBlock = structuredClone(blockedBase);
 delete codeOnlyBlock.blocker.attempt_evidence;
@@ -92,6 +132,32 @@ delete deniedConsent.blocker.attempt_evidence;
 deniedConsent.blocker.denial_evidence = "user explicitly declined this connection";
 assert.equal(evaluateEvidence(deniedConsent).ok, true, "explicit consent denial can block the journey");
 
+// Run through a symlinked directory (macOS /tmp is one): the valid control is
+// allowed and a failing packet is denied, as when run by its real path.
+{
+  const { spawnSync } = await import("node:child_process");
+  const os = await import("node:os");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-e2e-gate-link-"));
+  try {
+    const link = path.join(tmp, "scripts-link");
+    fs.symlinkSync(path.join(here, "..", "scripts"), link);
+    const run = (fixtureId) => {
+      const packet = path.join(tmp, `${fixtureId}.json`);
+      fs.writeFileSync(packet, JSON.stringify(fixtures.find((f) => f.id === fixtureId).packet));
+      return spawnSync(process.execPath, [path.join(link, "qa-e2e-gate.mjs"), "check", packet], { encoding: "utf8" });
+    };
+    const control = run("valid-vendor-portal");
+    assert.equal(control.status, 0, `valid control via a symlinked path: rc ${control.status} ${control.stderr}`);
+    assert.equal(JSON.parse(control.stdout).ok, true, "valid control via a symlinked path is allowed");
+    const bad = run("identity-missing");
+    assert.equal(bad.status, 1, "a failing packet via a symlinked path is denied by the gate itself");
+    assert.equal(JSON.parse(bad.stdout).ok, false, "with its failures printed");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 process.stdout.write(
   JSON.stringify({ ok: true, fixtures: fixtures.length, efforts, evaluations: fixtures.length * efforts.length }) + "\n",
 );
+

@@ -49,7 +49,7 @@ Support files:
 - `INTERNAL_WIKI_PAGE.md`: short paste-ready wiki summary.
 - `ECOSYSTEM_TERRAFORM_GUIDE.md`: user-facing guide and prompt samples for roadmap, technology, and hardening bootstrap workflows.
 - `skillsets/context-acceleration/`: optional Codex skillset for gating and using selected graph/wiki/symbol/code-review context accelerators at full useful capability.
-- `skillsets/adaptive-model-orchestration/`: portable Codex skill, OpenCode/GLM example profile, peer wrappers, package manifest, and offline-install guidance.
+- `skillsets/adaptive-model-orchestration/`: portable Codex skill, Codex peer wrapper, legacy OpenCode safety boundary, package manifest, and offline-install guidance.
 - `skillsets/core-framework/`: self-contained explicit-only Codex entrypoint with bundled framework references.
 - `skillsets/scope-advisory/`: portable scope-advisor Codex skill bundling the canonical `SCOPE_DISCIPLINE.md` contract; see `skillsets/scope-advisory/README.md` for bb and standard client install paths.
 - `skillsets/skill-library-router/`: Codex skillset for indexing large local skill libraries and keeping explicit-only skills discoverable.
@@ -244,7 +244,7 @@ Use when changing model routing, cache rules, delegated-agent policy, validation
 ### Adaptive Model Orchestration Profile
 
 Use when adopting or operating adaptive/always-on cross-family routing,
-OpenCode/GLM, Codex fast/balanced/deep peers, or max/ultra effort selection:
+Codex/Claude routing, peer selection, or max/ultra effort selection:
 
 1. Minimum Profile
 2. `HARNESS_STRATEGY.md`
@@ -351,9 +351,9 @@ Rules:
   not overruled by stale memory.
 - For non-trivial planning or architecture, run an independent planning or
   architecture critique through another model or counterpart when available and
-  useful. Prefer a configured sidecar/counterpart path (for example the local
-  opencode/GLM 5.2 route) as an example, but stay model-agnostic and fall back
-  to single-agent self-critique when unavailable or blocked.
+  useful. Use the verified Codex route for bounded or bulk work and Claude for
+  quality-critical work. Resolve provider and model from live evidence, and
+  fall back to single-agent self-critique when a required route is unavailable.
 - Directive, planning, architecture, or challenge/advisor briefs must print this
   authorization sentence (or an equivalent): "Authorization: the user explicitly
   authorizes sidecar/counterpart model use for directive and architecture

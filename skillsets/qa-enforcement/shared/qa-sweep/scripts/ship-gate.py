@@ -2,12 +2,14 @@
 """QA ship gate: fail-closed push/PR/deploy gate for repos that opted in.
 
 A repo opts in by committing `.qa/config.json`. From that moment the gate is
-ALWAYS ON for that repo for ship commands (git push, gh pr create/merge/ready,
-bb fleet validate, vercel/netlify/fly deploy). It denies unless the whole
+ALWAYS ON for that repo for ship commands (pushes to protected branches,
+production deploys, releases, tag pushes, workflow dispatch -- see
+segment_ship_kind). PR commands (merge, ready) are never gated (2026-10-06). It denies unless the whole
 discover->cluster->plan->fix->re-walk pipeline is complete at exactly the SHA
 being shipped:
 
-  .qa/config.json     repo opt-in: personas, workflows, optional deployed_check
+  .qa/config.json     repo opt-in: personas, workflows, optional deployed_check,
+                      optional automation_identities (CI-owned walk identities)
   <run>/workflow.json   the task's scope: persona, entry, outcome, steps, target
   <run>/inventory.jsonl one row per defect found on the full walk (no fixing yet)
   <run>/clusters.json   row -> cluster, repro command, repro_failed_once: true
@@ -47,9 +49,13 @@ import datetime
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
+import functools
 import sys
 import tempfile
+import time
 
 HOME = os.path.expanduser("~")
 # QA_GATE_EVENTS_FILE overrides the sink: tests, demos and probes MUST point it
@@ -58,6 +64,7 @@ HOME = os.path.expanduser("~")
 EVENTS = os.environ.get("QA_GATE_EVENTS_FILE") or os.path.join(
     HOME, ".local", "state", "agent-quality", "events.jsonl")
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
+REWALK_CONVERTER = os.path.join(SKILL_DIR, "rewalk-from-playwright.py")
 # realpath: a symlinked skill dir makes the gate script no-op (its main() guard
 # compares import.meta.url to argv[1]), so always run the resolved file.
 # Candidates: the flattened skill-home sibling, the kit's agent-runtime copy,
@@ -67,11 +74,11 @@ _E2E_CANDIDATES = [
     os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
     os.path.realpath(os.path.join(SKILL_DIR, "..", "..", "..", "..", "agent-runtime", "shared",
                                   "verified-qa-e2e", "scripts", "qa-e2e-gate.mjs")),
-    os.path.expanduser("~/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs"),
+    os.path.realpath(os.path.expanduser("~/.agents/skills/verified-qa-e2e/scripts/qa-e2e-gate.mjs")),
 ]
 E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDATES[0])
 
-# ---- v2 ship classification (2026-09-24, card 3 meu-psi pilot) --------------
+# ---- v2 ship classification (2026-09-24, pilot) --------------
 # v1 gated every push and every PR command, which deadlocked preview-based
 # flows: the re-walk must be at the shipped SHA, but the preview for that SHA
 # only exists after the push. v2 gates only what SHIPS: merges (gh pr merge,
@@ -80,17 +87,149 @@ E2E_GATE = next((p for p in _E2E_CANDIDATES if os.path.isfile(p)), _E2E_CANDIDAT
 # pushes, gh pr create and bb fleet validate are free: that is how previews,
 # CI and review get produced. No dead patterns: every class below is exercised
 # by selftest against a canonical sample.
+# 2026-10-06 (owner decision): PR commands (gh pr merge, gh pr ready, the
+# REST and GraphQL merge calls) are never gated, so production fixes and admin
+# merges are never blocked. Protected pushes, releases and deploys stay gated.
+# v4 (card 6): "what ships" also covers releases (gh release create), any
+# workflow dispatch (gh workflow run -- justification at the classifier), tag
+# pushes (--tags/--follow-tags/refs/tags/vX, checked at the tagged commit),
+# vercel redeploy, and deployments-API POSTs that target production. Preview
+# builds through the deployments API stay free (a preview heal).
 
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                    "--super-prefix", "--exec-path", "--config-env"}
 PUSH_ALL_FLAGS = {"--all", "--mirror", "--branches"}
+# v4: pushing tags ships whatever they point at (tag-triggered deploys are
+# release/tag driven: `release: published` vX.Y.Z-staging, tag deploys).
+TAG_PUSH_FLAGS = {"--tags", "--follow-tags"}
+# v4: Vercel deployments API. Only PRODUCTION targets gate; preview builds
+# through this API must stay free -- a pilot repo rebuilds seat-blocked
+# previews via exactly `vercel api "/v13/deployments?teamId=.." -X POST
+# --input <body.json>`. The body usually sits in a file (an autoheal
+# posts PRODUCTION the same way), so readable body files are inspected too.
+DEPLOY_CREATE_RE = re.compile(r"/v\d+/deployments(?:[?#]|$)")
+PROMOTE_API_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/")
+PROD_TARGET_RE = re.compile(r"""["']?\btarget["']?\s*[:=]\s*["']?production\b""")
+# per tool: flags whose presence means "request body" (POST unless -X says
+# otherwise), and the method flags. `vercel api -d` is --debug, not data.
+API_BODY_FLAGS = {
+    "curl": {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--data-ascii",
+             "--json", "-F", "--form", "--form-string"},
+    "vercel": {"--input", "-F", "--field", "-f", "--raw-field"},
+}
+API_METHOD_FLAGS = {"curl": {"-X", "--request"}, "vercel": {"-X", "--method"}}
+BODY_FILE_MAX = 256 * 1024
+# gh subcommand flags that take a value (so the positional parse skips it)
+GH_RELEASE_VALUE_FLAGS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--notes-start-tag",
+                          "--target", "--discussion-category", "-R", "--repo", "--tag"}
+# pflag's false spellings: `gh release edit --draft=false` publishes a draft
+# (`--draft false` does not: a bare bool flag takes no separate value)
+PFLAG_FALSE = {"false", "0", "f", "F", "FALSE", "False"}
+# ---- v5 (card 11): deployment provenance ------------------------------------
+# `vercel promote|redeploy <deployment>` and the promote API ship a deployment
+# that already exists; its code is the commit Vercel built it from, not the
+# local HEAD. The gate resolves that commit through the vercel CLI's own login
+# (read-only GET /v13/deployments/<id|url>; the hook never reads, prints or
+# forwards a token) and requires a fresh run for its tree. Unresolvable
+# provenance (unknown deployment, CLI missing or offline, no git metadata, a
+# dirty build, a commit not in this clone) DENIES. The PreToolUse hook runs
+# under the host's hook timeout and a timed-out hook proceeds, so every lookup
+# in one command shares the hook budget and an expired budget denies.
+VERCEL_VALUE_FLAGS = {"-S", "--scope", "-T", "--team", "-t", "--token", "--cwd", "-A", "--local-config",
+                      "-Q", "--global-config", "--timeout", "--target", "-e", "--env", "-b", "--build-env",
+                      "-m", "--meta", "--archive", "--dpl"}
+PROMOTE_ID_RE = re.compile(r"/v\d+/projects/[^/?#\s]+/promote/([^/?#\s'\"]+)")
+# the API forms of `vercel alias set <deployment> <domain>` (a production
+# domain pointed at any deployment ships it) and of `vercel redeploy` (a
+# deployments POST whose body names the deployment to rebuild)
+ALIAS_API_RE = re.compile(r"/v\d+/deployments/([^/?#\s'\"]+)/aliases")
+DEPLOYMENT_ID_BODY_RE = re.compile(r"""["']?deploymentId["']?\s*[:=]\s*["']?([A-Za-z0-9_.-]+)""")
+DEPLOYMENT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+GIT_SOURCE_RE = re.compile(r"""["']?gitSource["']?\s*:\s*\{([^{}]*)\}""")
+# GitHub REST/GraphQL writes that ship without a CLI form the gate can check
+# (gh api / curl api.github.com): merging branches, creating or publishing a
+# release, creating or moving a ref, committing file contents, dispatching a
+# workflow, creating a deployment. The commit they ship is not decidable
+# locally, so they DENY outright and name the gated CLI form. Merging a PR
+# (pulls/N/merge, mergePullRequest, enablePullRequestAutoMerge) is never gated.
+GITHUB_WRITE_RE = re.compile(
+    r"(?:^|/)repos/[^/\s]+/[^/\s?#]+/(merges|releases(?:/\d+)?|git/refs(?:/[^\s?#]*)?|"
+    r"actions/workflows/[^/\s]+/dispatches|dispatches|contents/[^\s?#]*|deployments)(?:[?#]|$)")
+GITHUB_GRAPHQL_WRITE_RE = re.compile(
+    r"\b(mergeBranch|createRef|updateRef|updateRefs|createCommitOnBranch)\b")
+GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
+                      "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
+LOOKUP_BUDGET_S = 3.2
+_SELFTEST_LOOKUP_BUDGET_S = None
+_LOOKUP_DEADLINE = None
+# The whole PreToolUse decision must land before the host's hook timeout: a
+# timed-out hook lets the command run (verified 2026-09-25: a live probe on
+# Claude Code 2.1.282, and codex-rs/hooks pre_tool_use.rs at rust-v0.157.0,
+# where a timeout is a Failed run that never blocks). Lookups and deployed
+# checks are clamped to what is left, a commit reached after the soft budget
+# denies, and a hard SIGALRM decides on the spot: deny for a ship in an
+# opted-in repo, allow otherwise (the same rule as a crash).
+# The clock starts when the host starts the hook chain, not when this process
+# does: coordinator-hook-pretool.sh exports HOOK_T0, so interpreter start-up
+# and the stages before this one count. With a 5 s host timeout and a clock
+# that started in hook(), a loaded host decided in 4.9-6.0 s (2026-09-25,
+# load 145-190) and the command ran ungated. The installers set the host
+# timeout (HOOK_HOST_TIMEOUT_S) on every entry that runs the chain, and
+# hooks/check-hook-timeouts.sh refuses a config below it.
+HOOK_HOST_TIMEOUT_S = 15.0
+# Below the chain supervisor's GATE_DEADLINE (11 s, coordinator-hook-pretool.sh),
+# which kills a stage still running then; this gate's own deny usually wins.
+HOOK_HARD_S = 10.0
+HOOK_BUDGET_S = HOOK_HARD_S - 1.0
+_HOOK_DEADLINE = None
+# None until _hook() knows whether the command targets an opted-in repo. At
+# the hard deadline, unknown counts as opted in: a deadline that fires before
+# the opt-in check (a chain that spent its budget before this process
+# started) must not let a ship-shaped command through.
+_HOOK_OPTED = None
+
+
+def hook_elapsed(now=None):
+    """Seconds since the hook chain started (HOOK_T0, epoch seconds). 0 when
+    unset or unreadable, and never negative: a T0 in the future cannot buy
+    more time, it can only be ignored."""
+    try:
+        t0 = float(os.environ.get("HOOK_T0", ""))
+    except ValueError:
+        return 0.0
+    return max(0.0, (time.time() if now is None else now) - t0)
+
+
+def time_left():
+    """Seconds left in this hook invocation (infinite outside hook())."""
+    return float("inf") if _HOOK_DEADLINE is None else _HOOK_DEADLINE - time.monotonic()
+
+GH_WORKFLOW_VALUE_FLAGS = {"-r", "--ref", "-f", "--raw-field", "-F", "--field", "-R", "--repo"}
+# wrappers that run a command unchanged: stripped before classification so
+# `FOO=1 vercel --prod`, `npx vercel@latest --prod` or `env gh pr merge 5`
+# classify like the bare command (pre-v4 they were invisible to the hook)
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+PLAIN_WRAPPERS = {"env", "command", "exec", "nohup", "time", "sudo", "npx", "bunx", "pnpx"}
+WRAPPER_VALUE_FLAGS = {"env": {"-u", "--unset", "-C", "--chdir"}, "sudo": {"-u", "--user", "-g", "--group"},
+                       "npx": {"-p", "--package"}, "pnpm": {"--package"}, "yarn": {"-p", "--package"},
+                       "npm": {"-p", "--package"}}
+RUNNER_SUBCOMMANDS = {"pnpm": {"exec", "dlx"}, "yarn": {"exec", "dlx"}, "npm": {"exec", "x"},
+                      "bun": {"x"}}
+SHIP_BINS = {"git", "gh", "vercel", "netlify", "fly", "flyctl", "curl"}
 
 ROW_STATUSES = ("open", "closed", "fail_escalated")
 ROW_FIELDS = ("id", "step", "symptom", "evidence", "predates_change", "severity", "status")
 
 
+GIT_TIMEOUT_S = 60
+
+
 def run_git(repo, *args):
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=5)
+    """git in `repo`. A busy machine can take more than a few seconds per call, so the limit is generous. A call that
+    still runs out raises TimeoutExpired, never an empty answer: several callers read empty output as "no upstream" or
+    "default branch main", which would let a ship through, while a raise is a crash and a crash denies. In hook mode
+    the hard deadline (HOOK_HARD_S) decides first."""
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
 
 
 def repo_root(start):
@@ -187,7 +326,60 @@ def qa_reader(root, sha=None):
             if p.returncode != 0:
                 raise FileNotFoundError(rel)
             return p.stdout
-        return {"exists": exists, "read": read}
+
+        def read_many(rels):
+            result, safe = {}, []
+            for rel in rels:
+                # Never put control-character paths in a line-framed request.
+                if any(c in rel for c in "\n\r\0"):
+                    try:
+                        result[rel] = read(rel)
+                    except FileNotFoundError:
+                        result[rel] = None
+                else:
+                    safe.append(rel)
+            if not safe:
+                return result
+            tree = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-z",
+                                   "--full-tree", sha, "--", *safe],
+                                  capture_output=True, timeout=GIT_TIMEOUT_S)
+            if tree.returncode != 0:
+                raise RuntimeError(tree.stderr.strip() or "git ls-tree failed")
+            oids = {}
+            for entry in tree.stdout.split(b"\0"):
+                if not entry:
+                    continue
+                meta, path = entry.split(b"\t", 1)
+                _, kind, oid = meta.split()
+                if kind == b"blob":
+                    oids[path.decode("utf-8")] = oid
+            requests = [(rel, oids[rel]) for rel in safe if rel in oids]
+            result.update((rel, None) for rel in safe if rel not in oids)
+            if not requests:
+                return result
+            proc = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
+                input=b"".join(oid + b"\n" for _, oid in requests),
+                capture_output=True, timeout=GIT_TIMEOUT_S)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "git cat-file --batch failed")
+            pos = 0
+            for rel, oid in requests:
+                end = proc.stdout.find(b"\n", pos)
+                if end < 0:
+                    raise RuntimeError("truncated git cat-file --batch header")
+                header = proc.stdout[pos:end].split()
+                pos = end + 1
+                if len(header) != 3 or header[0] != oid or header[1] != b"blob":
+                    raise RuntimeError("unexpected git cat-file --batch header")
+                size = int(header[2])
+                if size < 0 or pos + size >= len(proc.stdout) or proc.stdout[pos + size:pos + size + 1] != b"\n":
+                    raise RuntimeError("truncated git cat-file --batch blob")
+                result[rel] = proc.stdout[pos:pos + size].decode("utf-8")
+                pos += size + 1
+            if pos != len(proc.stdout):
+                raise RuntimeError("unexpected trailing git cat-file --batch output")
+            return result
+        return {"exists": exists, "read": read, "read_many": read_many}
 
     def exists(rel):
         return os.path.isfile(os.path.join(root, rel))
@@ -205,12 +397,13 @@ def qa_run_dirs(root, sha=None, rd=None):
     from that commit's tree."""
     dirs = []
     if sha:
-        p = run_git(root, "ls-tree", "--name-only", sha, "--", ".qa/runs/")
+        p = subprocess.run(["git", "-C", root, "ls-tree", "-z", "--name-only",
+                            sha, "--", ".qa/runs/"],
+                           capture_output=True, timeout=GIT_TIMEOUT_S)
         if p.returncode == 0:
-            for line in p.stdout.splitlines():
-                name = line.strip().rstrip("/").split("/")[-1]
-                if name:
-                    dirs.append(".qa/runs/" + name)
+            for path in p.stdout.split(b"\0"):
+                if path:
+                    dirs.append(path.decode("utf-8").rstrip("/"))
         legacy_has = run_git(root, "cat-file", "-e", "%s:.qa/rewalk.json" % sha).returncode == 0
     else:
         runs = os.path.join(root, ".qa", "runs")
@@ -223,23 +416,41 @@ def qa_run_dirs(root, sha=None, rd=None):
     return dirs
 
 
-def resolve_run(root, sha, rd):
+def resolve_run(root, sha, rd, equiv=False, listing=None):
     """(dir, None) for the one run re-walked at `sha` (or at its parent under
-    a .qa/-only head); (None, failure) when none or several match. A single
-    candidate is returned as is, so the legacy flat layout and a lone run
-    behave exactly as before."""
-    cands = qa_run_dirs(root, sha, rd)
+    a .qa/-only head; with equiv, at a commit whose tree outside .qa/ is
+    identical -- used only when no sha/parent match exists); (None, failure)
+    when none or several match. A single candidate is returned as is, so the
+    legacy flat layout and a lone run behave exactly as before. `listing`
+    (v5): the commit whose tree holds the records when it is not `sha`
+    itself (a deployment built from a code commit whose run was committed
+    later); it is the commit `rd` reads from."""
+    cands = qa_run_dirs(root, listing or sha, rd)
     if len(cands) == 1:
         return cands[0], None
-    seen, matches = [], []
-    for d in cands:
+    seen, matches, equiv_matches = [], [], []
+    rels = [d + "/rewalk.json" for d in cands]
+    many = rd.get("read_many")
+    try:
+        contents = many(rels) if many else {}
+    except Exception:
+        many = None
+        contents = {}
+    for d, rel in zip(cands, rels):
         try:
-            walked = str(json.loads(rd["read"](d + "/rewalk.json")).get("sha") or "")
+            content = contents[rel] if many else rd["read"](rel)
+            if content is None:
+                raise FileNotFoundError(rel)
+            walked = str(json.loads(content).get("sha") or "")
         except Exception:
             walked = ""
         seen.append("%s@%s" % (d, walked[:12] or "-"))
         if walked and (walked == sha or rewalk_parent_ok(root, sha, walked)):
             matches.append(d)
+        elif equiv and walk_fresh(root, sha, walked, equiv=True):
+            equiv_matches.append(d)
+    if not matches:
+        matches = equiv_matches
     if len(matches) == 1:
         return matches[0], None
     if not matches:
@@ -329,6 +540,12 @@ def check_inventory(qa, rd, fails, stats):
                 fails.append(f"inventory row {row['id']} is fail_escalated without an escalation reference")
             if not isinstance(row["predates_change"], bool):
                 fails.append(f"inventory row {row['id']}: predates_change must be true/false")
+            # A gate failure caused by another writer mutating the same data
+            # (2026-09-25: a CI setup and interactive walks sharing the
+            # CI identities) is a defect with a named writer, never a blind re-run.
+            if row.get("kind") == "environment_contamination" and not str(row.get("writer") or "").strip():
+                fails.append(f"inventory row {row['id']}: environment_contamination must name the writer "
+                             f"(CI run id, thread id or job) that mutated the data")
             rows.append(row)
     except Exception as exc:
         fails.append(f"{rel} unreadable: {exc}")
@@ -392,21 +609,49 @@ def check_plan(qa, rd, clusters, fails):
     return True
 
 
-def rewalk_parent_ok(root, head, walked):
-    """True when `head` (any sha present in the local repo) is exactly one
-    .qa/-only commit on top of `walked`."""
-    if not head:
-        return False
-    if run_git(root, "cat-file", "-e", head + "^{commit}").returncode != 0:
-        return False  # shipped head not present locally: cannot verify
+@functools.lru_cache(maxsize=None)
+def qa_only_parent(root, head):
+    if not head or run_git(root, "cat-file", "-e", head + "^{commit}").returncode != 0:
+        return ""
     parent = run_git(root, "rev-parse", head + "~1").stdout.strip()
-    if not parent or parent != walked:
-        return False
+    if not parent:
+        return ""
     diff = run_git(root, "diff", "--name-only", head + "~1", head).stdout.split()
-    return bool(diff) and all(d == ".qa" or d.startswith(".qa/") for d in diff)
+    return parent if diff and all(d == ".qa" or d.startswith(".qa/") for d in diff) else ""
 
 
-def check_rewalk(root, qa, rd, wf, sha, fails, stats):
+def rewalk_parent_ok(root, head, walked):
+    return bool(head) and bool(walked) and qa_only_parent(root, head) == walked
+
+
+def tree_equiv_outside_qa(root, shipped, walked):
+    """True when both commits exist locally and their root trees are identical
+    outside .qa/: every top-level entry except .qa has the same mode, type and
+    object hash. Tree hashes only, no heuristics. v4 (coordinator decision,
+    card 6): a squash or merge commit whose code tree IS the walked code tree
+    ships code that was walked, so a tag / release / default-branch dispatch
+    of it needs no second walk; any non-.qa difference (other changes merged
+    in) still does."""
+    def entries(c):
+        p = run_git(root, "ls-tree", "-z", "%s^{commit}" % c)
+        if p.returncode != 0:
+            return None
+        return sorted(e for e in p.stdout.split("\0") if e and e.split("\t", 1)[-1] != ".qa")
+    if not shipped or not walked:
+        return False
+    a, b = entries(shipped), entries(walked)
+    return a is not None and b is not None and a == b
+
+
+def walk_fresh(root, shipped, walked, equiv=False):
+    """The walk at `walked` covers `shipped`: same sha, one .qa-only commit on
+    top, or (equiv: tags, releases, default-branch dispatch) an identical
+    tree outside .qa/."""
+    return bool(walked) and (walked == shipped or rewalk_parent_ok(root, shipped, walked)
+                             or (equiv and tree_equiv_outside_qa(root, shipped, walked)))
+
+
+def check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv=False):
     rel = qa + "/rewalk.json"
     if not rd["exists"](rel):
         fails.append(rel + " missing (P5 re-walk of the whole workflow)")
@@ -419,18 +664,47 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats):
     if not doc.get("sha"):
         fails.append(rel + ": sha missing")
     elif sha and doc["sha"] != sha:
-        if not (rewalk_parent_ok(root, sha, doc["sha"])):
-            fails.append(f"{rel} sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}: re-walk at the new commit")
+        if not walk_fresh(root, sha, str(doc["sha"]), equiv):
+            why = (" and its tree outside .qa/ differs (or the walked commit is not in this clone)"
+                   if equiv else "")
+            fails.append(f"{rel} sha {str(doc['sha'])[:12]} != shipped sha {str(sha)[:12]}{why}: "
+                         f"re-walk at the new commit")
     steps = doc.get("steps")
     if not isinstance(steps, list) or not steps:
         fails.append(rel + ": steps must be a non-empty list")
     else:
+        manual_steps = set()
+        evidence_rel = qa + "/evidence.json"
+        if rd["exists"](evidence_rel):
+            try:
+                packet = json.loads(rd["read"](evidence_rel))
+                journey_steps = ((packet.get("journey") or {}).get("steps")
+                                 if isinstance(packet, dict) else None)
+                if isinstance(journey_steps, list):
+                    manual_steps = {
+                        item.get("workflow_step") for item in journey_steps
+                        if isinstance(item, dict) and item.get("observed") is True
+                        and isinstance(item.get("workflow_step"), str)
+                        and isinstance(item.get("evidence"), str) and item["evidence"].strip()
+                    }
+            except Exception:
+                manual_steps = set()
+        accepted = 0
         for st in steps:
-            if not isinstance(st, dict) or not st.get("step"):
+            if (not isinstance(st, dict) or not isinstance(st.get("step"), str)
+                    or not st["step"].strip()):
                 fails.append(rel + ": every step needs a step name")
                 continue
-            if st.get("verdict") != "PASS":
-                fails.append(f"{rel} step '{st['step']}': verdict {st.get('verdict')!r} (only PASS clears the gate)")
+            verdict = st.get("verdict")
+            if verdict == "NOT_AUTOMATED":
+                if st["step"] in manual_steps:
+                    accepted += 1
+                else:
+                    fails.append(f"{rel} step '{st['step']}': NOT_AUTOMATED; matching manual workflow_step evidence is required")
+            elif verdict == "PASS":
+                accepted += 1
+            else:
+                fails.append(f"{rel} step '{st['step']}': verdict {verdict!r} (only PASS or manually evidenced NOT_AUTOMATED clears the gate)")
             if not st.get("evidence"):
                 fails.append(f"{rel} step '{st['step']}': evidence missing")
         if isinstance(wf, dict) and isinstance(wf.get("steps"), list):
@@ -439,11 +713,284 @@ def check_rewalk(root, qa, rd, wf, sha, fails, stats):
                 if name not in walked:
                     fails.append(rel + f": workflow step '{name}' has no verdict")
         stats["rewalk_steps"] = len(steps)
-        stats["rewalk_failed"] = sum(1 for st in steps if isinstance(st, dict) and st.get("verdict") != "PASS")
+        stats["rewalk_failed"] = len(steps) - accepted
     return doc
 
 
-def check_e2e(qa, rd, cfg, fails):
+def declared_identities(auth):
+    """Every identity block in an evidence packet: the legacy single
+    `identity` plus each entry of `identities` (one per persona). Mirrors
+    declaredIdentities() in qa-e2e-gate.mjs, so both gates read the same set."""
+    out = []
+    if not isinstance(auth, dict):
+        return out
+    if "identity" in auth:
+        out.append(auth["identity"])
+    ids = auth.get("identities")
+    if isinstance(ids, list):
+        out.extend(ids)
+    elif ids is not None:
+        out.append(ids)
+    return out
+
+
+# Identity labels (review r1 D4). `E2E.patient`, `e2e.patient `,
+# `e2e.patient@example.test` and `e2е.patient` (Cyrillic е) all name the CI
+# suite's e2e.patient, and an exact-string match let each one through as
+# unowned. One spec, implemented the same way here and in qa-e2e-gate.mjs;
+# neither side uses its language's casefold, trim or isalpha, which differ
+# (review r2a: 2,716 of 30,058 labels got different keys, e.g. U+0345):
+#   key      = NFKC, lowercase, ß -> ss, LABEL_SPACE stripped, an @domain
+#              suffix dropped, stripped again;
+#   refused  = NFKC(label) has a character outside the label alphabet
+#              (printable ASCII and the Latin letter blocks): mixed scripts,
+#              Greek or Cyrillic look-alikes, IPA and small capitals, marks
+#              left after composition, invisible characters (U+200B, U+2060,
+#              U+FEFF, U+2800, U+3164, U+034F ...) and controls, in one rule;
+#   listed   = the key equals a listed key ('same'), the skeleton (NFD, marks
+#              dropped, look-alike letters mapped) equals a listed one
+#              ('confusable'), or the skeleton contains a listed one between
+#              non-alphanumeric boundaries ('contains': `e2e.patient (CI)`,
+#              `@e2e.patient`).
+# The selftest runs review r2a's corpus through both and fails on any
+# difference in key, problem or listing.
+LABEL_SPACE = "\t\n\x0b\x0c\r \x1c\x1d\x1e\x1f\x85\xa0  -     　﻿"
+_LABEL_STRIP = re.compile("^[" + LABEL_SPACE + "]+|[" + LABEL_SPACE + "]+$")
+_LABEL_ALPHABET = re.compile("[\x20-\x7eÀ-ÖØ-öø-ɏḀ-ỿ]")
+_LABEL_ALNUM = "0-9a-zß-öø-ɏḀ-ỿ"
+# Latin punctuation real names carry, mapped before anything else (review
+# r2a-ter): a macOS smart quote in O’Brien, an en dash in maria–silva, the
+# Catalan middle dot in Paral·lel. Twin of LABEL_PUNCT in qa-e2e-gate.mjs.
+_LABEL_PUNCT = str.maketrans({"\u2018": "'", "\u2019": "'", "\u2013": "-", "\u2014": "-", "\u00b7": "."})
+# Letters that read as a Latin letter (UTS #39 confusables, single letters).
+_LABEL_CONFUSABLES = {
+    "а": "a", "е": "e", "і": "i", "ј": "j", "к": "k", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
+    "ѕ": "s", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w", "ӏ": "l", "ѵ": "v", "ү": "y",
+    "α": "a", "γ": "y", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u",
+    "χ": "x", "ω": "w", "ı": "i", "ɑ": "a", "ɩ": "i", "0": "o", "1": "l",
+}
+
+
+def _label_nfkc(label):
+    import unicodedata
+    return unicodedata.normalize("NFKC", str(label)).translate(_LABEL_PUNCT)
+
+
+def label_key(label, keep_domain=False):
+    """The comparable form of an identity label (the spec above); with
+    keep_domain, before the @domain suffix is dropped."""
+    s = _LABEL_STRIP.sub("", _label_nfkc(label).lower().replace("ß", "ss"))
+    at = s.rfind("@")
+    if at > 0 and not keep_domain:
+        s = _LABEL_STRIP.sub("", s[:at])
+    return s
+
+
+def label_skeleton(label, keep_domain=False):
+    """NFD without combining marks, then look-alike letters: `E2E.PATİENT`
+    lowercases to `e2e.pati̇ent` (i + U+0307), which reads as e2e.patient."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", label_key(label, keep_domain))
+    return "".join(_LABEL_CONFUSABLES.get(c, c) for c in s if unicodedata.category(c) != "Mn")
+
+
+def label_problem(label):
+    """Why a label cannot be trusted as written, or None: its first character
+    outside the label alphabet (printable ASCII and Latin letters)."""
+    for c in _label_nfkc(label):
+        if not _LABEL_ALPHABET.match(c):
+            return "has a character outside the label alphabet (printable ASCII and Latin letters): U+%04X" % ord(c)
+    return None
+
+
+def owner_run_problems(ident, owned):
+    """Why an identity block's `walker` is not a valid owner_run (the
+    automation's own CI run recorded as the walk), as messages; [] when it is
+    one or there is no walker. Twin of ownerRunProblems() in qa-e2e-gate.mjs,
+    which also lifts IDENTITY_OWNED_BY_AUTOMATION for a valid one."""
+    walker = ident.get("walker")
+    if walker is None and "walker" not in ident:
+        return []
+    if not isinstance(walker, dict) or walker.get("kind") != "owner_run":
+        return ["walker.kind must be \"owner_run\""]
+    out = []
+    if ident.get("owned_by_automation") is not True:
+        out.append("an owner_run walks an identity an automated suite owns (owned_by_automation: true)")
+    wo, io = walker.get("owner"), ident.get("owner")
+    if not (isinstance(wo, str) and wo.strip() and isinstance(io, str) and wo.strip() == io.strip()):
+        out.append("walker.owner must be the identity block's owner")
+    rid = owner_run_id(walker)
+    if rid is None:
+        out.append("an owner_run names the CI run id it records (walker.run_id, digits)")
+    m = RUN_URL_RE.match(walker["run_url"].strip()) if isinstance(walker.get("run_url"), str) else None
+    if not m:
+        out.append("an owner_run names its run page: walker.run_url "
+                   "https://github.com/<owner>/<repo>/actions/runs/<run_id>")
+    elif rid is not None and m.group(3) != rid:
+        out.append(f"walker.run_url names run {m.group(3)}, not run_id {rid}")
+    if not owned:
+        out.append("an owner_run is accepted only against the repository's automation_identities "
+                   "(.qa/config.json), and none is configured")
+    elif (listed_identity(ident.get("label") or "", owned) or (None, None))[1] != "same":
+        out.append("an owner_run walks an identity listed in .qa/config.json automation_identities")
+    return out
+
+
+# A GitHub Actions run page; twin of RUN_URL in qa-e2e-gate.mjs. ASCII digits
+# only: Python's \d also matches fullwidth ones, which JavaScript's does not.
+RUN_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/actions/runs/(\d+)(?:/attempts/\d+)?$",
+                        re.ASCII)
+RUN_ATTEMPT_RE = re.compile(r"/attempts/(\d+)$", re.ASCII)
+
+
+def owner_run_id(walker):
+    rid = walker.get("run_id")
+    if isinstance(rid, int) and not isinstance(rid, bool) and rid > 0:
+        return str(rid)
+    if isinstance(rid, str) and re.fullmatch(r"\d+", rid.strip(), re.ASCII):
+        return rid.strip()
+    return None
+
+
+def origin_repo(root):
+    """'owner/repo' of the origin remote on github.com, lowercased, or None."""
+    try:
+        url = run_git(root, "remote", "get-url", "origin").stdout.strip()
+    except Exception:
+        return None
+    m = re.match(r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com(?::\d+)?/)"
+                 r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}".lower() if m else None
+
+
+# An ISO 8601 time that carries its offset (Z or +hh:mm). A naive time would be
+# read in the hook's local zone here and as UTC by some parsers, so it is not a
+# time at all (review r2a-bis). Twin of ZONED_TIME in qa-e2e-gate.mjs.
+# At most 9 fraction digits: V8 misreads 10 or more (review r2a-quater).
+ZONED_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:(\d{2}))$", re.ASCII)
+
+
+def _iso(s):
+    m = ZONED_TIME_RE.match(s.strip()) if isinstance(s, str) else None
+    if not m or (m.group(1) and int(m.group(1)) > 59):  # fromisoformat takes +05:60; Date.parse does not
+        return None
+    try:
+        # fromisoformat takes 2026-10-00T24:00 (the 24:00 rollover runs first);
+        # the calendar date must exist, as in qa-e2e-gate.mjs (review r2a-quater).
+        datetime.date(int(s.strip()[:4]), int(s.strip()[5:7]), int(s.strip()[8:10]))
+        return datetime.datetime.fromisoformat(s.strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _run_attempt(root, repo, rid, attempt, cache=None):
+    """(run attempt object, None) from the GitHub API, or (None, reason). The
+    named attempt, or the run's latest one when the URL names none. `cache` is
+    one check's: #36 names the same run for two identities, and both lookups
+    shared one 3.2 s budget (review r2a-bis)."""
+    global _LOOKUP_DEADLINE
+    key = (repo.lower(), rid, attempt)
+    if cache is not None and key in cache:
+        return cache[key]
+    path = f"repos/{repo}/actions/runs/{rid}" + (f"/attempts/{attempt}" if attempt else "")
+    now = time.monotonic()
+    if _LOOKUP_DEADLINE is None:
+        _LOOKUP_DEADLINE = now + LOOKUP_BUDGET_S
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)
+    if left < 0.3:
+        return None, f"run {rid}: lookup budget ({LOOKUP_BUDGET_S:.1f} s per command) is spent; retry"
+    try:
+        p = subprocess.run(["gh", "api", path], cwd=root, capture_output=True, text=True, timeout=left,
+                           env=dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1"))
+    except FileNotFoundError:
+        return None, f"run {rid}: the gh CLI is not on the hook's PATH, so the run cannot be checked"
+    except subprocess.TimeoutExpired:
+        return None, f"run {rid}: `gh api {path}` timed out after {left:.1f} s; retry"
+    except Exception as exc:
+        return None, f"run {rid}: `gh api {path}` could not run: {_redact(str(exc))}"
+    if p.returncode != 0:
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        res = None, f"run {rid}: `gh api {path}` failed (rc={p.returncode}: {_redact(lines[-1] if lines else '')})"
+    else:
+        try:
+            run = json.loads(p.stdout)
+        except ValueError:
+            run = None
+        res = (run, None) if isinstance(run, dict) else (None, f"run {rid}: `gh api {path}` returned no run object")
+    if cache is not None:
+        cache[key] = res
+    return res
+
+
+def owner_run_verify(root, ident, walked_sha, cache=None):
+    """What the ship gate checks of a well-formed owner_run beyond the packet
+    (review r2a D5, r2a-bis): the run URL's repository is this repository's
+    origin, and the run attempt the URL names (or the run's latest attempt)
+    exists, completed with success, was built from the walked commit, and
+    spans the walk window from its own start to its last update. Every failure
+    is a reason, and a reason denies. The lookup shares the v5 provenance
+    lookup's budget and deadline."""
+    walker = ident["walker"]
+    url = walker["run_url"].strip()
+    m = RUN_URL_RE.match(url)
+    repo, rid = f"{m.group(1)}/{m.group(2)}", m.group(3)
+    am = RUN_ATTEMPT_RE.search(url)
+    attempt = am.group(1) if am else None
+    if not root:
+        return ["no repository to check the run against (the ship gate verifies an owner_run from its repo)"]
+    origin = origin_repo(root)
+    if origin is None:
+        return ["the repository's origin remote is not on github.com, so the run cannot be tied to it"]
+    if repo.lower() != origin:
+        return [f"walker.run_url is a run of {repo}, not of this repository ({origin})"]
+    run, why = _run_attempt(root, repo, rid, attempt, cache)
+    if why:
+        return [why]
+    name = f"run {rid} attempt {run.get('run_attempt') or attempt or '?'}"
+    out = []
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        out.append(f"{name} is {run.get('status') or '?'}/{run.get('conclusion') or '-'}, "
+                   f"not completed/success: an unfinished or failed run is not a walk")
+    head = str(run.get("head_sha") or "").lower()
+    if not walked_sha:
+        out.append(f"{name}: no walked commit (rewalk.json sha) to compare its head_sha with")
+    elif head != str(walked_sha).lower():
+        out.append(f"{name} ran on {head[:12] or '?'}, not the walked commit {str(walked_sha)[:12]}")
+    start, end = _iso(run.get("run_started_at")), _iso(run.get("updated_at"))
+    w = ident.get("walk_window") if isinstance(ident.get("walk_window"), dict) else {}
+    ws, we = _iso(w.get("start")), _iso(w.get("end"))
+    if None in (ws, we):
+        out.append(f"walk_window {w.get('start')}..{w.get('end')} is not two ISO 8601 times with an offset (Z or +hh:mm)")
+    elif None in (start, end) or not (start <= ws <= we <= end):
+        out.append(f"{name} ran {run.get('run_started_at')}..{run.get('updated_at')}; the walk window "
+                   f"{w.get('start')}..{w.get('end')} is not inside it")
+    return out
+
+
+
+def listed_identity(label, owned):
+    """(listed label, how) when `label` names an entry of automation_identities
+    after normalisation ('same'), only by look-alike letters ('confusable'), or
+    contains one between non-alphanumeric boundaries ('contains'), before or
+    after its @domain suffix is dropped (review r2a-ter: `tester @e2e.patient`
+    keys as `tester`)."""
+    key, skel = label_key(label), label_skeleton(label)
+    whole = {skel, label_skeleton(label, keep_domain=True)}
+    names = [o for o in owned if isinstance(o, str)]
+    for o in names:
+        if label_key(o) == key:
+            return o, "same"
+    for o in names:
+        if label_skeleton(o) == skel:
+            return o, "confusable"
+    for o in names:
+        k = label_skeleton(o)
+        rx = "(?<![" + _LABEL_ALNUM + "])" + re.escape(k) + "(?![" + _LABEL_ALNUM + "])"
+        if k and any(re.search(rx, s) for s in whole):
+            return o, "contains"
+
+    return None
+def check_e2e(qa, rd, cfg, fails, root=None, walked_sha=None):
     rel = qa + "/evidence.json"
     gate = (cfg or {}).get("e2e_evidence_gate") or E2E_GATE
     if not rd["exists"](rel):
@@ -457,12 +1004,47 @@ def check_e2e(qa, rd, cfg, fails):
     except Exception as exc:
         fails.append(f"{rel} unreadable: {exc}")
         return
+    owned = (cfg or {}).get("automation_identities")
+    owned = [o for o in owned if isinstance(o, str)] if isinstance(owned, list) else []
+    try:
+        auth = json.loads(body).get("authentication") or {}
+    except Exception:
+        auth = {}
+    run_lookups = {}  # one per check_e2e call, which is one per check
+    for ident in declared_identities(auth):
+        if not isinstance(ident, dict) or not isinstance(ident.get("label"), str):
+            continue
+        label = ident["label"]
+        problem = label_problem(label)
+        hit = listed_identity(label, owned)
+        if hit and hit[1] == "confusable":
+            fails.append(f"{rel}: identity {label!r} looks like '{hit[0]}' in .qa/config.json automation_identities "
+                         f"but is spelled differently{' (it ' + problem + ')' if problem else ''}: refused")
+        elif problem:
+            fails.append(f"{rel}: identity label {label!r} {problem}: refused, name the identity in one script")
+        or_problems = owner_run_problems(ident, owned)
+        if "walker" in ident and not or_problems:
+            or_problems = owner_run_verify(root, ident, walked_sha, run_lookups)
+        for problem in or_problems:
+            fails.append(f"{rel}: identity {label!r} walker: {problem}: refused")
+        if hit and hit[1] == "same" and ident.get("owned_by_automation") is not True:
+            fails.append(f"{rel}: identity {label!r} is '{hit[0]}', listed in .qa/config.json automation_identities, "
+                         f"but the packet says no automated suite owns it")
+        if hit and hit[1] == "contains" and ident.get("owned_by_automation") is not True:
+            fails.append(f"{rel}: identity {label!r} contains '{hit[0]}', listed in .qa/config.json "
+                         f"automation_identities, but the packet says no automated suite owns it: refused")
+
     tmppath = None
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
             tf.write(body)
             tmppath = tf.name
-        proc = subprocess.run(["node", gate, "check", tmppath], capture_output=True, text=True, timeout=20)
+        args = ["node", gate, "check", tmppath]
+        if owned:
+            args += ["--automation-identities", json.dumps(owned)]
+        proc = subprocess.run(args, capture_output=True, text=True,
+
+                              timeout=max(0.5, min(20, time_left())))
     except Exception as exc:
         fails.append(f"qa-e2e-gate.mjs could not run: {exc}")
         return
@@ -497,7 +1079,7 @@ def check_deployed(root, cfg, sha, fails):
         import urllib.request
         target = url.replace("{sha}", sha or "")
         try:
-            with urllib.request.urlopen(target, timeout=3) as resp:
+            with urllib.request.urlopen(target, timeout=max(0.5, min(3, time_left()))) as resp:
                 if resp.status not in (200, 204):
                     fails.append(f"deployed check HTTP {resp.status} for {target}")
         except Exception as exc:
@@ -507,7 +1089,7 @@ def check_deployed(root, cfg, sha, fails):
     if cmd:
         try:
             proc = subprocess.run([cmd], shell=True, cwd=root, capture_output=True, text=True,
-                                  timeout=dc.get("timeout_s", 3))
+                                  timeout=max(0.5, min(dc.get("timeout_s", 3), time_left())))
             if proc.returncode != 0:
                 fails.append(f"deployed check exited {proc.returncode}: {(proc.stdout or proc.stderr).strip()[:200]}")
         except subprocess.TimeoutExpired:
@@ -518,18 +1100,23 @@ def check_deployed(root, cfg, sha, fails):
         fails.append(".qa/config.json deployed_check needs a url template or a command")
 
 
-def check_all(root, sha=None):
+def check_all(root, sha=None, equiv=False, evidence=None):
     """Return (ok, failures, stats, cfg). Never raises. Artifacts are read
-    from the shipped commit's tree when sha is resolvable (v3)."""
+    from the shipped commit's tree when sha is resolvable (v3). equiv (v4):
+    the walk may sit on a commit whose tree outside .qa/ equals the shipped
+    one -- only for tags, releases, default-branch dispatches and (v5)
+    deployments resolved to their source commit. evidence (v5): read the
+    records from this commit's tree instead (committed records only, never
+    the working tree); freshness is still judged against `sha`."""
     fails, stats = [], {"rows_total": 0, "open_rows": 0, "predates_count": 0, "clusters": 0,
                         "rewalk_steps": 0, "rewalk_failed": 0}
     cfg = None
     try:
         if not sha:
             sha = run_git(root, "rev-parse", "HEAD").stdout.strip() or None
-        rd = qa_reader(root, sha)
+        rd = qa_reader(root, evidence or sha)
         cfg = check_config(root, rd, fails)
-        qa, err = resolve_run(root, sha, rd)
+        qa, err = resolve_run(root, sha, rd, equiv, evidence)
         if err:
             fails.append(err)
             return (False, fails, stats, cfg)
@@ -537,8 +1124,9 @@ def check_all(root, sha=None):
         rows = check_inventory(qa, rd, fails, stats)
         clusters = check_clusters(qa, rd, rows, fails, stats)
         check_plan(qa, rd, clusters, fails)
-        check_rewalk(root, qa, rd, wf, sha, fails, stats)
-        check_e2e(qa, rd, cfg, fails)
+        rewalk = check_rewalk(root, qa, rd, wf, sha, fails, stats, equiv)
+        check_e2e(qa, rd, cfg, fails, root=root, walked_sha=(rewalk or {}).get("sha") if isinstance(rewalk, dict) else None)
+
         check_deployed(root, cfg, sha, fails)
     except Exception as exc:  # fail closed on anything unexpected
         fails.append(f"gate internal error: {exc}")
@@ -557,12 +1145,14 @@ def _shell_arg_at(s, i):
     n = len(s)
     while i < n and s[i] in " \t":
         i += 1
-    if i >= n or s[i] in ";&|":
+    if i >= n or s[i] in ";&|\n()":
         return None, i
     out = []
     while i < n:
         c = s[i]
-        if c in " \t;&|":
+        # v4: a newline ends the word (multi-line commands); unquoted ( and ) are
+        # shell metacharacters too, so `(cd x && git push origin main)` splits right
+        if c in " \t;&|\n()":
             break
         if c == "\\":
             if i + 1 < n:
@@ -606,10 +1196,14 @@ def _shell_arg_at(s, i):
 
 def ship_target_roots(command, cwd):
     """Every local repo a ship command can target: the payload cwd's repo plus
-    any `git -C path`, `cd path &&`, or --work-tree path inside the command,
+    any `git -C path` or `cd path &&` inside the command,
     with quoting honoured (paths with spaces included). Hermes review
     2026-09-24, topic qa-ship-gate: two rounds - first only the payload cwd
-    was resolved, then whitespace-split regexes truncated quoted paths."""
+    was resolved, then whitespace-split regexes truncated quoted paths.
+    `pushd`, `--git-dir` and the GIT_DIR env prefix name a target too; a .git
+    path resolves to the repo that holds it. A work tree alone (`--work-tree`,
+    GIT_WORK_TREE) does not choose the repository git pushes from, so it is not
+    a target (Hermes 2026-10-06, topic kit-never-block-pr-merge, rounds 1-2)."""
     roots = []
 
     def add(p):
@@ -620,7 +1214,7 @@ def ship_target_roots(command, cwd):
                 roots.append(r)
 
     add(cwd)
-    for pattern in (r"(?<![\w-])-C\s", r"\bcd\s", r"--work-tree[=\s]"):
+    for pattern in (r"(?<![\w-])-C\s", r"\b(?:cd|pushd)\s", r"--git-dir[=\s]", r"\bGIT_DIR=", r"--chdir[=\s]"):
         pos = 0
         while True:
             m = re.compile(pattern).search(command, pos)
@@ -635,32 +1229,620 @@ def ship_target_roots(command, cwd):
     return roots
 
 
-def command_segments(command):
-    """Top-level shell segments as token lists, split on ; | && and newlines,
-    tokenized with the same POSIX word parser the target resolver uses."""
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+COMPOUND_HEADS = {"{", "}", "!", "if", "then", "elif", "else", "while", "until", "do"}
+
+
+def _inline_script(seg):
+    """The script a segment hands to a shell: `sh|bash|zsh -c '<script>'`
+    (combined flags like -lc included) or `eval <words>`; None otherwise."""
+    if not seg:
+        return None
+    if seg[0] == "eval":
+        return " ".join(seg[1:]) or None
+    if os.path.basename(seg[0]) in SHELLS:
+        j = shell_script_index(seg, 0)  # after the shell's options: bash -c -e S runs S (Hermes r22)
+        if j is not None:
+            return seg[j]
+        for k, a in enumerate(seg[1:], 1):
+            if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
+                return seg[k + 1] if k + 1 < len(seg) else None
+    return None
+
+
+LINE_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\r?\n")
+
+
+def join_continuations(command):
+    """Remove each backslash-newline, as /bin/sh does: a line continuation joins the lines, it does not
+    end the command. An escaped backslash before a newline is not one (Hermes 2026-10-06,
+    kit-never-block-pr-merge)."""
+    return LINE_CONTINUATION.sub(lambda m: m.group(1), command)
+
+
+SHELL_WRAPPERS = ("env", "command", "nohup", "time", "exec", "sudo", "nice")
+WRAPPER_ARG_FLAGS = ("-C", "-u", "-n", "--chdir", "--unset")
+SHELL_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def shell_script_index(words, k):
+    """The index of the script a shell's -c runs, the shell being words[k]: bash takes the first word after its
+    options, so `sh -e -c S`, `bash -lc S`, `bash -o pipefail -c S`, `bash -c -e S`, `bash --norc -c S` and
+    `zsh --emulate sh -c S` all run S; --rcfile, --init-file and --emulate take a value, and so does each o in an
+    option cluster, in order (bash's O too): `bash -eo pipefail -c S` and `bash -c -oc pipefail S` run S. zsh takes
+    the rest of a cluster after o as the value when there is one (`zsh -oshwordsplit -c S`); its -O takes none.
+    test-ship-matrix.py checks this reading against the real shells.
+    None when no option holds c, or no word follows (Hermes 2026-10-08 r22; kit-shell-dispatch-script-word r1)."""
+    zsh = words[k].rsplit("/", 1)[-1] == "zsh"
+    c, j = False, k + 1
+    while j < len(words):
+        w = words[j]
+        j += 1
+        if w == "--":
+            break
+        if w in ("--rcfile", "--init-file", "--emulate"):
+            j += 1
+        elif w.startswith("--") and len(w) > 2:
+            pass
+        elif re.fullmatch(r"[-+][A-Za-z]+", w):
+            for i, ch in enumerate(w[1:], 2):
+                if ch == "c" and w[0] == "-":
+                    c = True
+                elif ch == "o" or (ch == "O" and not zsh):
+                    if zsh and i < len(w):
+                        break  # zsh: -oshwordsplit, the rest of the cluster is the value
+                    j += 1  # the next word is this option's value: -eo pipefail, -oc pipefail S
+        else:
+            j -= 1
+            break
+    return j if c and j < len(words) else None
+
+
+def _view_segment(words, seg, subs, depth):
+    """What one segment runs, for ship_view: a `gh pr merge` keeps only its substitutions,
+    `sh -c SCRIPT` and `eval` are read as their script, anything else is kept as written."""
+    k = 0
+    while k < len(words):
+        if SHELL_ASSIGN.match(words[k]):
+            k += 1
+            continue
+        if os.path.basename(words[k]) in SHELL_WRAPPERS:
+            k += 1
+            while k < len(words) and words[k].startswith("-"):
+                k += 2 if words[k] in WRAPPER_ARG_FLAGS else 1
+            continue
+        break
+    if k >= len(words):
+        return seg
+    h = os.path.basename(words[k])
+    if h == "gh" and words[k + 1:k + 3] == ["pr", "merge"]:
+        return subs
+    j = shell_script_index(words, k) if depth < 3 and h in ("sh", "bash", "zsh", "dash") else None
+    if j is not None:
+        inner = ship_view(words[j], depth + 1)
+        return None if inner is None else inner + subs
+    if depth < 3 and h == "eval" and k + 1 < len(words):
+        inner = ship_view(" ".join(words[k + 1:]), depth + 1)
+        return None if inner is None else inner + subs
+    return seg
+
+
+def ship_view(command, depth=0):
+    """What a command would run, for the coarse ship check: segments split at unquoted
+    ; & | ( ) and newlines, comments dropped, where a `gh pr merge` keeps only the bodies of its $(...) and
+    backtick substitutions, so its quoted subject or body never reads as a ship (Hermes
+    2026-10-06, kit-never-block-pr-merge). None when the command can't be read (unbalanced
+    quotes or substitutions). The shell fallback's ship_scan is the same scanner in awk;
+    test-ship-matrix.py checks that the two agree."""
+    command = _strip_heredoc_bodies(command)  # a heredoc body is text, as in command_segments
+    if command is None:
+        return None  # a heredoc it can't read exactly: the raw text is scanned (r11)
+    out, seg, subs, words, cur, q, i, n = "", "", "", [], None, None, 0, len(command)
+    # A line that starts with && || or | is a syntax error: the shell stops there and runs nothing
+    # after it. Not after a heredoc operator, whose body lines are text and may start with anything. Only an
+    # unquoted `<<` the scan reaches counts: one in a comment or in quotes is text (Hermes 2026-10-06 r8).
+    line_start, heredoc = True, False
+    while i < n:
+        c, nx = command[i], command[i + 1:i + 2]
+        if q == "'":
+            seg += c
+            if c == "'":
+                q = None
+            else:
+                cur += c
+            i += 1
+            continue
+        if c == "\\" and nx:
+            i += 2
+            if nx == "\n":
+                continue
+            seg += c + nx
+            cur = (cur or "") + (c + nx if q == '"' and nx not in '$`"\\' else nx)
+            continue
+        if c == "`" or (c == "$" and nx == "("):
+            if c == "`":
+                j = i + 1
+                while j < n and command[j] != "`":
+                    j += 2 if command[j] == "\\" else 1
+                if j >= n:
+                    return None
+                body = command[i + 1:j]
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep > 0:
+                    dep += {"(": 1, ")": -1}.get(command[j], 0)
+                    j += 1
+                if dep > 0:
+                    return None
+                j -= 1
+                body = command[i + 2:j]
+            subs += " ; " + body
+            seg += command[i:j + 1]
+            cur = (cur or "") + "$()"
+            i = j + 1
+            continue
+        if q == '"':
+            seg += c
+            if c == '"':
+                q = None
+            else:
+                cur += c
+            i += 1
+            continue
+        if c in "'\"":
+            q, cur = c, cur or ""
+        elif c in " \t":
+            if cur is not None:
+                words.append(cur)
+                cur = None
+        elif c == "&" and i and command[i - 1] in "<>":
+            cur = (cur or "") + c  # a descriptor copy such as 2>&1
+        elif c == "#" and cur is None:
+            j = command.find("\n", i)  # a comment runs to the end of the line and never runs
+            i = n if j < 0 else j
+            continue
+        elif c in "&|" and line_start and cur is None and not words and not heredoc:
+            return out  # a syntax error (Hermes 2026-10-06 r7: `gh pr merge 5 # c \` then `&& git push`)
+        elif c in ";&|()\n\r":
+            line_start = c == "\n"
+            if cur is not None:
+                words.append(cur)
+                cur = None
+            part = _view_segment(words, seg, subs, depth)
+            if part is None:
+                return None
+            out += part + " ; "
+            seg, subs, words = "", "", []
+            i += 1
+            continue
+        else:
+            heredoc = heredoc or (c == "<" and nx == "<")
+            cur = (cur or "") + c
+        seg += c
+        i += 1
+    if q:
+        return None
+    if cur is not None:
+        words.append(cur)
+    part = _view_segment(words, seg, subs, depth)
+    return None if part is None else out + part
+
+
+def flat_words(text):
+    """ship_view's text as the shell fallback reads it: quotes and backslashes removed,
+    whitespace as single spaces."""
+    text = re.sub(r"[\t\r\n]", " ", text)
+    return re.sub(r"  +", " ", re.sub(r"[\\\"']", "", text))
+
+
+HEREDOC_PLAIN = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+,:@%/!^-#~=*?[]{}$")
+HEREDOC_QUOTEISH = frozenset("\"'()`")
+
+
+def _heredoc_word(s, j):
+    """(delimiter, end) for the heredoc word at s[j], or None when bash, zsh, sh and dash might not all read it as
+    that delimiter (Hermes 2026-10-07, kit-never-block-pr-merge r10 `<<'EOF!'`, r11 `<<"a\\q"`, r13 dash). Measured, not guessed:
+    hooks/test-heredoc-words.py runs every generated spelling in the four shells, at top level and inside a
+    `"$(...)"` merge body, and requires this reader and the awk hdword() to read each word as the shells do or not
+    at all. POSIX quote removal: `\\X` is X; `'...'` is literal; in `"..."` a backslash
+    is dropped only before `$` or `\\`. Declined, because a shell reads them differently: a leading `#` or `-`, an
+    escaped or quoted quote, parenthesis or backtick, a `$'...'` or `$"..."`, a `${` `$[` `$(`, a word-final unquoted `}` (zsh), a trailing
+    backslash, an empty delimiter, and a word that ends anywhere but a blank, `; & | < >` or a newline."""
+    out, k, n, tail = [], j, len(s), ""
+    if s[j:j + 1] in ("#", "-"):
+        return None
+    while k < n:
+        c = s[k]
+        plain = c in HEREDOC_PLAIN or ord(c) > 127
+        if not (plain or c in "\\'\""):
+            break
+        tail = c if plain else ""
+        if c == "\\":
+            x = s[k + 1:k + 2]
+            if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                return None
+            out.append(x)
+            k += 2
+        elif c == "$" and s[k + 1:k + 2] in ("'", '"'):
+            return None  # $"..." (zsh) and $'...' (dash has no $'...' quoting) are read differently
+        elif c == "'":
+            k += 1
+            e = s.find("'", k)
+            if e < 0:
+                return None
+            body = s[k:e]
+            if "\n" in body or set(body) & HEREDOC_QUOTEISH:
+                return None
+            out.append(body)
+            k = e + 1
+        elif c == '"':
+            k += 1
+            while True:
+                d = s[k:k + 1]
+                if d in ("", "\n") or (d != '"' and d in HEREDOC_QUOTEISH):
+                    return None
+                k += 1
+                if d == '"':
+                    break
+                if d == "\\":
+                    x = s[k:k + 1]
+                    if x in ("", "\n") or x in HEREDOC_QUOTEISH:
+                        return None
+                    out.append(x if x in ("$", "\\") else "\\" + x)
+                    k += 1
+                else:
+                    out.append(d)
+        else:
+            out.append(c)
+            k += 1
+    delim = "".join(out)
+    if k == j or (k < n and s[k] not in " \t\n;&|<>") or not delim or delim.endswith("\\") or tail == "}":
+        return None
+    if any(x in s[j:k] for x in ("${", "$[", "$(")):
+        return None
+    return delim, k
+
+
+def _strip_heredoc_bodies(command):
+    """The command as the shell parses it, without heredocs, or None when a heredoc can't be read exactly. A body is
+    text the shell never parses, but the word parsers here would read its quotes, parentheses and words as code:
+    `gh pr merge 5 --body "$(cat <<EOF` / `git push origin main` / `EOF` / `)"` read as a push, and in
+    `x=$(echo "$(cat <<EOF` / `)")` / `&& y` / `EOF` / `)")` / `git push origin main` (zsh runs the push) the parser
+    closed the substitution early and swallowed the push into a quote (Hermes 2026-10-07, kit-never-block-pr-merge
+    r10). A real operator is a `<<` in code: not quoted, escaped, commented, in arithmetic (`$((1<<2))`, `$[1<<2]`)
+    or in a parameter expansion (`${x:-<<E}`); `<<<` is a here-string. Each operator, its delimiter, body and
+    terminator line are removed only when all of these hold, because shells disagree past them and a wrong guess
+    hides the lines after the body (r11: `x=$(cat <<E)` then lines the shell runs; `<<$(echo E)`; zsh `<<E(x)`):
+      - the delimiter is a word _heredoc_word reads: one bash, zsh, sh and dash read alike, measured by
+        hooks/test-heredoc-words.py, ending at a blank, `; & | < >` or a newline;
+      - the context that held the operator is still open at the newline where the body starts;
+      - a terminator line equal to the delimiter exists (after leading tabs for `<<-`);
+      - no body line starts with the delimiter and goes on (bash 3.2 ends a body inside `$(` at `E)`);
+      - with an unquoted delimiter, no body line holds `$(` or a backtick, or ends in a backslash: the shell
+        expands substitutions before the command runs, so `cat <<E` / `$(vercel alias set ...)` / `E` runs the
+        alias, and a backslash-newline joins lines first, so `$\\` / `(git push)` is one (Hermes 2026-10-22,
+        pr94-ship-gate-file-edits r1, r2). A quoted delimiter (any quote or backslash in it) keeps the body literal.
+    Otherwise this returns None and both callers read the command as unreadable: ship_view returns None, so the
+    raw text is scanned, and command_segments adds every line as a command. No operator survives a strip, so it
+    is idempotent. The shell fallback's awk strip() is the same scanner."""
+    out, stack, pending, word, i, n = [], [], [], False, 0, len(command)
+    while i < n:
+        c, nx = command[i], command[i + 1:i + 2]
+        top = stack[-1] if stack else ""
+        if top == "'":
+            out.append(c)
+            if c == "'":
+                stack.pop()
+            i += 1
+            continue
+        if c == "\\" and nx:
+            out.append(c + nx)
+            i += 2
+            word = True
+            continue
+        if top in ('"', "{", "["):  # double quotes, ${...} and $[...]: a << here is text
+            out.append(c)
+            if c == {'"': '"', "{": "}", "[": "]"}[top]:
+                stack.pop()
+            elif c == "`":
+                stack.append("`")
+            elif c == "$" and nx in "({[" and nx:
+                out.append(nx)
+                stack.append({"(": "$", "{": "{", "[": "["}[nx])
+                i += 1
+            elif c in "'\"" and top != '"':
+                stack.append(c)
+            i += 1
+            continue
+        if top in ("A", "a"):  # arithmetic, from (( to )): "a" is a parenthesis inside it, and << is a shift
+            out.append(c)
+            if c == "(":
+                stack.append("a")
+            elif c == ")" and top == "a":
+                stack.pop()
+            elif c == ")" and nx == ")":
+                out.append(nx)
+                stack.pop()
+                i += 1
+            i += 1
+            continue
+        if c == "\n" and pending:
+            if any(held != stack for _, _, held, _ in pending):
+                return None  # the operator's context closed on its own line, as in `x=$(cat <<E)`
+            out.append(c)
+            i += 1
+            for dash, delim, _, quoted in pending:
+                while True:
+                    if i >= n:
+                        return None  # no terminator line
+                    j = command.find("\n", i)
+                    line = command[i:] if j < 0 else command[i:j]
+                    i = n if j < 0 else j + 1
+                    body = line.lstrip("\t") if dash else line
+                    if body == delim:
+                        break
+                    if body.startswith(delim):
+                        return None  # `E)` or `EOFx`: shells disagree on whether this ends the body
+                    if not quoted and ("$(" in line or "`" in line or line.endswith("\\")):
+                        return None  # an unquoted body expands a substitution (one a continuation may join)
+            pending = []
+            word = False
+            continue
+        if c == "#" and not word:
+            j = command.find("\n", i)
+            j = n if j < 0 else j
+            out.append(command[i:j])
+            i = j
+            continue
+        if c == "<" and nx == "<" and command[i + 2:i + 3] != "<" and (not i or command[i - 1] != "<"):
+            j = i + 2
+            dash = command[j:j + 1] == "-"
+            j += dash
+            while j < n and command[j] in " \t":
+                j += 1
+            word = _heredoc_word(command, j)
+            if word is None:
+                return None  # a delimiter the shells may read differently: $(...), `...`, zsh E(x), E), "a(b"
+            delim, k = word
+            pending.append((dash, delim, list(stack), any(q in command[j:k] for q in "'\"\\")))
+            i, word = k, True
+            continue
+        out.append(c)
+        if c in "'\"":
+            stack.append(c)
+        elif c == "`":
+            stack.pop() if top == "`" else stack.append("`")
+        elif c == "$" and command[i + 1:i + 3] == "((":
+            out.append("((")
+            stack.append("A")
+            i += 2
+        elif c == "$" and nx in ("(", "{", "["):
+            out.append(nx)
+            stack.append({"(": "$", "{": "{", "[": "["}[nx])
+            i += 1
+        elif c == "(" and nx == "(" and not word:
+            out.append("(")
+            stack.append("A")
+            i += 1
+        elif c == "(":
+            stack.append("(")
+        elif c == ")" and top in ("$", "("):
+            stack.pop()
+        word = c not in " \t\n;&|()<>"
+        i += 1
+    if pending:
+        return None  # an operator on the last line: no body, no terminator
+    return "".join(out)
+
+
+def _line_segments(command):
+    """Every line of a command it can't read exactly, split at ; & | ( ) ` and $(, as words with quotes and
+    backslashes dropped: a push on any line is a segment, whatever the quotes around it (deny side)."""
+    out = []
+    for line in command.split("\n"):
+        for part in re.split(r"\$\(|[;&|()`]", line):
+            words = flat_words(part).split()
+            if words:
+                out.append(unwrap_segment(words) or words)
+    return out
+
+
+def command_segments(command, _depth=0):
+    """Top-level shell segments as token lists, split on ; | && ( ) and
+    newlines, tokenized with the same POSIX word parser the target resolver
+    uses. Scripts run through `sh -c` or `eval` are split the same way and
+    their segments added (Hermes 2026-10-06, topic kit-never-block-pr-merge).
+    Heredoc bodies are text and are removed first (_strip_heredoc_bodies). A command with a heredoc that can't be
+    read exactly is split as it stands, plus every line as a command (_line_segments), so nothing a shell might
+    run is lost (Hermes 2026-10-07, kit-never-block-pr-merge r11)."""
+    stripped = _strip_heredoc_bodies(command)
+    if stripped is None:
+        return _command_segments(command, _depth) + _line_segments(command)
+    return _command_segments(stripped, _depth)
+
+
+def _command_segments(command, _depth):
     segments, cur, i, n = [], [], 0, len(command)
+    # As in ship_view: a line that starts with && || or | stops the shell, unless a heredoc operator came first.
+    line_start, heredoc, stop = True, False, n
     while i < n:
         c = command[i]
         if c in " \t":
             i += 1
             continue
-        if c in ";|&\n":
+        if c == "#":
+            # A word that starts with # starts a comment, which runs to the end of the line
+            # (Hermes 2026-10-06, kit-never-block-pr-merge: `gh pr merge 5 # && git push`).
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c in ";|&\n()":
             j = i
-            while j < n and command[j] in ";|&\n":
+            while j < n and command[j] in ";|&\n()":
+                if command[j] == "\n":
+                    line_start = True
+                elif command[j] in "&|" and line_start and not heredoc:
+                    stop = j
+                    break
+                else:
+                    line_start = False
                 j += 1
             if cur:
                 segments.append(cur)
                 cur = []
+            if stop < n:
+                break
             i = j
             continue
         word, endpos = _shell_arg_at(command, i)
         if word is None:
             break
+        heredoc = heredoc or _unquoted_heredoc(command[i:endpos])
         cur.append(word)
+        line_start = False
         i = endpos
     if cur:
         segments.append(cur)
-    return segments
+    command = command[:stop]
+    out = []
+    for s in (unwrap_segment(s) for s in segments):
+        if not s:
+            continue
+        out.append(s)
+        script = _inline_script(s)
+        if script and _depth < 3:
+            out.extend(command_segments(script, _depth + 1))
+    if _depth < 3:
+        for body in _substitutions(command):
+            out.extend(command_segments(body, _depth + 1))
+    return out
+
+
+def _unquoted_heredoc(raw):
+    """True if a word's raw source text holds a heredoc operator; see _has_heredoc."""
+    return _has_heredoc(raw, comments=False)
+
+
+def _has_heredoc(script, comments=True):
+    """True if a shell script holds a heredoc operator: an unquoted, unescaped `<<` outside comments, or one inside
+    a `$(...)` or backtick body read the same way. A `<<` in quotes is text, also inside a quoted substitution such
+    as `"$(printf '<<')"` (Hermes 2026-10-06 r9). An unbalanced substitution counts, which keeps scanning (the deny
+    side). The shell fallback's awk uhd() is the same scanner."""
+    q, word, i, n = None, False, 0, len(script)
+    while i < n:
+        c = script[i]
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i, word = i + 1, True
+        elif c == "`" or script[i:i + 2] == "$(":
+            if c == "`":
+                j = i + 1
+                while j < n and script[j] != "`":
+                    j += 2 if script[j] == "\\" else 1
+                if j >= n or _has_heredoc(script[i + 1:j]):
+                    return True
+            else:
+                dep, j = 1, i + 2
+                while j < n and dep:
+                    dep += {"(": 1, ")": -1}.get(script[j], 0)
+                    j += 1
+                if dep or _has_heredoc(script[i + 2:j - 1]):
+                    return True
+                j -= 1
+            i, word = j, True
+        elif q == '"':
+            q = None if c == '"' else q
+        elif c in "'\"":
+            q, word = c, True
+        elif c == "#" and comments and not word:
+            j = script.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "<" and script[i + 1:i + 2] == "<":
+            return True
+        else:
+            word = c not in " \t\n;&|()"
+        i += 1
+    return False
+
+
+def _substitutions(command):
+    """Bodies of the command substitutions the shell would run that the split above keeps inside a
+    word: `$(...)` and backticks within double quotes, and backticks anywhere outside single quotes.
+    An unquoted `$(` is already split on its parenthesis. A comment holds none."""
+    bodies, q, i, n = [], None, 0, len(command)
+    while i < n:
+        c = command[i]
+        if q is None and c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()") \
+                and not (i >= 2 and command[i - 2] == "\\" and command[i - 1] in " \t"):
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            i += 1
+        elif c == "'" and q is None:
+            q = "'"
+        elif c == '"':
+            q = None if q == '"' else '"'
+        elif c == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            bodies.append(command[i + 1:j])
+            i = j
+        elif c == "$" and command[i + 1:i + 2] == "(" and q == '"':
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            bodies.append(command[i + 2:j - 1])
+            i = j - 1
+        i += 1
+    return bodies
+
+
+def unwrap_segment(seg):
+    """The command a segment actually runs: leading VAR=value assignments,
+    plain wrappers (env, command, sudo, npx, bunx, ...) with their flags and
+    package runners (`pnpm exec|dlx`, `yarn dlx`, `npm exec`, `bun x`, and
+    `pnpm|yarn <ship-bin>`) are dropped, and the head is reduced to its
+    basename without an @version (`./node_modules/.bin/vercel`,
+    `vercel@latest`). One place, so every consumer (classifier, merge-args,
+    sha selection) sees the same words."""
+    s = list(seg)
+    while s:
+        if ASSIGN_RE.match(s[0]) or s[0] in COMPOUND_HEADS:
+            s.pop(0)
+            continue
+        h = os.path.basename(s[0])
+        if h in PLAIN_WRAPPERS:
+            s.pop(0)
+            while s and s[0].startswith("-"):
+                f = s.pop(0)
+                if f in WRAPPER_VALUE_FLAGS.get(h, ()) and s:
+                    s.pop(0)
+            continue
+        if h in RUNNER_SUBCOMMANDS and len(s) > 1:
+            if s[1] in RUNNER_SUBCOMMANDS[h]:
+                s = s[2:]
+                while s and s[0].startswith("-"):
+                    f = s.pop(0)
+                    if f in WRAPPER_VALUE_FLAGS.get(h, ()) and s:
+                        s.pop(0)
+                continue
+            if h in ("pnpm", "yarn") and os.path.basename(s[1]).split("@")[0] in SHIP_BINS:
+                s = s[1:]
+                continue
+        break
+    if s:
+        h = os.path.basename(s[0])
+        if not h.startswith("@") and "@" in h:
+            h = h.split("@")[0]
+        s[0] = h
+    return s
 
 
 def git_subcommand(args):
@@ -685,14 +1867,15 @@ def git_subcommand(args):
     return None
 
 
-def push_destinations(args):
-    """(mode, dsts) for a git push token list. mode 'all' for --all/--mirror/
-    --branches (every branch ships); else the destination refs from refspecs.
+def push_refspecs(args):
+    """(mode, flags, [(src, dst)]) for a git push token list. mode 'all' for
+    --all/--mirror/--branches (every branch ships); else the refspec words
+    after the remote as (source, destination) pairs (`HEAD:dev`, bare `v1.2`).
     No refspec -> empty list (caller resolves the branch upstream)."""
     try:
         i = args.index("push") + 1
     except ValueError:
-        return None, []
+        return None, [], []
     flags, words = [], []
     while i < len(args):
         a = args[i]
@@ -706,13 +1889,18 @@ def push_destinations(args):
         words.append(a)
         i += 1
     if any(f in PUSH_ALL_FLAGS or f.split("=")[0] in PUSH_ALL_FLAGS for f in flags):
-        return "all", []
-    dsts = []
-    for rs in words[1:]:  # words[0] is the remote when present
-        dst = rs.split(":", 1)[1] if ":" in rs else rs
-        if dst:
-            dsts.append(dst)
-    return None, dsts
+        return "all", flags, []
+    pairs, rest = [], words[1:]  # words[0] is the remote when present
+    while rest:
+        rs = rest.pop(0)
+        if rs == "tag" and rest:  # `git push origin tag v1.2` == refs/tags/v1.2
+            t = "refs/tags/" + rest.pop(0)
+            pairs.append((t, t))
+            continue
+        # a leading + only forces the update; `+main` still ships to main
+        src, _, dst = rs.lstrip("+").partition(":")
+        pairs.append((src or dst, dst or src))
+    return None, flags, pairs
 
 
 def normalize_ref(dst):
@@ -756,82 +1944,709 @@ def protected_refs(root, cfg):
     return prot
 
 
-def segment_ship_kind(seg, root, cfg):
-    """"merge" | "push" | "deploy" for one shell segment, else None."""
-    if not seg:
+def resolve_commit(root, rev):
+    """Full commit sha for a rev, or None. `^{commit}` peels annotated tags,
+    so a tag object resolves to the commit it ships."""
+    if not rev:
         return None
+    p = run_git(root, "rev-parse", "-q", "--verify", "%s^{commit}" % rev)
+    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+
+
+def head_commit(root):
+    return run_git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def current_branch(root):
+    b = run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    return b if b and b != "HEAD" else None
+
+
+def remote_commit(root, ref):
+    """What the remote holds for `ref` as far as this clone knows
+    (refs/remotes/origin/<ref>), then the local ref, then a raw sha."""
+    return resolve_commit(root, "refs/remotes/origin/%s" % ref) or resolve_commit(root, ref)
+
+
+def tag_ref(root, src):
+    """refs/tags/<name> when a push source names a tag (refs/tags/... or a
+    bare word that is a local tag, e.g. `git push origin v1.2`), else None.
+    HEAD and explicit refs/heads/ sources are never tags."""
+    if src.startswith("refs/tags/"):
+        return src
+    if src.startswith("refs/") or src in ("HEAD", "@"):
+        return None
+    return "refs/tags/%s" % src if resolve_commit(root, "refs/tags/%s" % src) else None
+
+
+def _positionals(toks, value_flags):
+    """Positional words of a gh subcommand plus {flag: value} for value flags
+    (split `--target main` and attached `--target=main` forms)."""
+    pos, vals, i = [], {}, 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-") and "=" in t:
+            k, _, v = t.partition("=")
+            vals[k] = v
+        elif t in value_flags and i + 1 < len(toks):
+            vals[t] = toks[i + 1]
+            i += 1
+        elif not t.startswith("-"):
+            pos.append(t)
+        i += 1
+    return pos, vals
+
+
+def release_commit(root, toks):
+    """Commit `gh release create` publishes: its tag when the tag exists
+    locally; else --target (as the remote knows it); else the remote default
+    branch, which is what GitHub tags when neither exists; else HEAD."""
+    pos, vals = _positionals(toks, GH_RELEASE_VALUE_FLAGS)
+    if pos:
+        c = resolve_commit(root, "refs/tags/%s" % pos[0].replace("refs/tags/", "", 1))
+        if c:
+            return c
+    target = vals.get("--target")
+    if target:
+        return remote_commit(root, target) or head_commit(root)
+    return remote_commit(root, default_branch(root)) or head_commit(root)
+
+
+def release_edit_commit(root, toks):
+    """(ships, commit, problem) for `gh release edit <tag>`. It ships when it
+    publishes a draft (--draft=false in any pflag spelling) or moves the
+    release to another tag (--tag). The commit is the release's tag (--tag
+    when given) as this clone has it, else --target as the remote knows it.
+    No default-branch fallback: a draft's stored target is not visible
+    locally, and guessing it is the "checked the wrong commit" defect."""
+    pos, vals = _positionals(toks, GH_RELEASE_VALUE_FLAGS)
+    if vals.get("--draft") not in PFLAG_FALSE and "--tag" not in vals:
+        return False, None, None
+    tag = (vals.get("--tag") or (pos[0] if pos else "")).replace("refs/tags/", "", 1)
+    c = resolve_commit(root, "refs/tags/%s" % tag) if tag else None
+    if not c and vals.get("--target"):
+        c = remote_commit(root, vals["--target"])
+    if c:
+        return True, c, None
+    return True, None, ("gh release edit publishes release %r, but its tag is not in this clone and no "
+                        "--target names the commit: `git fetch --tags`, then retry" % (tag or "?"))
+
+
+def workflow_commit(root, toks):
+    """(commit, on_default) for `gh workflow run`: the commit it dispatches
+    on (--ref/-r as the remote knows it, else the remote default branch,
+    GitHub's default, else HEAD) and whether that ref is the default branch."""
+    _, vals = _positionals(toks, GH_WORKFLOW_VALUE_FLAGS)
+    ref = (vals.get("--ref") or vals.get("-r") or "").replace("refs/heads/", "", 1)
+    default = default_branch(root)
+    target = ref or default
+    return (remote_commit(root, target) or head_commit(root)), target == default
+
+
+def _read_body_file(path, cwd):
+    """Text of a request-body file named on the command line, or None when it
+    is not a readable regular file (stdin `-`, not yet created, too big).
+    External input read by a hook: no $VAR expansion, regular files only,
+    size-capped."""
+    if not path or path == "-" or "$" in path:
+        return None
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(cwd, path)
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > BODY_FILE_MAX:
+            return None
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except Exception:
+        return None
+
+
+def api_deploy_post(seg, command, cwd):
+    """A deployments-API call that ships PRODUCTION, for `vercel api` and curl:
+    a POST (explicit method, or a body flag with no other method) to
+    /vN/deployments whose target is production, or a POST to a project's
+    /promote/ endpoint (the API form of `vercel promote`).
+
+    Where production is looked for: every argv word (the word parser strips
+    shell quotes, so '{"target":"production"}' arrives as
+    {"target":"production"} and "{target: production}" as {target:
+    production}), every readable body file (--input f, -d @f, -F k=@f), and
+    the raw command text (a heredoc or pipe that builds the body). Policy for
+    a body that cannot be seen at hook time (written by an earlier command,
+    or stdin) with no production marker anywhere in the command: ALLOW. The
+    gate matches on evidence of production; a preview heal must never be
+    denied for lack of it, and the git-pre-push/CI layers do not depend on
+    this classifier."""
+    tool = "vercel" if seg[0] == "vercel" else "curl"
+    toks = seg[2:] if tool == "vercel" else seg[1:]
+    urls = [t for t in toks if DEPLOY_CREATE_RE.search(t) or PROMOTE_API_RE.search(t) or ALIAS_API_RE.search(t)]
+    if not urls:
+        return False
+    body_flags, method_flags = API_BODY_FLAGS[tool], API_METHOD_FLAGS[tool]
+    method, has_body, texts, i = None, False, list(toks), 0
+    while i < len(toks):
+        t = toks[i]
+        flag, val = t, None
+        if t.startswith("--") and "=" in t:
+            flag, _, val = t.partition("=")
+        elif len(t) > 2 and t[0] == "-" and t[1] != "-" and t[:2] in method_flags | body_flags:
+            flag, val = t[:2], t[2:]  # attached short form: -XPOST, -d@body.json
+        if flag in method_flags:
+            if val is None and i + 1 < len(toks):
+                val = toks[i + 1]
+                i += 1
+            method = (val or "").upper()
+        elif flag in body_flags:
+            has_body = True
+            if val is None and i + 1 < len(toks):
+                val = toks[i + 1]
+                i += 1
+            val = val or ""
+            if flag == "--input":
+                path = val
+            elif val.startswith("@"):
+                path = val[1:]
+            elif "=@" in val:  # -F key=@file
+                path = val.split("=@", 1)[1]
+            else:
+                path = None
+            body = _read_body_file(path, cwd) if path else None
+            if body:
+                texts.append(body)
+        i += 1
+    if not (method == "POST" or (method is None and has_body)):
+        return None
+    texts.append(command)
+    # promote and alias POSTs ship the deployment named in the URL
+    ids = [(PROMOTE_ID_RE.search(u) or ALIAS_API_RE.search(u) or [None, ""])[1]
+           for u in urls if PROMOTE_API_RE.search(u) or ALIAS_API_RE.search(u)]
+    if ids:
+        return {"promote": ids, "urls": urls, "texts": texts}
+    if any(PROD_TARGET_RE.search(t) for t in texts):
+        # a production create naming deploymentId is a redeploy of that one
+        redeploys = [m.group(1) for t in texts for m in DEPLOYMENT_ID_BODY_RE.finditer(t)]
+        return {"promote": list(dict.fromkeys(redeploys)), "urls": urls, "texts": texts}
+    return None
+
+
+def _redact(text):
+    """One line of CLI output, safe to show: long opaque words (tokens,
+    hashes) are masked and the line is capped."""
+    return re.sub(r"[A-Za-z0-9_\-]{24,}", "<redacted>", " ".join((text or "").split()))[:160]
+
+
+def vercel_team_query(vals, urls, cwd, root):
+    """Scope for the deployment lookup, as a query string: --scope/-S/--team/-T
+    on the command, else teamId=/slug= in an API URL, else the orgId of the
+    nearest .vercel link (project.json, repo.json) from --cwd/cwd up to the
+    repo root. '' = the CLI's current scope (which 404s another team's
+    deployment, so a missing scope fails closed rather than open)."""
+    for k in ("--scope", "-S", "--team", "-T"):
+        v = vals.get(k)
+        if v and re.fullmatch(r"[A-Za-z0-9_.-]+", v):
+            return ("teamId=" if v.startswith("team_") else "slug=") + v
+    for u in urls:
+        m = re.search(r"[?&](teamId|slug)=([A-Za-z0-9_.-]+)", u)
+        if m:
+            return "%s=%s" % (m.group(1), m.group(2))
+    start = vals.get("--cwd")
+    d = os.path.abspath(os.path.join(cwd, os.path.expanduser(start)) if start else cwd)
+    stop = os.path.abspath(root)
+    if d != stop and not d.startswith(stop + os.sep):
+        d = stop  # `cd <repo> && vercel ...` / `git -C`: the payload cwd is elsewhere
+    while True:
+        for name in ("project.json", "repo.json"):
+            try:
+                org = str(load_json(os.path.join(d, ".vercel", name)).get("orgId") or "")
+            except Exception:
+                org = ""
+            if re.fullmatch(r"team_[A-Za-z0-9]+", org):
+                return "teamId=" + org
+        if d == stop or not d.startswith(stop + os.sep) or os.path.dirname(d) == d:
+            return ""
+        d = os.path.dirname(d)
+
+
+def deployment_commit(root, ref, team, cwd):
+    """(commit, None) for the local commit a Vercel deployment was built
+    from, or (None, reason). One read-only GET /v13/deployments/<id|host>
+    through the vercel CLI's own login; the hook never reads, prints or
+    forwards a token. Every failure is a reason, and a reason DENIES."""
+    global _LOOKUP_DEADLINE
+    host = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", ref or "").split("/", 1)[0]
+    if not host or not DEPLOYMENT_REF_RE.match(host):
+        return None, ("deployment %r: no deployment id or URL to resolve its source commit from"
+                      % (ref or ""))
+    now = time.monotonic()
+    lookup_budget = max(LOOKUP_BUDGET_S, _SELFTEST_LOOKUP_BUDGET_S or LOOKUP_BUDGET_S)
+    if _LOOKUP_DEADLINE is None:
+        _LOOKUP_DEADLINE = now + lookup_budget
+    left = min(_LOOKUP_DEADLINE - now, time_left() - 0.6)  # leave time to check the commit
+    if left < 0.3:
+        return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
+                      "ship one deployment per command" % (host, lookup_budget))
+    path = "/v13/deployments/%s%s" % (host, ("?" + team) if team else "")
+    env = dict(os.environ, VERCEL_TELEMETRY_DISABLED="1", NO_COLOR="1")
+    try:
+        p = subprocess.run(["vercel", "api", path, "--raw", "--non-interactive"],
+                           cwd=cwd if os.path.isdir(cwd) else root, capture_output=True, text=True,
+                           timeout=left, env=env)
+    except FileNotFoundError:
+        return None, ("deployment %s: the vercel CLI is not on the hook's PATH, so the commit this "
+                      "deployment was built from cannot be resolved" % host)
+    except subprocess.TimeoutExpired:
+        return None, ("deployment %s: provenance lookup timed out after %.1f s (offline, or the API "
+                      "is slow); retry" % (host, left))
+    except Exception as exc:
+        return None, "deployment %s: provenance lookup could not run: %s" % (host, _redact(str(exc)))
+    if p.returncode != 0:
+        lines = (p.stderr or p.stdout or "").strip().splitlines()
+        return None, ("deployment %s: provenance lookup failed (rc=%d: %s). The hook resolves deployments "
+                      "with the vercel CLI's own login (`vercel login`, or VERCEL_TOKEN in the agent's "
+                      "environment) and scope (%s); a --token on the command line is not forwarded"
+                      % (host, p.returncode, _redact(lines[-1] if lines else ""),
+                         team or "the CLI's current scope"))
+    try:
+        doc = json.loads(p.stdout[p.stdout.index("{"):])
+    except Exception:
+        return None, "deployment %s: provenance lookup returned no JSON" % host
+    meta = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+    gs = doc.get("gitSource") if isinstance(doc.get("gitSource"), dict) else {}
+    if str(meta.get("gitDirty", "")).lower() in ("1", "true"):
+        return None, ("deployment %s was built from uncommitted changes (meta.gitDirty): no commit "
+                      "describes its code" % host)
+    shas = {str(v).lower() for v in [gs.get("sha")] + [meta.get(k) for k in (
+        "githubCommitSha", "gitlabCommitSha", "bitbucketCommitSha")] if v}
+    if not shas:
+        return None, ("deployment %s has no git provenance (no gitSource.sha or meta.*CommitSha): "
+                      "deploy it from a commit" % host)
+    if len(shas) > 1:
+        return None, "deployment %s: conflicting source commits %s" % (
+            host, ", ".join(sorted(s[:12] for s in shas)))
+    sha = shas.pop()
+    c = resolve_commit(root, sha) if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None
+    if not c:
+        return None, ("deployment %s was built from %s, which is not in this clone: `git fetch`, then "
+                      "retry" % (host, sha[:12]))
+    return c, None
+
+
+def deployment_ship(root, refs, team, cwd):
+    """Segment result for shipping existing deployments: each one's source
+    commit, checked with tree equivalence and with records allowed from HEAD
+    (provenance set), or a reason per deployment that could not be resolved."""
+    shas, problems = [], []
+    for ref in refs or [""]:
+        c, why = deployment_commit(root, ref, team, cwd)
+        if c and c not in shas:
+            shas.append(c)
+        elif why:
+            problems.append(why)
+    return "deploy", shas, set(shas), problems, set(shas)
+
+
+def api_ship(root, info, cwd):
+    """Segment result for a production deployments-API POST (api_deploy_post).
+    A promote ships the named deployment's source commit. A create whose body
+    names a gitSource ships THAT commit (sha, else the ref as origin knows
+    it), not HEAD; a body without one (file upload) keeps the v4 rule: HEAD."""
+    if info["promote"]:
+        return deployment_ship(root, info["promote"], vercel_team_query({}, info["urls"], cwd, root), cwd)
+    shas, problems = [], []
+    for t in info["texts"]:
+        for m in GIT_SOURCE_RE.finditer(t):
+            sm = re.search(r"""["']?sha["']?\s*:\s*["']?([0-9a-fA-F]{7,40})""", m.group(1))
+            rm = re.search(r"""["']?ref["']?\s*:\s*["']?([^"',\s}]+)""", m.group(1))
+            c = resolve_commit(root, sm.group(1)) if sm else (remote_commit(root, rm.group(1)) if rm else None)
+            if c:
+                if c not in shas:
+                    shas.append(c)
+                continue
+            why = ("production deployment from gitSource %s: that commit is not in this clone "
+                   "(`git fetch`, then retry)" % _redact(" ".join(m.group(1).split()))[:80])
+            if why not in problems:
+                problems.append(why)
+    if shas or problems:
+        return "deploy", shas, set(shas), problems, set(shas)
+    return "deploy", [head_commit(root)], set(), [], set()
+
+
+def upload_dirty(root):
+    """Problems for an upload deploy (vercel --prod, netlify --prod, fly
+    deploy), which ships the WORKING TREE, not HEAD: uncommitted changes
+    outside .qa/ (and the .vercel link dir) were never walked."""
+    p = run_git(root, "status", "--porcelain", "--untracked-files=normal")
+    if p.returncode != 0:
+        return ["git status failed, so what this upload deploy ships is unknown"]
+    paths = [ln[3:].strip('"') for ln in p.stdout.splitlines() if len(ln) > 3]
+    paths = [x for x in paths if not re.match(r"(\.qa|\.vercel)(/|$)", x)]
+    if not paths:
+        return []
+    return ["this deploy uploads the working tree, which has uncommitted changes outside .qa/ (%s%s): "
+            "commit them, walk that commit, then deploy" % (", ".join(paths[:5]),
+                                                            " ..." if len(paths) > 5 else "")]
+
+
+def github_api_write(seg, command):
+    """Deny reason for a GitHub API write that ships (`gh api`, curl to
+    api.github.com), else None. Method: explicit -X/--method/--request, else
+    POST when a field or body flag is present, else GET. GET, HEAD and
+    DELETE pass: reading and deleting ship no code."""
+    gh = seg[0] == "gh"
+    toks = seg[2:] if gh else seg[1:]
+    if gh:
+        pos, vals = _positionals(toks, GH_API_VALUE_FLAGS)
+        endpoint = pos[0] if pos else ""
+        method = (vals.get("-X") or vals.get("--method") or "").upper()
+        has_body = any(k in vals for k in ("-f", "--raw-field", "-F", "--field", "--input"))
+    else:
+        urls = [t for t in toks if "api.github.com" in t]
+        if not urls:
+            return None
+        endpoint, method, has_body = urls[0], "", False
+        for i, t in enumerate(toks):
+            if t in ("-X", "--request") and i + 1 < len(toks):
+                method = toks[i + 1].upper()
+            elif t.startswith("--request="):
+                method = t.split("=", 1)[1].upper()
+            elif (t.split("=", 1)[0] in API_BODY_FLAGS["curl"]
+                  or (len(t) > 2 and t[1] != "-" and t[:2] in API_BODY_FLAGS["curl"])):
+                has_body = True
+    for t in toks:
+        if len(t) > 2 and t.startswith("-X"):
+            method = t[2:].upper()  # attached -XPOST (curl and pflag)
+    method = method or ("POST" if has_body else "GET")
+    if method in ("GET", "HEAD", "DELETE"):
+        return None
+    path = endpoint.split("api.github.com", 1)[-1]
+    if re.search(r"(?:^|/)graphql(?:[?#]|$)", path):
+        m = GITHUB_GRAPHQL_WRITE_RE.search(" ".join(toks) + "\n" + command)
+        what = "GraphQL %s" % m.group(1) if m else None
+    else:
+        m = GITHUB_WRITE_RE.search(path)
+        what = "%s %s" % (method, _redact(path)[:80]) if m else None
+    if not what:
+        return None
+    return ("GitHub API write (%s) ships code the gate cannot tie to a commit: use the gated CLI form "
+            "(gh release create|edit, git push, gh workflow run) so the shipped commit is "
+            "checked" % what)
+
+
+def _vercel_prod_flag(seg):
+    """`--prod`, or `--target production` / `--target=production`."""
+    for i, t in enumerate(seg):
+        if t == "--prod" or t == "--target=production":
+            return True
+        if t == "--target" and i + 1 < len(seg) and seg[i + 1] == "production":
+            return True
+    return False
+
+
+def segment_ship(seg, root, cfg, command="", cwd=None):
+    """(kind, shas, equiv, problems, prov) for one unwrapped shell segment.
+    kind: "push" | "deploy" | None. shas: the commits this segment
+    ships, resolved locally, so a tag pointing at an unwalked commit cannot
+    pass on a walked HEAD. equiv: the subset whose walk may sit on a
+    tree-identical commit (tree_equiv_outside_qa): tags, releases,
+    default-branch dispatches, deployment source commits. problems (v5):
+    reasons the shipped commit could not be resolved, each one a DENY.
+    prov (v5): deployment source commits, whose records may come from HEAD's
+    tree (the run is usually committed after the code it walked). For
+    merges the caller resolves the PR head (shas empty here)."""
+    r = _segment_ship(seg, root, cfg, command, cwd)
+    return r if len(r) == 5 else (r[0], r[1], r[2], [], set())
+
+
+def _segment_ship(seg, root, cfg, command="", cwd=None):
+    if not seg:
+        return None, [], set()
     head = seg[0]
+    cwd = cwd or root
     if head == "git":
         if git_subcommand(seg) != "push":
-            return None
-        mode, dsts = push_destinations(seg)
-        prot = protected_refs(root, cfg)
+            return None, [], set()
+        mode, flags, pairs = push_refspecs(seg)
         if mode == "all":
-            return "push"
-        if not dsts:
+            return "push", [head_commit(root)], set()
+        prot = protected_refs(root, cfg)
+        kind, shas, equiv, strict = None, [], set(), set()
+        if any(f.split("=")[0] in TAG_PUSH_FLAGS for f in flags):
+            # --tags/--follow-tags: which tags are new is only known to the
+            # remote; the hook checks HEAD, the pre-push layer checks each
+            # pushed tag exactly (git lists them on stdin)
+            h = head_commit(root)
+            kind, shas = "deploy", [h]
+            equiv.add(h)
+        if not pairs:
             up = upstream_branch(root)
-            return "push" if up and normalize_ref(up) in prot else None
-        for d in dsts:
-            if normalize_ref(d) in prot:
-                return "push"
-        return None
-    if head == "gh" and len(seg) > 2 and seg[1] == "pr" and seg[2] in ("merge", "ready"):
-        return "merge"
+            if up and normalize_ref(up) in prot:
+                return "push", shas + [head_commit(root)], set()  # HEAD goes to a protected branch: strict
+            return kind, shas, equiv
+        for src, dst in pairs:
+            dst_branch = current_branch(root) if dst in ("HEAD", "@") else normalize_ref(dst)
+            if dst_branch in prot:
+                kind = "push"
+                c = resolve_commit(root, src) or head_commit(root)
+                shas.append(c)
+                strict.add(c)
+                continue
+            t = tag_ref(root, src) or tag_ref(root, dst if dst.startswith("refs/tags/") else "")
+            if t:
+                kind = kind or "deploy"
+                c = resolve_commit(root, t) or head_commit(root)
+                shas.append(c)
+                equiv.add(c)
+        return kind, shas, equiv - strict  # a commit also pushed to a protected branch stays strict
+    if head == "gh" and len(seg) > 2:
+        if seg[1] == "pr":
+            # No PR command is gated (owner decision 2026-10-06: production
+            # fixes must keep shipping; admin merges stay available). That
+            # includes gh pr ready, since GitHub cannot merge a draft.
+            # Protected pushes, releases and deploys stay gated.
+            return None, [], set()
+        if seg[1] == "release" and seg[2] == "create":
+            c = release_commit(root, seg[3:])
+            return "deploy", [c], {c}
+        if seg[1] == "api":
+            why = github_api_write(seg, command)
+            return ("deploy", [], set(), [why], set()) if why else (None, [], set())
+        if seg[1] == "release" and seg[2] == "edit":
+            ships, c, why = release_edit_commit(root, seg[3:])
+            if not ships:
+                return None, [], set()
+            return "deploy", [c] if c else [], {c} if c else set(), [why] if why else [], set()
+        if seg[1] == "workflow" and seg[2] == "run":
+            # ANY dispatch is shipping. Deploy workflows run exactly this way
+            # (e.g. a deploy.yaml run by workflow_dispatch for dev/staging/prod); a
+            # reliable workflow-name -> file -> jobs mapping needs GitHub API
+            # round trips inside a hook, and a missed deploy workflow is an
+            # ungated production deploy while a false positive only asks for
+            # a completed .qa pipeline on a rare manual command.
+            c, on_default = workflow_commit(root, seg[3:])
+            return "deploy", [c], ({c} if on_default else set())
+        return None, [], set()
     if head == "vercel":
-        if "--prod" in seg or (len(seg) > 1 and seg[1] == "promote"):
-            return "deploy"
-        return None
+        # global flags may precede the subcommand (`vercel --scope t promote x`)
+        pos, vals = _positionals(seg[1:], VERCEL_VALUE_FLAGS)
+        sub = pos[0] if pos else ""
+        if sub == "api":
+            info = api_deploy_post(seg, command, cwd)
+            return api_ship(root, info, cwd) if info else (None, [], set())
+        # v5: promote/redeploy ship an EXISTING deployment, whose code is the
+        # commit it was built from -- never the local HEAD. `vercel promote
+        # status` only reads. `vercel rollback` stays free: it restores an
+        # already-shipped deployment, and gating incident recovery is wrong.
+        if sub in ("promote", "redeploy"):
+            if sub == "promote" and pos[1:2] == ["status"]:
+                return None, [], set()
+            return deployment_ship(root, pos[1:2], vercel_team_query(vals, [], cwd, root), cwd)
+        # pointing a domain at a deployment ships it (`vercel alias [set] <deployment> <alias>`;
+        # the one-argument form picks a deployment the hook cannot see, so it denies);
+        # a rolling release starts shipping the deployment given by --dpl
+        if sub == "alias":
+            rest = pos[1:]
+            if rest[:1] == ["set"]:
+                rest = rest[1:]
+            elif not rest or rest[0] in ("ls", "list", "rm", "remove"):
+                return None, [], set()
+            return deployment_ship(root, rest[:1] if len(rest) > 1 else [""],
+                                   vercel_team_query(vals, [], cwd, root), cwd)
+        if sub in ("rolling-release", "rr") and pos[1:2] == ["start"]:
+            return deployment_ship(root, [vals.get("--dpl", "")], vercel_team_query(vals, [], cwd, root), cwd)
+        if _vercel_prod_flag(seg):
+            return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
+        return None, [], set()
     if head == "netlify" and "deploy" in seg[1:3] and "--prod" in seg:
-        return "deploy"
+        return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
     if head in ("fly", "flyctl") and len(seg) > 1 and seg[1] == "deploy":
-        return "deploy"
-    return None
+        return "deploy", [head_commit(root)], set(), upload_dirty(root), set()
+    if head in ("curl", "curl.exe"):
+        why = github_api_write(seg, command)
+        if why:
+            return "deploy", [], set(), [why], set()
+        info = api_deploy_post(seg, command, cwd)
+        return api_ship(root, info, cwd) if info else (None, [], set())
+    return None, [], set()
+
+
+def segment_ship_kind(seg, root, cfg):
+    """"push" | "deploy" for one shell segment, else None."""
+    return segment_ship(seg, root, cfg)[0]
+
+
+def ship_plan(command, root, cfg, cwd=None):
+    """(kind, shas, equiv, problems, prov): the highest-stakes ship kind
+    anywhere in the command, every commit its non-merge segments ship, the
+    commits that may be checked with tree equivalence, the reasons a shipped
+    commit could not be resolved (each denies), and the deployment source
+    commits whose records may come from HEAD. A commit also shipped by a
+    strict segment (protected push, prod upload deploy) is checked strictly.
+    A `ship_commands` match adds HEAD. Merges get their PR head from the caller."""
+    kinds, shas, eq, strict, problems, prov = [], [], set(), set(), [], set()
+    for seg in command_segments(command):
+        k, s, e, pr, pv = segment_ship(seg, root, cfg, command, cwd)
+        if k:
+            kinds.append(k)
+            shas += [x for x in s if x and x not in shas]
+            eq |= {x for x in s if x in e}
+            strict |= {x for x in s if x not in e}
+            problems += [x for x in pr if x not in problems]
+            prov |= set(pv)
+    matched, why = ship_commands_match(cfg, command)
+    if why and why not in problems:
+        problems.append(why)
+    if matched:
+        kinds.append("extra")
+        try:
+            h = head_commit(root)
+            if h and h not in shas:
+                shas.append(h)
+            strict.add(h)
+        except Exception:
+            pass
+    eq -= strict
+    prov -= strict
+    if "push" in kinds:
+        return "push", shas, eq, problems, prov
+    return (kinds[0] if kinds else None), shas, eq, problems, prov
+
+
+SHIP_COMMANDS_BUDGET_S = 2.0
+# (patterns, command) -> (matched, problem). _hook fills it before any git, so the deadline and crash paths read the
+# answer instead of matching again.
+_SHIP_COMMANDS_SEEN = {}
+
+
+def ship_commands_match(cfg, command, budget=SHIP_COMMANDS_BUDGET_S):
+    """(matched, problem) for the config's `ship_commands` patterns. A pattern the regex engine cannot use (invalid,
+    or nested deep enough to raise RecursionError) matches nothing and does not stop the others from being tried.
+    The patterns run in a forked child: a valid pattern can backtrack for minutes, Python's re does not stop for
+    signals, and the hard deadline must still decide. A child that does not answer within `budget` seconds, or dies,
+    counts as a match with a problem, which denies (fail closed: the repo's own pattern is unusable). Each answer is
+    kept for the rest of the process."""
+    pats = cfg.get("ship_commands") if isinstance(cfg, dict) else None
+    pats = tuple(str(p) for p in pats) if isinstance(pats, list) else ()
+    if not pats:
+        return False, None
+    key = (pats, command)
+    if key not in _SHIP_COMMANDS_SEEN:
+        _SHIP_COMMANDS_SEEN[key] = _ship_commands_child(pats, command, budget)
+    return _SHIP_COMMANDS_SEEN[key]
+
+
+def _ship_commands_child(pats, command, budget):
+    """Run the patterns in a child. Anything that keeps an answer from coming back (fork refused at the process
+    limit, the child dying, waitpid failing, the budget running out) is a match with a problem: never a silent no."""
+    pid = None
+    try:
+        pid = os.fork()
+        if pid == 0:
+            hit = False
+            try:
+                for p in pats:
+                    try:
+                        if re.search(p, command):
+                            hit = True
+                            break
+                    except Exception:
+                        pass
+            finally:
+                os._exit(1 if hit else 0)
+        end = time.monotonic() + budget
+        while True:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                pid = None
+                if os.WIFEXITED(status) and os.WEXITSTATUS(status) in (0, 1):
+                    return os.WEXITSTATUS(status) == 1, None
+                return True, "matching .qa/config.json ship_commands failed (status %d); treated as a ship" % status
+            if time.monotonic() >= end:
+                return True, ("a .qa/config.json ship_commands pattern did not finish matching within %.1f s; treated "
+                              "as a ship. Simplify the pattern" % budget)
+            time.sleep(0.005)
+    except Exception as exc:
+        return True, "matching .qa/config.json ship_commands failed (%s); treated as a ship" % exc
+    finally:
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except Exception:
+                pass
 
 
 def ship_kind(command, root, cfg):
     """Highest-stakes ship kind anywhere in the command, for this root."""
-    kinds = [k for k in (segment_ship_kind(s, root, cfg) for s in command_segments(command)) if k]
-    try:
-        if cfg and isinstance(cfg.get("ship_commands"), list):
-            if any(re.search(str(p), command) for p in cfg["ship_commands"]):
-                kinds.append("extra")
-    except Exception:
-        pass
-    if "merge" in kinds:
-        return "merge"   # needs PR-head freshness, the stricter sha rule
-    if "push" in kinds:
-        return "push"
-    return kinds[0] if kinds else None
+    return ship_plan(command, root, cfg)[0]
 
 
-def pr_merge_args(command):
-    """Token list of the first `gh pr merge`/`gh pr ready` segment, if any."""
-    for seg in command_segments(command):
-        if len(seg) > 2 and seg[0] == "gh" and seg[1] == "pr" and seg[2] in ("merge", "ready"):
-            return seg
-    return None
-
-
-def pr_head_sha(root, args):
-    """PR head sha for `gh pr merge [n]`: `gh pr view [n] --json headRefOid`.
-    None on any failure (caller falls back to the local HEAD)."""
-    if os.environ.get("QA_GATE_NO_GH"):
-        return None
-    num = next((a for a in (args[3:] if len(args) > 3 else []) if a.isdigit()), None)
-    cmd = ["gh", "pr", "view"] + ([num] if num else []) + ["--json", "headRefOid", "-q", ".headRefOid"]
-    try:
-        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=6)
-        sha = p.stdout.strip()
-        if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
-            return sha
-    except Exception:
-        pass
-    return None
+def _hard_deadline(signum, frame):
+    """SIGALRM at HOOK_HARD_S: decide now, before the host times the hook out."""
+    if _HOOK_OPTED is not False and (coarse_ship(_LAST_INPUT or "") or custom_ship(_LAST_INPUT or "")):
+        reason = ("[qa-ship-gate] Ship denied: the gate could not finish within %.1f s of the hook chain "
+                  "starting (the host's hook timeout is %.0f s, and a timed-out hook lets the command run); "
+                  "retry, or ship one target per command" % (HOOK_HARD_S, HOOK_HOST_TIMEOUT_S))
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                            "permissionDecision": "deny",
+                                                            "permissionDecisionReason": reason}}) + "\n")
+        sys.stdout.flush()
+        sys.stderr.write(reason + "\n")
+        sys.stderr.flush()
+        os._exit(2)
+    os._exit(0)
 
 
 def hook(raw=None):
+    """PreToolUse adapter under a hard deadline (see HOOK_HARD_S)."""
+    global _HOOK_DEADLINE, _LAST_INPUT
+    spent = hook_elapsed()
+    if spent >= HOOK_HARD_S:  # the chain spent the budget before this process: decide by shape now
+        _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
+        _hard_deadline(None, None)
+    _HOOK_DEADLINE = time.monotonic() + HOOK_BUDGET_S - spent
+    signal.signal(signal.SIGALRM, _hard_deadline)
+    signal.setitimer(signal.ITIMER_REAL, HOOK_HARD_S - spent)
+
+    try:
+        return _hook(raw)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+# File-edit tools carry file content, not a command line. On 2026-10-16 a Codex apply_patch adding an
+# offline test fixture (`vercel alias set` against candidate.example.test) was read as a production
+# alias, failed provenance and was denied. Edits never ship; only a shell segment does. A shell
+# command is skipped only when it is exactly one apply_patch heredoc with a QUOTED delimiter and
+# nothing after its first closing line: an unquoted heredoc expands `$(...)` before apply_patch
+# runs, and a shell ends the heredoc at the first delimiter line, running whatever follows. A bare
+# patch body given to a shell is shell input, so it is scanned like any other command.
+FILE_EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_based_edit_tool"}
+_APPLY_PATCH_HEADER = re.compile(r"\A\s*apply_patch[ \t]*<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*\Z")
+
+
+def _is_quoted_apply_patch_heredoc(command):
+    lines = command.strip().split("\n")
+    head = _APPLY_PATCH_HEADER.match(lines[0]) if lines else None
+    if not head:
+        return False
+    strip_tabs, delimiter = head.group(1) == "-", head.group(3)
+    for i, line in enumerate(lines[1:], 1):
+        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+            return i == len(lines) - 1  # the shell runs anything after the first closing line
+    return False
+
+
+def is_file_edit(payload, command):
+    tool = str(payload.get("tool_name") or payload.get("toolName") or "").strip().lower()
+    if tool in FILE_EDIT_TOOLS:
+        return True
+    return _is_quoted_apply_patch_heredoc(command)
+
+
+def _hook(raw=None):
     """PreToolUse adapter: deny ship commands in opted-in repos with an open pipeline."""
-    global _LAST_INPUT
+    global _LAST_INPUT, _HOOK_OPTED
     try:
         _LAST_INPUT = raw if raw is not None else (sys.stdin.read() or "{}")
         payload = json.loads(_LAST_INPUT)
@@ -845,38 +2660,74 @@ def hook(raw=None):
     command = inp.get("command") or inp.get("cmd") or ""
     if not isinstance(command, str) or not command:
         return 0
+    if is_file_edit(payload, command):
+        return 0  # a patch's text is file content, never a command that ships
+    command = join_continuations(command)
     if payload.get("agent_id") or payload.get("agentId"):
         return 0
     cwd = payload.get("cwd") or payload.get("working_directory") or os.getcwd()
     targets = [r for r in ship_target_roots(command, cwd) if opted_in(r)]
     if not targets:
+        _HOOK_OPTED = False
         return 0
+
+    _HOOK_OPTED = True  # from here the hard deadline denies ship-shaped commands
     cfgs = {}
     for root in targets:
         try:
             cfgs[root] = load_json(os.path.join(root, ".qa", "config.json"))
         except Exception:
             cfgs[root] = None  # unparseable config on a ship command: check_all reports it
-    kinds = {root: ship_kind(command, root, cfgs[root]) for root in targets}
+    for root in targets:  # before any git, so the deadline and crash paths can read the answer
+        ship_commands_match(cfgs[root], command, min(SHIP_COMMANDS_BUDGET_S, max(0.1, time_left())))
+    plans ={root: ship_plan(command, root, cfgs[root], cwd) for root in targets}
+    kinds = {root: plans[root][0] for root in targets}
     if not any(kinds.values()):
         return 0  # feature-branch push, gh pr create, bb fleet validate, preview deploy
     prov = derive_provider(payload)
-    merge_args = pr_merge_args(command)
     sections, denied = [], []
     for root in targets:
         kind = kinds[root]
         if not kind:
             continue
-        # Walk freshness: a merge needs the walk at the PR head SHA being
-        # merged (gh pr view), falling back to the local HEAD; pushes and
-        # deploys check the local HEAD (with the .qa-only-parent allowance).
+        # Walk freshness: pushes and deploys check the local HEAD (with the
+        # .qa-only-parent allowance).
         # v3: with a sha resolved, artifacts are read from that commit's tree.
-        sha = ""
-        if kind == "merge" and merge_args is not None:
-            sha = pr_head_sha(root, merge_args) or run_git(root, "rev-parse", "HEAD").stdout.strip()
-        else:
-            sha = run_git(root, "rev-parse", "HEAD").stdout.strip()
-        ok, fails, stats, _ = check_all(root, sha or None)
+        # v4: every segment contributes the commits it ships (ship_plan): a
+        # tag push or release checks the TAGGED commit, a protected refspec
+        # its source, a dispatch its --ref as origin knows it. All of them
+        # must pass, so a walked HEAD cannot clear an unwalked tag and a tag
+        # cannot hide the branch pushed next to it.
+        # v5: a promoted/redeployed deployment checks the commit Vercel built
+        # it from (plans[root][4]); its run may be committed in HEAD's tree
+        # rather than its own, so HEAD's committed records are tried too,
+        # freshness still judged against the deployment's commit. Anything
+        # that could not be resolved (plans[root][3]) denies outright.
+        shas, problems, prov_shas = list(plans[root][1]), plans[root][3], plans[root][4]
+        if not shas and not problems:
+            shas = [head_commit(root)]
+        ok, fails, stats = not problems, list(problems), {"rows_total": 0, "clusters": 0, "open_rows": 0}
+        many = len(shas) + len(problems) > 1
+        for sha in shas:
+            if time_left() <= 0:
+                ok = False
+                fails.append("[%s] gate time budget (%.1f s from the hook chain start, under the host's "
+                             "%.0f s hook timeout) was spent before this commit was checked; retry"
+                             % ((sha or "HEAD")[:12], HOOK_BUDGET_S, HOOK_HOST_TIMEOUT_S))
+
+                break
+            o, f, s, _ = check_all(root, sha or None, equiv=bool(sha) and sha in plans[root][2])
+            h = head_commit(root) if sha in prov_shas else ""
+            if not o and h and h != sha and time_left() > 0:
+                o2, f2, s2, _ = check_all(root, sha, equiv=True, evidence=h)
+                if o2:
+                    o, f, s = o2, f2, s2
+                else:
+                    f = (["(records at the deployed commit) " + x for x in f]
+                         + ["(records at HEAD %s) %s" % (h[:12], x) for x in f2])
+            ok = ok and o
+            fails += ["[%s] %s" % ((sha or "HEAD")[:12], x) for x in f] if many else f
+            stats = s
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"]},
                  provider=prov)
@@ -1005,9 +2856,10 @@ def cmd_record(args):
 
 def prepush(remote="origin"):
     """git pre-push layer: reads the ref lines on stdin and denies only pushes
-    whose destination is protected (remote default branch + protected_branches).
-    Feature-branch pushes, tags and deletions pass untouched (a PR needs its
-    preview built before anyone can walk it). Ported from the meu-psi pilot's
+    whose destination is protected (remote default branch + protected_branches)
+    or a tag (v4: a tag ships the commit it points at). Feature-branch pushes
+    and deletions pass untouched (a PR needs its
+    preview built before anyone can walk it). Ported from a pilot repo's
     verified hook; the destination logic is ship-gate's own, so there is one
     parser (v2 template defect: the old template ran the full check on every
     push and re-created the v1 deadlock)."""
@@ -1028,25 +2880,31 @@ def prepush(remote="origin"):
         lref, lsha, rref, _rsha = parts
         if not any(c != "0" for c in lsha):
             continue  # deletion: passes (branch protection on the server owns deletes)
+        if rref.startswith("refs/tags/"):
+            # v4: a pushed tag ships the commit it points at. Annotated tags
+            # report the tag object sha on stdin; peel it to the commit.
+            pushes.append((rref, resolve_commit(root, lsha) or lsha))
+            continue
         branch = normalize_ref(rref)
         if branch in prot:
             pushes.append((branch, lsha))
     if not pushes:
         return 0
     denied = False
-    for branch, lsha in pushes:
-        ok, fails, stats, _ = check_all(root, lsha)
+    for ref, sha in pushes:
+        # tags may be checked with tree equivalence; protected branches stay strict
+        ok, fails, stats, _ = check_all(root, sha, equiv=ref.startswith("refs/tags/"))
         if ok:
             emit("gate_passed", root, data={"rows_total": stats["rows_total"], "clusters": stats["clusters"],
-                                            "kind": "push", "ref": branch}, provider=derive_provider({}))
+                                            "kind": "push", "ref": ref}, provider=derive_provider({}))
             continue
         denied = True
         emit("gate_denied", root, data={"reason": (fails[0] if fails else "")[:200], "open_rows": stats["open_rows"],
-                                        "kind": "push", "ref": branch}, provider=derive_provider({}))
-        failures.append("[%s -> %s]\n  - %s" % (lsha[:12], branch, "\n  - ".join(fails)))
+                                        "kind": "push", "ref": ref}, provider=derive_provider({}))
+        failures.append("[%s -> %s]\n  - %s" % (sha[:12], ref, "\n  - ".join(fails)))
     if not denied:
         return 0
-    sys.stderr.write("[qa-ship-gate] Push to a protected branch denied. Complete the .qa pipeline for the "
+    sys.stderr.write("[qa-ship-gate] Push to a protected branch or a tag denied. Complete the .qa pipeline for the "
                      "pushed commit, or push a feature branch:\n" + "\n".join(failures) + "\n")
     return 1
 
@@ -1068,6 +2926,9 @@ def main():
     cmd = argv[0] if argv else "check"
     rest = parse_args(argv[1:])
     if cmd == "hook":
+        if rest.get("selftest-fixture"):
+            global _SELFTEST_LOOKUP_BUDGET_S
+            _SELFTEST_LOOKUP_BUDGET_S = 30.0
         return hook()  # hook() stashes raw input for the crash fail-closed path
     if cmd == "stop":
         return stop()
@@ -1081,14 +2942,90 @@ def main():
     if cmd == "prepush":
         return prepush(argv[1] if len(argv) > 1 else "origin")
     if cmd == "selftest":
-        return selftest()
+        return selftest(rest.get("gate"), rest.get("templates"))
     print(__doc__)
     return 2
 
 
-def selftest():
+def selftest_batch_framing(expect):
+    """Real git framing regression, also runnable against the previous reader."""
+    with tempfile.TemporaryDirectory(prefix="qa-batch-framing-") as root:
+        def git(*args):
+            return subprocess.run(["git", "-C", root, *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "fixture@example.invalid")
+        git("config", "user.name", "fixture")
+        with open(os.path.join(root, "code.txt"), "w") as fh:
+            fh.write("code\n")
+        git("add", ".")
+        git("commit", "-qm", "code")
+        walked = git("rev-parse", "HEAD")
+        files = {
+            ".qa/runs/a\n/rewalk.json": json.dumps({"sha": "not-the-walked-sha"}),
+            ".qa/runs/z/rewalk.json": json.dumps({"sha": walked}),
+            ".qa/acentuação.txt": "sessões disponíveis\n",
+            ".qa/carriage\r.txt": "carriage return path\n",
+        }
+        for rel, content in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        git("add", ".qa")
+        git("commit", "-qm", "records")
+        records = git("rev-parse", "HEAD")
+        rd = qa_reader(root, records)
+        normal = [".qa/runs/z/rewalk.json", ".qa/acentuação.txt"]
+        expect(rd["read_many"](normal) == {rel: rd["read"](rel) for rel in normal},
+               "batch reader matches per-file reads on normal and accented UTF-8 paths")
+        expect(rd["read_many"](list(files)) == files,
+               "batch framing: newline run and sibling keep their own rewalk content")
+        expect(resolve_run(root, walked, rd, listing=records) == (".qa/runs/z", None),
+               "batch framing: resolve_run selects the sibling with the actual walked SHA")
+        # Also select the control-character candidate itself: quoting the tree
+        # listing must not hide it or let its sibling inherit its metadata.
+        for rel, value in ((".qa/runs/a\n/rewalk.json", walked),
+                           (".qa/runs/z/rewalk.json", "not-the-walked-sha")):
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                json.dump({"sha": value}, fh)
+        git("add", ".qa")
+        git("commit", "-qm", "swap walked candidate")
+        swapped = git("rev-parse", "HEAD")
+        expect(resolve_run(root, walked, qa_reader(root, swapped), listing=swapped) ==
+               (".qa/runs/a\n", None),
+               "batch framing: resolve_run selects the newline candidate with its own walked SHA")
+        expect(rd["read_many"]([".qa/absent", *normal]) ==
+               {".qa/absent": None, **{rel: files[rel] for rel in normal}},
+               "batch reader preserves missing-file and subsequent-file results")
+        expect(rd["read_many"]([]) == {}, "batch reader accepts an empty request")
+
+        # Corrupt only the protocol boundary; tree lookup and fallback stay real.
+        real_run = subprocess.run
+        for header in (b"0" * 40 + b" blob 1\nx\n", b"x missing\n", b"x ambiguous\n"):
+            def corrupt(args, **kwargs):
+                if args[-1:] == ["--batch"]:
+                    return subprocess.CompletedProcess(args, 0, header, b"")
+                return real_run(args, **kwargs)
+
+            subprocess.run = corrupt
+            try:
+                try:
+                    rd["read_many"](normal[:1])
+                    raised = False
+                except RuntimeError:
+                    raised = True
+                expect(raised, "batch reader rejects mismatched/missing/ambiguous header %r" % header)
+                expect(resolve_run(root, walked, rd, listing=records) == (".qa/runs/z", None),
+                       "resolve_run falls back to per-file reads after a bad batch header")
+            finally:
+                subprocess.run = real_run
+
+
+def selftest(v4_gate=None, v4_templates=None):
     """Prove each deny/allow path on scratch repos. A check that cannot go red proves nothing."""
     import shutil
+    os.environ.pop("HOOK_T0", None)  # hook calls below start their own clock unless a case sets one
     tmp = tempfile.mkdtemp(prefix="qa-gate-selftest-")
     fails = []
     # isolate the events sink: selftest rows are not real gate activity and
@@ -1099,11 +3036,43 @@ def selftest():
     EVENTS = scratch_events
     old_qa_gate_events = os.environ.get("QA_GATE_EVENTS_FILE")
     os.environ["QA_GATE_EVENTS_FILE"] = scratch_events
+    # v5: a scratch `vercel` first on PATH for every hook this selftest runs,
+    # so no case reaches the real Vercel API. It answers GET
+    # /v13/deployments/<ref> from stub-bin/deployments.json (written by the
+    # v5 cases) only under teamId=team_fx, like a real scoped lookup.
+    stub_bin = os.path.join(tmp, "stub-bin")
+    os.makedirs(stub_bin)
+    with open(os.path.join(stub_bin, "vercel"), "w") as fh:
+        fh.write("#!/usr/bin/env python3\n"
+                 "import json, os, sys, time\n"
+                 "a = sys.argv[1:]\n"
+                 "if a[:1] != ['api'] or len(a) < 2:\n"
+                 "    sys.exit(0)\n"
+                 "ref, _, q = a[1].split('/v13/deployments/', 1)[-1].partition('?')\n"
+                 "try:\n"
+                 "    fx = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deployments.json')))\n"
+                 "except Exception:\n"
+                 "    fx = {}\n"
+                 "if ref == 'dpl_slow':\n"
+                 "    time.sleep(20)\n"
+                 "if ref == 'dpl_offline':\n"
+                 "    sys.stderr.write('Error: request to https://api.vercel.com failed, reason: getaddrinfo ENOTFOUND\\n')\n"
+                 "    sys.exit(1)\n"
+                 "if 'teamId=team_fx' not in q.split('&') or ref not in fx:\n"
+                 "    sys.stderr.write('Error: Deployment not found (404)\\n')\n"
+                 "    sys.exit(1)\n"
+                 "time.sleep(fx[ref].get('_sleep', 0))\n"
+                 "print(json.dumps(fx[ref]))\n")
+    os.chmod(os.path.join(stub_bin, "vercel"), 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = stub_bin + os.pathsep + old_path
 
     def expect(cond, name):
         print(("ok   " if cond else "FAIL ") + name)
         if not cond:
             fails.append(name)
+
+    selftest_batch_framing(expect)
 
     def sh(cmd, cwd=None, inp=""):
         return subprocess.run(cmd, shell=True, cwd=cwd, input=inp, capture_output=True, text=True)
@@ -1122,6 +3091,42 @@ def selftest():
         payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
                               "tool_input": {"command": command}, "cwd": root})
         return sh('python3 "%s" hook' % os.path.abspath(__file__), cwd=root, inp=payload)
+
+    # a git call that outlasts the limit raises (a crash, which fails closed); it never answers empty, which
+    # default_branch() would read as "main" and upstream_branch() as "no upstream"
+    global GIT_TIMEOUT_S
+    slow_bin = os.path.join(tmp, "git-past-limit")
+    os.makedirs(slow_bin, exist_ok=True)
+    with open(os.path.join(slow_bin, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nexec sleep 3\n")
+    os.chmod(os.path.join(slow_bin, "git"), 0o755)
+    slow_repo = mkrepo("git-past-limit-repo")
+    saved_git = GIT_TIMEOUT_S, os.environ["PATH"]
+    GIT_TIMEOUT_S, os.environ["PATH"] = 0.3, slow_bin + os.pathsep + os.environ["PATH"]
+
+    def outcome(fn):
+        try:
+            return ("answered", fn(slow_repo))
+        except subprocess.TimeoutExpired:
+            return ("raised", None)
+    try:
+        slow_git = outcome(lambda r: run_git(r, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"))
+        slow_branches = [outcome(fn)[0] for fn in (default_branch, upstream_branch, current_branch, head_commit)]
+        slow_check = check_all(slow_repo)
+        slow_origin = origin_repo(slow_repo)
+        # a ship_commands match resolves HEAD inside ship_plan: a timeout there still yields the ship kind
+        slow_plan = outcome(lambda r: ship_plan("make ship-it", r, {"ship_commands": ["ship-it"]}))
+    finally:
+        GIT_TIMEOUT_S, os.environ["PATH"] = saved_git
+    expect(slow_git[0] == "raised", "a git call past the limit raises instead of answering empty")
+    expect(slow_branches == ["raised"] * 4,
+           "default/upstream/current branch and head commit raise on a git past the limit %s" % slow_branches)
+    expect(not slow_check[0] and any("gate internal error" in f for f in slow_check[1]),
+           "check_all with a git past the limit fails closed %s" % slow_check[1][:1])
+    expect(slow_origin is None, "origin_repo with a git past the limit is None (no repository to check against denies)")
+    expect(slow_plan[0] == "answered" and slow_plan[1][0] == "extra",
+           "ship_plan for a ship_commands match keeps the ship kind on a git past the limit (%s)"
+           % ((slow_plan[1][:2] if slow_plan[1] else slow_plan[0]),))
 
     def cfgs_of(root):
         try:
@@ -1206,6 +3211,26 @@ def selftest():
          "tool_input": {"command": 'git --work-tree="%s" -C "%s" push origin main' % (spaced, spaced)}, "cwd": foreign}))
     expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr,
            "git --work-tree quoted-space denied")
+    # Hermes 2026-10-06, topic kit-never-block-pr-merge: env-named and --git-dir targets
+    for cmd in ('GIT_DIR="%s/.git" git push origin HEAD:main' % spaced,
+                'GIT_WORK_TREE="%s" GIT_DIR="%s/.git" git push origin main' % (spaced, spaced),
+                'git --git-dir="%s/.git" push origin main' % spaced,
+                'pushd "%s" && git push origin main' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": foreign}))
+        expect(p.returncode == 2 and "inventory.jsonl missing" in p.stderr, "%s denied from foreign cwd" % cmd.replace(spaced, "<opted repo>"))
+    p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
+        {"session_id": "selftest", "tool_name": "Bash",
+         "tool_input": {"command": 'GIT_DIR="%s/.git" gh pr merge 5 --admin' % spaced}, "cwd": foreign}))
+    expect(p.returncode == 0, "GIT_DIR-prefixed PR merge into an opted-in repo allowed")
+    # Round 2: a work tree alone does not pick the pushed repository; from a plain
+    # checkout these push the plain repo and stay allowed.
+    for cmd in ('GIT_WORK_TREE="%s" git push origin main' % spaced,
+                'git --work-tree="%s" push origin main' % spaced,
+                'GIT_WORK_TREE="%s" gh pr merge 5 --admin' % spaced):
+        p = sh('python3 "%s" hook' % GATE, cwd=spaced_plain, inp=json.dumps(
+            {"session_id": "selftest", "tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": spaced_plain}))
+        expect(p.returncode == 0, "%s from a plain checkout allowed" % cmd.replace(spaced, "<opted repo>"))
     esc_plain = spaced_plain.replace(" ", "\\ ")
     p = sh('python3 "%s" hook' % GATE, cwd=foreign, inp=json.dumps(
         {"session_id": "selftest", "tool_name": "Bash",
@@ -1269,7 +3294,8 @@ def selftest():
                    "prerequisites": {"verified": True, "evidence": "shot", "items": []},
                    "journey": {"walked": True, "same_actor": True, "same_surface": True, "evidence": "shot",
                                "steps": [{"page": "Login", "control": "Submit", "surface": "Web",
-                                          "observed": True, "evidence": "shot"}]},
+                                          "observed": True, "expected": {"value": "Submit button is shown", "source": "selftest acceptance criterion"},
+                                          "actual": "Submit button is shown", "match": True, "evidence": "shot"}]},
                    "terminal": {"status": "passed", "evidence": "shot"}}, fh)
     commit_qa(r1)  # v3: evidence must be committed; head is a .qa-only commit over sha1
     p = hookrun(r1, "git push origin main")
@@ -1378,6 +3404,8 @@ def selftest():
     expect("no verdict" not in p.stderr, "real gate verdict restored after removing the noop override")
 
     # ---------------- pre-push template: real pushes to a bare remote ----------------
+    # The push repos run a copy of this file from .qa/bin, which finds no e2e gate beside it and would fall back to
+    # the host's installed skill; their configs name this run's own gate, so the selftest needs nothing installed.
     bare = os.path.join(tmp, "remote.git")
     sh("git init -q --bare -b main %s" % bare)
     r4 = os.path.join(tmp, "pushrepo")
@@ -1387,7 +3415,7 @@ def selftest():
     sh("git remote add origin %s && git remote set-head origin main" % bare, cwd=r4)
     os.makedirs(os.path.join(r4, ".qa", "bin"))
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "protected_branches": ["dev", "main"]},
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
               open(os.path.join(r4, ".qa", "config.json"), "w"))
     open(os.path.join(r4, "f.txt"), "w").write("x")
     sh("git add -A && git commit -qm init", cwd=r4)
@@ -1491,32 +3519,116 @@ def selftest():
     p = hookrun(r3, "git --no-pager push origin main")
     expect(p.returncode == 2, "v2: flag-before-subcommand push DENIED")
 
-    # merges: freshness against the PR head SHA (fake gh on PATH)
+    # Card 16 batch lifecycle: fix PRs merge freely into a non-protected batch
+    # branch; only the batch merge to a protected branch needs closed inventory
+    # and one rewalk at the batch head.
+    binp = os.path.join(tmp, "bin")
+    os.makedirs(binp, exist_ok=True)
+    base_file, head_file = os.path.join(tmp, "pr-base"), os.path.join(tmp, "pr-head")
+    fake = os.path.join(binp, "gh")
+    open(fake, "w").write("#!/bin/sh\ncase \"$*\" in *baseRefName,headRefOid*) printf '%%s\\t%%s\\n' \"$(tr -d '\\n' < %s)\" \"$(tr -d '\\n' < %s)\";; *) exit 1;; esac\n"
+                           % (base_file, head_file))
+    os.chmod(fake, 0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = binp + os.pathsep + old_path
+
+    open_head = sh("git rev-parse HEAD", cwd=r3).stdout.strip()
+    open(base_file, "w").write("qa/batch-card16\n")
+    open(head_file, "w").write(open_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:qa/batch-card16")
+    expect(p.returncode == 0,
+           "card16: push to non-protected batch base with open inventory ALLOWED")
+    open(base_file, "w").write("main\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: push to default protected base with open inventory DENIED")
+    open(base_file, "w").write("dev\n")
+    p = hookrun(r3, "git push origin HEAD:dev")
+    expect(p.returncode == 2 and "R2 still OPEN" in p.stderr,
+           "card16: push to configured protected dev base with open inventory DENIED")
+    p = hookrun(r3, "gh pr merge 22 --admin")
+    expect(p.returncode == 0,
+           "2026-10-06: gh pr merge --admin into a protected base with open inventory ALLOWED (merges are never gated)")
+    p = hookrun(r3, "gh pr ready 22")
+    expect(p.returncode == 0, "2026-10-06: gh pr ready with open inventory ALLOWED (a draft cannot be merged)")
+
+    # Close the batch inventory and automate the one whole-workflow rewalk.
     lines = [json.loads(l) for l in open(os.path.join(qa3, "inventory.jsonl"))]
     lines[1]["status"] = "closed"
     with open(os.path.join(qa3, "inventory.jsonl"), "w") as fh:
         fh.write("\n".join(json.dumps(l) for l in lines) + "\n")
-    doc = json.load(open(os.path.join(qa3, "clusters.json")))
-    doc["mapping"]["R2"] = "CL-1"
-    json.dump(doc, open(os.path.join(qa3, "clusters.json"), "w"))
-    binp = os.path.join(tmp, "bin")
-    os.makedirs(binp, exist_ok=True)
-    prhead = "f" * 40
-    fake = os.path.join(binp, "gh")
-    open(fake, "w").write("#!/bin/sh\ncase \"$*\" in *--json*) echo %s;; *) exit 1;; esac\n" % prhead)
-    os.chmod(fake, 0o755)
-    old_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = binp + os.pathsep + old_path
-    doc = json.load(open(os.path.join(qa3, "rewalk.json")))
-    doc["sha"] = sha3  # local HEAD, not the PR head: stale for the merge
-    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
+    clusters_doc = json.load(open(os.path.join(qa3, "clusters.json")))
+    clusters_doc["mapping"]["R2"] = "CL-1"
+    json.dump(clusters_doc, open(os.path.join(qa3, "clusters.json"), "w"))
+    open(os.path.join(qa3, "plan.md"), "w").write("# p\n- CL-1\n")
+    report_path = os.path.join(qa3, "playwright-report.json")
+    workflow_path = os.path.join(qa3, "workflow.json")
+
+    def playwright_report(status, annotation=True):
+        annotations = ([{"type": "qa-step", "description": "w1::s1"}] if annotation else [])
+        result = {"retry": 0, "status": status, "attachments": [
+            {"name": "trace", "contentType": "application/zip", "path": "artifacts/trace.zip"},
+            {"name": "screenshot", "contentType": "image/png", "path": "artifacts/screenshot.png"}]}
+        return {"suites": [{"title": "batch", "specs": [{"title": "s1", "tests": [
+            {"title": "s1 behavior", "annotations": annotations, "expectedStatus": "passed",
+             "status": "expected" if status == "passed" else "unexpected", "results": [result]}]}]}]}
+
+    def generate_rewalk(status, annotation, sha):
+        with open(report_path, "w") as fh:
+            json.dump(playwright_report(status, annotation), fh)
+        return subprocess.run(["python3", REWALK_CONVERTER, report_path, workflow_path,
+                               "--sha", sha, "--target", "https://preview.test",
+                               "--deployment-id", "dpl_card16", "--output", os.path.join(qa3, "rewalk.json")],
+                              cwd=r3, capture_output=True, text=True)
+
+    generated = generate_rewalk("passed", True, open_head)
+    pass_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
+    pass_evidence = pass_doc["steps"][0]["evidence"]
+    expect(generated.returncode == 0 and pass_doc["steps"][0]["verdict"] == "PASS"
+           and report_path in pass_evidence and "artifacts/trace.zip" in pass_evidence
+           and "artifacts/screenshot.png" in pass_evidence,
+           "card16: Playwright first-attempt pass records report and attachments")
+    pass_head = commit_qa(r3)
+    open(head_file, "w").write(pass_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(p.returncode == 0,
+           "card16: protected default-base push with closed inventory and fresh rewalk ALLOWED [%s]"
+           % p.stderr.strip()[:140])
+
+    failing = generate_rewalk("failed", True, pass_head)
+    fail_doc = json.load(open(os.path.join(qa3, "rewalk.json")))
+    fail_head = commit_qa(r3)
+    open(head_file, "w").write(fail_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(failing.returncode == 0 and fail_doc["steps"][0]["verdict"] == "FAIL"
+           and p.returncode == 2 and "verdict 'FAIL'" in p.stderr,
+           "card16: failing annotated Playwright test emits FAIL and protected push is DENIED")
     p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 2 and "shipped sha" in p.stderr, "v2: gh pr merge --admin with stale walk DENIED")
-    doc["sha"] = prhead
-    json.dump(doc, open(os.path.join(qa3, "rewalk.json"), "w"))
-    commit_qa(r3)
-    p = hookrun(r3, "gh pr merge 22 --admin")
-    expect(p.returncode == 0, "v2: gh pr merge with fresh walk at PR head ALLOWED [%s]" % p.stderr.strip()[:140])
+    expect(p.returncode == 0, "2026-10-06: gh pr merge with a FAIL rewalk ALLOWED (merges are never gated)")
+
+    unmapped = generate_rewalk("passed", False, fail_head)
+    no_auto = json.load(open(os.path.join(qa3, "rewalk.json")))
+    no_auto_head = commit_qa(r3)
+    open(head_file, "w").write(no_auto_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(unmapped.returncode == 0 and no_auto["steps"][0]["verdict"] == "NOT_AUTOMATED"
+           and p.returncode == 2 and "matching manual workflow_step evidence is required" in p.stderr,
+           "card16: unmapped step emits NOT_AUTOMATED and denies without manual evidence")
+
+    # Existing E2E packets clear the manual-only path only when they name the
+    # exact workflow step and provide the observed step evidence.
+    evidence_doc = json.load(open(os.path.join(qa3, "evidence.json")))
+    evidence_doc["journey"]["steps"][0]["workflow_step"] = "s1"
+    json.dump(evidence_doc, open(os.path.join(qa3, "evidence.json"), "w"))
+    manual_rewalk = json.load(open(os.path.join(qa3, "rewalk.json")))
+    manual_rewalk["sha"] = no_auto_head
+    json.dump(manual_rewalk, open(os.path.join(qa3, "rewalk.json"), "w"))
+    manual_head = commit_qa(r3)
+    open(head_file, "w").write(manual_head + "\n")
+    p = hookrun(r3, "git push origin HEAD:main")
+    expect(p.returncode == 0,
+           "card16: NOT_AUTOMATED clears with matching verified manual workflow evidence [%s]"
+           % p.stderr.strip()[:140])
     os.environ["PATH"] = old_path
 
     # non-opted-in repo: everything allowed, ships included
@@ -1529,8 +3641,8 @@ def selftest():
     segs = lambda c: command_segments(c)
     ok_classes = (
         segment_ship_kind(segs("git push origin main")[0], r3, cfgs_of(r3)) == "push"
-        and segment_ship_kind(segs("gh pr merge 22")[0], r3, cfgs_of(r3)) == "merge"
-        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) == "merge"
+        and segment_ship_kind(segs("gh pr merge 22 --admin")[0], r3, cfgs_of(r3)) is None
+        and segment_ship_kind(segs("gh pr ready 22")[0], r3, cfgs_of(r3)) is None
         and segment_ship_kind(segs("vercel deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("netlify deploy --prod")[0], r3, cfgs_of(r3)) == "deploy"
         and segment_ship_kind(segs("fly deploy")[0], r3, cfgs_of(r3)) == "deploy"
@@ -1538,6 +3650,134 @@ def selftest():
         and segment_ship_kind(segs('git commit -m "pre-push hook"')[0], r3, cfgs_of(r3)) is None
     )
     expect(ok_classes, "v2: every classification class matches a canonical sample (no dead patterns)")
+
+    # A backslash-newline is whitespace, not the end of a command; an escaped backslash before a
+    # newline still ends it (Hermes 2026-10-06, kit-never-block-pr-merge).
+    expect(join_continuations("git \\\n  -c core.x=y \\\n  push origin main") == "git   -c core.x=y   push origin main",
+           "continuation: backslash-newline joins the lines")
+    expect(join_continuations("git pu\\\nsh origin main") == "git push origin main",
+           "continuation: inside a word it joins the word, as /bin/sh does")
+    expect(join_continuations("echo a\\\\\ngit push") == "echo a\\\\\ngit push",
+           "continuation: an escaped backslash before a newline is not a continuation")
+    expect([s[0] for s in segs(join_continuations("echo a\\\\\ngit push"))] == ["echo", "git"],
+           "continuation: the command after an escaped backslash and newline is its own segment")
+    cont_payload = json.dumps({"tool_input": {"command": "git \\\n  -c core.x=y \\\n  push origin main"}})
+    expect(bool(coarse_ship(cont_payload)), "coarse_ship: a continued push in a payload is ship-shaped")
+    expect(bool(coarse_ship("git -c core.x=y push origin main")), "coarse_ship: options between git and push")
+    expect(not coarse_ship(json.dumps({"tool_input": {"command": "gh pr merge 1 \\\n --admin"}})),
+           "coarse_ship: a continued PR merge is not ship-shaped")
+    # A PR merge is never ship-shaped for what its quoted subject or body says, on every path, even
+    # beside other commands (Hermes 2026-10-06, kit-never-block-pr-merge); what else runs still counts.
+    merge_texts = ['gh pr merge 5 --subject "git \\\npush"', 'gh pr merge 5 --admin --subject "git push origin main"',
+                   "gh pr merge 5 --body 'run vercel --prod; git push --tags'", 'cd "/x y" && gh pr merge 5 -t "git push"',
+                   'GH_TOKEN=x gh pr merge 5 --subject "deploy --prod" 2>&1',
+                   "gh pr merge 5 --subject 'git push origin main' && echo done",
+                   'echo start; gh pr merge 5 -b "git push --tags"; echo done', 'gh pr merge 5 -t "git push" | tee log',
+                   """bash -c "gh pr merge 5 --subject 'git push origin main'" """,
+                   "env GH_TOKEN=x gh pr merge 5 -t 'vercel --prod'",
+                   # a comment never runs (Hermes 2026-10-06 r6)
+                   "gh pr merge 5 # && git push origin main", "gh pr merge 5 --admin # `git push origin main`",
+                   "gh pr merge 5 #; vercel --prod",
+                   # a line that starts with && || or | is a syntax error: nothing after it runs (Hermes r7);
+                   # a backslash inside a comment is part of the comment, not a continuation
+                   "gh pr merge 5 # comment \\\n&& git push origin main", "gh pr merge 5\n&& git push origin main",
+                   "gh pr merge 5\n  || git push origin main", "gh pr merge 5 # c \\\n&& echo \"$(git push origin main)\"",
+                   # a << in a comment or in quotes is text, not a heredoc (Hermes 2026-10-06 r8)
+                   "gh pr merge 5 # see <<notes \\\n&& git push origin main",
+                   "gh pr merge 5 --subject \"a <<b\"\n&& git push origin main",
+                   "gh pr merge 5 --subject 'a <<b'\n&& git push origin main",
+                   # a << quoted inside a substitution is text too (Hermes 2026-10-06 r9)
+                   "gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                   "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                   "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main",
+                   'gh pr merge 5 --subject "$(printf "%s" "<<")"\n&& git push origin main']
+    ship_texts = ['gh pr merge 5; git push origin main', 'gh pr merge 5 && git push origin main',
+                  'gh pr merge 5 | sh -c "git push origin main"', 'gh pr merge 5 --subject "$(git push origin main)"',
+                  'gh pr merge 5 --subject "`git push origin main`"', 'gh pr merge 5 \ngit push origin main',
+                  'git push origin main && gh pr merge 5', 'gh pr merge 5 --subject "x && git push origin main',
+                  'sh -c "git push origin main"', 'gh pr merge 5 & git push origin main', 'eval "git push origin main"',
+                  'bash -lc "cd /x && git push origin main"', 'X=$(git push origin main) gh pr merge 5',
+                  # a # inside a word, quoted or escaped starts no comment; a comment ends at the newline
+                  'gh pr merge 5 #x\ngit push origin main', 'echo a#b && git push origin main',
+                  'echo \\# && git push origin main', 'echo "#" && git push origin main',
+                  # an ordinary comment ends at the newline; a real continuation joins; a heredoc body is text
+                  'gh pr merge 5 # comment\ngit push origin main', 'gh pr merge 5 \\\n&& git push origin main',
+                  'gh pr merge 5 &&\ngit push origin main', 'cat <<EOF\n&& x\nEOF\ngit push origin main',
+                  'cat<<EOF\n&& x\nEOF\ngit push origin main', 'x=$(cat <<EOF\n&& y\nEOF\n)\ngit push origin main',
+                  'x="$(cat <<EOF\n&& y\nEOF\n)"\ngit push origin main', 'x="`cat <<EOF\n&& y\nEOF\n`"\ngit push origin main',
+                  # a heredoc body may hold a ) line: zsh reads past it and runs the push (bash and sh stop)
+                  'x=$(cat <<EOF\n)\n&& y\nEOF\n)\ngit push origin main',
+                  'x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main']
+    for c in merge_texts:
+        expect(not coarse_ship(json.dumps({"tool_input": {"command": c}})), "coarse_ship: %r is not ship-shaped" % c)
+        p = hookrun(r3, c)
+        expect(p.returncode == 0, "gate: %r ALLOWED in an opted-in repo [%s]" % (c, " ".join(p.stderr.split())[:100]))
+    for c in ship_texts:
+        expect(bool(coarse_ship(json.dumps({"tool_input": {"command": c}}))), "coarse_ship: %r is ship-shaped" % c)
+    expect(ship_view("gh pr merge 5 -t 'git push' && echo done") == " ;  ;  echo done",
+           "ship_view: a merge segment is dropped, the rest kept")
+    expect(ship_view('gh pr merge 5 --subject "unterminated') is None, "ship_view: unbalanced quotes can't be read")
+    expect(ship_view("gh pr merge 5 # && git push origin main") == "", "ship_view: a comment is dropped")
+    expect(command_segments("gh pr merge 5 # && git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a comment is not a segment")
+    expect(_substitutions("echo x # `git push`") == [], "substitutions: none inside a comment")
+    expect("push" not in (ship_view("gh pr merge 5 # c \\\n&& git push origin main") or "push"),
+           "ship_view: nothing after a line that starts with && runs")
+    expect(command_segments("gh pr merge 5 # c \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: nothing after a line that starts with && runs")
+    expect("push" not in (ship_view("gh pr merge 5 # see <<notes \\\n&& git push origin main") or "push"),
+           "ship_view: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments("gh pr merge 5 # see <<notes \\\n&& git push origin main") == [["gh", "pr", "merge", "5"]],
+           "command_segments: a << in a comment is no heredoc, so the line-start && still stops the shell")
+    expect(command_segments('gh pr merge 5 --subject "a <<b"\n&& git push origin main') ==
+           [["gh", "pr", "merge", "5", "--subject", "a <<b"]],
+           "command_segments: a quoted << is no heredoc")
+    for cmd in ("gh pr merge 5 --subject \"$(printf '<<')\"\n&& git push origin main",
+                "gh pr merge 5 --subject \"`printf '<<'`\"\n&& git push origin main",
+                "gh pr merge 5 --subject $(printf '<<')\n&& git push origin main"):
+        expect("push" not in (ship_view(cmd) or "push") and
+               not any(s[:2] == ["git", "push"] for s in command_segments(cmd)),
+               f"ship_view and command_segments: a << quoted inside a substitution is no heredoc: {cmd!r}")
+    for src, want in (('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main',
+                       'x=$(echo "$(cat \n)")\ngit push origin main'),
+                      ("cat <<-'E'\n\tbody\n\tE\nnext", "cat \nnext"), ('cat << "E O F"\nbody\nE O F\nnext', "cat \nnext"),
+                      ("a <<A; b <<B\n1\nA\n2\nB\nlast", "a ; b \nlast"), ("cat <<\\EOF\nbody\nEOF\nnext", "cat \nnext"),
+                      ("cat <<<word\nnext", None), ("echo $((1<<2))\nnext", None), ("(( x = 1 << 2 ))\nnext", None),
+                      ("echo $[1<<2]\nnext", None), ("echo ${x:-<<E }\nnext\nE", None),
+                      ("echo '<<x' \"<<y\" \\<<z # <<c\nnext", None)):
+        got = _strip_heredoc_bodies(src)
+        expect(got == (src if want is None else want) and _strip_heredoc_bodies(got) == got,
+               f"_strip_heredoc_bodies: removes each real operator, body and terminator, and nothing else: {src!r}")
+    # A heredoc it can't read exactly is unreadable, never guessed: shells disagree past these, and a wrong guess
+    # removed the lines they run (Hermes 2026-10-07, kit-never-block-pr-merge r11). Each runs the push in some shell.
+    push = "git push origin main"
+    for src in (f"x=$(cat <<E)\n{push}\nE", f'x="$(cat <<E)"\n{push}\nE', f"x=`cat <<E`\n{push}\nE",
+                f"x=$(cat <<A <<B)\n{push}\nA\nB", f"cat <<$(echo E)\nbody\n$(echo E)\n{push}",
+                f"cat <<`echo E`\nbody\n`echo E`\n{push}", f"cat <<$((1))\nbody\n$((1))\n{push}",
+                f"cat <<E$(x)F\nbody\nE$(x)F\n{push}", f"cat <<E(x)\nbody\nE(x)\n{push}", f"cat <<E)\nbody\nE)\n{push}",
+                f'cat <<$(echo "E")\nbody\n$(echo E)\n{push}', f"x=$(cat <<E\nbody\nE)\n{push}",
+                f"(cat <<E)\nbody\nE\n{push}", f"cat <<EOF\nnever ends\n{push}", f"cat << ;\n{push}", f"cat <<E"):
+        expect(_strip_heredoc_bodies(src) is None and ship_view(src) is None,
+               f"_strip_heredoc_bodies and ship_view: a heredoc not read exactly is unreadable: {src!r}")
+        expect(push not in src or any(s[:2] == ["git", "push"] for s in command_segments(src)),
+               f"command_segments: every line of an unreadable heredoc command is a segment: {src!r}")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments(f"echo ${{x:-<<E }}\n{push}\nE")),
+           "command_segments: a << inside ${...} is text, so the next line runs")
+    expect(["git", "push", "origin", "main"] in
+           command_segments('x=$(echo "$(cat <<EOF\n)")\n&& y\nEOF\n)")\ngit push origin main'),
+           "command_segments: a heredoc body cannot hide the push that follows it")
+    expect([_has_heredoc(s) for s in ("cat <<EOF", "cat<<EOF", "x=$(cat <<EOF\n)", 'x="$(cat <<EOF\n)"', "x=`cat <<E`",
+                                      'echo "$(echo "$(cat <<E)")"', "x=$(echo ok")] == [True] * 7,
+           "_has_heredoc: an unquoted << at any substitution depth is a heredoc, and so is an unbalanced substitution")
+    expect([_has_heredoc(s) for s in ("echo '<<'", 'echo "<<"', "echo \\<<x", "echo ok # <<x", '"$(printf \'<<\')"',
+                                      "\"`printf '<<'`\"", "$(echo ok # <<x\n)", "echo a#<b<c")] == [False] * 8,
+           "_has_heredoc: a << in quotes, escaped or in a comment is text, also inside a substitution")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat<<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc operator with no space still makes its body text")
+    expect(any(s[:2] == ["git", "push"] for s in command_segments("cat <<EOF\n&& x\nEOF\ngit push origin main")),
+           "command_segments: a heredoc body line that starts with && does not hide what follows")
+    expect(_substitutions("echo '$(git push)' \"`a`\" \"$(b \\\"c\\\")\"") == ["a", 'b \\"c\\"'],
+           "substitutions: none inside single quotes; backticks and $() inside double quotes")
 
     # ---------------- v3: per-run namespacing (change request) ----------------
     # Contract: evidence ships as .qa-only artifacts commits over the walked
@@ -1569,7 +3809,8 @@ def selftest():
     sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r5)
     os.makedirs(os.path.join(r5, ".qa"))
     json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
-               "protected_branches": ["dev", "main"]}, open(os.path.join(r5, ".qa", "config.json"), "w"))
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
+              open(os.path.join(r5, ".qa", "config.json"), "w"))
     open(os.path.join(r5, "f.txt"), "w").write("x")
     sh("git add -A && git commit -qm base", cwd=r5)  # opt-in committed with the base
     sh("echo a >> f.txt && git add -A && git commit -qm codeA", cwd=r5)
@@ -1713,8 +3954,969 @@ def selftest():
     expect(p.returncode != 0 and ("no QA run" in p.stderr or "missing" in p.stderr),
            "v3 case10: hook+config+bin with no pipeline denies")
 
+    # ---------------- v4 (card 6): what else ships ----------------
+    # Self-contained and subprocess-only, so the same cases run against any
+    # gate/template pair: `selftest --gate <ship-gate.py> --templates <dir>`
+    # replays them against an older release (the before-run of card 6).
+    V4GATE = os.path.abspath(v4_gate or GATE)
+    V4TMPL = os.path.abspath(v4_templates or os.path.join(SKILL_DIR, "..", "templates"))
+    print("-- v4 cases against gate %s, templates %s" % (V4GATE, V4TMPL))
+
+    def hook4(root, command):
+        payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
+                              "tool_input": {"command": command}, "cwd": root})
+        return subprocess.run(["python3", V4GATE, "hook"], cwd=root, input=payload, capture_output=True,
+                              text=True, env=dict(os.environ, QA_GATE_NO_GH="1"))
+
+    def deny4(root, command, name):
+        p = hook4(root, command)
+        expect(p.returncode == 2 and "qa-ship-gate" in p.stderr, "v4 DENY  %s" % name)
+        return p
+
+    def allow4(root, command, name):
+        p = hook4(root, command)
+        expect(p.returncode == 0, "v4 ALLOW %s [%s]" % (name, " ".join(p.stderr.split())[:100]))
+        return p
+
+    # r9: base(opt-in) -> codeW -> W (.qa-only run at codeW) = main, vgood
+    #                            -> codeU (unwalked) = feat = HEAD, vbad
+    r9 = os.path.join(tmp, "v4repo")
+    os.makedirs(r9)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r9)
+    os.makedirs(os.path.join(r9, ".qa"))
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "protected_branches": ["dev", "main"], "e2e_evidence_gate": E2E_GATE},
+              open(os.path.join(r9, ".qa", "config.json"), "w"))
+    open(os.path.join(r9, "f.txt"), "w").write("x\n")
+    sh("git add -A && git commit -qm base && echo w >> f.txt && git commit -qam codeW", cwd=r9)
+    codeW = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    write_run(r9, "w", codeW)
+    sh("git add .qa && git commit -qm evidence-w -- .qa && git tag vgood", cwd=r9)
+    shaW = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    sh("git checkout -q -b feat && echo u >> f.txt && git commit -qam codeU && git tag vbad", cwd=r9)
+    codeU = sh("git rev-parse HEAD", cwd=r9).stdout.strip()
+    open(os.path.join(r9, "prod-body.json"), "w").write(json.dumps(
+        {"name": "app", "target": "production", "gitSource": {"type": "github", "sha": codeU}}))
+    open(os.path.join(r9, "preview-body.json"), "w").write(json.dumps(
+        {"name": "app", "target": "preview", "gitSource": {"type": "github", "sha": codeU}}))
+    p = sh('python3 "%s" check --repo %s --sha %s' % (GATE, r9, shaW), cwd=r9)
+    expect(p.returncode == 0, "v4 fixture: the walked commit W passes check [%s]" % " ".join(p.stdout.split())[:100])
+
+    # tags ship the tagged commit
+    deny4(r9, "git push origin vbad", "tag push at an unwalked commit")
+    deny4(r9, "git push origin refs/tags/vbad", "refs/tags/... refspec push")
+    deny4(r9, "git push origin tag vbad", "`git push origin tag <name>`")
+    deny4(r9, "git push --tags", "git push --tags (hook checks HEAD; pre-push checks each tag)")
+    deny4(r9, "git push --follow-tags origin feat", "git push --follow-tags")
+    # A push inside a command substitution runs, quoted or not, so the gate sees it.
+    for c in ('echo "$(git push origin vbad)"', "echo `git push origin vbad`", 'echo "`git push origin vbad`"',
+              'gh pr merge 5 --subject "$(git push origin vbad)"', 'echo "x $(echo "$(git push origin vbad)")"'):
+        deny4(r9, c, "a push in a substitution: %s" % c)
+    allow4(r9, "echo '$(git push origin vbad)'", "a substitution inside single quotes is text")
+    allow4(r9, 'gh pr merge 5 --subject "git push origin vbad"', "a merge whose subject names a push")
+    allow4(r9, "gh pr merge 5 # && git push origin vbad", "a push inside a comment never runs")
+    deny4(r9, "gh pr merge 5 #x\ngit push origin vbad", "a push on the line after a comment")
+    allow4(r9, "gh pr merge 5 # c \\\n&& git push origin vbad", "a comment's backslash is no continuation")
+    deny4(r9, "gh pr merge 5 \\\n&& git push origin vbad", "a real continuation before && still pushes")
+    allow4(r9, "git push origin vgood", "tag push at a walked commit (tagged commit checked, not HEAD)")
+    deny4(r9, "git push origin vgood HEAD:dev", "walked tag next to an unwalked protected push")
+    # releases and dispatches check the commit they publish
+    deny4(r9, "gh release create vbad", "gh release create of an unwalked tag")
+    deny4(r9, "gh release create -t 'Release title' --notes n vbad", "gh release create with value flags first")
+    deny4(r9, "gh release create v9 --target feat", "gh release create --target <unwalked branch>")
+    allow4(r9, "gh release create vgood", "gh release create of a walked tag")
+    deny4(r9, "gh workflow run deploy.yaml --ref feat", "gh workflow run on an unwalked ref")
+    allow4(r9, "gh workflow run deploy.yaml", "gh workflow run on the default branch at a walked commit")
+    allow4(r9, "gh run watch 1", "gh run watch (not a dispatch)")
+    # vercel CLI
+    deny4(r9, "vercel redeploy dpl_abc", "vercel redeploy")
+    deny4(r9, "vercel promote app-x.vercel.app", "vercel promote (covered since v2)")
+    deny4(r9, "vercel deploy --target production", "vercel deploy --target production")
+    deny4(r9, "npx vercel@latest --prod", "npx vercel@latest --prod")
+    deny4(r9, "VERCEL_ORG_ID=team_x vercel --prod", "env-prefixed vercel --prod")
+    allow4(r9, "vercel deploy", "vercel deploy (preview)")
+    allow4(r9, "vercel rollback", "vercel rollback (incident recovery stays free)")
+    # deployments API: production gated, previews free (preview-heal shape)
+    allow4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input preview-body.json --raw',
+           "vercel api POST building a PREVIEW (preview heal, body file)")
+    deny4(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json --raw',
+          "vercel api POST, PRODUCTION body file (autoheal shape)")
+    deny4(r9, "vercel api /v13/deployments -F target=production -F name=app",
+          "vercel api fields imply POST, target=production")
+    allow4(r9, "vercel api '/v6/deployments?target=production' -d", "vercel api GET list (-d is --debug)")
+    deny4(r9, "curl -X POST https://api.vercel.com/v13/deployments -H 'Authorization: Bearer t' "
+              "-d '{\"name\":\"app\",\"target\":\"production\"}'", "curl POST inline production body")
+    deny4(r9, "curl -sS -XPOST https://api.vercel.com/v13/deployments -d @prod-body.json",
+          "curl POST production body file")
+    allow4(r9, "curl -X POST https://api.vercel.com/v13/deployments -d '{\"target\": \"preview\"}'",
+           "curl POST preview body")
+    allow4(r9, "curl 'https://api.vercel.com/v13/deployments?target=production&limit=1'",
+           "curl GET list with a production filter")
+    deny4(r9, "cat > body-later.json <<'EOF'\n{\"target\": \"production\"}\nEOF\n"
+              "vercel api /v13/deployments -X POST --input body-later.json",
+          "heredoc-built production body (file absent at hook time)")
+    deny4(r9, "curl -X POST https://api.vercel.com/v10/projects/prj_1/promote/dpl_1", "promote API POST")
+    # pushes: sources, wrappers, multi-line
+    allow4(r9, "git push origin feat", "feature-branch push")
+    allow4(r9, "git push origin main", "protected push of local main (walked) while HEAD is not")
+    deny4(r9, "git push origin feat:main", "feat:main ships the unwalked source")
+    deny4(r9, "git push origin +feat:dev", "forced refspec +feat:dev")
+    deny4(r9, "git status\ngit push origin HEAD:dev", "ship on the second line of a multi-line command")
+    deny4(r9, "GH_TOKEN=x git push origin HEAD:main", "env-prefixed protected push")
+    allow4(r9, "GH_TOKEN=x gh pr ready 5", "env-prefixed gh pr ready (PR commands are never gated)")
+    allow4(r9, "GH_TOKEN=x gh pr merge 5 --admin", "env-prefixed gh pr merge (merges are never gated)")
+    sh("git checkout -q -b dev", cwd=r9)
+    deny4(r9, "git push origin HEAD", "git push origin HEAD while on a protected branch")
+    deny4(r9, "git push origin +dev", "forced +dev")
+    sh("git checkout -q feat && git branch -q -D dev", cwd=r9)
+
+    # tree equivalence (coordinator decision): commits built from tree hashes
+    # with no parent link to the walk, as a squash merge on main would be.
+    #   S  = W's exact tree (identical-tree squash)          -> vsquash
+    #   S2 = W's tree plus .qa/notes.md (differs under .qa)  -> vqaonly
+    #   M  = W's tree plus f2.txt, parents base+W (a merge bringing in other code) -> vmerge
+    base9 = sh("git rev-list --max-parents=0 HEAD", cwd=r9).stdout.strip()
+
+    def tree_with(extra_path, content):
+        idx = os.path.join(tmp, "v4-index")
+        env = "GIT_INDEX_FILE=%s" % idx
+        blob = sh("printf '%s' | git hash-object -w --stdin" % content, cwd=r9).stdout.strip()
+        sh("%s git read-tree %s && %s git update-index --add --cacheinfo 100644,%s,%s"
+           % (env, shaW, env, blob, extra_path), cwd=r9)
+        tree = sh("%s git write-tree" % env, cwd=r9).stdout.strip()
+        os.remove(idx)
+        return tree
+
+    shaS = sh("git commit-tree %s^{tree} -p %s -m squash" % (shaW, base9), cwd=r9).stdout.strip()
+    shaS2 = sh("git commit-tree %s -p %s -m squash-qa" % (tree_with(".qa/notes.md", "n"), base9),
+               cwd=r9).stdout.strip()
+    shaM = sh("git commit-tree %s -p %s -p %s -m merge" % (tree_with("f2.txt", "other"), base9, shaW),
+              cwd=r9).stdout.strip()
+    sh("git tag vsquash %s && git tag vqaonly %s && git tag vmerge %s && git branch sq %s"
+       % (shaS, shaS2, shaM, shaS), cwd=r9)
+    allow4(r9, "git push origin vsquash", "tree-equiv: tag on an identical-tree squash commit")
+    allow4(r9, "git push origin vqaonly", "tree-equiv: tag on a commit differing from the walk only under .qa/")
+    deny4(r9, "git push origin vmerge", "tree-equiv: tag on a merge commit that brings in other changes")
+    allow4(r9, "gh release create vsquash", "tree-equiv: release of the identical-tree squash commit")
+    deny4(r9, "gh release create vmerge", "tree-equiv: release of the merge commit with other changes")
+    deny4(r9, "git push origin vsquash:dev", "tree-equiv is NOT applied to protected pushes")
+    deny4(r9, "git push origin vsquash sq:dev", "same commit as tag and protected push: strict wins")
+    deny4(r9, "gh workflow run deploy.yaml --ref sq", "tree-equiv is NOT applied to a non-default dispatch")
+    sh("git branch -f main %s" % shaS, cwd=r9)
+    allow4(r9, "gh workflow run deploy.yaml", "tree-equiv: default-branch dispatch on the squash commit")
+    sh("git branch -f main %s" % shaM, cwd=r9)
+    deny4(r9, "gh workflow run deploy.yaml", "tree-equiv: default-branch dispatch on the merge commit")
+    sh("git branch -f main %s && git branch -q -D sq" % shaW, cwd=r9)
+    sh("git checkout -q -b rel %s && git config branch.rel.remote origin && "
+       "git config branch.rel.merge refs/heads/main" % shaS, cwd=r9)
+    deny4(r9, "git push --follow-tags", "tags pushed along a protected upstream push: strict")
+    sh("git checkout -q feat && git branch -q -D rel", cwd=r9)
+
+    # ---------------- v5 (card 11): deployment provenance ----------------
+    # Deny cases run with HEAD on main = W (walked), where the v4 gate
+    # checked only HEAD and so allowed them; allow cases run with HEAD on the
+    # unwalked feat, where v4 denied them. Every one of them flips between
+    # 77b8d56 and v5, except the controls marked "control".
+    def hook5(root, command, env=None, fixture_timeout=True):
+        payload = json.dumps({"session_id": "selftest", "tool_name": "Bash",
+                              "tool_input": {"command": command}, "cwd": root})
+        child_env = dict(os.environ, QA_GATE_NO_GH="1", **(env or {}))
+        child_env.pop("QA_GATE_SELFTEST", None)
+        child_env.pop("QA_GATE_SELFTEST_LOOKUP_BUDGET_S", None)
+        args = ["python3", V4GATE, "hook"]
+        if fixture_timeout:
+            args.append("--selftest-fixture")
+        return subprocess.run(args, cwd=root, input=payload, capture_output=True,
+                              text=True, env=child_env)
+
+    def deny5(root, command, name, why, env=None):
+        p = hook5(root, command, env)
+        expect(p.returncode == 2 and "qa-ship-gate" in p.stderr and why in p.stderr,
+               "v5 DENY  %s [%s]" % (name, " ".join(p.stderr.split())[-110:]))
+
+    def allow5(root, command, name):
+        p = hook5(root, command)
+        expect(p.returncode == 0, "v5 ALLOW %s [%s]" % (name, " ".join(p.stderr.split())[:100]))
+
+    def git_dep(sha, **meta):
+        return {"id": "dpl_x", "target": "production", "meta": meta,
+                "gitSource": {"type": "github", "ref": "main", "sha": sha}}
+
+    json.dump({
+        "dpl_walked": git_dep(codeW, githubCommitSha=codeW),
+        "app-walked.vercel.app": git_dep(codeW, githubCommitSha=codeW),
+        "dpl_walkedqa": git_dep(shaW, githubCommitSha=shaW),
+        "dpl_squash": git_dep(shaS),
+        "dpl_unwalked": git_dep(codeU, githubCommitSha=codeU),
+        "dpl_foreign": git_dep("ab" * 20),
+        "dpl_nogit": {"id": "dpl_nogit", "target": "production", "meta": {}},
+        "dpl_dirty": git_dep(codeW, githubCommitSha=codeW, gitDirty="1"),
+        "dpl_mismatch": git_dep(codeW, githubCommitSha=codeU),
+    }, open(os.path.join(stub_bin, "deployments.json"), "w"))
+    os.makedirs(os.path.join(r9, ".vercel"))
+    json.dump({"orgId": "team_fx", "projectId": "prj_1"}, open(os.path.join(r9, ".vercel", "project.json"), "w"))
+    open(os.path.join(r9, "prod-body-w.json"), "w").write(json.dumps(
+        {"name": "app", "target": "production", "gitSource": {"type": "github", "sha": codeW}}))
+    with open(os.path.join(r9, ".git", "info", "exclude"), "a") as fh:
+        fh.write("/.vercel/\n/prod-body.json\n/preview-body.json\n/prod-body-w.json\n")
+    no_vercel = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep)
+                                if d and not os.path.isfile(os.path.join(d, "vercel")))
+    U = codeU[:12]
+    sh("git checkout -q main", cwd=r9)  # HEAD = W, walked
+    deny5(r9, "vercel promote dpl_unwalked", "walked HEAD A cannot promote unwalked deployment B", U)
+    deny5(r9, "vercel redeploy dpl_unwalked", "walked HEAD cannot redeploy unwalked deployment", U)
+    deny5(r9, "vercel --scope team_fx promote dpl_unwalked", "global flag before the subcommand", U)
+    deny5(r9, "curl -X POST 'https://api.vercel.com/v10/projects/prj_1/promote/dpl_unwalked?teamId=team_fx'",
+          "promote API (curl) of an unwalked deployment", U)
+    deny5(r9, "vercel api /v10/projects/prj_1/promote/dpl_unwalked -X POST",
+          "promote API (vercel api, scope from .vercel/project.json)", U)
+    deny5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body.json',
+          "production API create whose gitSource is unwalked", U)
+    deny5(r9, "vercel alias set dpl_unwalked app.example.com", "vercel alias set to an unwalked deployment", U)
+    # 2026-10-16: file edits carry content, never a ship. A patch adding an offline fixture that
+    # mentions an alias command must pass; a heredoc patch followed by a real ship must not.
+    patch_body = ("*** Begin Patch\n*** Update File: scripts/ci/deploy.test.mjs\n@@\n"
+                  "+  expect(cmd).toBe('vercel alias set dpl_unknown claramente.club');\n*** End Patch")
+    for tool, inp in (("apply_patch", {"input": patch_body}), ("apply_patch", {"command": patch_body}),
+                      ("Edit", {"command": "vercel alias set dpl_unknown app.example.com"}),
+                      ("Write", {"command": "vercel promote dpl_unknown"})):
+        p = subprocess.run(["python3", V4GATE, "hook", "--selftest-fixture"], cwd=r9, capture_output=True, text=True,
+                           input=json.dumps({"session_id": "selftest", "tool_name": tool, "tool_input": inp, "cwd": r9}),
+                           env=dict(os.environ, QA_GATE_NO_GH="1"))
+        expect(p.returncode == 0, "v5 ALLOW file edit via %s %s [%s]" % (tool, sorted(inp), " ".join(p.stderr.split())[:100]))
+    allow5(r9, "apply_patch <<'EOF'\n%s\nEOF" % patch_body, "apply_patch heredoc mentioning an alias command")
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com" % patch_body,
+          "apply_patch heredoc followed by a real alias", U)
+    deny5(r9, "vercel alias set dpl_unwalked app.example.com && apply_patch <<'EOF'\n%s\nEOF" % patch_body,
+          "real alias before an apply_patch heredoc", U)
+    # Only a quoted heredoc is literal. Unquoted, the shell expands $(...) before apply_patch runs; and
+    # the heredoc ends at its first closing line, so a later line runs as a command.
+    deny5(r9, "apply_patch <<EOF\n%s\n$(vercel alias set dpl_unwalked app.example.com)\nEOF" % patch_body,
+          "unquoted apply_patch heredoc with a command substitution", U)
+    deny5(r9, "apply_patch <<-EOF\n%s\n`vercel alias set dpl_unwalked app.example.com`\nEOF" % patch_body,
+          "unquoted <<- apply_patch heredoc with a backtick substitution", U)
+    deny5(r9, "apply_patch <<'EOF'\n%s\nEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted apply_patch heredoc closed early, then a real alias", U)
+    deny5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF\nvercel alias set dpl_unwalked app.example.com\nEOF" % patch_body,
+          "quoted <<- heredoc closed early by a tab-indented delimiter, then a real alias", U)
+    deny5(r9, "%s\n$(vercel alias set dpl_unwalked app.example.com)" % patch_body,
+          "a bare patch body given to a shell", U)
+    allow5(r9, "apply_patch <<-'EOF'\n%s\n\tEOF" % patch_body, "quoted <<- apply_patch heredoc")
+    # Not only apply_patch: any unquoted heredoc body expands its substitutions, so they are scanned; a quoted
+    # one stays text, and a merge body with an unquoted heredoc is still a merge (merges are never gated).
+    deny5(r9, "cat <<EOF\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted cat heredoc with a command substitution", U)
+    deny5(r9, "cat > notes.txt <<\\EOF\nok\nEOF\ncat <<EOF\nbuilt `vercel promote dpl_unwalked`\nEOF",
+          "an unquoted heredoc after a quoted one, with a backtick substitution", U)
+    deny5(r9, "cat <<EOF\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+          "unquoted heredoc whose substitution a backslash-newline splits", U)
+    deny5(r9, "cat <<-EOF\n\t`\\\nvercel promote dpl_unwalked`\n\tEOF",
+          "unquoted <<- heredoc whose backtick substitution a continuation splits", U)
+    allow5(r9, "cat <<'EOF'\n$\\\n(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted heredoc: a backslash-newline stays text")
+    allow5(r9, "cat <<'EOF'\n$(vercel alias set dpl_unwalked app.example.com)\nEOF",
+           "quoted cat heredoc holding a substitution as text")
+    allow5(r9, "cat <<\\EOF\n`vercel promote dpl_unwalked`\nEOF", "backslash-quoted heredoc holding a backtick as text")
+    allow5(r9, 'gh pr merge 5 --squash --body "$(cat <<EOF\nships via git push origin main, built $(date)\nEOF\n)"',
+           "merge body: unquoted heredoc with $(date) and a push line")
+    deny5(r9, "vercel alias dpl_unwalked app.example.com", "vercel alias (no set) to an unwalked deployment", U)
+    deny5(r9, "vercel alias app.example.com", "vercel alias with the deployment left implicit",
+          "no deployment id")
+    deny5(r9, "curl -X POST 'https://api.vercel.com/v2/deployments/dpl_unwalked/aliases?teamId=team_fx' "
+              "-d '{\"alias\":\"app.example.com\"}'", "alias API on an unwalked deployment", U)
+    deny5(r9, "vercel api /v13/deployments -X POST -F name=app -F deploymentId=dpl_unwalked -F target=production",
+          "production API redeploy (deploymentId) of an unwalked deployment", U)
+    deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
+    deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
+    deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
+    expect(LOOKUP_BUDGET_S == 3.2, "v5: production provenance lookup budget remains 3.2 s")
+    p = hook5(r9, "vercel promote dpl_slow",
+              env={"QA_GATE_SELFTEST": "1", "QA_GATE_SELFTEST_LOOKUP_BUDGET_S": "30"},
+              fixture_timeout=False)
+    expect(p.returncode == 2 and "timed out after 3.2 s" in p.stderr,
+           "v5 DENY  production lookup budget times out the slow fake at 3.2 s [%s]"
+           % " ".join(p.stderr.split())[-110:])
+    deny5(r9, "vercel promote dpl_foreign", "source commit not in this clone", "not in this clone")
+    deny5(r9, "vercel promote dpl_nogit", "deployment without git metadata", "no git provenance")
+    deny5(r9, "vercel promote dpl_dirty", "deployment built from a dirty tree", "uncommitted changes")
+    deny5(r9, "vercel promote dpl_mismatch", "gitSource and meta disagree", "conflicting source commits")
+    deny5(r9, "vercel promote", "promote with no deployment named", "no deployment id")
+    deny5(r9, "vercel promote dpl_walked --scope team_other", "explicit scope that cannot see it",
+          "provenance lookup failed")
+    deny5(r9, "vercel promote dpl_walked", "vercel CLI missing from the hook PATH", "not on the hook's PATH",
+          env={"PATH": no_vercel})
+    deny5(r9, "gh release edit vbad --draft=false", "gh release edit publishing an unwalked tag", U)
+    deny5(r9, "gh release edit vbad --draft=0", "gh release edit --draft=0 (pflag false)", U)
+    deny5(r9, "gh release edit vgood --draft=false --tag vbad", "gh release edit moving to an unwalked tag", U)
+    deny5(r9, "gh release edit vnope --draft=false", "gh release edit of a tag not in the clone",
+          "not in this clone")
+    gw = "GitHub API write"
+    allow5(r9, "gh api -X PUT repos/o/r/pulls/5/merge", "gh api PR merge (merges are never gated)")
+    deny5(r9, "gh api repos/{owner}/{repo}/releases -f tag_name=v9", "gh api release create (fields imply POST)", gw)
+    deny5(r9, "gh api -X PATCH repos/o/r/releases/123 -F draft=false", "gh api release publish", gw)
+    deny5(r9, "gh api repos/o/r/git/refs -f ref=refs/tags/v9 -f sha=abc", "gh api ref create", gw)
+    deny5(r9, "gh api -XPOST repos/o/r/actions/workflows/deploy.yml/dispatches -f ref=main",
+          "gh api workflow dispatch", gw)
+    deny5(r9, "gh api repos/o/r/merges -f base=main -f head=feat", "gh api branch merge", gw)
+    deny5(r9, "gh api -X PUT repos/o/r/contents/f.txt -f message=m -f content=eA==", "gh api contents commit", gw)
+    allow5(r9, "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) "
+               "{ clientMutationId } }'", "gh api graphql mergePullRequest (merges are never gated)")
+    allow5(r9, "curl -X PUT https://api.github.com/repos/o/r/pulls/5/merge -H 'Authorization: token t'",
+           "curl PR merge (merges are never gated)")
+    deny5(r9, "curl -d '{\"tag_name\":\"v9\"}' https://api.github.com/repos/o/r/releases", "curl release create", gw)
+    allow5(r9, "vercel --prod", "control: upload deploy of a clean walked HEAD")
+    with open(os.path.join(r9, "f.txt"), "a") as fh:
+        fh.write("dirty\n")
+    deny5(r9, "vercel --prod", "upload deploy of a walked HEAD with uncommitted code", "uploads the working tree")
+    sh("git checkout -q -- f.txt", cwd=r9)
+    sh("git checkout -q feat", cwd=r9)  # HEAD = U, unwalked
+    allow5(r9, "vercel promote dpl_walked", "deployment built from the walked commit, HEAD unwalked")
+    allow5(r9, "vercel promote dpl_walkedqa", "deployment built from the .qa commit on top of the walk")
+    allow5(r9, "vercel promote dpl_squash", "deployment whose source tree equals the walked tree")
+    allow5(r9, "vercel redeploy https://app-walked.vercel.app", "redeploy by URL of a walked deployment")
+    allow5(r9, "curl -X POST 'https://api.vercel.com/v10/projects/prj_1/promote/dpl_walked?teamId=team_fx'",
+           "promote API of a walked deployment")
+    allow5(r9, 'vercel api "/v13/deployments?teamId=team_x" -X POST --input prod-body-w.json',
+           "production API create whose gitSource is walked")
+    allow5(r9, "vercel promote status", "vercel promote status (read-only)")
+    allow5(r9, "vercel alias set dpl_walked app.example.com", "vercel alias set to a walked deployment")
+    allow5(r9, "vercel api /v13/deployments -X POST -F name=app -F deploymentId=dpl_walked -F target=production",
+           "production API redeploy (deploymentId) of a walked deployment")
+    allow5(r9, "vercel alias ls", "control: vercel alias ls (read-only)")
+    allow5(r9, "gh api repos/o/r/releases", "control: gh api release list (GET)")
+    allow5(r9, "gh api repos/o/r/pulls/5/merge", "control: gh api is-merged check (GET)")
+    allow5(r9, "gh api graphql -f query='query { viewer { login } }'", "control: gh api graphql query")
+    allow5(r9, "gh api -X DELETE repos/o/r/git/refs/heads/old", "control: gh api branch delete")
+    allow5(r9, "curl https://api.github.com/repos/o/r/releases", "control: curl GitHub GET")
+
+    # the decision must land inside the host's hook timeout (a timed-out hook
+    # lets the command run): a 2.5 s lookup followed by a deployed_check that
+    # hangs for 10 s must still deny in time. HOOK_T0 leaves the gate 4.2 s of
+    # its chain budget, the window these two cases were written for, so their
+    # bounds do not depend on how fast this host is.
+    def t0_left(seconds):
+        return {"HOOK_T0": "%.3f" % (time.time() - (HOOK_HARD_S - seconds))}
+    r12 = os.path.join(tmp, "v5budget")
+    os.makedirs(os.path.join(r12, ".qa"))
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r12)
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "deployed_check": {"command": "sleep 10", "timeout_s": 10}},
+              open(os.path.join(r12, ".qa", "config.json"), "w"))
+    open(os.path.join(r12, "f.txt"), "w").write("x\n")
+    sh("git add -A && git commit -qm base", cwd=r12)
+    code12 = sh("git rev-parse HEAD", cwd=r12).stdout.strip()
+    write_run(r12, "w", code12)
+    sh("git add .qa && git commit -qm evidence -- .qa", cwd=r12)
+    os.makedirs(os.path.join(r12, ".vercel"))
+    json.dump({"orgId": "team_fx"}, open(os.path.join(r12, ".vercel", "project.json"), "w"))
+    fx = json.load(open(os.path.join(stub_bin, "deployments.json")))
+    fx["dpl_budget"] = dict(git_dep(code12), _sleep=2.5)
+    json.dump(fx, open(os.path.join(stub_bin, "deployments.json"), "w"))
+    t0 = time.monotonic()
+    p = hook5(r12, "vercel promote dpl_budget", env=t0_left(4.2))
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and took < 4.8,
+           "v5 DENY  slow lookup + hanging deployed_check decides in %.1f s (< 4.8 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
+    # hard deadline: work no soft clamp bounds (every git call 0.3 s slower,
+    # as on a loaded host) must still end in a deny before the host timeout
+    slow_git = os.path.join(tmp, "slow-git")
+    os.makedirs(slow_git)
+    with open(os.path.join(slow_git, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nsleep 0.3\nexec %s \"$@\"\n" % shutil.which("git"))
+    os.chmod(os.path.join(slow_git, "git"), 0o755)
+    sh("git checkout -q main", cwd=r9)
+    t0 = time.monotonic()
+    p = hook5(r9, "git push origin main", env=dict(t0_left(4.2), PATH=slow_git + os.pathsep + os.environ["PATH"]))
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and "could not finish within" in p.stderr and took < 4.8,
+           "v5 DENY  slow host: hard deadline denies a normally allowed push in %.1f s (< 4.8 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
+    # T1: the clock starts with the hook chain (HOOK_T0), not with this
+    # process. A chain that already spent its budget before the gate started
+    # (slow interpreter start, an earlier stage) denies a ship at once and
+    # still allows everything else; a T0 in the future buys no extra time.
+    spent = {"HOOK_T0": "%.3f" % (time.time() - HOOK_HARD_S - 1)}
+    t0 = time.monotonic()
+    p = hook5(r9, "git push origin main", env=spent)
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and "could not finish within" in p.stderr and took < 2.0,
+           "T1 DENY  chain budget already spent: ship denied in %.2f s (< 2.0 s) [%s]"
+           % (took, " ".join(p.stderr.split())[-90:]))
+    p = hook5(r9, "ls -la", env=spent)
+    expect(p.returncode == 0, "T1 ALLOW chain budget already spent: a non-ship command is allowed")
+    os.environ["HOOK_T0"] = "%.3f" % (time.time() + 3600)
+    future = hook_elapsed()
+    os.environ["HOOK_T0"] = "not-a-time"
+    garbage = hook_elapsed()
+    os.environ.pop("HOOK_T0", None)
+    expect(future == 0.0 and garbage == 0.0 and hook_elapsed() == 0.0,
+           "T1 a future, unreadable or missing HOOK_T0 counts as 0 s spent (never extends the budget)")
+    expect(HOOK_HARD_S <= HOOK_HOST_TIMEOUT_S - 3.0 and HOOK_BUDGET_S < HOOK_HARD_S,
+           "T1 hard deadline leaves >= 3 s before the host timeout, soft budget before the hard one")
+    # T2: a repo's own ship_commands are ship-shaped at the hard deadline too. coarse_ship knows only the built-in
+    # shapes, so before custom_ship a `make ship-it` that ran out the clock was allowed. Ahead of the real pattern sit
+    # one the regex engine rejects (re.error), one nested deep enough to raise RecursionError, and a valid one that
+    # backtracks for minutes on a run of a's ending in "!": none may hide it, and none may hold the decision past the
+    # deadline.
+    unusable = ["(", "(" * 500 + "a" + ")" * 500, "(a+)+$"]
+    redos = "echo %s! && make ship-it" % ("a" * 30)
+    r13 = os.path.join(tmp, "custom-ship-deadline")
+    os.makedirs(os.path.join(r13, ".qa"))
+    sh("git init -q -b main && git config user.email t@t && git config user.name t", cwd=r13)
+    json.dump({"schema_version": 1, "personas": ["admin"], "workflows": [{"name": "w1"}],
+               "ship_commands": unusable + ["ship-it"]}, open(os.path.join(r13, ".qa", "config.json"), "w"))
+    sh("git add -A && git commit -qm base", cwd=r13)
+    p = hook5(r13, "make ship-it", env=spent)
+    expect(p.returncode == 2 and "could not finish within" in p.stderr,
+           "T2 DENY  chain budget already spent: a ship_commands match is denied [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    for bad in unusable:
+        expect(ship_plan("make ship-it", r13, {"ship_commands": [bad, "ship-it"]})[0] == "extra",
+               "T2 ship_plan: an unusable pattern (%s...) before a matching one does not hide the match" % bad[:3])
+    expect(ship_plan("make ship-it", r13, {"ship_commands": "ship-it"})[0] is None
+           and ship_plan("make ship-it", r13, ["ship-it"])[0] is None,
+           "T2 ship_plan: ship_commands that is not a list, or a config that is not an object, matches nothing")
+    p = hook5(r13, "make ship-it")
+    expect(p.returncode == 2 and "Ship denied in" in p.stderr,
+           "T2 DENY  normal git: an unwalked ship_commands match [%s]" % " ".join(p.stderr.split())[-90:])
+    p = hook5(r13, "make build", env=spent)
+    expect(p.returncode == 0, "T2 ALLOW chain budget already spent: a command no ship_commands entry matches")
+    hang_git = os.path.join(tmp, "hang-git")
+    os.makedirs(hang_git)
+    with open(os.path.join(hang_git, "git"), "w") as fh:
+        fh.write("#!/bin/sh\nsleep 5\nexec %s \"$@\"\n" % shutil.which("git"))
+    os.chmod(os.path.join(hang_git, "git"), 0o755)
+    p = hook5(r13, "make ship-it", env=dict(t0_left(1.5), PATH=hang_git + os.pathsep + os.environ["PATH"]))
+    expect(p.returncode == 2 and "could not finish within" in p.stderr,
+           "T2 DENY  git hanging past the hard deadline: a ship_commands match is denied [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    # a git that cannot start: the match is still a ship, and it denies
+    broken_git = os.path.join(tmp, "broken-git")
+    os.makedirs(broken_git)
+    with open(os.path.join(broken_git, "git"), "w") as fh:
+        fh.write("#!/nonexistent/interpreter\n")
+    os.chmod(os.path.join(broken_git, "git"), 0o755)
+    p = hook5(r13, "make ship-it", env={"PATH": broken_git + os.pathsep + os.environ["PATH"]})
+    expect(p.returncode == 2 and "qa-ship-gate" in p.stderr,
+           "T2 DENY  git cannot start: a ship_commands match is denied [%s]" % " ".join(p.stderr.split())[-90:])
+    p = hook5(r13, "make build", env={"PATH": broken_git + os.pathsep + os.environ["PATH"]})
+    expect(p.returncode == 0, "T2 ALLOW git cannot start: a command no ship_commands entry matches")
+    # a command that sets (a+)+$ backtracking: every path still decides, and in time
+    for name, env, why in (("normal git", lambda: None, "qa-ship-gate"),
+                           ("chain budget already spent", lambda: spent, "could not finish within"),
+                           ("git hanging past the hard deadline",  # T0 taken when this case starts, not before the loop
+                            lambda: dict(t0_left(3.0), PATH=hang_git + os.pathsep + os.environ["PATH"]),
+                            "could not finish within")):
+        t0 = time.monotonic()
+        p = hook5(r13, redos, env=env())
+        took = time.monotonic() - t0
+        expect(p.returncode == 2 and why in p.stderr and took < HOOK_HARD_S + 1,
+               "T2 DENY  backtracking pattern, %s: denied in %.1f s (< %.0f s) [%s]"
+               % (name, took, HOOK_HARD_S + 1, " ".join(p.stderr.split())[-90:]))
+    p = hook5(r13, "echo %s!" % ("a" * 30))
+    expect(p.returncode == 2 and "did not finish matching" in p.stderr,
+           "T2 DENY  a pattern that cannot finish matching counts as a ship (fail closed) [%s]"
+           % " ".join(p.stderr.split())[-90:])
+    t0 = time.monotonic()
+    hit = ship_commands_match({"ship_commands": ["(a+)+$"]}, "a" * 30 + "!", budget=0.3)
+    took = time.monotonic() - t0
+    expect(hit[0] and "did not finish matching" in (hit[1] or "") and took < 1.5,
+           "T2 ship_commands_match: a backtracking pattern is cut off at its budget (%.2f s)" % took)
+    expect(ship_commands_match({"ship_commands": ["ship-it"]}, "make build") == (False, None)
+           and ship_commands_match({"ship_commands": []}, "make ship-it") == (False, None),
+           "T2 ship_commands_match: no match, and no patterns, answer (False, None)")
+    real_fork = os.fork
+
+    def refused_fork():
+        raise BlockingIOError(35, "Resource temporarily unavailable")
+    os.fork = refused_fork
+    try:
+        refused = ship_commands_match({"ship_commands": ["ship-it"]}, "make build at the process limit")
+    finally:
+        os.fork = real_fork
+    expect(refused[0] and "failed" in (refused[1] or ""),
+           "T2 ship_commands_match: fork refused (process limit) counts as a match with a problem %r" % (refused,))
+
+    def cs_payload(command, cwd):
+        return json.dumps({"tool_input": {"command": command}, "cwd": cwd})
+    expect(custom_ship(cs_payload("make ship-it", r13)), "T2 custom_ship: a ship_commands match")
+    expect(custom_ship(cs_payload("make \\\n ship-it", r13)), "T2 custom_ship: a match across a line continuation")
+    expect(custom_ship(cs_payload("cd %s && make ship-it" % r13, tmp)), "T2 custom_ship: a repo named by cd")
+    expect(not custom_ship(cs_payload("make build", r13)), "T2 custom_ship: no match; an invalid pattern is skipped")
+    expect(not custom_ship(cs_payload("make ship-it", tmp)), "T2 custom_ship: no opted-in repo targeted")
+    expect(not custom_ship("not json") and not custom_ship(cs_payload("", r13)),
+           "T2 custom_ship: an unreadable payload or empty command")
+
+    sh("git checkout -q feat", cwd=r9)
+    allow5(r9, "gh release edit vgood --draft=false", "control: gh release edit publishing a walked tag")
+    allow5(r9, "gh release edit vbad --title x", "control: gh release edit that does not publish")
+
+    # non-opted-in repo: every new ship command stays free
+    r11 = os.path.join(tmp, "v4plain")
+    os.makedirs(r11)
+    sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+       "git add -A && git commit -qm i && git tag v1.2", cwd=r11)
+    for c in ("git push origin v1.2", "git push --tags", "gh release create v1.2", "gh workflow run deploy",
+              "vercel redeploy dpl_1", "npx vercel --prod",
+              "vercel api /v13/deployments -X POST -F target=production",
+              "curl -X POST https://api.vercel.com/v13/deployments -d '{\"target\":\"production\"}'"):
+        allow4(r11, c, "non-opted repo: %s" % c)
+
+    # git pre-push layer: real pushes to a local bare remote
+    bare9 = os.path.join(tmp, "remote9.git")
+    sh("git init -q --bare -b main %s" % bare9)
+    sh("git remote add r9remote %s && git push -q r9remote main" % bare9, cwd=r9)
+    os.makedirs(os.path.join(r9, ".qa", "bin"), exist_ok=True)
+    shutil.copy(V4GATE, os.path.join(r9, ".qa", "bin", "ship-gate.py"))
+    shutil.copy(os.path.join(V4TMPL, "pre-push"), os.path.join(r9, ".git", "hooks", "pre-push"))
+    os.chmod(os.path.join(r9, ".git", "hooks", "pre-push"), 0o755)
+
+    def landed(ref):
+        return bool(sh("git --git-dir=%s rev-parse --verify -q %s" % (bare9, ref)).stdout.strip())
+
+    p = sh("git push r9remote vgood", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vgood"), "v4 prepush: tag at a walked commit lands")
+    p = sh("git push r9remote vbad", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vbad"), "v4 prepush: tag at an unwalked commit denied, nothing landed")
+    sh("git tag -a vann -m annotated %s" % codeU, cwd=r9)
+    p = sh("git push r9remote vann", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vann"), "v4 prepush: annotated tag peeled to its unwalked commit, denied")
+    p = sh("git push r9remote --tags", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vbad"), "v4 prepush: --tags denied on the unwalked tag")
+    p = sh("git push r9remote feat", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/heads/feat"), "v4 prepush: feature branch still lands")
+    p = sh("git push r9remote vsquash", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vsquash"),
+           "v4 prepush tree-equiv: tag on the identical-tree squash commit lands [%s]" % p.stderr.strip()[-100:])
+    p = sh("git push r9remote vqaonly", cwd=r9)
+    expect(p.returncode == 0 and landed("refs/tags/vqaonly"), "v4 prepush tree-equiv: .qa-only tree difference lands")
+    p = sh("git push r9remote vmerge", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/tags/vmerge"),
+           "v4 prepush tree-equiv: tag on the merge commit with other changes denied, nothing landed")
+    p = sh("git push r9remote vsquash:refs/heads/dev", cwd=r9)
+    expect(p.returncode != 0 and not landed("refs/heads/dev"),
+           "v4 prepush tree-equiv: the squash commit pushed to protected dev stays denied")
+
+    # merge_group: the resolver block of qa-ci.yml, run verbatim
+    ci_text = open(os.path.join(V4TMPL, "qa-ci.yml")).read()
+    expect(re.search(r"(?m)^\s+merge_group:", ci_text) is not None, "v4 qa-ci: merge_group trigger present")
+    expect("pull-requests: read" in ci_text, "v4 qa-ci: pull-requests: read (gh pr view in queue runs)")
+    m = re.search(r"# --- qa-gate resolve-sha begin[^\n]*\n(.*?)# --- qa-gate resolve-sha end", ci_text, re.S)
+    expect(m is not None, "v4 qa-ci: marked SHA resolver present")
+    resolver = os.path.join(tmp, "resolve-sha.sh")
+    rlines = m.group(1).splitlines() if m else ["exit 3"]
+    ded = min(len(l) - len(l.lstrip()) for l in rlines if l.strip())
+    open(resolver, "w").write("\n".join(l[ded:] for l in rlines) + "\n")
+    ghbin = os.path.join(tmp, "v4bin")
+    os.makedirs(ghbin, exist_ok=True)
+    real_head = "5c5c01b2e82ce9efbbc03f8945a98a5cbea86c7b"  # PR #167 head from a real merge-queue run
+    open(os.path.join(ghbin, "gh"), "w").write(
+        "#!/bin/sh\ncase \"$*\" in\n  'pr view 167 --json headRefOid --jq .headRefOid') echo %s;;\n"
+        "  'pr view 42 --json headRefOid --jq .headRefOid') echo %s;;\n  *) exit 1;;\nesac\n" % (real_head, shaW))
+    os.chmod(os.path.join(ghbin, "gh"), 0o755)
+
+    def resolve(event, ref, sha, pr_head=""):
+        out = os.path.join(tmp, "gh-output")
+        if os.path.exists(out):
+            os.remove(out)
+        env = dict(os.environ, GITHUB_OUTPUT=out, GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_SHA=sha,
+                   PR_HEAD=pr_head, PATH=ghbin + os.pathsep + os.environ.get("PATH", ""))
+        p = subprocess.run(["/bin/sh", resolver], env=env, capture_output=True, text=True)
+        val = ""
+        if os.path.exists(out):
+            val = next((l.strip()[4:] for l in open(out) if l.startswith("sha=")), "")
+        return p.returncode, val
+
+    grp = "f7db6b9f843f6e0ac8dfe5590a3015e6487fc861"
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-167-b36b69df83f9caedf2f8ce11d3122d8795eec01e", grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: real queue ref resolves the queued PR head, not the group sha (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/release/1.0/pr-167-" + "b" * 40, grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: base branch with a slash (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "gh-readonly-queue/main/pr-167-" + "b" * 40, grp)
+    expect(rc == 0 and val == real_head, "v4 merge_group: bare branch-name ref form (got %s)" % val[:12])
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-999-" + "b" * 40, grp)
+    expect(rc != 0 and not val, "v4 merge_group: unresolvable PR head fails the job")
+    rc, val = resolve("merge_group", "refs/heads/something-else", grp)
+    expect(rc != 0 and not val, "v4 merge_group: unparseable queue ref fails instead of checking the group commit")
+    rc, val = resolve("pull_request", "refs/pull/9/merge", "c" * 40, "a" * 40)
+    expect(rc == 0 and val == "a" * 40, "v4 pull_request: PR head sha")
+    rc, val = resolve("push", "refs/heads/main", "c" * 40)
+    expect(rc == 0 and val == "c" * 40, "v4 push: GITHUB_SHA")
+    # the queued PR's head is what the gate then checks, against its .qa run
+    rc, val = resolve("merge_group", "refs/heads/gh-readonly-queue/main/pr-42-" + codeW, codeU)
+    ok_head = rc == 0 and val == shaW and subprocess.run(
+        ["python3", V4GATE, "check", "--repo", r9, "--sha", val], capture_output=True).returncode == 0
+    grp_fail = subprocess.run(["python3", V4GATE, "check", "--repo", r9, "--sha", codeU],
+                              capture_output=True).returncode != 0
+    expect(ok_head and grp_fail, "v4 merge_group: gate passes the queued PR head, would fail the group commit")
+
+    # husky: gate block at the top of .husky/pre-push, a husky-style ref parser after it
+    tmpl_text = open(os.path.join(V4TMPL, "pre-push")).read()
+    mb = re.search(r"(?ms)^# --- qa-ship-gate begin.*?^# --- qa-ship-gate end[^\n]*\n", tmpl_text)
+    block = mb.group(0) if mb else tmpl_text
+    husky_tail = ('while read local_ref local_sha remote_ref remote_sha; do echo "husky-saw $remote_ref"; done\n'
+                  'echo husky-after\n')
+
+    def husky_repo(name, v9):
+        r = os.path.join(tmp, name)
+        os.makedirs(os.path.join(r, ".husky", "_"))
+        sh("git init -q -b main && git config user.email t@t && git config user.name t && echo x > f && "
+           "git add f && git commit -qm i", cwd=r)
+        bare = os.path.join(tmp, name + ".git")
+        sh("git init -q --bare -b main %s" % bare)
+        sh("git remote add up %s && git push -q up main" % bare, cwd=r)
+        open(os.path.join(r, ".husky", "pre-push"), "w").write("#!/usr/bin/env sh\n" + block + husky_tail)
+        os.chmod(os.path.join(r, ".husky", "pre-push"), 0o755)
+        if v9:  # husky v9 layout: .husky/_/<hook> sources h, which runs the script under sh -e
+            open(os.path.join(r, ".husky", "_", "h"), "w").write(
+                '#!/usr/bin/env sh\nn=$(basename "$0")\ns=$(dirname "$(dirname "$0")")/$n\n'
+                '[ ! -f "$s" ] && exit 0\nsh -e "$s" "$@"\nc=$?\n'
+                '[ $c != 0 ] && echo "husky - $n script failed (code $c)"\nexit $c\n')
+            open(os.path.join(r, ".husky", "_", "pre-push"), "w").write('#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n')
+            os.chmod(os.path.join(r, ".husky", "_", "pre-push"), 0o755)
+            sh("git config core.hooksPath .husky/_", cwd=r)
+        else:
+            sh("git config core.hooksPath .husky", cwd=r)
+        return r, bare
+
+    for label, v9 in (("husky v9 (sh -e)", True), ("husky plain", False)):
+        r10, bare10 = husky_repo("husky-v9" if v9 else "husky-plain", v9)
+        sh("git checkout -q -b feat/a && echo a >> f && git commit -qam a", cwd=r10)
+        p = sh("git push up feat/a", cwd=r10)
+        out = p.stdout + p.stderr
+        expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
+               "v4 %s: not opted in, push passes and the husky ref parser still sees the refs" % label)
+        os.makedirs(os.path.join(r10, ".qa"))
+        json.dump({"personas": ["a"], "workflows": [{"name": "w"}], "protected_branches": ["dev", "main"]},
+                  open(os.path.join(r10, ".qa", "config.json"), "w"))
+        sh("git add .qa && git commit -qm optin", cwd=r10)
+        p = sh("git push up HEAD:dev", cwd=r10)
+        exists = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare10).stdout.strip()
+        expect(p.returncode != 0 and not exists and ".qa/bin/ship-gate.py is missing" in p.stderr,
+               "v4 %s: config without .qa/bin -> named deny survives chaining" % label)
+        os.makedirs(os.path.join(r10, ".qa", "bin"))
+        shutil.copy(V4GATE, os.path.join(r10, ".qa", "bin", "ship-gate.py"))
+        p = sh("git push up HEAD:dev", cwd=r10)
+        exists = sh("git --git-dir=%s rev-parse --verify -q refs/heads/dev" % bare10).stdout.strip()
+        expect(p.returncode != 0 and not exists and "husky-after" not in p.stdout + p.stderr,
+               "v4 %s: opted in, dev push denied before the husky tail runs" % label)
+        p = sh("git push up feat/a", cwd=r10)
+        out = p.stdout + p.stderr
+        expect(p.returncode == 0 and "husky-saw refs/heads/feat/a" in out and "husky-after" in out,
+               "v4 %s: opted in, feature push passes and husky still sees the refs" % label)
+
+    # Identity isolation (2026-09-25).
+    def reader(files):
+        return {"exists": lambda rel: rel in files, "read": lambda rel: files[rel]}
+    row = {"id": "R9", "step": "s", "symptom": "gate 36/38: CI setup recreated the data mid-walk", "evidence": "e",
+           "predates_change": True, "severity": "high", "status": "open", "kind": "environment_contamination"}
+    f9 = []
+    check_inventory("q", reader({"q/inventory.jsonl": json.dumps(row)}), f9, {})
+    expect(any("must name the writer" in x for x in f9), "environment_contamination row without a writer is refused")
+    f9 = []
+    check_inventory("q", reader({"q/inventory.jsonl": json.dumps({**row, "writer": "gh run 18214"})}), f9, {})
+    expect(not any("writer" in x for x in f9), "environment_contamination row naming its writer is accepted")
+    pkt = {"authentication": {"required": True, "identity": {"label": "e2e.patient", "owned_by_automation": False}}}
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("automation_identities" in x for x in f9), "a config-listed CI identity declared unowned is refused")
+    pkt2 = {"authentication": {"required": True, "identities": [
+        {"label": "qa.professional", "owned_by_automation": False},
+        {"label": "e2e.patient", "owned_by_automation": False}]}}
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "a config-listed CI identity in identities[1] declared unowned is refused")
+    pkt2["authentication"]["identity"] = {"label": "qa.professional", "owned_by_automation": False}
+    pkt2["authentication"]["identities"] = [{"label": "e2e.patient", "owned_by_automation": False}]
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "identity plus identities: the second persona is still cross-checked")
+    pkt2["authentication"]["identity"] = {"label": "e2e.patient", "owned_by_automation": False}
+    pkt2["authentication"]["identities"] = [{"label": "qa.professional", "owned_by_automation": False}]
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt2)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(any("'e2e.patient'" in x for x in f9), "identity plus identities: the legacy identity is still cross-checked")
+
+    pkt["authentication"]["identity"]["owned_by_automation"] = True
+
+    f9 = []
+    check_e2e("q", reader({"q/evidence.json": json.dumps(pkt)}), {"automation_identities": ["e2e.patient"]}, f9)
+    expect(not any("automation_identities" in x for x in f9), "a config-listed CI identity declared owned passes the cross-check")
+    # review r1 D4: however the listed label is spelled, both gates find it,
+    # and the two gates agree label by label.
+    probe = ["e2e.patient", "E2E.patient", "e2e.patient ", "e2e.patient@example.test", "e2е.patient",
+             "е2е.раtіеnt", "e2e.pat​ient", "E2E.PATİENT", "qa.vеndor",
+             # review r2a: compound labels, and U+2800 (invisible, category So)
+             "patient (e2e.patient@example.test)", "e2e.patient (CI)", "@e2e.patient", "qa.veɴdor", "e2e.pat⠀ient",
+             "e2e.patͅient",
+             # review r2a-ter: a listed label after an @, and scripts other than Latin
+             "tester @e2e.patient", "x@e2e.patient", "Иван Петров", "🧪 tester", "مريم",
+             "qa.patient", "joão.silva", "Straße.qa", "e2e.patients", "xe2e.patient",
+             # review r2a-ter: Latin punctuation real names carry
+             "O’Brien", "o‘neil", "maria–silva", "ana—lima", "Paral·lel"]
+    refused = probe[:20]
+    expect(label_key("O’Brien") == label_key("O'Brien") and label_key("maria–silva") == "maria-silva"
+           and label_key("Paral·lel") == "paral.lel", "smart quotes, dashes and the middle dot key as their ASCII forms")
+    # review r2a: one spec in both gates. The reviewer's differential corpus
+    # (r2a-repro/diff_labels.py: seed 7, 20,000 mutations of the listed labels
+    # plus its fixed probes) goes through both implementations; any difference
+    # in key, problem or listing fails.
+    lists = [["e2e.patient"], ["qa.vendor"], ["e2e.professional"]]
+    corpus = list(probe) + [
+        "e2e.pαtient", "qa.vοndor", "ｅ２ｅ．ｐａｔｉｅｎｔ", "e2e.pat‍ient", "e2e.pat⁠ient", "e2e.pat\xadient",
+        "e2e.pat͏ient", "e2e.patㅤient", "e2e.patient﻿", "e2e.patient\x1f", "\x1ce2e.patient",
+        "e2e.patient᠎", "e2e.patient.", "e2e_patient", "e2e. patient", "e2e.patient/staging", "e2e.patient@evil",
+        "e2e.patientı", "e2e.patıent", "qa.vendorᾳ", "ΟΔΟΣ", "ᾈqa", "ꭰbc", "Ᲊ", "e2e.patient\U00010d50", "ǰqa", "ΐ",
+        "e2e.professionaІ", "e2e.prоfеssional", "e2e.patient\u0085", "e2e.patient　", "e2e.patient́",
+        "ℯ2ℯ.patient", "𝐞𝟐𝐞.𝐩𝐚𝐭𝐢𝐞𝐧𝐭", "e2e.pat̲ient", "qa.vendoʀ", "qa.ᴠendor", "STRASSE.QA", "ſtraße", "ẞ.qa"]
+    import random as _random
+    pool = [chr(c) for c in list(range(0x20, 0x7f)) + list(range(0xa0, 0x250)) + list(range(0x300, 0x370))
+            + list(range(0x370, 0x400)) + list(range(0x400, 0x530)) + list(range(0x1e00, 0x1f00))
+            + list(range(0x1f00, 0x2000)) + list(range(0x2000, 0x2070)) + list(range(0xff00, 0xff60))
+            + [0x13a0, 0xab70, 0x1c89, 0x10d50, 0x1d41e, 0xfeff, 0x3164, 0x2800, 0x1e9e, 0x130]]
+    rng = _random.Random(7)
+    for _ in range(20000):
+        s = list(rng.choice(["e2e.patient", "qa.vendor", "e2e.professional", ""]))
+        for _ in range(rng.randint(1, 3)):
+            op = rng.random()
+            if op < 0.4 and s:
+                s[rng.randrange(len(s))] = rng.choice(pool)
+            elif op < 0.8:
+                s.insert(rng.randrange(len(s) + 1), rng.choice(pool))
+            else:
+                s.append(rng.choice(pool))
+        corpus.append("".join(s))
+    mjs_out = None
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => { const [labels, lists] = JSON.parse(process.getBuiltinModule('fs').readFileSync(0, 'utf8'));"
+              " process.stdout.write(JSON.stringify(labels.map((l) => [m.labelKey(l), m.labelProblem(l),"
+              " lists.map((o) => m.listedIdentity(l, o))]))); })")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri()],
+                             input=json.dumps([corpus, lists]), capture_output=True, text=True, timeout=120)
+        mjs_out = json.loads(run.stdout) if run.returncode == 0 and run.stdout else None
+    expect(mjs_out is not None and len(mjs_out) == len(corpus), "qa-e2e-gate.mjs label functions ran on the corpus (%s)" % E2E_GATE)
+    differ = []
+    for label, js_row in zip(corpus, mjs_out or []):
+        py_row = [label_key(label), label_problem(label), [list(listed_identity(label, o) or []) or None for o in lists]]
+        if py_row != js_row:
+            differ.append((label, py_row, js_row))
+    expect(not differ, "ship-gate.py and qa-e2e-gate.mjs agree on key, problem and listing for all %d corpus labels "
+           "(%d differ; first: %s)" % (len(corpus), len(differ), ascii(differ[:2])))
+    mjs_verdicts = {l: [r[0], r[1], r[2][0]] for l, r in zip(corpus, mjs_out or [])}
+    # review r2a-ter: both gates accept and refuse the same times (Date.parse
+    # alone takes 2026-02-30 and year 0; fromisoformat alone takes +05:60).
+    times = ["2026-09-25T15:10:00Z", "2026-02-30T00:00Z", "0000-01-01T00:00Z", "2026-02-28T12:00+05:60",
+             "2026-02-28T24:00Z", "2024-02-29T12:00Z", "2026-02-29T12:00Z", "2026-04-31T00:00Z", "2026-13-01T00:00Z",
+             "2026-00-10T00:00Z", "2026-09-25T12:10:00.123456789-03:00", "2026-02-28T12:00+23:59",
+             "2026-02-28T12:00+24:00", "2026-02-28T23:59:60Z", "2026-02-28T23:60Z", "2026-12-31T23:59:59.999Z",
+             # review r2a-quater: day 00 behind a 24:00 rollover; fractions past 9 digits
+             "2026-10-00T24:00Z", "2026-10-01T12:00:00.123456789Z", "2026-10-01T12:00:00.1234567890Z",
+             # review r2b: the 24:00 rollover past year 9999
+             "9999-12-31T24:00Z", "9999-12-31T23:59Z",
+             "2026-09-25T15:10:00", "2026-09-25 15:10:00Z", "9999-12-31T23:59Z", "0001-01-01T00:00Z"]
+    mjs_t = None
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => process.stdout.write(JSON.stringify("
+              "JSON.parse(process.getBuiltinModule('fs').readFileSync(0, 'utf8')).map((t) => Number.isNaN(m.parseZonedTime(t))))))")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri()],
+                             input=json.dumps(times), capture_output=True, text=True, timeout=60)
+        mjs_t = json.loads(run.stdout) if run.returncode == 0 and run.stdout else None
+    t_differ = [t for t, jt in zip(times, mjs_t or []) if (_iso(t) is None) != jt]
+    expect(mjs_t is not None and not t_differ and _iso("2026-02-30T00:00Z") is None,
+           "ship-gate.py and qa-e2e-gate.mjs agree on %d walk times (differ: %s)" % (len(times), t_differ if mjs_t else "mjs did not run"))
+
+    for label in probe:
+
+        f9 = []
+        pk = {"authentication": {"required": True, "identities": [
+            {"label": label, "ownership_checked": True, "ownership_evidence": "searched", "owned_by_automation": False}]}}
+        check_e2e("q", reader({"q/evidence.json": json.dumps(pk)}), {"automation_identities": ["e2e.patient"]}, f9)
+        hit = any("refused" in x or "automation_identities" in x for x in f9)
+        expect(hit == (label in refused), "label %r is %s by the ship gate" % (label, "refused" if label in refused else "accepted"))
+        py = [label_key(label), label_problem(label), list(listed_identity(label, ["e2e.patient"]) or []) or None]
+        expect(label not in mjs_verdicts or mjs_verdicts[label] == py,
+               "label %r: ship-gate.py and qa-e2e-gate.mjs agree (%s vs %s)" % (label, py, mjs_verdicts.get(label)))
+    # A pilot PR: the suite's own CI run recorded as the walk (owner_run).
+    base_or = {"label": "e2e.patient", "owned_by_automation": True, "owner": "deployed e2e gate",
+               "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": 36193694659,
+                          "run_url": "https://github.com/example-owner/example-repo/actions/runs/36193694659"}}
+    variants = {
+        "valid": (base_or, ["e2e.patient"], True),
+        "valid, attempt URL": ({**base_or, "walker": {**base_or["walker"], "run_url": base_or["walker"]["run_url"] + "/attempts/2"}}, ["e2e.patient"], True),
+        "no list (r2a D5)": (base_or, [], False),
+        "run_id x, no run_url (r2a D5)": ({**base_or, "walker": {"kind": "owner_run", "owner": "deployed e2e gate", "run_id": "x"}}, ["e2e.patient"], False),
+        "run_url of another run (r2a D5)": ({**base_or, "walker": {**base_or["walker"], "run_id": 1, "run_url": "https://github.com/someone/else/actions/runs/999"}}, ["e2e.patient"], False),
+        "run_url off github.com": ({**base_or, "walker": {**base_or["walker"], "run_url": "https://evil.test/a/b/actions/runs/36193694659"}}, ["e2e.patient"], False),
+        "no walker": ({k: v for k, v in base_or.items() if k != "walker"}, ["e2e.patient"], True),
+        "owner mismatch": ({**base_or, "walker": {**base_or["walker"], "owner": "other"}}, ["e2e.patient"], False),
+        "no run_id": ({**base_or, "walker": {"kind": "owner_run", "owner": "deployed e2e gate"}}, ["e2e.patient"], False),
+        "unlisted label": ({**base_or, "label": "e2e.other"}, ["e2e.patient"], False),
+        "unowned": ({**base_or, "owned_by_automation": False}, ["e2e.patient"], False),
+        "unknown kind": ({**base_or, "walker": {"kind": "borrowed"}}, ["e2e.patient"], False),
+        "fullwidth digits (r2a-bis)": ({**base_or, "walker": {**base_or["walker"], "run_id": "３６１９３６９４６５９",
+                                        "run_url": "https://github.com/example-owner/example-repo/actions/runs/３６１９３６９４６５９"}},
+                                       ["e2e.patient"], False),
+    }
+    mjs_or = {}
+    if shutil.which("node") and os.path.isfile(E2E_GATE):
+        js = ("import(process.argv[1]).then((m) => { const out = {}; const v = JSON.parse(process.argv[2]);"
+              " for (const k of Object.keys(v)) out[k] = m.ownerRunProblems(v[k][0], v[k][1]).problems.length === 0;"
+              " process.stdout.write(JSON.stringify(out)); })")
+        run = subprocess.run(["node", "--input-type=module", "-e", js, "--", __import__("pathlib").Path(E2E_GATE).as_uri(),
+                              json.dumps(variants)], capture_output=True, text=True, timeout=30)
+        mjs_or = json.loads(run.stdout or "{}")
+    for name, (ident, lst, ok) in variants.items():
+        py_ok = not owner_run_problems(ident, lst)
+        expect(py_ok == ok, "owner_run %s: ship gate %s" % (name, "accepts" if ok else "refuses"))
+        expect(mjs_or.get(name) == ok, "owner_run %s: qa-e2e-gate.mjs agrees (%s)" % (name, mjs_or.get(name)))
+    # r2a D5, r2a-bis: the ship gate ties the run to this repository and checks
+    # the run attempt with `gh api` (stubbed here: offline, deterministic). The
+    # stub answers repos/example-owner/example-repo/actions/runs/<id>[/attempts/<n>]
+    # from <dir>/<path with / as _>.json and logs every call.
+    orr = os.path.join(tmp, "owner-run-repo")
+    os.makedirs(orr)
+    sh("git init -q && git remote add origin git@github.com:example-owner/example-repo.git", cwd=orr)
+    orbin = os.path.join(tmp, "owner-run-bin")
+    os.makedirs(orbin)
+    ghdir = os.path.join(tmp, "gh-api")
+    os.makedirs(ghdir)
+    open(os.path.join(orbin, "gh"), "w").write(
+        "#!/bin/sh\n[ -n \"$OR_GH_SLEEP\" ] && sleep \"$OR_GH_SLEEP\"\n"
+        f"echo \"$*\" >> {ghdir}/calls\n"
+        f"f={ghdir}/$(printf %s \"$2\" | tr / _).json\n"
+        "[ \"$1\" = api ] && [ -f \"$f\" ] || { echo 'unexpected gh call' >&2; exit 1; }\n"
+        "cat \"$f\"\n")
+    os.chmod(os.path.join(orbin, "gh"), 0o755)
+    walked = "a" * 40
+    runs_path = "repos/example-owner/example-repo/actions/runs/36193694659"
+    run_doc = {"head_sha": walked, "run_attempt": 1, "run_started_at": "2026-09-25T15:05:00Z",
+               "updated_at": "2026-09-25T15:45:00Z", "status": "completed", "conclusion": "success"}
+    ident_or = {**base_or, "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"}}
+    saved_path = os.environ["PATH"]
+    # The reduced PATH keeps out a real gh, not git: on macOS /usr/bin/git is
+    # the Xcode shim, which exits 69 until the Xcode license is accepted, and
+    # every owner_run case then failed for a reason unrelated to the gate. A
+    # directory holding only a link to the real git keeps gh out (Homebrew's
+    # bin has both).
+    git_only = os.path.join(tmp, "git-only-bin")
+    os.makedirs(git_only, exist_ok=True)
+    real_git = shutil.which("git", path=saved_path)
+    if real_git and not os.path.exists(os.path.join(git_only, "git")):
+        os.symlink(real_git, os.path.join(git_only, "git"))
+    base_path = os.pathsep.join([git_only, "/usr/bin", "/bin"])
+
+    def gh_calls():
+        p = os.path.join(ghdir, "calls")
+        return open(p).read().splitlines() if os.path.isfile(p) else []
+
+    def verify(ident, doc=run_doc, root=orr, sha=walked, path_first=orbin, path_tail=base_path, sleep=None,
+               attempts=None, cache=None, keep_calls=False):
+        global _LOOKUP_DEADLINE
+        for f in os.listdir(ghdir):
+            if not (keep_calls and f == "calls"):
+                os.remove(os.path.join(ghdir, f))
+
+        for path, d in [(runs_path, doc)] + sorted((attempts or {}).items()):
+            with open(os.path.join(ghdir, path.replace("/", "_") + ".json"), "w") as f:
+                f.write(d if isinstance(d, str) else json.dumps(d))
+        os.environ["PATH"] = (path_first + os.pathsep if path_first else "") + path_tail
+        if sleep:
+            os.environ["OR_GH_SLEEP"] = sleep
+        _LOOKUP_DEADLINE = None
+        try:
+            return owner_run_verify(root, ident, sha, cache)
+        finally:
+            os.environ["PATH"] = saved_path
+            os.environ.pop("OR_GH_SLEEP", None)
+            _LOOKUP_DEADLINE = None
+
+    expect(verify(ident_or) == [], "owner_run: right repo, matching id, run on the walked commit around the walk -> pass")
+    expect(gh_calls() == ["api " + runs_path], "owner_run: no attempt named -> the run's latest attempt (%s)" % gh_calls())
+    expect(any("not the walked commit" in p for p in verify(ident_or, {**run_doc, "head_sha": "b" * 40})),
+           "owner_run: a run on another commit -> deny")
+    expect(any("not inside it" in p for p in verify(ident_or, {**run_doc, "updated_at": "2026-09-25T15:30:00Z"})),
+           "owner_run: a walk window outside the run -> deny")
+    # r2a-bis: an unfinished or failed run is not a walk.
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "status": "in_progress", "conclusion": None})),
+           "owner_run: a run still in progress -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "conclusion": "failure"})),
+           "owner_run: a failed run -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {k: v for k, v in run_doc.items() if k != "conclusion"})),
+           "owner_run: a run with no conclusion -> deny")
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "status": "in_progress"})),
+           "owner_run: a run in progress that reports a success conclusion -> deny")
+    # r2a-bis: a re-run moves the run's updated time; the window is the attempt's own.
+    rerun = {**run_doc, "run_attempt": 2, "run_started_at": "2026-09-27T10:00:00Z", "updated_at": "2026-09-27T10:40:00Z"}
+    expect(any("not inside it" in p for p in verify(ident_or, rerun)),
+           "owner_run: a walk in attempt 1, run re-run later, URL names no attempt -> deny (the latest attempt's window)")
+    at1 = {**ident_or, "walker": {**ident_or["walker"], "run_url": ident_or["walker"]["run_url"] + "/attempts/1"}}
+    expect(verify(at1, rerun, attempts={runs_path + "/attempts/1": run_doc}) == [],
+           "owner_run: the same walk, URL names /attempts/1 -> pass on that attempt's window")
+    expect(gh_calls() == ["api " + runs_path + "/attempts/1"], "owner_run: /attempts/1 asks for that attempt (%s)" % gh_calls())
+    late = {**ident_or, "walk_window": {"start": "2026-09-27T10:05:00Z", "end": "2026-09-27T10:20:00Z"}}
+    expect(any("not inside it" in p for p in verify({**late, "walker": at1["walker"]}, rerun, attempts={runs_path + "/attempts/1": run_doc})),
+           "owner_run: a walk during attempt 2 recorded as /attempts/1 -> deny")
+    # r2a-bis: a naive time is read in the local zone, so it is refused.
+    naive = {**ident_or, "walk_window": {"start": "2026-09-25T15:10:00", "end": "2026-09-25T15:40:00"}}
+    expect(any("with an offset" in p for p in verify(naive)), "owner_run: a walk window with no offset -> deny")
+    # Inside a day-long run, so no local-zone reading of the naive times fits it by accident.
+    day = {**run_doc, "run_started_at": "2026-09-25T00:00:00Z", "updated_at": "2026-09-26T00:00:00Z"}
+    naive_mid = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00", "end": "2026-09-25T12:40:00"}}
+    expect(any("with an offset" in p for p in verify(naive_mid, day)), "owner_run: a naive walk window inside a day-long run -> deny")
+    expect(any("not inside it" in p for p in verify(ident_or, {**day, "run_started_at": "2026-09-25T00:00:00"})),
+           "owner_run: a run start with no offset -> deny")
+    fullwidth = "３６１９３６９４６５９"
+    expect(owner_run_id({"run_id": fullwidth}) is None
+           and not RUN_URL_RE.match("https://github.com/example-owner/example-repo/actions/runs/" + fullwidth),
+           "owner_run: fullwidth digits are not a run id or a run URL (ASCII, as in qa-e2e-gate.mjs)")
+    shifted = {**ident_or, "walk_window": {"start": "2026-09-25T12:10:00-03:00", "end": "2026-09-25T12:40:00-03:00"}}
+    expect(verify(shifted) == [], "owner_run: the same walk window at -03:00 -> pass")
+    # r2a-bis: a reply that is not a run object denies with a reason, not an exception.
+    for bad in ("[]", "null", "\"x\"", "not json"):
+        r = verify(ident_or, bad)
+        expect(any("returned no run object" in p for p in r), "owner_run: gh replying %s -> deny (%s)" % (bad, r))
+    # r2a-bis: one lookup per run attempt within a check (#36 names one run
+    # twice), and none carried from one check into the next.
+    one_check = {}
+    verify(ident_or, cache=one_check)
+    second = verify(ident_or, {**run_doc, "conclusion": "failure"}, cache=one_check, keep_calls=True)
+    expect(second == [] and len(gh_calls()) == 1, "owner_run: the same run twice in one check -> one gh call (%d)" % len(gh_calls()))
+    expect(any("not completed/success" in p for p in verify(ident_or, {**run_doc, "conclusion": "failure"}))
+           and verify(ident_or) == [], "owner_run: a later check looks the run up again")
+    verify(ident_or)  # leaves the stub's run doc in place
+    os.remove(os.path.join(ghdir, "calls"))
+    os.environ["PATH"] = orbin + os.pathsep + base_path
+    try:
+        f_two = []
+        check_e2e("q", reader({"q/evidence.json": json.dumps({"authentication": {"identities": [ident_or, dict(ident_or)]}})}),
+                  {"automation_identities": ["e2e.patient"]}, f_two, orr, walked)
+    finally:
+        os.environ["PATH"] = saved_path
+        _LOOKUP_DEADLINE = None
+    expect(len(gh_calls()) == 1, "owner_run: check_e2e with two identities on one run -> one gh call (%d)" % len(gh_calls()))
+    expect(any("not on the hook's PATH" in p for p in verify(ident_or, path_first=None, path_tail=git_only)),
+           "owner_run: gh unavailable -> deny")
+    _LOOKUP_DEADLINE_SAVED = LOOKUP_BUDGET_S
+    globals()["LOOKUP_BUDGET_S"] = 0.5
+    try:
+        expect(any("timed out" in p for p in verify(ident_or, sleep="3")), "owner_run: gh timing out -> deny")
+    finally:
+        globals()["LOOKUP_BUDGET_S"] = _LOOKUP_DEADLINE_SAVED
+    at9 = {**ident_or, "walker": {**ident_or["walker"], "run_url": ident_or["walker"]["run_url"] + "/attempts/9"}}
+    expect(any("failed (rc=1" in p for p in verify(at9)), "owner_run: an attempt the API does not have -> deny")
+    other = {**ident_or, "walker": {**ident_or["walker"], "run_url": "https://github.com/someone/else/actions/runs/36193694659"}}
+    expect(any("not of this repository" in p for p in verify(other)), "owner_run: a run of another repository -> deny")
+    expect(verify(ident_or, root=None) != [], "owner_run: no repository to check against -> deny")
+    expect(any("no walked commit" in p for p in verify(ident_or, sha=None)), "owner_run: no walked commit -> deny")
+
+
+
+
     shutil.rmtree(tmp, ignore_errors=True)
+    os.environ["PATH"] = old_path
     EVENTS = live_events
+
     if old_qa_gate_events is None:
         os.environ.pop("QA_GATE_EVENTS_FILE", None)
     else:
@@ -1729,8 +4931,52 @@ _LAST_INPUT = None
 def coarse_ship(text):
     """Last-resort ship heuristic used only when hook() itself crashes: a
     crash on a ship-looking command in an opted-in repo must DENY (fail
-    closed), never allow. Coarser than the classifier on purpose."""
-    return re.search(r"git\s+push|--mirror|gh\s+pr\s+(merge|ready)|--prod|vercel\s+promote", text)
+    closed), never allow. Coarser than the classifier on purpose. Reads the
+    payload's command when the text is a payload, with line continuations
+    joined, and allows options between git and push. It reads ship_view, so a
+    PR merge is never ship-shaped for what its quoted subject or body says."""
+    try:
+        d = json.loads(text)
+        inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
+        cmd = (inp.get("command") or inp.get("cmd")) if isinstance(inp, dict) else None
+        if isinstance(cmd, str) and cmd:
+            text = cmd
+    except Exception:
+        pass
+    view = ship_view(text)
+    text = flat_words(view) if view is not None else join_continuations(text)
+    return re.search(r"\bgit\b[^;&|\n]*?\spush\b|--mirror|--tags|refs/tags/|"
+                     r"gh\s+release\s+(create|edit)|gh\s+workflow\s+run|--prod|--target[=\s]+production|"
+                     r"vercel\s+(promote|redeploy|alias|rolling-release|rr)|/v\d+/deployments|/v\d+/projects/\S+/promote/|"
+                     r"repos/\S+/(merges|releases|git/refs|dispatches|contents/|deployments)|"
+                     r"createCommitOnBranch|updateRef", text)
+
+
+def custom_ship(text, budget=0.5):
+    """Last-resort check, next to coarse_ship, for a repo's own `ship_commands`: True when the payload's command
+    matches one in an opted-in repo it targets. Finding the repos and reading their .qa/config.json never runs git,
+    so this still answers when git is what ran out the clock. It reads the answer _hook stored before any git; only
+    when there is none (the chain spent its budget before _hook ran) does it match, within `budget` seconds, with
+    the same fail-closed rules (ship_commands_match). A config that cannot be read matches nothing."""
+    try:
+        d = json.loads(text)
+        inp = (d.get("tool_input") or d.get("toolInput") or d.get("input") or {}) if isinstance(d, dict) else {}
+        cmd = (inp.get("command") or inp.get("cmd")) if isinstance(inp, dict) else None
+        if not isinstance(cmd, str) or not cmd:
+            return False
+        cmd = join_continuations(cmd)
+        cwd = d.get("cwd") or d.get("working_directory") or os.getcwd()
+        for root in ship_target_roots(cmd, cwd):
+            if not opted_in(root):
+                continue
+            try:
+                if ship_commands_match(load_json(os.path.join(root, ".qa", "config.json")), cmd, budget)[0]:
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
 
 
 if __name__ == "__main__":
@@ -1742,7 +4988,7 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "hook":
             # fail closed for ship-looking commands; everything else fails open
             raw = globals().get("_LAST_INPUT") or ""
-            if raw and coarse_ship(raw):
+            if raw and (coarse_ship(raw) or custom_ship(raw)):
                 reason = "[qa-ship-gate] gate crashed while evaluating a ship command; treated as DENIED. Complete the .qa pipeline (%s)" % exc
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                          "permissionDecision": "deny",

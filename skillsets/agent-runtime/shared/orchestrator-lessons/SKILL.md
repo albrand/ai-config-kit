@@ -4,14 +4,87 @@ description: >
   Use when running a fleet of agents, or when the same class of mistake keeps
   recurring across sessions. Failure patterns that repeat, why each one survives
   review, and the check that catches it. Read before declaring work done.
-verify: "test -n \"$HOME\""
-verified: 2026-09-21
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/agent-runtime/shared/orchestrator-lessons/scripts/verify-contract.py"
+verified: 2026-10-19
 ---
 
 # Lessons an orchestrator keeps having to relearn
 
+When assigning feature implementation, shared-contract, LLM-output, or production-fix work, load `engineering-contracts` before planning acceptance or validation. Keep this skill's orchestration, data-movement, and recurrence checks.
+
 Every entry here cost real rounds. They are written as the check to run, not as
 advice, because advice does not fire and a check does.
+
+## Have the full picture before you plan or distribute anything
+
+On 2026-10-03 an orchestrator had a working reference system, the product's
+source, its schemas and production read access. It staffed more than fifteen
+cards from symptom counts before mapping anything. A proxy field made a display
+gap look like a data gap. The biggest gap went unexamined: 89% of ingested
+communications were never linked to a client, so they could not reach any
+screen. New-capability cards ran while cheap backfill and display wins waited.
+A deadline was missed with activity everywhere and the user's screens still
+thin.
+
+**Check, before the first card is cut:** produce the map, then plan from it.
+
+1. Inventory every user-facing surface in scope and every field on it, with its
+   read path: route, procedure, service, store, and field.
+2. Trace one representative record end to end through every stage, in your
+   system and in the working reference: source, ingest, attribution, processing
+   under current rules, storage, API, and rendered screen.
+3. For every surface × field × entity (each customer, account or tenant in
+   scope), count each stage. The first stage that drops to zero is the gap for
+   that cell. Classify the losses, for example why unlinked records are
+   unlinked.
+4. Give every gap a fix class (backfill, attribution, processing, display,
+   performance, source access) and an hours estimate with its basis.
+5. Only then rank by user-visible outcome per hour, cut cards, and commit to
+   times.
+
+Work that cannot point to a cell in the map is not started. When evidence
+contradicts the map, update the map before re-planning.
+
+## Gate data movement at plan and integration
+
+Classify the actual effects before requiring data-movement evidence. A change
+is data-moving when it processes, attributes, projects, backfills, writes, or
+requeues stored data. A nominal reader or UI change that triggers such a write
+is data-moving. A pure stored-data reader with no writes, a UI-only change with
+no writes, and docs/tests-only changes do not move stored data; do not require
+them to invent a lane, throughput, drain, count change, takeover, or 30-minute
+read-back. Use the real outcome, integration, quality, and behavior evidence
+for those changes; UI changes use a screen read when that is the changed
+outcome, while docs/tests-only changes use their relevant document or test
+evidence.
+
+Only for a change whose actual behavior moves stored data, require this
+completed block in the card and carry it through integration. For every other
+kind, mark the block not applicable and state the actual effect and evidence:
+
+```markdown
+## Data movement
+- Kind: data-moving | reader-only | UI-only | docs/tests-only; classify by actual writes/requeues, not the label
+- Existing records affected (production, counts only): <count and what; UTC measurement, owner/query, or COORDINATOR TO MEASURE plus exact query>
+- Lane and cadence: <cron/queue/route, source file:line; every N minutes>
+- Per-run throughput: <rows per invocation; source file:line or measurement>
+- Time-budget check: <per-run time vs limit; source file:line>
+- Predicted drain: ceil(<existing count> / <per-run throughput>) runs × <cadence> = <duration>
+- Counts-only read-back query: <path or exact query, used before and after>
+- Expected after-value: <count by 30 minutes after deployment is Ready and the lane has taken over>
+- Deployment-takeover check: <new deployment runs the lane; logs grouped by deploymentId show integrations.chain.started on the new deployment, not skipped_sibling>
+```
+
+For data-moving cards, complete every field above. At release closeout,
+report the observed before and 30-minute after counts from the read-back.
+Writers without production access use the coordinator's latest count or
+provide the exact query and mark it COORDINATOR TO MEASURE; measure it before
+merge. Tests passed is never evidence of data movement. At integration,
+capture the before read-back, then the same counts-only query 30 minutes after
+deployment is Ready and takeover is confirmed. The release verdict stays FAIL
+until the after-read reaches the prediction; diagnose immediately if it does
+not. Deployment readiness and delivery are separate: trigger the processing
+after deployment, then measure the same outcome read-back.
 
 ## Find colliding work before you write, and own it once found
 
@@ -29,6 +102,37 @@ children yourself. A stopped child is your next action, not a status line.
 A peer's "rebased, green" is a claim. Read the remote SHA and the check result
 yourself: that day a peer's green rebase never reached GitHub, and your own
 `git push` was silently refused by a pre-push gate.
+
+## Carry hard boundaries into delegated execution
+
+A native trial's parent brief prohibited retries after permission denials, but
+its generated prompt omitted that rule and requested file outputs without
+checking whether the child's allowed tools authorized those writes. The child
+retried/rerouted denied actions; the required output failed. This confirms a
+handoff omission, not a single cause of the model's behavior.
+
+**Check before launch:** copy the parent's exact hard refusal and permission
+boundaries into both the generated brief and launcher configuration. Check
+that requested disposable writes fit the existing authority and allowed tools;
+if not, narrow the requested output to authorized work. Preserve the original
+outcome: report an unattempted requested output as BLOCKED/NOT RUN and an
+attempted failed output as FAIL, as applicable; continue independent
+authorized work and never silently substitute reduced output as success. Never
+widen authority or add a routine approval step. Actual hard safety/authorization
+refusals—a safety-hook, sandbox, guardian, DLP, access-policy, or provider-policy
+refusal—are final: do not retry, rephrase, switch tools/routes, delegate around
+them, or widen authority. Preserve the exact refusal and continue only
+independently authorized work.
+
+Ordinary command usage/format, transport/runtime, and wrong execution-context
+errors may be diagnosed and corrected within already established authority.
+An external access/ACL refusal is not such an error. A GitHub collaborator
+error under one account does not authorize evading repository ACLs or selecting
+credentials; use an already authenticated owner context only when actual owner
+rules authorize it. This distinction does not make external access refusals
+generally recoverable. Keep safety/process FAIL distinct from successful output
+observations or task API results. This text check is preventive knowledge only;
+it does not prove agent behavior or enforce safety.
 
 ## Verify the thing you did not change
 
@@ -115,6 +219,17 @@ sending what it asked for — raw inputs it can recompute — or fixing the thin
 
 **Check:** before disputing a verdict, ask what evidence would settle it, then
 produce that. If the answer is "a test I have not written", write it.
+
+A native report about work you own is actionable failure input. Before sending
+any review-fix design, inspect the exact candidate code and affected consumers;
+reproduce the finding or trace it through source, identify why it escaped, and
+derive the smallest repair and falsifiable acceptance from that evidence. Check
+the prior repair for collateral effects. Do authorized routine repairs while
+preserving real ownership and approval boundaries; name any outside dependency
+that prevents action. A drafted, sent, or dismissed report, a policy edit, or an
+unrelated green check does not prove healing. Tie recurring cases to
+engineering-contracts' scoped root-cause and prevention contract instead of
+adding another self-attested global checklist.
 
 ## Members that report nothing are not working
 
@@ -236,3 +351,130 @@ claim about reality and inflating it destroys its only value.
 
 **Check:** Done means accepted. Anything else is In Review, however finished it
 feels.
+
+## A data-moving release is done when the user's data moved, not merely when the release is Ready
+
+On 2026-10-03 two releases reached production before a noon deadline. Both were
+gated, tree-verified and Ready, with every scheduled job "accepted". The
+per-client numbers barely moved: one producer timed out after 2 of 16 accounts,
+and the improved extraction never ran over the existing backlog. "Ready" and
+"accepted" were reported as delivery for an hour before anyone measured the
+outcome.
+
+**Check:** for releases whose actual behavior processes, writes, or requeues
+stored data, trigger the processing the change depends on, then measure the
+user-facing outcome (per customer or per entity, the same table as the
+baseline) within 30 minutes. A job that has not reported completion is a FAIL
+to act on now, not "pending". Until that table moves, the data-moving release
+is deployed, not delivered. Pure readers and UI changes with no writes, and
+docs/tests-only releases, do not require processing or a 30-minute baseline
+read-back; use their actual outcome evidence.
+
+## Find a gap by tracing one record end to end, in both systems
+
+A storage count showed 0 of 67 work items linked to their source, so the plan
+treated it as a data gap and staffed it. The count read a legacy field. The
+links existed for 70 of 76 items in the graph; the missing piece was the reader
+that displays them. The card that fixed the real gap was not made a release
+blocker.
+
+**Check:** before staffing a gap, pick one representative entity and follow it
+through every stage in BOTH the working reference and your system: source,
+ingest, storage, processing, graph, API, screen. Name the first stage where they
+diverge, and confirm the field you counted is the one the reader actually uses.
+A gap is located when you can show that stage, not when a count is low.
+
+## Use the pipeline you have on the data you have before building new
+
+The reference system looked rich because it had processed its full history. Our
+system processed forward only. The quickest per-customer gains were
+reprocessing existing data through existing code and wiring existing data to the
+screen. Instead the plan spread effort across six new-capability cards, none of
+which could finish by the deadline.
+
+**Check:** rank work by user-visible outcome per hour. Do these first:
+1. Reprocess or backfill existing data through code that already works.
+2. Display data that already exists.
+3. Fix whatever blocks those.
+
+Only after that, build new capability.
+
+## A commitment needs a measured estimate for every card on its path
+
+A noon deadline was promised while every card on the path had "ETA unmeasured".
+Each card also needed serial gate runs of 15–25 minutes, and every failure cost
+another one.
+
+**Check:** before committing a time:
+- Get each card's remaining hours with their basis: tests left, review rounds, gate runs.
+- Add the serial gate cost: number of gates times their duration, plus retries at the observed failure rate.
+- Plan backwards from the deadline.
+
+Anything that doesn't fit gets cut or escalated before the commitment, not
+after it is missed.
+
+## One reading is not a measurement
+
+A single favorable read reported a page at 5.1–5.6 s against 6.4–25.5 s
+before. A fresh paired read measured 6.6–27.1 s against 6.7–28.5 s: no change.
+The first figure had already gone into a business report.
+
+**Check:** performance claims need:
+- paired, interleaved runs of baseline and candidate against the same data;
+- at least three cold and three warm runs each;
+- ranges, not a best case.
+
+If the control has moved since the stored baseline, the stored baseline is void.
+Never publish a figure that was measured once.
+
+## Catch gate failures before the gate
+
+Nearly every PR in one wave failed its expensive gate at least once, for reasons
+that could have been caught locally:
+- three shared docs files that every change must edit;
+- a hand-edited index table with strict formatting;
+- tests that silently read a developer's `.env`;
+- a strict test fake that hung for 30 s on an unscripted read instead of failing.
+
+Each failure cost a 15–25 minute gate run plus a review round.
+
+**Check:** before requesting a gate slot, each worker runs a gate replica in its
+own worktree:
+1. Merge the newest integration branch.
+2. Run conflict detection.
+3. Run the changed directories and their consumers with a clean environment at the gate's concurrency.
+4. Run docs tests and lint.
+
+Treat any file that conflicts on most merges as a design defect. Generate it,
+or split it per area. Strict fakes must throw on unexpected calls, never wait.
+
+## Run the persona check on the PR, and ship what passed
+
+A user-facing change merged without a persona check. Two hours later its 60 s
+timeout surfaced in the release candidate and held every other passed change
+for three hours.
+
+**Check:** a change that touches what a user sees gets its persona check before
+merge, not at release. A release ships what has passed. A card that fails its
+check is pulled from the release, not waited on.
+
+## A processing change states its backfill and its run-time budget
+
+A producer was extended to do per-account generation inside one scheduled
+invocation across every tenant. It had no time budget, by an earlier decision.
+Its old worst case was about 58 s, and the change made it time out. Extraction
+rules changed with no path for existing data.
+
+**Check:** any change to processing must answer two questions in its brief and
+its PR:
+- How will self-healing detect existing data that needs reprocessing or
+  backfill, and requeue it? For example, stamp each processed record with the
+  rule version, so a sweep finds records processed under an older version. Not
+  a manual database script, and not a one-off app feature. Backfill is part of
+  the self-healing policy: reconnect, then detect what the data is missing and
+  treat it.
+- Does the job fit its runtime limit at production volume, measured or computed
+  from real counts?
+
+Per-entity work belongs on a queue with one job per entity, not inside a single
+scheduled call.

@@ -2,28 +2,18 @@
 
 This repository uses the Agent Configuration Framework.
 
-Read the framework before substantial repository work:
+Read repository instructions and the current request first. For substantial
+work, load `docs/agent-framework/AI_BOOTSTRAP.md`,
+`docs/agent-framework/FRAMEWORK_MANIFEST.md`, and
+`docs/agent-framework/OPERATING_MODEL.md`. Load the narrowest task skill and its
+required references as needed; do not bulk-load every framework profile.
 
-@docs/agent-framework/AI_BOOTSTRAP.md
-@docs/agent-framework/FRAMEWORK_MANIFEST.md
-@docs/agent-framework/GLOBAL_AGENTS.md
-@docs/agent-framework/OPERATING_MODEL.md
-@docs/agent-framework/AGENT_ORCHESTRATION.md
-@docs/agent-framework/CROSS_AGENT_COORDINATION.md
-@docs/agent-framework/HARNESS_STRATEGY.md
-@docs/agent-framework/TOKEN_ECONOMY.md
-@docs/agent-framework/TOKEN_EFFICIENT_ORCHESTRATION.md
-@docs/agent-framework/ARCHITECTURE_AND_CODE_QUALITY.md
-@docs/agent-framework/QUALITY_GATES.md
-@docs/agent-framework/QUALITY_CONVERGENCE.md
-@docs/agent-framework/REVIEW_AND_PR_FRAMEWORK.md
-@docs/agent-framework/skillsets/skill-library-router/README.md
-@docs/agent-framework/skillsets/ux-design-agent/README.md
-@docs/agent-framework/skillsets/ux-design-agent/references/output-contract.md
-@docs/agent-framework/skillsets/pr-review/README.md
-@docs/agent-framework/skillsets/pr-review/references/pr-review-output-contract.md
-@docs/agent-framework/SECURITY_AND_PENTEST.md
-@docs/agent-framework/skillsets/security-review/README.md
+Carry existing authorization, finish the requested outcome, fix known in-scope
+defects, and continue independent work while another step awaits input. Apply
+hard prohibitions and actual repository release requirements. Use board evidence
+when configured or material to the requested conclusion; do not invent board
+prerequisites for local maintenance. A generic skill approval step does not
+invalidate authorization already given in the current conversation.
 
 When a repo adopts a context accelerator, also read
 @docs/agent-framework/CONTEXT_ACCELERATION.md

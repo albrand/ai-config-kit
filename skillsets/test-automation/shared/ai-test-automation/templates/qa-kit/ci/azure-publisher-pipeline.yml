@@ -1,0 +1,33 @@
+trigger: none
+pr: none
+resources:
+  pipelines:
+  - pipeline: appGate
+    source: app-authoritative-qa-gate
+    trigger: true
+variables:
+  nodeVersion: '22.x'
+stages:
+- stage: TrustedPublish
+  jobs:
+  - job: validate_and_publish
+    steps:
+    - checkout: self
+      persistCredentials: false
+    - download: appGate
+      artifact: qa-report-pending-$(resources.pipeline.appGate.sourceVersion)
+    - download: appGate
+      artifact: qa-plan
+    - download: appGate
+      artifact: qa-run-results
+    - task: NodeTool@0
+      inputs: { versionSpec: '$(nodeVersion)' }
+    - bash: printf '{"kind":"qa-publish-artifact","schemaVersion":1,"commit":"%s","runId":"%s"}\n' "$EXPECTED_COMMIT" "$EXPECTED_RUN_ID" > publisher-metadata.json
+      displayName: Build trusted run identity
+      env:
+        EXPECTED_COMMIT: $(resources.pipeline.appGate.sourceVersion)
+        EXPECTED_RUN_ID: $(resources.pipeline.appGate.runID)
+    - script: node qa/bin/qa.mjs publish-evidence --config qa/qa.config.json --plan "$(Pipeline.Workspace)/appGate/qa-plan/qa-plan.json" --scenarios qa/scenarios.json --results "$(Pipeline.Workspace)/appGate/qa-run-results/run-v1.json" --metadata publisher-metadata.json --artifact "$(resources.pipeline.appGate.runURI)" --expected-commit "$(resources.pipeline.appGate.sourceVersion)" --expected-run-id "$(resources.pipeline.appGate.runID)" --apply --receipt-output board-receipt.json
+      displayName: Recompute and publish from trusted plan and raw runner evidence
+      env:
+        QA_BOARD_WRITE_TOKEN: $(QA_BOARD_WRITE_TOKEN)

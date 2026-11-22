@@ -4,7 +4,27 @@ Use this contract when a harness exposes more than one model family, reasoning
 effort, agent, or external AI counterpart. The active thread remains the
 coordinator and final authority. Routing adds independent evidence and bounded
 execution capacity; it never transfers architecture, security, release, or
-validation truth.
+validation truth. Hermes keeps its current working review route until Codex
+(model set in Hermes's own config) is verified there.
+
+## Routing Policy
+
+- Bounded and bulk execution goes to the verified Codex route.
+- Gemini (provider `acp-antigravity-acp`, owner decision 2026-11-17) comes
+  after Codex and before Cursor: `bb fleet route` ranks Claude, Codex,
+  Gemini, Cursor when Claude goes first, and Codex, Gemini, Cursor
+  otherwise. Gemini is routed only while an account-pool Gemini account is
+  below the switch mark. It never displaces Claude from the work above.
+- Architecture, security, authentication, data-loss, release, and final-review
+  work stays on Claude. Do not send bulk work to Claude.
+- Hermes PR reviews use Codex (model set in Hermes's own config) through
+  `bb fleet validate`. Keep the current review route working until Codex
+  (model set in Hermes's own config) is verified there; the live route change
+  belongs in Hermes's own config.
+
+Use the live provider route for the exact provider, model, and reasoning level;
+do not hardcode model names. These assignments describe the user's adopted
+policy and are not a portable recommendation to add providers or plans.
 
 ## Adoption Profiles
 
@@ -48,20 +68,76 @@ expensive to detect, evidence is weak or contradictory, or the work benefits
 from independent decomposition. Strong deterministic validation often makes a
 standard tier sufficient.
 
+## Model Policy (owner directive 2026-10-08)
+
+Pick the model and reasoning level from the agent's role. In bb, `bb fleet route`
+applies this table; pass `--topic`, `--rejections`, `--complexity` and, when the
+work began before its first review, `--started-at` so it can. Fleet does not
+route bb automations: they are scripts that pick their own models. Whatever
+starts an automation's agent must pin the reviewer route, that is what
+`bb fleet route <kind> --role reviewer` gives (`claude-haiku-5-5` or
+`gpt-6-luna`).
+Elsewhere (Codex, Claude Code, Elyra cards), name the model and reasoning
+explicitly when you start an agent. Never leave it to a default: Codex's config
+default is the GPT ceiling, and Claude's is Opus.
+
+| Role | Claude | GPT (Codex) | Gemini |
+| --- | --- | --- | --- |
+| Orchestrator (the owner's, or one the owner asked for) | `claude-opus-5-5`; reasoning by complexity: medium, high or xhigh | `gpt-6.1-sol` at high | `gemini-pro-orchestrator`; `gemini-4-hydrogen-xhigh` at high complexity |
+| PR reviewer, automation | `claude-haiku-5-5` at low | `gpt-6-luna`; low, medium or high by complexity | `gemini-3.8-flash-low` |
+| Child | `claude-sonnet-5-5`, or `claude-haiku-5-5` for low-complexity research and bulk work (their default complexity); low | `gpt-6-luna`; low, medium or high by complexity | `gemini-4-carbon-low`, `-medium` or `-high` by complexity; `gemini-3.8-flash-low` for low-complexity research and bulk work |
+
+- **Claude children and reviewers.** Reasoning goes from low to high if and
+  only if the work keeps being sent back: two rejections in a row, counting
+  Hermes non-accepts and failed quality gates together. It never goes past
+  high. A Haiku child that keeps coming back moves to Sonnet; a
+  reviewer or automation stays on Haiku.
+- **GPT children, reviewers and automations.** They climb one step for each
+  rejection in a row, and one step each when this work has been going back
+  and forth for 2 hours, then for 6. That time is the work's own, counted
+  from its first rejection since its last accept (or its stated start); a new
+  task in an old group starts at zero:
+  - `gpt-6-luna` low → medium → high → xhigh
+  - → `gpt-6.1-sol` high → xhigh, which is the ceiling.
+- **Never astra.** No agent work runs on any astra model. At dispatch, Fleet
+  refuses any turn that starts on one, and any Codex turn that names no
+  model (Codex would run its own config's default), the owner's included. bb skips that check by design for
+  Send now on a queued message, compaction, and an edited message's re-send:
+  there Fleet enforces nothing, and only the model you named keeps the turn
+  off astra. The ceiling also excludes
+  `max` and `ultra` (which delegates on its own).
+- **Gemini.** Effort is the model id's suffix, so Gemini takes no separate
+  reasoning level. It climbs one step for each rejection in a row and for
+  the same 2- and 6-hour marks as GPT. Reviewers climb within Flash
+  (`gemini-3.8-flash-low` → `-medium` → `-high`). Children climb
+  `gemini-4-carbon-low` → `-medium` → `-high` → `gemini-4-hydrogen-high` →
+  `gemini-4-hydrogen-xhigh`, the ceiling; light Flash work moves onto
+  `gemini-4-carbon-low` on its first step. The Argon models
+  (`gemini-pro-orchestrator-argon`, `gemini-4-argon-low|medium|high`) are
+  available but not routed.
+- **Re-route before rework.** A running agent keeps its spawn model. When work
+  is rejected, start its next attempt on the route the new count gives.
+- **Precedence.** This table takes precedence over the Max And Ultra Decision
+  below for delegated agents. That section still applies to work the owner
+  starts and runs themselves.
+
 ## Role Matrix
 
-Keep role assignment capability-first. Verify the live model catalog rather
-than assuming a model name or effort level exists.
+Keep role assignment capability-first within the routing policy above. Verify
+the live provider and model catalog rather than assuming a name or effort level
+exists.
 
 - Coordinator: owns intent, architecture, integration, escalation, and final
   validation truth.
-- Fast peer: handles bounded discovery, extraction, summarization, and
-  mechanical checks.
-- Balanced peer: provides a separate plan/code review, bounded exploration, or
-  implementation critique.
-- Deep peer: challenges high-risk decisions or unresolved disagreement.
-- External family sidecar: supplies cross-family critique, read-only audit, or
-  bounded execution under an architected plan.
+- Codex peer: handles bounded and bulk execution, discovery, extraction,
+  summarization, and mechanical checks.
+- Claude: handles architecture, security, authentication, data-loss, release,
+  and final review. It does not take bulk execution work.
+- Hermes: provides an independent PR review through Codex (model set in
+  Hermes's own config); it does not execute changes and must never receive
+  project source. Keep its current working route until Codex (model set in
+  Hermes's own config) is verified there.
+- OpenCode: legacy and opt-in only; it is not a default route.
 
 Every delegated unit needs a compact brief: the original request as a faithful
 excerpt that preserves the relevant requested outcomes, or a reference
@@ -77,26 +153,18 @@ rescope the delegated unit instead of treating the excerpt as sufficient.
 handoff contract behind these fields. Keep direction acyclic: a sidecar must
 not call the coordinator or recursively create another orchestration layer.
 
-## Verified Example Profile: Codex + OpenCode/GLM
+## Installed Codex Skill
 
-The installable profile in `skillsets/adaptive-model-orchestration/` maps the
-generic roles to a verified family combination:
+The installable skill in `skillsets/adaptive-model-orchestration/` supports
+Codex peer selection and the Codex/Claude routing policy. Its doctor checks must
+verify the live catalog before use. Do not package or install provider profiles.
 
-- active Codex model: coordinator;
-- OpenCode GLM fast model: discovery and extraction;
-- OpenCode GLM quality model at its normal high setting: default independent
-  plan, review, debugging, and verification pass;
-- OpenCode GLM quality model at its deepest setting: security, architecture,
-  data, migration, release, ambiguous debugging, or final high-risk review;
-- Codex Luna-like peer: high-throughput bounded checks;
-- Codex Terra-like peer: balanced xhigh plan/code review;
-- Codex Sol-like peer: hardest single-path judgment or automatic delegation
-  when the live catalog exposes those capabilities.
-
-Model names and supported effort labels are examples, not framework truths.
-The profile's doctor check must verify executable, authentication, model,
-effort, and agent availability before use. Provider-specific trust and private
-context sharing require explicit operator authorization.
+A distinct remote-router topology is cmux + Hermes: cmux is the local UI/session
+transport and Hermes is the provider router, plan/delegation brain, fallback, and
+usage ledger on a Tailscale-only VPS, driven by a local deterministic broker.
+It is default-off, one-writer-per-task, and acyclic like the sidecar role above.
+See `CMUX_HERMES_ORCHESTRATION.md` and `skillsets/cmux-hermes-orchestration/`;
+use `plan-arbiter` for efficient-frontier lane selection across that surface.
 
 ## Max And Ultra Decision
 

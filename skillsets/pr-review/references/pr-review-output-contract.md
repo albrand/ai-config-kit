@@ -3,7 +3,7 @@
 Load this reference before producing final artifacts for `high-signal-pr-review`, `/code-review`, PR review comments, merge-readiness reviews, or PR bodies.
 
 This file is the normative source for public PR-review output. Codex, Claude
-Code, opencode/GLM, and any other AI agent entrypoint must load and obey this
+Code, and any other AI agent entrypoint must load and obey this
 contract before reviewing a PR or preparing a PR body. Do not fork these rules
 into tool-specific summaries; reference this contract from each entrypoint.
 
@@ -13,6 +13,14 @@ separate and may record exact validation evidence for the user.
 
 Never add AI attribution on PR surfaces: no model names, no "Generated with..."
 footer, no "Claude Code" signature, no AI disclaimer, and no watermark.
+
+Before the first LLM review submission, attach both JSON and Markdown packets
+from `python3 ~/.agents/skills/pr-review/scripts/pre-review.py` to `bb fleet validate --evidence` and any
+advisor round; keep LLM review focused on semantic gaps left by deterministic
+checks. When a review finds a defect, its fix must add the cheapest
+deterministic detector that would catch it (regex, Semgrep, lint, test, fixture,
+or probe); if only semantic review can catch it, say so in one line. Put generic
+rules in the kit starter pack and project-specific rules in `.review-rules/`.
 
 ## PR Body Contract
 
@@ -220,7 +228,7 @@ This section is the normative source for re-review behavior. A **re-review** is
 any second or later review of the same PR, a follow-up review after the author
 replied or pushed, or a queue sweep that revisits a previously reviewed head.
 Re-review is **delta-first** by default, not full-current-head. Codex, Claude
-Code, opencode/GLM, and any other AI entrypoint must load and obey this contract
+Code, and any other AI entrypoint must load and obey this contract
 before re-reviewing.
 
 ### Re-Review Inputs
@@ -254,7 +262,7 @@ Board inventory cannot expand re-review blocking scope without a **causal delta
 path** to the changed surface. A plausible regression against protected
 board-backed behavior is a blocker only when the delta can reach that behavior;
 otherwise it is a follow-up. Missing board access must not suppress concrete code
-findings (see the proportional board rule in `GLOBAL_AGENTS.md`).
+findings, it marks board-dependent readiness **Blocked / NOT READY** when required acceptance or protected-behavior evidence cannot be established. Continue independent authorized work.
 
 ### Finding Identity
 

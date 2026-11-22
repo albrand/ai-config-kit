@@ -1,0 +1,71 @@
+---
+name: codex-delegation
+description: Use when routing bounded or bulk execution through the verified Codex route, including choosing the accountable BB thread or fleet path, preparing a bounded brief, and reconciling worker output.
+verify: test -f skillsets/agent-runtime/shared/codex-delegation/SKILL.md
+verified: 2026-10-05
+---
+
+# Codex Delegation
+
+Bounded and bulk execution uses the live verified Codex route. Quality-critical
+architecture, security, authentication, data-loss, release, and final-review
+work stays on Claude; do not send bulk work to Claude. GLM is retired for
+ordinary execution and fallback. Keep Hermes's current review route working
+until Codex (model set in Hermes's own config) is verified there; manage the
+live route change in Hermes's own config.
+
+1. Resolve the current Codex provider, model, and reasoning level from the live
+   route. Do not copy a stale model ID or invoke an untracked subprocess.
+2. Use a BB thread or fleet member when the harness offers one, so ownership and
+   usage remain attributable. Never call `opencode run` for this route.
+3. Give the worker the relevant user request, accepted scope, parent outcome,
+   plan, exact owned paths and `do_not_touch` paths, source evidence, acceptance
+   criteria, exact checks, security and data invariants, allowed tools, output
+   cap, stop conditions, and fallback. Carry the parent's exact hard refusal
+   and permission boundaries into the generated brief and launcher
+   configuration; verify requested writes fit the existing authority before
+   launch. Actual hard safety/authorization refusals are final: never retry,
+   rephrase, switch tools/routes, delegate around them, or widen authority.
+   Ordinary command usage/format, transport/runtime, and wrong execution-context
+   errors may be diagnosed and corrected within already established authority.
+   An access/ACL refusal is not such an error: do not evade ACLs or select
+   credentials. Use an already authenticated owner context only when actual
+   owner rules authorize it. Preserve the requested outcome: an unattempted
+   output is BLOCKED/NOT RUN, and an attempted failed output is FAIL; never
+   report reduced output as success. Continue only independently authorized
+   work; see `orchestrator-lessons` for the check.
+4. Keep one writer per branch and worktree. Executor work uses a dedicated
+   isolated worktree with explicit write authorization. Do not recurse into
+   another orchestrator or sidecar.
+5. Treat worker output as evidence. Re-read changed files, rerun important
+   checks, resolve disagreements against source, and keep final integration and
+   validation with the coordinator.
+6. End every brief with a typed return, so the first lines are readable at a
+   glance: `STATUS: done|needs-owner`, `SHA:` or `PR:`, `DECISIONS:` (every
+   value the brief left open, and what the worker chose), `Verified:` (the
+   commands that decided it, with exit codes), `Not covered:` (only checks that
+   could not run, and why), and `NEEDS-OWNER: <one question: a login, code or hard-prohibition approval not yet given>; your recommendation; what you kept
+   doing` when needed. A choice of routes is never needs-owner: a step the requested outcome needs is yours to pick and do. Anything short of done or needs-owner is not a stopping
+   point: diagnose, try another route, keep going. A report that says done is a
+   claim, not a result.
+
+For Hermes PR review, use `bb fleet validate` with bounded evidence. After its
+replacement is verified, the route uses Codex (model set in Hermes's own
+config). Never pass a `--model` override to `acp-hermes-agent`. Never place or
+retain project source on Hermes; send only bounded review context via the
+approved broker.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+When the delegated job is a decision (classify, triage, pass/fail, does this
+reproduce), put the declared answer space in the brief and require
+`{question, answer, evidence, confidence_source}` back. An answer outside the
+space, or a confidence resting only on the delegate's own opinion, is a
+failed delegate. Re-ask or escalate.
+
+For pure classification, Jev (`typed-decisions` section 10) returns the typed
+answer natively. Prefer it unless the decision needs reasoning or tools. Contract: the `typed-decisions` skill.
+
+Record it in the decision ledger (the delegate's decision under its own point), with a `--ref` a later agent can find, and resolve it when the truth arrives.
+<!-- typed-decisions:end -->

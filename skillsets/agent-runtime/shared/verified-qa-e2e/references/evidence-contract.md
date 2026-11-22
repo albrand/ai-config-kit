@@ -29,7 +29,15 @@ vendor-specific secret links.
       "found": true,
       "attempted": true,
       "evidence": "repository seed/setup reference without credentials"
-    }
+    },
+    "identities": [
+      {
+        "label": "qa.vendor",
+        "ownership_checked": true,
+        "ownership_evidence": "CI workflows and e2e setup/fixtures searched; no suite uses qa.vendor",
+        "owned_by_automation": false
+      }
+    ]
   },
   "prerequisites": {
     "verified": true,
@@ -54,6 +62,9 @@ vendor-specific secret links.
         "control": "Accept Dispatch",
         "surface": "Vendor Portal",
         "observed": true,
+        "expected": { "value": "Button text 'Accept Dispatch' is shown", "source": "ticket acceptance criterion AC-1" },
+        "actual": "Button text 'Accept Dispatch' is shown",
+        "match": true,
         "evidence": "private observation reference"
       }
     ]
@@ -72,12 +83,144 @@ vendor-specific secret links.
 ```
 
 For `claim_e2e_complete`, omit `external`. The remaining evidence is identical.
+The gate compares actual with expected.value exactly; match is a cross-check, never a substitute.
 The `reasoning_effort` field is accepted for auditability but is never consulted
 when deciding pass or fail. When `initial_state` is `authenticated`, test-identity
 discovery may be omitted. When it is `logged_out`, discovery evidence is required
 before requesting user interaction or declaring authentication blocked.
 
+## The walk identity
+
+`authentication.identities` is required when `authentication.required` is
+true and the operation is `publish_qa_instructions` or `claim_e2e_complete`:
+one block per persona the walk signed in as. A walk as a professional and a
+patient declares two blocks, and each one is checked on its own. The single
+`authentication.identity` of older packets is still read, as one more block;
+the gate checks every block in either place, so a clean first persona never
+hides a second. Each block holds a label (an account name or role, never a
+credential), the evidence that CI workflows and e2e setup, fixtures and
+teardown were searched for it, and `owned_by_automation`. A block for an
+identity an automated suite owns also needs:
+
+```json
+"identity": {
+  "label": "e2e.professional",
+  "ownership_checked": true,
+  "ownership_evidence": "e2e global setup deletes and recreates its appointment",
+  "owned_by_automation": true,
+  "owner": "deployed e2e gate (playwright global setup)",
+  "unowned_identity_available": false,
+  "unowned_identity_evidence": "the seed defines no other professional account",
+  "walk_window": {"start": "2026-09-25T15:10:00Z", "end": "2026-09-25T15:40:00Z"},
+  "overlap_check": {"checked_at": "2026-09-25T15:41:00Z",
+                    "evidence": "CI run list: no e2e run started or finished within the window",
+                    "overlapping_runs": 0},
+  "disclosure": "walked as e2e.professional, owned by the e2e gate, on the shared preview DB; no run overlapped"
+}
+```
+
+Failure codes: `IDENTITY_MISSING`, `IDENTITY_LABEL_MISSING`,
+`IDENTITY_OWNERSHIP_UNCHECKED`, `IDENTITY_OWNERSHIP_UNKNOWN`,
+`IDENTITY_OWNER_MISSING`, `IDENTITY_OWNED_BY_AUTOMATION` (an unowned identity
+exists, or the evidence that none does is missing), `WALK_WINDOW_MISSING`,
+`OVERLAP_UNCHECKED` (no evidence, or `checked_at` before the walk ended),
+`CONCURRENT_AUTOMATION_RUN`, and `IDENTITY_SHARING_UNDISCLOSED`. In qa-sweep
+repos, `.qa/config.json` `automation_identities` lists the CI identities, and
+the ship gate refuses a packet that declares any of them unowned, in
+`identity` or in any `identities` entry. The ship gate passes that list to
+this gate (`check <packet> --automation-identities '<json array>'`).
+
+**Labels are compared normalised.** Both sides go through NFKC, map the
+Latin punctuation names carry to ASCII (U+2018 and U+2019 to `'`, U+2013 and
+U+2014 to `-`, U+00B7 to `.`: `O’Brien` typed with a macOS smart quote,
+`maria–silva`, `Paral·lel`), lowercase, `ß` to `ss`, strip, and lose an
+`@domain` suffix, so `E2E.patient`,
+`e2e.patient ` and `e2e.patient@example.test` all name `e2e.patient`. A label
+with a character outside printable ASCII and the Latin letter blocks (after
+NFKC) is refused outright: that covers mixed scripts (`e2е.patient` with a
+Cyrillic `е`), Greek and Cyrillic look-alikes, IPA and small capitals
+(`qa.veɴdor`), marks left after composition, invisible characters (U+200B,
+U+2060, U+FEFF, U+2800, U+3164) and controls. A label that matches a listed
+one only by look-alike letters (`E2E.PATİENT`) is refused too:
+`IDENTITY_LABEL_CONFUSABLE`. A label that is a listed one, or contains one
+between non-alphanumeric boundaries (`e2e.patient (CI)`, `@e2e.patient`,
+`patient (e2e.patient@…)`), before or after the `@domain` drop (so
+`tester @e2e.patient`, which keys as `tester`, still contains it), declared
+unowned fails
+`IDENTITY_LISTED_AS_AUTOMATION`. This gate and ship-gate.py implement one
+spec (not their languages' own casefold, trim or letter tests, which differ);
+the ship-gate selftest runs 20,000 generated labels through both and fails on
+any difference.
+
+
+**CI's own run as the walk (`owner_run`).** The rule against owned identities
+stops other walkers borrowing one. The suite that owns the identity, running
+itself, borrows nothing, and it can only sign in as the identities it owns.
+To record such a run as the walk, add a `walker` to that identity block:
+
+```json
+"walker": {"kind": "owner_run", "owner": "deployed e2e gate (playwright global setup)",
+           "run_id": 123456789, "run_url": "https://github.com/example-org/example-repo/actions/runs/123456789"}
+```
+
+With `walker.kind` `owner_run`, `walker.owner` equal to the block's `owner`,
+a numeric `run_id`, and a `run_url` of the form
+`https://github.com/<owner>/<repo>/actions/runs/<run_id>[/attempts/<n>]`
+naming that same run, `IDENTITY_OWNED_BY_AUTOMATION` does not apply to that
+block, even when an unowned identity exists. `walk_window`, the
+`overlap_check` (after the walk ended, `overlapping_runs: 0`) and `disclosure`
+stay required: another writer on the same data during the owner's run is the
+same contamination. The label must be one the repository lists in
+`automation_identities`; with no list an owner_run is refused (this gate run
+alone, `check <packet>` without `--automation-identities`, refuses it too).
+Refused: `WALKER_INVALID` (another `kind`), `OWNER_RUN_OWNER_MISMATCH`,
+`OWNER_RUN_ID_MISSING` (absent or not digits), `OWNER_RUN_URL_INVALID`,
+`OWNER_RUN_URL_MISMATCH` (the URL names another run), `OWNER_RUN_NOT_OWNED`
+(`owned_by_automation` not true), `OWNER_RUN_NO_LIST`, and
+`OWNER_RUN_UNLISTED`.
+
+The ship gate then checks the claim against the world, failing closed: the
+run URL's `<owner>/<repo>` must be the repository's `origin` remote, and
+`gh api repos/<owner>/<repo>/actions/runs/<run_id>/attempts/<n>` (the attempt
+`run_url` names; without `/attempts/<n>`, `.../runs/<run_id>`, the latest
+attempt), inside the same lookup budget as the deployment provenance lookup
+and once per run attempt per check, must show an attempt that is `completed`
+with conclusion `success`, ran on the walked commit (`rewalk.json` `sha`),
+and whose own `run_started_at..updated_at` contains the walk window. A re-run
+is another attempt with its own window: name the attempt that walked. No
+`gh`, a failed or timed-out lookup, a reply that is not a run, an unfinished
+or unsuccessful attempt, another commit or a window outside the attempt
+denies. What stays declarative is that the evidence came from that run and
+not from a person during it.
+
+Times (`walk_window.start`/`.end`, `overlap_check.checked_at`) carry an offset,
+`Z` or `+hh:mm`: a time without one is read in local time by one parser and
+UTC by another, so it is refused (`WALK_WINDOW_MISSING`, `OVERLAP_UNCHECKED`).
+So is a date that does not exist (`2026-02-30`, year `0000`, day `00` even as
+`2026-10-00T24:00Z`), a fraction of more than 9 digits, or an offset past
+`:59`; both gates check the calendar date, where `Date.parse` alone
+would roll 2026-02-30 into March.
+
+The origin must be spelled as github.com: `https://github.com/...`,
+`git@github.com:...` or `ssh://git@github.com[:port]/...`. An SSH host alias
+(`git@github-work:...`), `ssh.github.com`, `www.github.com` or `http://`
+cannot be tied to a GitHub repository and denies; so does a `run_url` with a
+trailing slash, query or fragment. Use the canonical forms.
+
+
+Known false refusal: diacritics are stripped for the look-alike check, so an
+unowned `joão.silva` is refused when `joao.silva` is listed (and an `@domain`
+suffix is dropped, so `e2e.patient@other` counts as `e2e.patient`). Both fail
+closed; rename the identity or list it. Names outside the Latin script
+(`Иван Петров`, `Ελένη`, `مريم`, CJK, Hangul) and emoji (`🧪 tester`) are
+refused by the label alphabet; name the identity with a Latin-script label.
+
+
+
+
+
 ## Claiming a reached prerequisite blocked
+
 
 Use `claim_e2e_blocked` only after reaching the intended entry point. The
 packet still needs `actor`, `entrypoint`, and `authentication` evidence, but
@@ -112,6 +255,7 @@ A broken or missing product control that the user needs is a `FAILED` journey,
 not a `BLOCKED` prerequisite. The gate checks evidence shape, not whether a
 browser action truly occurred or whether a defect was classified honestly;
 compare every reference with the browser trace before reporting the verdict.
+A step whose actual differs from expected makes the claim a failure, not a block.
 
 ## Manual browser login handoff
 

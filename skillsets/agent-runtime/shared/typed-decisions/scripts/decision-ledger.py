@@ -8,7 +8,7 @@ be checked against how often decisions at that tier were later overturned.
 Events are JSON lines in one file, never rewritten:
   {"type": "init", ...}
   {"type": "decision", "id", "ts", "point", "answer", "space", "source", "tier",
-   "measurement", "ref", "agent", ["latency_ms", "tokens", "batch"]}
+   "measurement", "ref", "agent", ["latency_ms", "tokens", "batch", "spend_usd", "agreement"]}
   {"type": "outcome", "id", "ts", "outcome": "held"|"overturned", "evidence"}
 
 latency_ms and tokens are for the whole call that produced the decision; batch is
@@ -32,6 +32,10 @@ Commands:
            tell a real overturn from new work under a reused topic, so a
            person or agent resolves it with evidence.
   report   [--point P] [--min 20]
+  review-report [--days 30]
+           agreement rate, tokens and reported USD per review, p50/p95 latency
+  resolve-review --ref REVIEW --outcome held|overturned --evidence TEXT
+           resolve all unresolved Jev decisions for one Hermes review
   check    [--stale-days 14]   ledger parses, outcomes reference decisions,
                                and it is actually in use
   --falsify                    prove check/record refuse what they must
@@ -44,6 +48,7 @@ import argparse
 import datetime as dt
 import fcntl
 import json
+import math
 import os
 import re
 import sqlite3
@@ -124,7 +129,7 @@ def append(events):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def cost_fields(latency_ms=None, tokens=None, batch=None):
+def cost_fields(latency_ms=None, tokens=None, batch=None, spend_usd=None, agreement=None):
     out = {}
     for name, v in (("latency_ms", latency_ms), ("tokens", tokens), ("batch", batch)):
         if v is None:
@@ -134,11 +139,19 @@ def cost_fields(latency_ms=None, tokens=None, batch=None):
         out[name] = v
     if out and "latency_ms" not in out:
         raise Refused("tokens/batch without latency_ms: record the call's latency too")
+    if spend_usd is not None:
+        if not isinstance(spend_usd, (int, float)) or not math.isfinite(spend_usd) or spend_usd < 0:
+            raise Refused("spend-usd must be a non-negative number")
+        out["spend_usd"] = spend_usd
+    if agreement is not None:
+        if agreement not in ("agreed", "disagreed"):
+            raise Refused("agreement must be agreed or disagreed")
+        out["agreement"] = agreement
     return out
 
 
 def build_decision(point, answer, space, source, tier, measurement, ref="", agent="", id_=None, ts=None,
-                   latency_ms=None, tokens=None, batch=None):
+                   latency_ms=None, tokens=None, batch=None, spend_usd=None, agreement=None):
     if not SLUG.match(point or ""):
         raise Refused("point must be a short lowercase slug, e.g. test-verdict")
     options = [s.strip() for s in space.split("|")] if space else None
@@ -156,7 +169,7 @@ def build_decision(point, answer, space, source, tier, measurement, ref="", agen
     return {"type": "decision", "id": id_ or uuid.uuid4().hex[:12], "ts": ts or now_iso(),
             "point": point, "answer": answer, "space": options, "source": source, "tier": tier,
             "measurement": measurement, "ref": clean(ref, "ref"), "agent": clean(agent, "agent"),
-            **cost_fields(latency_ms, tokens, batch)}
+            **cost_fields(latency_ms, tokens, batch, spend_usd, agreement)}
 
 
 def index(events):
@@ -171,7 +184,8 @@ def index(events):
 
 def cmd_record(a):
     ev = build_decision(a.point, a.answer, a.space, a.source, a.tier, a.measurement, a.ref, a.agent,
-                        latency_ms=a.latency_ms, tokens=a.tokens, batch=a.batch)
+                        latency_ms=a.latency_ms, tokens=a.tokens, batch=a.batch,
+                        spend_usd=a.spend_usd, agreement=a.agreement)
     append([ev])
     print(ev["id"])
 
@@ -315,6 +329,77 @@ def cmd_report(a):
     for n in notes:
         print("note: " + n)
     print(f"(notes appear once a row has >= {a.min} resolved decisions; thresholds stay human-set)")
+
+
+def cmd_review_report(a):
+    events, bad = read_events()
+    decisions, _ = index(events)
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=a.days)
+    rows = [d for d in decisions.values() if d.get("source") == "system-one"
+            and d.get("ref", "").startswith("jev-hermes:")
+            and parse_ts(d["ts"]) >= cutoff]
+    calls = {}
+    for d in rows:
+        ref = d["ref"].split("#", 1)[0].strip()
+        calls.setdefault(ref, []).append(d)
+    reviews = {}
+    latencies = []
+    for call_ref, call_rows in calls.items():
+        review_ref = re.sub(r":c[0-9]+$", "", call_ref)
+        review = reviews.setdefault(review_ref, {"agreements": 0, "compared": 0, "tokens": 0, "spend_usd": 0.0, "spend_reported": False})
+        review["agreements"] += sum(d.get("agreement") == "agreed" for d in call_rows)
+        review["compared"] += sum(d.get("agreement") in ("agreed", "disagreed") for d in call_rows)
+        token_values = [d["tokens"] for d in call_rows if "tokens" in d]
+        spend_values = [d["spend_usd"] for d in call_rows if "spend_usd" in d]
+        if token_values:
+            review["tokens"] += max(token_values)
+        if spend_values:
+            review["spend_usd"] += max(spend_values)
+            review["spend_reported"] = True
+        latency_values = [d["latency_ms"] for d in call_rows if "latency_ms" in d]
+        if latency_values:
+            latencies.append(max(latency_values))
+    if not reviews:
+        print(f"no Jev Hermes reviews in the last {a.days} days")
+        return
+    compared = sum(r["compared"] for r in reviews.values())
+    agreements = sum(r["agreements"] for r in reviews.values())
+    rate = agreements / compared if compared else None
+    usd_values = [r["spend_usd"] for r in reviews.values() if r["spend_reported"]]
+    print(f"Jev Hermes reviews: {len(reviews)} in the last {a.days} days")
+    print(f"agreement rate: {agreements}/{compared} ({rate:.1%})" if rate is not None else "agreement rate: no comparisons recorded")
+    print(f"tokens per review: {sum(r['tokens'] for r in reviews.values()) / len(reviews):.0f} average")
+    print(f"USD per review: {sum(usd_values) / len(usd_values):.6f} average across {len(usd_values)} cost-reported review(s)"
+          if usd_values else "USD per review: not reported by the Jev response")
+    print(f"latency p50/p95: {pct(latencies, 0.50):.0f}/{pct(latencies, 0.95):.0f} ms across {len(latencies)} Jev call(s)"
+          if latencies else "latency p50/p95: no measured calls")
+    if bad:
+        print(f"unparseable ledger lines: {len(bad)}")
+
+
+def cmd_resolve_review(a):
+    events, _ = read_events()
+    decisions, outcomes = index(events)
+    prefix = "jev-hermes:" + a.ref + ":"
+    refs = sorted({d.get("ref", "").split("#", 1)[0] for d in decisions.values()
+                   if d.get("source") == "system-one" and d.get("ref", "").startswith(prefix)})
+    finding_marker = f"#f{a.finding}_" if a.finding else ""
+    unresolved = [d for d in decisions.values() if d.get("source") == "system-one"
+                  and d.get("ref", "").startswith(prefix)
+                  and (not finding_marker or finding_marker in d.get("ref", ""))
+                  and d["id"] not in outcomes]
+    if not unresolved:
+        print("no unresolved Jev decisions matched")
+        return
+    evidence = clean(a.evidence, "evidence")
+    if not evidence:
+        raise Refused("resolution evidence is required")
+    for decision in unresolved:
+        ev = {"type": "outcome", "id": decision["id"], "ts": now_iso(),
+              "outcome": a.outcome, "evidence": evidence}
+        append([ev])
+    target = f" for finding {a.finding}" if a.finding else ""
+    print(f"resolved {len(unresolved)} Jev decision(s){target} as {a.outcome} across {len(refs)} call(s)")
 
 
 def bench_dir(a_dir=None):
@@ -539,6 +624,8 @@ def main():
     r.add_argument("--latency-ms", type=int)
     r.add_argument("--tokens", type=int)
     r.add_argument("--batch", type=int)
+    r.add_argument("--spend-usd", type=float)
+    r.add_argument("--agreement", choices=("agreed", "disagreed"))
     s = sub.add_parser("resolve")
     s.add_argument("id", nargs="?")
     s.add_argument("--ref")
@@ -552,6 +639,13 @@ def main():
     rp.add_argument("--point")
     rp.add_argument("--source", help="only decisions from this confidence source (e.g. system-one)")
     rp.add_argument("--min", type=int, default=20)
+    rr = sub.add_parser("review-report")
+    rr.add_argument("--days", type=int, default=30)
+    rrr = sub.add_parser("resolve-review")
+    rrr.add_argument("--ref", required=True)
+    rrr.add_argument("--outcome", choices=OUTCOMES, required=True)
+    rrr.add_argument("--evidence", required=True)
+    rrr.add_argument("--finding")
     c = sub.add_parser("check")
     c.add_argument("--stale-days", type=int, default=14)
     v = sub.add_parser("velocity")
@@ -560,7 +654,8 @@ def main():
     a = p.parse_args()
     try:
         rc = {"record": cmd_record, "resolve": cmd_resolve, "import-hermes": cmd_import_hermes,
-              "report": cmd_report, "check": cmd_check, "velocity": cmd_velocity}[a.cmd](a)
+              "report": cmd_report, "review-report": cmd_review_report, "resolve-review": cmd_resolve_review,
+              "check": cmd_check, "velocity": cmd_velocity}[a.cmd](a)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         sys.exit(2)

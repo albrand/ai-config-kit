@@ -34,7 +34,7 @@ def load_broker():
 
 
 def write_fake(binpath: Path, body: str) -> None:
-    binpath.write_text("#!/usr/bin/env python3\n" + body, encoding="utf-8")
+    binpath.write_text(f"#!{sys.executable}\n" + body, encoding="utf-8")
     os.chmod(binpath, 0o755)
 
 

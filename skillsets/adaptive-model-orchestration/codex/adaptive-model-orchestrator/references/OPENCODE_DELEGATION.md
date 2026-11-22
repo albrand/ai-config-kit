@@ -1,183 +1,69 @@
-# OpenCode Delegation Contract
+# Legacy OpenCode Execution Boundary
 
-This is the provider-specific execution contract for using OpenCode as an
-external sidecar. Read `ADAPTIVE_MODEL_ORCHESTRATION.md` first. That file owns
-the portable routing and effort policy; this file owns the OpenCode handoff.
+OpenCode is retired from the framework's default routing policy. Bounded and
+bulk execution goes through the verified Codex route; architecture, security,
+authentication, data-loss, release, and final-review work stays on Claude. Hermes
+PR reviews use Codex (model set in Hermes's own config) through
+`bb fleet validate`. Keep the current Hermes review route working until that
+replacement is verified in Hermes's own config; manage the live route in
+Hermes's own config. GLM is retired for ordinary task execution and fallback.
 
-OpenCode is optional unless an adopted profile explicitly requires it. Never
-assume the executable, provider membership, authentication, model, effort
-variant, agent name, private-context authorization, or broad filesystem access
-exists. Verify those capabilities with a small probe.
+This reference preserves safety rules for an operator who explicitly requests
+an existing non-GLM OpenCode setup. It does not authorize provider membership,
+authentication, model choice, or private-context sharing. Without explicit
+request and live verification, keep execution on the default Codex and Claude
+routes. See `skillsets/agent-runtime/shared/codex-delegation/SKILL.md` for the
+default bounded-work handoff.
 
-## Modes
+## Legacy OpenCode Gate
 
-- Advisor: tool-free critique over a compact evidence packet.
-- Explorer: read-only repository discovery and evidence extraction.
-- Auditor: deeper read-only inspection when a packet is insufficient.
-- Executor: bounded implementation of an already architected plan in a
-  disjoint scope.
+Before any explicitly requested OpenCode call:
 
-Direction is acyclic: coordinator -> OpenCode -> result -> coordinator.
+1. Verify the executable version, configured provider, model, agent, and effort
+   with a small no-tool probe. Never select GLM.
+2. Keep package checks offline. Runtime authentication belongs to an explicit
+   operator-run doctor; do not inspect or handle credentials.
+3. Confirm repository-context authorization, minimize the evidence packet, and
+   remove secrets.
+4. Record workdir, allowed tools, mutation boundary, output cap, stop
+   conditions, and a local Codex fallback.
+5. For execution, use a dedicated isolated worktree and any configured explicit
+   write gate. Prompt-level path restrictions are not an enforcement boundary.
+6. Keep sharing disabled. Never publish an OpenCode session unless the user
+   explicitly requests publication of that session.
+7. Keep coordinator ownership of architecture, security, integration, and final
+   validation. Sidecar output is evidence, never release truth.
+
+Direction must remain acyclic: coordinator -> OpenCode -> result -> coordinator.
 OpenCode must not call the coordinator, another orchestrator, or another
-sidecar. The coordinator retains architecture, integration, security, release,
-and final validation authority.
+sidecar. If any gate fails, report the exact blocker and continue locally only
+when the Codex route is authorized.
 
-## Capability And Authorization Gate
+## Hermes Review Boundary
 
-Before the first call:
-
-1. Resolve `opencode` from `OPENCODE_BIN` or `PATH` and record its version.
-2. Verify the configured provider, model, effort variant, and primary agent with
-   a tiny no-tool probe. Agent names and CLI flags may change across versions.
-3. Keep package validation offline. Authentication and live model probes belong
-   to an explicit runtime doctor check.
-4. Confirm whether sending repository context to the configured provider is
-   authorized. Sanitize secrets and minimize the evidence packet regardless.
-5. Record workdir, allowed tools, mutation boundary, time/output cap, stop
-   conditions, and single-agent fallback.
-6. For executor mode, use a dedicated isolated worktree whose entire root is
-   authorized for modification. The bundled wrapper also requires the explicit
-   write environment gate and marker documented by its skillset.
-7. If an adopted always-on profile requires OpenCode and it is unavailable,
-   report the blocked lane and continue locally without weakening gates.
-
-Do not encode `danger-full-access`, automatic approval, private-context trust,
-or unrestricted external directories as portable defaults. Those are local
-operator decisions.
+Hermes is an independent reviewer, not an executor. Request PR reviews through
+`bb fleet validate` with a bounded topic and evidence packet. The review route
+uses Codex. Never pass a `--model` override to `acp-hermes-agent`. Never place
+or retain a project source on Hermes; provide only bounded review context via
+the approved broker. Transport details remain in
+`CMUX_HERMES_ORCHESTRATION.md`.
 
 ## Handoff Packet
 
-Send only what the mode requires:
+For any explicitly approved legacy sidecar call, include only:
 
-- the original request as a faithful excerpt that preserves the relevant
-  requested outcomes, or a reference demonstrably accessible to the recipient
-  (a fresh-session delegate must actually be able to read it); the full
-  original request must remain accessible to the recipient even when the brief
-  uses a faithful excerpt; if that access would exceed the recipient's
-  authorized context, keep that work local or rescope the delegated unit
-  instead of treating the excerpt as sufficient;
-- the accepted scope revision, the parent outcome, and this unit's bounded
-  responsibility;
-- `objective` and sidecar role;
-- ordered plan for executor mode;
-- in-scope paths and `do_not_touch` paths;
-- authoritative evidence or attached compressed packet;
-- acceptance criteria and exact validation commands;
+- the relevant request and accepted scope;
+- the bounded responsibility and exact `do_not_touch` paths;
+- source evidence, acceptance criteria, and exact local checks;
 - security, data, dependency, and release invariants;
-- allowed tools and mutation boundary;
-- expected artifact/output shape and hard output cap;
-- stop conditions and fallback.
+- allowed tools, mutation boundary, output cap, stop conditions, and fallback.
 
-For a directive, planning, architecture, or challenge pass, include the
-authorization required by the active environment. Do not manufacture
-authorization inside a portable template.
-
-## Invocation Pattern
-
-Prefer the wrapper and lean config in
-`skillsets/adaptive-model-orchestration/`. A direct invocation has this shape:
-
-```sh
-OPENCODE_CONFIG_DIR="<lean-config-dir>" \
-  opencode run "<bounded brief>" \
-  --format json \
-  --auto \
-  --pure \
-  --dir "<workdir>" \
-  -m "<verified-model>" \
-  --agent "<verified-agent>" \
-  -f "<optional-evidence-file>"
-```
-
-Treat `--pure`, `--variant`, `--agent`, and agent names as feature-gated. Probe
-the installed version before depending on them. Keep OpenCode's remote session
-publication feature disabled (`share: "disabled"`; do not pass `--share`)
-unless the user explicitly requests publication.
-
-For advisor calls, prefer precomputed evidence over asking a live repo-bound
-agent to rediscover the entire task. For execution, split plans into disjoint
-file scopes and attach the plan rather than embedding a large transcript.
-
-The bundled wrapper invokes `run-managed.mjs` and streams OpenCode's JSON
-unchanged. The runner applies a bounded 30-minute outer deadline by default. An
-operator may declare a shorter or longer explicit deadline with
-`OPENCODE_RUN_DEADLINE_MS`; an undeclared idle limit must not be invented during
-a run. Same-step continuation requires
-`OPENCODE_RETAIN_SESSION=1` plus `OPENCODE_SESSION_ID` or
-`OPENCODE_CONTINUE=1`.
-
-## Liveness And Stop Authority
-
-Keep these controls distinct:
-
-- OpenCode provider `timeout` limits an individual provider/model request.
-- OpenCode `chunkTimeout` limits the wait between streamed provider chunks.
-- agent `steps` limits agentic iterations and requests a summary at the limit.
-- tool calls, pre-edit reads, validation calls, elapsed time, and outer JSON
-  silence are coordinator telemetry only.
-
-The official definitions live in the OpenCode configuration and agent docs:
-<https://opencode.ai/docs/config/> and <https://opencode.ai/docs/agents/>.
-
-Never interrupt a live run because a telemetry count crossed an expectation.
-Stop only for a verified scope, security, or destructive-action violation; a
-provider or fatal protocol error; a caller cancellation signal; or a
-predeclared explicit wall deadline. Scope drift remains an immediate hard stop.
-
-On cancellation, signal the entire owned process group, wait for it to close,
-and use bounded escalation only if the group remains alive. Do not edit,
-validate, or reassign the worktree until the managed runner reports the process
-tree absent and the coordinator confirms the worktree is stable. A signal being
-sent is not evidence that the process is quiescent.
+The complete request must remain accessible to the recipient. If this exceeds
+the authorized context, keep the work local or rescope it.
 
 ## Executor Output
 
-Require:
-
-```yaml
-status: done | partial | blocked
-plan_progress: <completed steps>
-changes:
-  - path: <file>
-    summary: <one line>
-artifacts:
-  - <path>
-validation:
-  - check: <command>
-    result: pass | fail | blocked | skipped | not_run
-    required_outcome: <what this check must prove>
-    observed: <behavior or output actually seen>
-    artifact: <evidence path or inline excerpt>
-    binding: <candidate SHA/version, environment, known limitation>
-gates_preserved: <quality and security gates, or blocker>
-residual_risk: <short>
-next_step: <short or null>
-```
-
-Deletion-eligible executor output must include at least one validation entry
-with `result: pass`, no failed/blocked/skipped/not-run result, and the exact
-affirmative value `gates_preserved: yes`. Empty or ambiguous validation remains
-available for diagnosis but is never auto-deleted.
-`binding` may be stated once in shared task context instead of repeated per
-entry, and trivial tasks do not need a private JSON object per check. The
-schema records evidence; it does not enforce it.
-
-The coordinator re-reads changes, verifies load-bearing claims, reruns the
-important checks, and resolves disagreements. OpenCode output is execution or
-advisory evidence, never final release truth.
-
-## Recovery
-
-A still-running process is not an insufficient result. After a run has actually
-completed with failed gates, missing close-out, or partial/blocked status, issue
-at most one compact repair packet for the same plan step. Retain the session for
-that continuation. After the one repair, escalate to the coordinator instead of
-replaying a broad prompt.
-
-On provider timeout or another hard stop, retain partial structured output and
-the OpenCode session. Return `blocked` rather than expanding scope, choosing new
-architecture, adding dependencies, weakening gates, or taking a destructive
-action not authorized by the brief. Delete only newly created root sessions
-that the runner observed finish successfully under the selected output
-contract; retain interrupted, timed-out, continued, partial, failed, and
-ambiguous sessions.
+Require a structured result with status (`done`, `partial`, or `blocked`),
+changes, artifacts, validation results (`pass`, `fail`, `blocked`, `skipped`,
+or `not_run`), gates preserved, residual risk, and next step. Re-read changed
+files and rerun important checks locally before acting on the result.

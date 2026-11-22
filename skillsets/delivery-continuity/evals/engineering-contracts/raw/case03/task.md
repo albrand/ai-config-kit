@@ -1,0 +1,1 @@
+Add a health route to the service. The route must be reachable from the application entry point used by the server, and the existing route must keep working. Run `python3 check.py`.

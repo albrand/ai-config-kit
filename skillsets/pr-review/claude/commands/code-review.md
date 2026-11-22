@@ -32,11 +32,11 @@ Use normal Claude Code capabilities. Prefer `gh` CLI or GitHub MCP for GitHub PR
    - Extract the business rules the PR is trying to satisfy: user workflow, role/permission rules, data lifecycle, external contracts, acceptance criteria, non-goals, and previously working behavior that must remain intact.
    - Build a compact matrix: `business rule / source / changed code / expected behavior / validation evidence`.
    - If business rules or acceptance criteria are unclear and the gap changes the verdict, ask one targeted question or mark the PR `NEEDS DISCUSSION`.
-7. Demand authoritative ticket-board access before readiness judgment:
-   - For Jira-backed repositories, ask imperatively for Jira board access; for non-Jira repositories, ask for the configured board or a current board export.
-   - Inventory all visible board tickets, not only the PR's linked issue.
+7. Use authoritative ticket-board evidence when a board is configured or linked, or the requested judgment depends on ticket acceptance or release evidence:
+   - Reuse available board access and current ticket evidence; request access only when a required board-dependent conclusion cannot be established.
+   - Inventory the linked and potentially affected tickets. Expand when the changed surface can reach additional protected behavior.
    - Check the diff against current, adjacent, QA, Done, released, and previously working tickets that share files, routes, contracts, data, permissions, or user workflows with the PR.
-    - Missing board access, stale export, incomplete inventory, or missing PR-to-ticket traceability means **Board regression gate blocked / NOT READY** for approval/merge-readiness — but it does not suppress validated code findings, which are still reported. Scope the inventory to all visible board tickets when a board source is available; when none exists, scope to the linked ticket plus demonstrably impacted tickets (shared files, routes, contracts, data, permissions, or user workflows) and state the narrower scope.
+   - Missing required board evidence means **Board regression gate blocked / NOT READY** for the conclusion that depends on it. Continue independent review and report concrete findings. When no board applies, use the request, repository instructions, source, and runtime evidence.
 8. Use independent agents when useful and available:
    - One or two instruction-compliance passes.
    - One business-rule coverage pass.
@@ -91,24 +91,42 @@ Use the operator close-out shape from `pr-review-output-contract.md`. Findings f
 <!-- typed-decisions:begin -->
 ## Typed decisions here
 
-Judge each candidate finding separately, against the diff and ticket, with
-two typed questions:
+The Hermes finding remains the candidate. Jev is an independent second judge,
+not a new filter and not a merge gate.
 
-1. Finding class (pick-one): `compile-or-runtime-break | wrong-changed-path-behavior
-   | broken-contract (auth/data/security/API/env) | missing-required-validation
-   | scoped-instruction-violation | none`. `none` is dropped. That is the
-   high-signal filter, applied as a fixed list rather than a mood.
-2. "Reproduces on the changed path?" (yes/no), backed by evidence. No
-   evidence → not reported.
+For each Hermes finding, compare five isolated Jev judgments with Hermes'
+labels: J1 finding class (`named-defect | evidence-method | unclear`); J2
+dedupe (`new | duplicate | not-applicable | unclear`) and cause (`delta | pre-existing | unclear`); J3 changed-path scope (`changed | unchanged | unclear`)
+and severity (`critical | high | medium | low | info | unclear`, using the
+written anchors in `hermes-review-jev.py`).
 
-The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
-none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole.
+Create a packet with only `review_ref`, `hermes_verdict`, `sensitive_context`,
+`changed_paths`, and bounded `findings` fields (`id`, `kind`, `path`,
+`severity`, `cause`, `relation`, `prior_id`, `prior_summary`, `changed_path`,
+`summary`). Never send the diff, source excerpt, raw Hermes transcript, prompt,
+secret, or personal data. Mark `sensitive_context` true for patient or other
+personal-data reviews; the helper skips Jev. It rejects unknown packet fields,
+code-like summaries, and common personal-data patterns before making a call.
+The Hermes finding labels stay local to the helper for comparison; Jev receives
+only the finding text, prior text, rules, and path labels.
+Make `review_ref` unique to this `bb fleet validate` invocation, including the
+PR, head SHA, and round identifier, so re-reviews have separate timing and
+spend measurements.
 
-Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
-batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
-evidence, but a Jev `no` on reproduction sends that finding back for a check
-before you report it. Keep code and ticket excerpts minimal, never secret. Contract: the `typed-decisions` skill.
+Run `python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py judge packet.json`.
+The helper records each answer as `system-one` with a findable ref and peer
+agreement. A disagreement, missing answer, or failed record is marked
+`ESCALATED` for the coordinator or a Claude review. Agreement permits the
+reviewer to continue considering the finding; it never blocks or unblocks merge
+by itself. Keep Hermes' verdict and the coordinator's evidence-based decision
+authoritative. When the workflow observes a finding's final adjudication,
+resolve it immediately, including after a merge: `held` if still supported,
+`overturned` if disproved. Resolve each finding separately with
+`python3 ~/.agents/skills/typed-decisions/scripts/hermes-review-jev.py resolve --ref <review_ref> --finding <finding_id> --outcome held|overturned --evidence <short-outcome>`.
+Do not infer that every finding was held because the PR merged.
+Report the window metrics with
+`python3 ~/.agents/skills/typed-decisions/scripts/decision-ledger.py review-report --days 30`.
+Contract: the `typed-decisions` skill.
 
 Record it in the decision ledger (`--point review-finding` per finding and `--point pr-verdict`), with a `--ref` a later agent can find, and resolve it when the truth arrives.
 <!-- typed-decisions:end -->

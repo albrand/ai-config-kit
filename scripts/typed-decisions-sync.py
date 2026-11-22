@@ -3,10 +3,10 @@
 
 Three things, all checked:
   1. the always-on block in every global instruction file (identical text);
-  2. a skill-specific "Typed decisions here" block in every copy of each skill
-     that owns a decision point -- kit sources AND installed copies, which have
-     diverged on purpose (installed ones carry machine-local text) and so
-     cannot be synced wholesale;
+  2. a skill-specific "Typed decisions here" block in installed copies of
+     skills that own a decision point. Meaningful-tests and PR-review blocks
+     are canonical in their kit skill sources and copied exactly to homes;
+     other local blocks are rendered from this script;
   3. the typed-decisions skill itself in every agent skill home.
 
 A rule written into one file and missing from the next is installed but
@@ -16,44 +16,24 @@ any gap; --falsify proves the check goes red when a block is removed.
 Usage:
   typed-decisions-sync.py            write missing or stale blocks
   typed-decisions-sync.py --check    report only; exit 1 on any gap
+  typed-decisions-sync.py --source-only          write kit source files only
+  typed-decisions-sync.py --check --source-only  check kit source files only
   typed-decisions-sync.py --falsify  --check, plus proof the check can fail
 """
-import os, re, shutil, sys, tempfile
+import argparse, os, re, shutil, sys, tempfile
+from pathlib import Path
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+import standing_home_lock
 
 H = os.path.expanduser
-KIT = H("~/projects/agent-config-kit")
+# AI_CONFIG_KIT lets scheduled checks read a merged-main export instead of a checkout parked on an old branch.
+KIT = os.environ.get("AI_CONFIG_KIT") or H("~/projects/agent-config-kit")
 FOOT = "Contract: the `typed-decisions` skill."
 
 SECTIONS = {
-"meaningful-tests": """The per-goal verdict is pick-one, `PASS | FAIL | BLOCKED | NOT RUN`, and
-nothing else. "Partially", "mostly works" and "works with a caveat" are
-outside that space, and count as FAIL. PASS needs a check: the persona
-completed the goal, read at target state. BLOCKED needs the named blocker.
-Judge each goal separately; one goal passing never lifts another. The overall
-claim is computed, not felt: any FAIL means not done, and any NOT RUN means
-you may not write "tested".
-
-Jev (`typed-decisions` section 10) may answer the semantic sub-questions (does this evidence show the
-persona reaching the goal? does this report name a blocker?) as one more
-isolated judge. It never produces PASS on its own: PASS still needs the check.""",
-
-"finish-the-job": """"Am I done?" is a decision, so type it. Answer each yes/no with a check
-behind it, not a feeling:
-
-- In-scope work left? (re-read the original request)
-- A found defect still unfixed?
-- Siblings of the fixed bug searched?
-- Every copy of a touched shared file identical? (`shasum` each home)
-- Capability checked before saying blocked? (`bb-capability-check`)
-
-Stopping is allowed only when every answer comes out clean. "Blocked" is
-allowed only with the named blocker. Feeling done is a self-report, not a
-check.
-
-Batch the semantic questions (in-scope work left, given the request and a
-summary of what changed?) into one Jev call (`typed-decisions` section 10). The mechanical ones stay
-checks.""",
-
 "scope-advisor": """Don't judge scope as a whole. For each requirement in the scope record, answer
 three separate yes/no questions against the record (not the conversation):
 `covered?`, `added-unrequested?`, `rests on an assumption only the user can
@@ -85,34 +65,14 @@ Jev (`typed-decisions` section 10) is a cheap extra reviewer for the per-finding
 packet, isolated, calibrated. Count it toward agreement. Never let it replace
 a reviewer on a release or security verdict.""",
 
-"delegating-to-glm": """When the delegated job is a decision (classify, triage, pass/fail, does this
+"codex-delegation": """When the delegated job is a decision (classify, triage, pass/fail, does this
 reproduce), put the declared answer space in the brief and require
 `{question, answer, evidence, confidence_source}` back. An answer outside the
 space, or a confidence resting only on the delegate's own opinion, is a
 failed delegate. Re-ask or escalate.
 
-For pure classification, Jev (`typed-decisions` section 10) is faster and cheaper than a GLM
-delegate and returns the typed answer natively. Prefer it unless the decision
-needs reasoning or tools.""",
-
-"pr-review": """Judge each candidate finding separately, against the diff and ticket, with
-two typed questions:
-
-1. Finding class (pick-one): `compile-or-runtime-break | wrong-changed-path-behavior
-   | broken-contract (auth/data/security/API/env) | missing-required-validation
-   | scoped-instruction-violation | none`. `none` is dropped. That is the
-   high-signal filter, applied as a fixed list rather than a mood.
-2. "Reproduces on the changed path?" (yes/no), backed by evidence. No
-   evidence → not reported.
-
-The review verdict is computed: any confirmed finding → `REQUEST_CHANGES`;
-none → `APPROVE` (or `COMMENT` when only non-blocking notes remain). Don't
-grade it as a whole.
-
-Run question 1 (`--pick`) and question 2 (`--yn`) for every candidate in one
-batched Jev call (`typed-decisions` section 10), as an isolated judge. It confirms nothing without
-evidence, but a Jev `no` on reproduction sends that finding back for a check
-before you report it. Keep code and ticket excerpts minimal, never secret.""",
+For pure classification, Jev (`typed-decisions` section 10) returns the typed
+answer natively. Prefer it unless the decision needs reasoning or tools.""",
 
 "security-sweep": """The refute pass is one separate yes/no per candidate, judged without seeing
 the other candidates: "exploitable on the target path after existing
@@ -137,15 +97,6 @@ Put each yes/no, and the final pick (`--pick` over the declared lanes with
 one-line descriptions), to Jev (`typed-decisions` section 10) as an isolated second judge. A
 disagreement with your own selection escalates.""",
 
-"hermes-assisted": """Ask Hermes for a verdict from `accept | revise | reject`, with per-finding
-evidence. Any other shape counts as no verdict, recorded as advisor
-unavailable/unusable. Under this skill's failure rules, that never blocks a
-verdict you have evidenced yourself. Agreement between Hermes and your own
-separate judgment is a confidence source. Hermes saying it is sure is not.
-
-Jev (`typed-decisions` section 10) can pre-screen each finding's yes/no before the Hermes pass.
-Jev and your own judgment agreeing is `agreement(N=2)`, whether or not
-Hermes is available.""",
 
 "harness-routing": """The model or lane is pick-one from the declared tiers. Decide it from
 separate yes/no questions (reversible? mechanically verifiable? touches
@@ -165,14 +116,13 @@ def homes(skill):
 
 TARGETS = {
     "meaningful-tests": homes("meaningful-tests"),
-    "finish-the-job": homes("finish-the-job"),
     "scope-advisor": [f"{KIT}/skillsets/scope-advisory/codex/scope-advisor/SKILL.md"] + homes("scope-advisor"),
     # shared kit skills reach every home through scripts/publish.mjs
     "reviewing-with-an-agent": [f"{KIT}/skillsets/agent-runtime/shared/reviewing-with-an-agent/SKILL.md"]
                                + homes("reviewing-with-an-agent"),
-    "delegating-to-glm": [f"{KIT}/skillsets/agent-runtime/shared/delegating-to-glm/SKILL.md"]
-                         + homes("delegating-to-glm"),
-    "pr-review": [f"{KIT}/skillsets/pr-review/codex/high-signal-pr-review/SKILL.md",
+    "codex-delegation": [f"{KIT}/skillsets/agent-runtime/shared/codex-delegation/SKILL.md"]
+                         + homes("codex-delegation"),
+    "pr-review": [f"{KIT}/skillsets/pr-review/shared/high-signal-pr-review/SKILL.md",
                   f"{KIT}/skillsets/pr-review/claude/commands/code-review.md",
                   "~/.claude/commands/code-review.md"] + homes("high-signal-pr-review"),
     "security-sweep": [f"{KIT}/skillsets/security-review/codex/adversarial-security-sweep/SKILL.md",
@@ -182,33 +132,18 @@ TARGETS = {
     "plan-arbiter": [f"{KIT}/skillsets/cmux-hermes-orchestration/codex/plan-arbiter/SKILL.md",
                      f"{KIT}/skillsets/cmux-hermes-orchestration/claude/commands/plan-arbiter.md",
                      "~/.claude/commands/plan-arbiter.md"] + homes("plan-arbiter"),
-    "hermes-assisted": homes("hermes-assisted-pr-review"),
     "harness-routing": homes("harness-routing"),
 }
 
 GLOBAL_BLOCK = """<!-- typed-decisions:begin -->
-**Typed decisions (always-on)** — most agent steps are decisions (route, triage,
-in scope, risky, severity, pass/fail, done, escalate), not writing. For each:
-declare the answer space before asking (yes/no, pick-one, or a level whose
-levels are written out); an answer outside it is a failed decision, never one to
-interpret. Ask one atomic question at a time, judge each in isolation against
-the same state, and compose the verdict with explicit logic. Gate action on
-confidence — high acts, medium verifies, low escalates — and take confidence
-only from agreement across isolated judgments, a measurable check, or a recorded
-outcome history, never from a model's self-report. Typed is not correct: high
-confidence still gets the checks irreversible, security and release work
-require. Record each gated decision in the decision ledger with a findable
-`--ref`, and resolve it (held or overturned) when the truth arrives, even when
-the decision was another agent's. Run semantic atomic judgments on Jev,
-the System One decision model (`typed-decisions` section 10, `jev.py`):
-batched, isolated, recorded as `system-one`. Never in a blocking hook, never
-with secrets or personal data, and alone never enough for an irreversible
-or security call. Full detail: the `typed-decisions` skill.
+## Typed decisions
+
+Declare the answer space first; ask one atomic question at a time against identical state; compute the verdict. An out-of-space answer is a failed decision; never interpret it. High confidence acts, medium verifies, low/out-of-space escalates; high confidence still requires the checks for irreversible, security, and release decisions. Confidence needs measured checks, isolated agreement, or resolved history, never self-report. Record each gated decision with a findable `--ref`; resolve it as held or overturned when truth arrives, even if another agent made it. Run semantic atomic judgments on Jev (System One; `typed-decisions` section 10, `jev.py`) in batches, isolated and recorded as `system-one`. Never use Jev in a blocking hook or with secrets/personal data, or alone for irreversible/security calls. Detail: `typed-decisions`.
 <!-- typed-decisions:end -->"""
 
 # Every global instruction file an agent on this machine loads at start.
-GLOBALS = ["~/.claude/CLAUDE.md", "~/.bb/AGENTS.md", "~/.codex/AGENTS.md",
-           "~/.config/opencode/AGENTS.md", f"{KIT}/GLOBAL_AGENTS.md"]
+GLOBALS = ["~/.claude/CLAUDE.md", "~/.codex/AGENTS.md",
+           "~/.config/opencode/AGENTS.md"]
 
 PAT = re.compile(r"<!-- typed-decisions:begin -->.*?<!-- typed-decisions:end -->", re.S)
 ANCHOR = "<!-- token-efficient-orchestration:end -->"
@@ -216,20 +151,30 @@ ANCHOR = "<!-- token-efficient-orchestration:end -->"
 
 # Ledger point each skill records to; see the typed-decisions skill, section 9.
 RECORD = {
-    "meaningful-tests": "`--point test-verdict`, one record per goal",
-    "finish-the-job": "`--point done` with the computed answer",
     "scope-advisor": "`--point scope-verdict`",
     "reviewing-with-an-agent": "`--point review-finding` per finding",
-    "delegating-to-glm": "the delegate's decision under its own point",
+    "codex-delegation": "the delegate's decision under its own point",
     "pr-review": "`--point review-finding` per finding and `--point pr-verdict`",
     "security-sweep": "`--point security-finding` per candidate",
     "plan-arbiter": "`--point route`",
-    "hermes-assisted": "nothing by hand: Hermes verdicts are imported daily",
     "harness-routing": "`--point route`",
 }
 
 
 def skill_block(key):
+    if key in ("meaningful-tests", "pr-review"):
+        # These source blocks own their wording. Mirror them verbatim rather
+        # than maintaining a second SECTIONS/RECORD copy in this renderer.
+        source = {
+            "meaningful-tests": "skillsets/delivery-continuity/shared/meaningful-tests/SKILL.md",
+            "pr-review": "skillsets/pr-review/shared/high-signal-pr-review/SKILL.md",
+        }[key]
+        canonical = os.path.join(KIT, source)
+        text = Path(canonical).read_text(encoding="utf-8")
+        blocks = PAT.findall(text)
+        if len(blocks) != 1:
+            raise ValueError(f"expected one canonical {key} typed-decisions block in {canonical}")
+        return blocks[0]
     record = (f"\n\nRecord it in the decision ledger ({RECORD[key]}), with a `--ref` a later agent "
               "can find, and resolve it when the truth arrives.")
     return ("<!-- typed-decisions:begin -->\n## Typed decisions here\n\n"
@@ -254,9 +199,17 @@ def jobs():
             yield key, p, skill_block(key)
 
 
-def run(check, resolve=H, say=print):
+def is_kit_source(path):
+    expanded = os.path.realpath(H(path))
+    root = os.path.realpath(KIT)
+    return expanded == root or expanded.startswith(root + os.sep)
+
+
+def run(check, resolve=H, say=print, source_only=False):
     bad = 0
     for key, p, want in jobs():
+        if source_only and (p is None or not is_kit_source(p)):
+            continue
         if p is None:
             say(f"MISSING-TARGETS {key}"); bad += 1; continue
         path = resolve(p)
@@ -270,9 +223,14 @@ def run(check, resolve=H, say=print):
             say(f"STALE   {key:24} {p}"); bad += 1
         else:
             open(path, "w").write(new); say(f"written {key:24} {p}")
-    for h in HOMES:
-        if not os.path.exists(resolve(f"{h}/typed-decisions/SKILL.md")):
-            say(f"NO-SKILL {h}/typed-decisions"); bad += 1
+    if source_only:
+        source_skill = os.path.join(KIT, "skillsets/agent-runtime/shared/typed-decisions/SKILL.md")
+        if not os.path.exists(resolve(source_skill)):
+            say(f"NO-SKILL {source_skill}"); bad += 1
+    else:
+        for h in HOMES:
+            if not os.path.exists(resolve(f"{h}/typed-decisions/SKILL.md")):
+                say(f"NO-SKILL {h}/typed-decisions"); bad += 1
     return bad
 
 
@@ -306,7 +264,7 @@ def falsify():
         for label, p in cases:
             f = resolve(p)
             orig = open(f).read()
-            damaged = (orig.replace("never from a model's self-report", "from the model")
+            damaged = (orig.replace(GLOBAL_BLOCK, GLOBAL_BLOCK.replace(" never ", " always ", 1))
                        if "reworded" in label else PAT.sub("", orig))
             assert damaged != orig, f"falsify case did not apply: {label}"
             open(f, "w").write(damaged)
@@ -328,12 +286,31 @@ def falsify():
         shutil.rmtree(tmp)
 
 
+def parse_args(argv):
+    """Parse before touching anything: --help and unknown options must exit without writing."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--check", action="store_true", help="report only; exit 1 on any gap")
+    parser.add_argument("--source-only", action="store_true",
+                        help="limit reads/writes to kit-owned source targets; exclude installed homes")
+    # The daily agent-hooks run passes --check --falsify together; --falsify wins, as before.
+    parser.add_argument("--falsify", action="store_true", help="--check, plus proof the check can fail")
+    args = parser.parse_args(argv)
+    return args
+
+
 if __name__ == "__main__":
-    if "--falsify" in sys.argv:
+    args = parse_args(sys.argv[1:])
+    if args.falsify:
         live = run(True)
         print(f"live: {live} gap(s)" + (" -- in place everywhere" if not live else ""))
         sys.exit(1 if (falsify() or live) else 0)
-    bad = run("--check" in sys.argv)
+    if args.check:
+        bad = run(True, source_only=args.source_only)
+    elif args.source_only:
+        bad = run(False, source_only=True)
+    else:
+        with standing_home_lock.exclusive_home_writer():
+            bad = run(False)
     if not bad:
         print("typed-decisions: in place everywhere")
     sys.exit(1 if bad else 0)

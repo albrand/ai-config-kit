@@ -1,0 +1,25 @@
+# Place this pipeline in the QA-owned repository and require it on scenario/test paths.
+trigger: none
+pr:
+  branches:
+    include: ['main']
+pool:
+  vmImage: ubuntu-latest
+variables:
+  nodeVersion: '22.x'
+steps:
+- checkout: self
+  fetchDepth: 0
+- task: NodeTool@0
+  inputs: { versionSpec: '$(nodeVersion)' }
+- bash: |
+    set -euo pipefail
+    target_branch="${SYSTEM_PULLREQUEST_TARGETBRANCH#refs/heads/}"
+    git fetch origin "+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
+    node qa/bin/qa.mjs test --config qa/qa.config.json --output qa/changed-scenario-run.json
+    node qa/bin/qa.mjs check-scenarios --config qa/qa.config.json --head qa/scenarios.json --base "origin/${target_branch}" --file qa/scenarios.json --results qa/changed-scenario-run.json
+  displayName: Compile, discover and execute changed QA scenarios
+  env:
+    SYSTEM_PULLREQUEST_TARGETBRANCH: $(System.PullRequest.TargetBranch)
+- publish: qa/changed-scenario-run.json
+  artifact: changed-scenario-run

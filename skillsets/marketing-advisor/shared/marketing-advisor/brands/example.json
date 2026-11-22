@@ -1,0 +1,7 @@
+{
+ "brand": "example",
+ "language": "pt-BR",
+ "facts_file": "example-facts.md",
+ "principles": [],
+ "_note": "Copy this file into the brands directory, list the owner's recorded principles with the events (feedback messages) each came from, and point facts_file at the fact sheet. An empty principles list runs the generic rubric and panel only (uncalibrated)."
+}

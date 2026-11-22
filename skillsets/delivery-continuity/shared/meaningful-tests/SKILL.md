@@ -1,0 +1,139 @@
+---
+name: meaningful-tests
+description: Use before selecting or reporting tests, claiming a feature or workflow complete, or exercising a product as its user. Require a named persona, identified target, stated user outcomes, and a verdict per outcome; preserve evidence boundaries and fix authorized workflow failures.
+verify: "PYTHONDONTWRITEBYTECODE=1 python3 skillsets/delivery-continuity/shared/meaningful-tests/scripts/verify-contract.py"
+verified: 2026-10-19
+---
+
+# Meaningful tests
+
+For implementing features, shared-contract changes, LLM-backed output changes, and production fixes, or assessing completion of a new or existing candidate in those classes, load [engineering-contracts](../engineering-contracts/SKILL.md) before selecting checks. In Claude, use the native Skill tool with the registered `engineering-contracts` name when available; in Codex, read the discovered `SKILL.md`. A link or mentioned skill name alone does not show it was activated. If the harness lacks a native Skill tool, read the file directly. It establishes the requested value and falsifiable behavior; this skill still owns persona, target, full-workflow, verdict, and evidence reporting.
+
+## Name the outcome and its evidence
+
+A workflow test names a persona, known starting state, target URL or stack with
+commit SHA or deployment identity, and user-outcome goal. Exercise the real
+interface the persona uses, then record one verdict for that goal:
+
+- PASS: the persona completed the goal, including required unchanged steps.
+- FAIL: an attempted goal did not complete. A broken state is a failure, not an
+  observation or a scope excuse.
+- BLOCKED: the goal could not be attempted; name the specific missing input,
+  permission, capability, or external state.
+- NOT RUN: no attempt or adequate evidence exists. Never imply it passed.
+
+Report a verdict per goal. A PASS for one goal remains valid when another goal
+fails, but the full workflow cannot be called complete. State failed or blocked
+required goals clearly; do not make the headline greener than its contents.
+Formatting, label order, or a table does not change whether evidence exists.
+
+## Keep evidence at the owning boundary
+
+Unit and component checks establish their exercised contracts; they do not prove
+the entire application works. A successful API response does not prove the
+user can reach or understand the action. Lint, typecheck, and build results
+establish their specific checks. Rendered labels or an element's presence do
+not establish layout, chart geometry, or a completed user goal.
+
+Choose focused checks that can detect the defect. For a regression, demonstrate
+the new check fails against the old behavior when feasible. Count the tests
+that actually ran and investigate empty or skipped suites. Do not invent tests
+for declarations or generated internals when a check at their consumer owns
+the behavior. Use `TEST_OWNERSHIP.md` when the repository adopts that contract.
+
+## Measure, then claim
+
+A release claim requires data-movement evidence only when the actual change
+processes, attributes, projects, backfills, writes, or requeues stored data. A
+nominal reader or UI change that triggers a write is data-moving. A pure
+stored-data reader with no writes, a UI-only change with no writes, and
+docs/tests-only changes do not require a lane, throughput, drain, count change,
+deployment takeover, or 30-minute read-back. Use their real outcome,
+integration, quality, and behavior evidence; use a screen read for a changed UI
+outcome and relevant document or test evidence for docs/tests-only changes.
+For data-moving changes, require observed before and 30-minute after counts
+from the counts-only read-back, the predicted value, and confirmed deployment
+takeover. Until the after-read reaches the prediction, report FAIL; deployment
+readiness and delivery are separate, so trigger processing after deployment
+and measure its outcome. Tests passed is never evidence of data movement.
+
+A gap claim needs the stage where it starts. Trace one representative record
+through source, storage, processing, API, and screen, in the working reference
+too when one exists. Confirm the field you count is the one the reader uses. A
+low count of a proxy field is not a located gap.
+
+A performance claim needs paired, interleaved baseline and candidate runs on the
+same data: at least three cold and three warm each, reported as ranges. Re-run
+the control. If it moved, the stored baseline is void. A single reading is never
+published as a result.
+
+## Make the check able to fail
+
+- The oracle must be independent of the assumption under test: a repo test, a
+  golden file, a named external source, or a second method. A check that reads
+  the answer from the code it judges proves nothing.
+- Each goal gets at least one probe that tries to break it: a boundary, a wrong
+  input, the unhappy path. A goal checked only on its happy path is NOT RUN for
+  its failure modes.
+- An ambiguous result is FAIL. Do not round it up to PASS or park it as an
+  observation.
+- Run the same normalized check once per window of unchanged code. A repeat on
+  identical code adds cost, not evidence.
+- A verdict names the SHA it ran on. An edit to what the check covered makes the
+  verdict NOT RUN until the check is repeated; unrelated edits, such as docs or
+  another module, do not.
+
+## Exercise the complete requested workflow
+
+Walk from the persona's entry point through its final outcome, including setup,
+authorization, unchanged steps, and applicable unhappy paths: wrong role,
+missing prerequisite, invalid input, denied permission, cancellation, back,
+close, undo, retry, and logout. Test only applicable states; do not introduce
+unrelated personas or infrastructure merely to fill a checklist.
+
+When a committed `.qa/config.json` exists, use the repository's `qa-sweep`
+inventory and ship gate. Inventory a walk's defects before batching related
+fixes, run focused checks, and re-walk the complete journey at the final batch
+head. Do not re-walk the full suite after every small fix.
+
+Pre-existing breakage within the requested journey still makes its verdict FAIL.
+When authorized to fix it, the defect becomes the next action. Otherwise,
+escalate the specific decision or effect and continue independent authorized
+work. A review-only request authorizes reporting defects, not implementation.
+Keep delta-first PR findings separate from the full workflow's verdict.
+
+## Preserve boundaries
+
+User screenshots, recordings, and errors are primary evidence. Inspect them
+through supported tools. Diagnose recoverable access or format failures, but
+never bypass a safety-hook block, sandbox, guardian, DLP, or browser quarantine.
+Record the specific unmeasured evidence and continue independent work when a
+hard boundary prevents inspection.
+
+For browser work, authentication, seeded identities, manual login handoffs, or
+QA publication, load `verified-qa-e2e` and pass its applicable deterministic gate.
+Use only the authorized isolated browser, keep page ownership, and obtain the
+required input-isolation proof. Never use a live mail client to test sending,
+handle credentials, expose a local service, or mutate production merely to
+complete a test. User authorization and hard prohibitions still govern actions.
+
+## Report precisely
+
+Name persona, target identity, user outcomes attempted, and each verdict. Attach
+command or interaction, expected result, observed result, and a findable artifact
+at the relevant evidence tier. Distinguish proposed, implemented, installed,
+and exercised outcomes. Correct prior unsupported claims explicitly. Missing
+evidence is NOT RUN; honest partial evidence is useful and must not be hidden.
+
+<!-- typed-decisions:begin -->
+## Typed decisions here
+
+The per-goal verdict is pick-one, `PASS | FAIL | BLOCKED | NOT RUN`, and
+nothing else. "Partially", "mostly works" and "works with a caveat" are
+outside that space, and count as FAIL. PASS needs a check: the persona
+completed the goal, read at target state. BLOCKED needs the named blocker.
+Judge each goal separately; one goal passing never lifts another. The overall
+claim is computed, not felt: any FAIL means not done, and any NOT RUN means
+you may not write "tested".
+
+<!-- typed-decisions:end -->

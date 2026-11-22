@@ -1,0 +1,19 @@
+{
+  "about": "Review r2c: bb automation fixtures for scope-gate.py selftest. `files` are written into the selftest's temp dir ({tmp}/<name> in dispatch-cases.json); `automations` are what a fake `bb automation show <id> --json` returns as .execution, for run, resume and a retarget or reschedule, which fire the stored text. Any other id is unreadable (exit 1).",
+  "files": {
+    "auto-tell.sh": "echo start\nbb thread tell thr_x also refactor it\n",
+    "auto-tell-ok.sh": "echo start\nbb thread tell thr_x 'serves: P1 next step'\n",
+    "auto-clean.sh": "npm test\n",
+    "auto-tell.py": "import subprocess\nsubprocess.run(['bb', 'thread', 'tell', 'thr_x', 'also refactor it'])\n",
+    "auto-tell-ok.py": "# serves: P1\nimport subprocess\nsubprocess.run(['bb', 'thread', 'tell', 'thr_x', 'next step'])\n"
+  },
+  "automations": {
+    "auto_plain": {"mode": "agent", "prompt": "also refactor it", "targetThreadId": "thr_x"},
+    "auto_serves": {"mode": "agent", "prompt": "serves: P1 next step", "targetThreadId": "thr_x"},
+    "auto_blocked": {"mode": "agent", "prompt": "serves: P2 the paperclip"},
+    "auto_script": {"mode": "script", "interpreter": "bash", "script": "echo start\nbb thread tell thr_x also refactor it\n"},
+    "auto_script_ok": {"mode": "script", "interpreter": "bash", "script": "bb thread tell thr_x 'serves: P1 next step'\n"},
+    "auto_py": {"mode": "script", "interpreter": "python3", "script": "import subprocess\nsubprocess.run(['bb', 'thread', 'tell', 'thr_x', 'also refactor it'])\n"},
+    "auto_clean": {"mode": "script", "interpreter": "python3", "script": "print('hello')\n"}
+  }
+}

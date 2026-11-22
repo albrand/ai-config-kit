@@ -128,6 +128,17 @@ Track what the rounds bought. If each one is still finding real defects, keep
 going; that is the loop working. When they start finding only what you failed to
 attach, the loop has become bookkeeping.
 
+## End conditions
+
+- Stop after two rounds with no new real defect. Further rounds buy bookkeeping.
+- One follow-up per gap. If the answer does not close it, the gap is access or
+  evidence, not another question.
+- Ask for failures, not approval: "list what is wrong or unproven", never "does
+  this look right".
+- For high stakes, finish with a fresh-eyes pass: a reviewer that has not seen
+  the earlier rounds, given only the final artifact. This is the one case where
+  a new thread is right.
+
 ## Take the loss
 
 The point of the round is the finding you did not want. If a reviewer says a fix

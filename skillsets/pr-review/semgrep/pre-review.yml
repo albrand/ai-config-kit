@@ -1,0 +1,42 @@
+rules:
+  - id: pre_review.url_parser_mismatch
+    message: Validate database URLs with the same parser used by the runtime client.
+    severity: WARNING
+    languages: [typescript, javascript]
+    patterns:
+      - pattern: const $PARSED = new URL($URL)
+      - pattern: $PARSED.hostname
+      - pattern: new Pool({..., connectionString: $URL, ...})
+    metadata:
+      category: security
+      confidence: low
+      cwe: "CWE-20: Improper Input Validation"
+
+  - id: pre_review.github_token_permissions
+    message: A workflow uses GITHUB_TOKEN but does not declare explicit permissions.
+    severity: WARNING
+    languages: [yaml]
+    patterns:
+      - pattern-regex: "(?s)secrets\\.GITHUB_TOKEN|GH_TOKEN"
+      - pattern-not-regex: "(?m)^\\s*permissions\\s*:"
+    paths:
+      include: [".github/workflows/**"]
+    metadata:
+      category: security
+      confidence: medium
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
+
+  - id: pre_review.external_response_shape
+    message: Check an external JSON response's shape before accessing its fields.
+    severity: WARNING
+    languages: [python]
+    patterns:
+      - pattern: $RESPONSE = requests.$METHOD(...).json()
+      - pattern: $RESPONSE.$FIELD
+      - pattern-not-inside: |
+          if isinstance($RESPONSE, dict):
+            ...
+    metadata:
+      category: security
+      confidence: low
+      cwe: "CWE-20: Improper Input Validation"

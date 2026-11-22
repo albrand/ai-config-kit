@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "verifier": [
+    "scripts/verify-static.sh",
+    "scripts/verify-unit.sh",
+    "scripts/verify-native.sh",
+    "scripts/verify-unit.py",
+    "scripts/verify-suites.json",
+    "scripts/check-standing-rules.py"
+  ],
+  "stages": {
+    "static": {
+      "run": "sh scripts/verify-static.sh"
+    },
+    "unit": {
+      "run": "sh scripts/verify-unit.sh"
+    },
+    "integration": {
+      "run": "sh scripts/verify-native.sh",
+      "unconfined": "its suites apply macOS sandbox-exec themselves, which a sandboxed job cannot nest; installed hook-chain and live BB capability coverage stay host checks, listed in scripts/verify-suites.json"
+    },
+    "journeys": {
+      "run": null,
+      "na": "no user interface or network service; the kit ships instructions, skills and hooks"
+    },
+    "evals": {
+      "run": null,
+      "na": "no LLM features in the kit itself"
+    },
+    "rehearsal": {
+      "run": null,
+      "na": "no background processing or data migration"
+    },
+    "mutation": {
+      "run": null,
+      "na": "no mutation tool is installed for this Python and shell repo; each gate fix carries a focused mutation check in its review"
+    },
+    "postdeploy": {
+      "run": null,
+      "na": "nothing is deployed; homes are installed locally by each skillset's install script"
+    }
+  }
+}
