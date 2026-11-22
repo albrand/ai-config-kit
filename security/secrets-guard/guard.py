@@ -11,16 +11,43 @@ INTERPRETERS = {'python','python2','python3','node','ruby','perl'}
 WRAPPERS = {'ssh','bash','sh','eval','command','sudo','env'}
 
 def flatten(cmd):
-    # Recurse through common shell payload forms; preserve parser errors for fail-closed decision.
+    # Split shell operators and recursively inspect common wrapper payloads.
+    # Wrapper commands themselves are not policy leaves; their payloads are.
     out=[]; pending=[cmd]
     while pending:
-        s=pending.pop(); out.append(s)
-        try: toks=shlex.split(s, posix=True)
-        except ValueError: raise
-        for i,t in enumerate(toks[:-1]):
-            if (t in ('-c','-lc','-ec') or t=='eval') and i+1<len(toks): pending.append(toks[i+1])
-        # ssh host command payload begins after destination
-        if toks and toks[0]=='ssh' and len(toks)>2: pending.append(' '.join(toks[2:]))
+        source=pending.pop()
+        lexer=shlex.shlex(source,posix=True,punctuation_chars=';&|()')
+        lexer.whitespace_split=True; lexer.commenters='#'
+        tokens=list(lexer); segments=[]; segment=[]
+        for token in tokens:
+            if token and all(char in ';&|()' for char in token):
+                if segment: segments.append(segment); segment=[]
+            else: segment.append(token)
+        if segment: segments.append(segment)
+        for words in segments:
+            if not words: continue
+            verb=os.path.basename(words[0])
+            if verb in ('bash','sh','zsh'):
+                for i,word in enumerate(words[:-1]):
+                    if word in ('-c','-lc','-ec'):
+                        pending.append(words[i+1]); break
+                else: out.append(' '.join(words))
+            elif verb=='eval': pending.append(' '.join(words[1:]))
+            elif verb=='ssh':
+                options_with_value={'-b','-c','-D','-E','-F','-i','-J','-L','-l','-m','-O','-o','-p','-Q','-R','-S','-W','-w'}
+                i=1
+                while i<len(words):
+                    word=words[i]
+                    if word=='--': i+=1; break
+                    if not word.startswith('-'): break
+                    i+=2 if word in options_with_value else 1
+                if i+1<len(words): pending.append(' '.join(words[i+1:]))
+                else: out.append(' '.join(words))
+            elif verb in ('command','sudo','nohup','time','env'):
+                nested=words[1:]
+                while nested and (nested[0].startswith('-') or (verb=='env' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',nested[0]))): nested=nested[1:]
+                if nested: pending.append(' '.join(nested))
+            else: out.append(' '.join(words))
     return out
 
 def denied(command):

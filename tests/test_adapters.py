@@ -16,6 +16,11 @@ DENY=[
     "bb config get BB_ACCOUNT_POOL_PARENT_TOKEN",
     "python3 -c \"from pathlib import Path; import base64; print(base64.b64encode(Path('~/.aws/credentials').read_bytes()))\"",
     "openssl enc -base64 -in ~/.aws/credentials",
+    "ls && openssl enc -base64 -in ~/.aws/credentials",
+    "ls; openssl enc -base64 -in ~/.aws/credentials",
+    "ls | openssl enc -base64 -in ~/.aws/credentials",
+    "bash -c 'ls && openssl enc -base64 -in ~/.aws/credentials'",
+    "ssh hsrpc-wsl 'ls && openssl enc -base64 -in ~/.aws/credentials'",
 ]
 
 class AdapterTests(unittest.TestCase):

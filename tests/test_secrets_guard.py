@@ -26,6 +26,11 @@ class GuardTests(unittest.TestCase):
             "base64 ~/pfull/prod.env", "base64 .env.local",
             "python3 -c \"from pathlib import Path; print(Path('~/.aws/credentials').read_text())\"",
             "openssl enc -base64 -in ~/.aws/credentials",
+            "ls && openssl enc -base64 -in ~/.aws/credentials",
+            "ls; openssl enc -base64 -in ~/.aws/credentials",
+            "ls | openssl enc -base64 -in ~/.aws/credentials",
+            "bash -c 'ls && openssl enc -base64 -in ~/.aws/credentials'",
+            "ssh hsrpc-wsl 'ls && openssl enc -base64 -in ~/.aws/credentials'",
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
         ]:
