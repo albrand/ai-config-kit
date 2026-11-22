@@ -4,27 +4,71 @@ import os, re, shlex, subprocess, sys
 
 ENV_SOURCE = re.compile(r'(?i)^(?:\.env(?:\..*)?|.*\.env)$')
 
+def _strip_shell_comment(value):
+    quote=None; escaped=False
+    for i,char in enumerate(value):
+        if escaped:
+            escaped=False; continue
+        if char=='\\' and quote!="'":
+            escaped=True; continue
+        if quote:
+            if char==quote: quote=None
+        elif char in ('"',"'"):
+            quote=char
+        elif char=='#' and (i==0 or value[i-1].isspace()):
+            return value[:i]
+    return value
+
+def _expand_env_value(value, variables):
+    pattern=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)')
+    def replace(match):
+        name=match.group(1) or match.group(4)
+        current=variables.get(name,'')
+        operator=match.group(2)
+        if operator and (name not in variables or (operator==':-' and not current)):
+            return match.group(3) or ''
+        return current
+    expanded=pattern.sub(replace,value)
+    if '$' in expanded or '`' in expanded or '$(' in value:
+        raise ValueError('dynamic env value')
+    return expanded
+
 def parse_env(text):
-    values=[]
+    values=[]; variables=dict(os.environ)
     for line in text.splitlines():
-        m=re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$",line)
-        if not m: continue
-        key,value=m.groups(); value=value.strip()
-        if len(value)>1 and value[0]==value[-1] and value[0] in "'\"": value=value[1:-1]
-        if value and (re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I) or len(value)>=16): values.append(value)
+        stripped=line.strip()
+        if not stripped or stripped.startswith('#'): continue
+        m=re.match(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$",stripped)
+        if not m: raise ValueError('unsupported env-file syntax')
+        key,raw=m.groups(); raw=_strip_shell_comment(raw).strip()
+        quoted=len(raw)>=2 and raw[0]==raw[-1] and raw[0] in "'\""
+        if raw[:1] in ("'",'"') and not quoted: raise ValueError('unclosed env-file quote')
+        if quoted:
+            value=raw[1:-1]
+            if raw[0]=='"': value=re.sub(r'\\(["\\$`])',r'\1',value)
+            else: value=value.replace("'\\''", "'")
+        else:
+            words=shlex.split(raw,posix=True)
+            if len(words)>1: raise ValueError('ambiguous unquoted env value')
+            value=words[0] if words else ''
+        if raw[:1]!="'": value=_expand_env_value(value,variables)
+        variables[key]=value
+        if value and (re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I) or len(value)>=16):
+            values.extend((raw[1:-1] if quoted else value,value))
     return values
 
-def sourced_env_paths(command):
-    """Return literal env-file paths named by shell `.` or `source` commands.
+def env_mask_paths(command):
+    """Find env files sourced by the command and dotenv files in its cwd(s).
 
     This only tokenizes shell syntax; it never evaluates or sources a file.
-    Reading candidate files lets us mask values that the wrapped command loads
-    after the scrubber starts.
+    Reading candidate files lets us mask values that the wrapped command or an
+    application it launches loads after the scrubber starts.
     """
     lexer=shlex.shlex(command, posix=True, punctuation_chars=';&|')
     lexer.whitespace_split=True
     tokens=list(lexer)
     paths=[]
+    directories=[os.getcwd()]
     cwd=os.getcwd()
     for i,token in enumerate(tokens[:-1]):
         if token == 'cd':
@@ -32,6 +76,7 @@ def sourced_env_paths(command):
             if '$' in destination or '`' in destination or destination == '-':
                 raise ValueError('dynamic directory before env source')
             cwd=os.path.abspath(destination if os.path.isabs(destination) else os.path.join(cwd,destination))
+            directories.append(cwd)
             continue
         if token not in ('.','source'):
             continue
@@ -41,7 +86,54 @@ def sourced_env_paths(command):
         if '$' in candidate or '`' in candidate:
             raise ValueError('dynamic env source path')
         paths.append(os.path.abspath(candidate if os.path.isabs(candidate) else os.path.join(cwd,candidate)))
+    for directory in dict.fromkeys(directories):
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if ENV_SOURCE.fullmatch(entry.name) and entry.is_file():
+                        paths.append(os.path.abspath(os.path.join(directory,entry.name)))
+        except FileNotFoundError:
+            continue
     return paths
+
+def has_hsrpc_ssh(command):
+    """Recognize an actual shell command targeting the known SSH alias."""
+    pending=[command]; seen=set()
+    while pending:
+        text=pending.pop()
+        if text in seen: continue
+        seen.add(text)
+        lexer=shlex.shlex(text,posix=True,punctuation_chars=';&|()')
+        lexer.whitespace_split=True; lexer.commenters='#'
+        tokens=list(lexer); segment=[]
+        segments=[]
+        for token in tokens:
+            if token and all(char in ';&|()' for char in token):
+                if segment: segments.append(segment); segment=[]
+            else: segment.append(token)
+        if segment: segments.append(segment)
+        for words in segments:
+            while words and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',words[0]): words=words[1:]
+            if not words: continue
+            verb=os.path.basename(words[0])
+            if verb in ('bash','sh','zsh'):
+                for i,word in enumerate(words[:-1]):
+                    if word in ('-c','-lc','-ec'): pending.append(words[i+1])
+            elif verb=='eval': pending.append(' '.join(words[1:]))
+            elif verb in ('command','sudo','nohup','time','env'):
+                nested=words[1:]
+                while nested and (nested[0].startswith('-') or '=' in nested[0]): nested=nested[1:]
+                if nested: pending.append(' '.join(nested))
+            elif verb=='ssh':
+                options_with_value={'-b','-c','-D','-E','-F','-i','-J','-L','-l','-m','-O','-o','-p','-Q','-R','-S','-W','-w'}
+                i=1
+                while i<len(words):
+                    word=words[i]
+                    if word=='--': i+=1; break
+                    if not word.startswith('-'): break
+                    i+=2 if word in options_with_value else 1
+                if i<len(words) and words[i]=='hsrpc-wsl': return True
+    return False
 
 def redact(data,secrets):
     for secret in sorted(set((v for v in secrets if len(v)>=4)),key=len,reverse=True):
@@ -56,16 +148,16 @@ def main():
         if value and re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I): secrets.append(value)
     paths=[os.path.expanduser('~/pfull/prod.env'),os.path.expanduser('~/pfull/prod-lane.env'),os.path.expanduser('~/.env')]
     try:
-        paths.extend(sourced_env_paths(command))
+        paths.extend(env_mask_paths(command))
     except Exception:
         print('secret scrubber could not inspect sourced env paths; command not run',file=sys.stderr); return 2
-    for path in paths:
+    for path in dict.fromkeys(paths):
         try:
             with open(path,errors='replace') as f: secrets.extend(parse_env(f.read()))
         except FileNotFoundError: pass
-        except OSError:
+        except Exception:
             print('secret scrubber could not read an env mask file; command not run',file=sys.stderr); return 2
-    if re.search(r'\bssh\s+hsrpc-wsl\b',command):
+    if has_hsrpc_ssh(command):
         # Fetch the known remote env file into process memory only; never stream it to the terminal.
         try:
             p=subprocess.run(['ssh','hsrpc-wsl','cat ~/pfull/prod.env'],capture_output=True,text=True,timeout=8)

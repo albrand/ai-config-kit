@@ -1,12 +1,48 @@
 #!/usr/bin/env python3
 import datetime, json, os, shutil, sys
+import hashlib, re, tomllib
+
+def codex_hook_hash(command, matcher, timeout=600):
+    identity={'event_name':'pre_tool_use',
+              'hooks':[{'type':'command','command':command,'timeout':timeout,'async':False}],
+              'matcher':matcher}
+    canonical=json.dumps(identity,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+    return 'sha256:'+hashlib.sha256(canonical.encode()).hexdigest()
+
+def trust_codex_hooks(home, registrations):
+    """Trust only guard registrations, matching Codex's hook fingerprint."""
+    hooks_path=os.path.join(home,'.codex/hooks.json')
+    config_path=os.path.join(home,'.codex/config.toml')
+    if not os.path.isfile(config_path):
+        raise RuntimeError('Codex config.toml is missing; refusing an untrusted guard registration')
+    text=open(config_path).read()
+    for group_index,hook_index,command,matcher,timeout in registrations:
+        key='%s:pre_tool_use:%d:%d' % (hooks_path,group_index,hook_index)
+        digest=codex_hook_hash(command,matcher,timeout)
+        header='[hooks.state."%s"]' % key
+        block=re.compile(re.escape(header)+r'\n(?:(?!\[).*(?:\n|$))*')
+        stanza=header+'\ntrusted_hash = "%s"\nenabled = true\n\n' % digest
+        text=block.sub(stanza,text,count=1) if block.search(text) else text.rstrip('\n')+'\n\n'+stanza
+    tomllib.loads(text)
+    backup=config_path+'.'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S')+'.bak'
+    shutil.copy2(config_path,backup)
+    temp=config_path+'.tmp'
+    with open(temp,'w') as f: f.write(text)
+    os.replace(temp,config_path)
 home=os.path.expanduser('~'); src=os.path.dirname(os.path.abspath(__file__))
 dest=os.path.join(home,'.agent-hooks'); os.makedirs(dest,exist_ok=True)
 cursor_only='--cursor-only' in sys.argv[1:]
+if not cursor_only and os.path.exists(os.path.join(home,'.codex/hooks.json')) and not os.path.isfile(os.path.join(home,'.codex/config.toml')):
+    raise SystemExit('Codex config.toml is missing; refusing an untrusted guard registration')
+if not cursor_only and os.path.exists(os.path.join(home,'.codex/hooks.json')):
+    try:
+        with open(os.path.join(home,'.codex/config.toml'),'rb') as f: tomllib.load(f)
+    except Exception:
+        raise SystemExit('Codex config.toml is invalid; refusing an untrusted guard registration')
 if cursor_only:
     names=('guard.py','cursor-pretool.py')
 else:
-    names=('guard.py','secret-names','claude-pretool.sh','codex-pretool.sh','scrub-exec.py','gemini-pretool.py')
+    names=('guard.py','secret-names','claude-pretool.sh','codex-pretool.sh','scrub-exec.py','gemini-pretool.py','cursor-pretool.py')
 for name in names:
     target={'guard.py':'secrets-guard.py','scrub-exec.py':'secrets-scrub-exec.py'}.get(name,name)
     shutil.copy2(os.path.join(src,name),os.path.join(dest,target))
@@ -21,9 +57,21 @@ if not cursor_only:
         data=json.load(open(config))
         hooks=data.setdefault('hooks',{})
         entries=hooks.setdefault('PreToolUse',[])
-        entries[:] = [e for e in entries if not any(h.get('command','').endswith('/'+provider+'-pretool.sh') for h in e.get('hooks',[]))]
-        entries.append({'matcher':'Bash','hooks':[{'type':'command','command':command}]})
+        registrations=[]; found_guard=False
+        for group_index,entry in enumerate(entries):
+            if entry.get('matcher')!='Bash': continue
+            for hook_index,hook in enumerate(entry.get('hooks',[])):
+                if hook.get('command','').endswith('/'+provider+'-pretool.sh'):
+                    found_guard=True
+                    replacement={'type':'command','command':command}
+                    entry['hooks'][hook_index]=replacement
+                    if provider=='codex': registrations.append((group_index,hook_index,command,'Bash',600))
+        if not found_guard:
+            entries.append({'matcher':'Bash','hooks':[{'type':'command','command':command}]})
+            if provider=='codex': registrations.append((len(entries)-1,0,command,'Bash',600))
         tmp=config+'.tmp'; open(tmp,'w').write(json.dumps(data,indent=2)+'\n'); os.replace(tmp,config)
+        if provider=='codex':
+            trust_codex_hooks(home,registrations)
 
 # Antigravity ACP reads global named hooks from ~/.gemini/config/hooks.json.
 if not cursor_only:
