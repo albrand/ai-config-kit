@@ -31,6 +31,7 @@ class GuardTests(unittest.TestCase):
             "ls | openssl enc -base64 -in ~/.aws/credentials",
             "bash -c 'ls && openssl enc -base64 -in ~/.aws/credentials'",
             "ssh hsrpc-wsl 'ls && openssl enc -base64 -in ~/.aws/credentials'",
+            'ls() { cat "$@"; }; ls ~/.aws/credentials',
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
         ]:
