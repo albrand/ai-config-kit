@@ -29,7 +29,7 @@ class AdapterTests(unittest.TestCase):
                 result=self.run_hook(provider,command)
                 try: data=json.loads(result.stdout)
                 except Exception: data={}
-                allow_output=(provider=='claude' and 'secrets-scrub-exec.py' in data.get('hookSpecificOutput',{}).get('updatedInput',{}).get('command','')) or (provider=='codex' and not data.get('hookSpecificOutput',{}).get('updatedInput'))
+                allow_output=('secrets-scrub-exec.py' in data.get('hookSpecificOutput',{}).get('updatedInput',{}).get('command','') and data.get('hookSpecificOutput',{}).get('permissionDecision')=='allow')
                 ok=(result.returncode==0 and allow_output)
                 passed+=int(ok); failed+=int(not ok)
             for command in DENY:
