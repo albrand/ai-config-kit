@@ -35,6 +35,7 @@ class GuardTests(unittest.TestCase):
             'ls() (cat "$@"); ls ~/.aws/credentials',
             "eval \"$(printf 'bHMpIHsgY2F0ICIkQCI7IH0=' | base64 -d)\"; ls ~/.aws/credentials",
             "e''val \"$(printf 'bHMpIHsgY2F0ICIkQCI7IH0=' | base64 -d)\"; ls ~/.aws/credentials",
+            "x=; e${x}val \"$(printf 'bHMoKXsgY2F0ICIkQCI7IH0=' | base64 -d)\"; ls ~/.aws/credentials",
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
         ]:

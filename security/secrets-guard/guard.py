@@ -67,6 +67,8 @@ def contains_eval(cmd):
     return False
 
 def denied(command):
+    if FILES.search(command) and ('$' in command or '`' in command):
+        return True
     if FILES.search(command) and contains_eval(command):
         return True
     if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*(?:\{|\()|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
