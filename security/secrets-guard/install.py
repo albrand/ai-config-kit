@@ -2,8 +2,9 @@
 import datetime, json, os, shutil
 home=os.path.expanduser('~'); src=os.path.dirname(os.path.abspath(__file__))
 dest=os.path.join(home,'.agent-hooks'); os.makedirs(dest,exist_ok=True)
-for name in ('guard.py','secret-names','claude-pretool.sh','codex-pretool.sh'):
-    shutil.copy2(os.path.join(src,name),os.path.join(dest,'secrets-'+name if name=='guard.py' else name))
+for name in ('guard.py','secret-names','claude-pretool.sh','codex-pretool.sh','scrub-exec.py'):
+    target={'guard.py':'secrets-guard.py','scrub-exec.py':'secrets-scrub-exec.py'}.get(name,name)
+    shutil.copy2(os.path.join(src,name),os.path.join(dest,target))
 for config, provider, command in [
     (os.path.join(home,'.claude/settings.json'),'claude','/bin/sh '+os.path.join(dest,'claude-pretool.sh')),
     (os.path.join(home,'.codex/hooks.json'),'codex','/bin/sh '+os.path.join(dest,'codex-pretool.sh')),

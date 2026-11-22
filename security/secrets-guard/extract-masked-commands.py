@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Print only masked tool-call commands selected by a case-insensitive filter."""
-import argparse, json, re, sys
+import argparse, ast, json, re, sys
 
 def mask(s):
     # Keep delimiters and command structure while removing likely values.
@@ -26,6 +26,21 @@ def strings(obj):
                 elif isinstance(x,list):
                     for v in x: yield from command_fields(v)
             yield from command_fields(inp)
+            if isinstance(obj.get('input'),str):
+                src=obj['input']
+                for m in re.finditer(r'\bcmd\s*:\s*',src):
+                    tail=src[m.end():].lstrip()
+                    try:
+                        if tail.startswith('"'):
+                            value,_=json.JSONDecoder().raw_decode(tail)
+                        elif tail.startswith("'"):
+                            # JavaScript single-quoted string literal subset.
+                            match=re.match(r"'((?:\\.|[^'\\])*)'",tail,re.S)
+                            if not match: continue
+                            value=ast.literal_eval("'"+match.group(1)+"'")
+                        else: continue
+                        if isinstance(value,str): yield value
+                    except Exception: pass
         # Traverse only known transcript containers, never arbitrary text fields.
         for key in ('payload','content','message','parts','response_item','messages'):
             v=obj.get(key)

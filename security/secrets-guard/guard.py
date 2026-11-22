@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed PreToolUse command guard. Reads hook JSON on stdin."""
-import json, re, shlex, sys
+import json, os, re, shlex, sys
 
 SENSITIVE = re.compile(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)', re.I)
 URI = re.compile(r'(?i)\b(?:mongodb(?:\+srv)?|neo4j\+s|postgres(?:ql)?|mysql|redis)://[^\s\'"<>]*:[^\s\'"<>]*@')
@@ -25,6 +25,7 @@ def flatten(cmd):
 def denied(command):
     if URI.search(command): return True
     if re.search(r'(?im)(?:^|[;&|]\s*)(?:env|printenv|set|export\s+-p|declare\s+-x)(?:\s*(?:$|[;&|]))', command): return True
+    if re.search(r'(?i)(?:os\.environ|process\.env|getenv\s*\()',command) and re.search(r'(?i)(?:print|echo|printf|console\.log|write\s*\()',command) and SENSITIVE.search(command): return True
     # `set -a` is an assignment-export mode, not a shell variable dump.
     if re.search(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+\.env[^;]*;\s*set\s+\+a', command):
         command = re.sub(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+;\s*set\s+\+a', 'source-env-internally', command)
@@ -55,7 +56,9 @@ def main():
         if not isinstance(command,str): raise ValueError('missing command')
         if denied(command):
             print(json.dumps({'block':True,'reason':'Secret-value output blocked. Use secret-names <file> to inspect variable names with values masked.'})); return 0
-        print(json.dumps({'block':False,'reason':''})); return 0
+        scrubber=os.path.expanduser('~/.agent-hooks/secrets-scrub-exec.py')
+        wrapped='/usr/bin/python3 '+shlex.quote(scrubber)+' -- '+shlex.quote(command)
+        print(json.dumps({'block':False,'reason':'','updated_command':wrapped})); return 0
     except Exception:
         print(json.dumps({'block':True,'reason':'Secret guard failed closed; command not run.'})); return 0
 if __name__=='__main__': sys.exit(main())
