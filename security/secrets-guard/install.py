@@ -14,5 +14,5 @@ for config, provider, command in [
     hooks=data.setdefault('hooks',{})
     entries=hooks.setdefault('PreToolUse',[])
     entries[:] = [e for e in entries if not any(h.get('command','').endswith('/'+provider+'-pretool.sh') for h in e.get('hooks',[]))]
-    entries.append({'matcher':'Bash' if provider=='claude' else 'exec_command','hooks':[{'type':'command','command':command}]})
+    entries.append({'matcher':'Bash','hooks':[{'type':'command','command':command}]})
     tmp=config+'.tmp'; open(tmp,'w').write(json.dumps(data,indent=2)+'\n'); os.replace(tmp,config)
