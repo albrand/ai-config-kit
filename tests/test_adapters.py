@@ -14,6 +14,7 @@ ALLOW=[
 DENY=[
     "ssh hsrpc-wsl 'set -a; . ~/pfull/prod.env; set +a; python3 -c \"import os; print(os.environ.get(\\\"DATABASE_URL\\\"))\"'",
     "bb config get BB_ACCOUNT_POOL_PARENT_TOKEN",
+    "python3 -c \"from pathlib import Path; import base64; print(base64.b64encode(Path('~/.aws/credentials').read_bytes()))\"",
 ]
 
 class AdapterTests(unittest.TestCase):

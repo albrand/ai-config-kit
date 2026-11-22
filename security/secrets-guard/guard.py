@@ -7,6 +7,7 @@ URI = re.compile(r'(?i)\b(?:mongodb(?:\+srv)?|neo4j\+s|postgres(?:ql)?|mysql|red
 FILES = re.compile(r'(?i)(?:\.env[^/\s]*|[^/\s]*\.env|credentials?(?:\.json)?|id_(?:rsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.aws/credentials|Aura[^/]*credentials[^/]*)')
 DUMP = re.compile(r'(?i)^(?:env|printenv|set|export\s+-p|declare\s+-x)$')
 READERS = {'cat','head','tail','less','grep','egrep','fgrep','sed','awk','strings','xxd','base64'}
+INTERPRETERS = {'python','python2','python3','node','ruby','perl'}
 WRAPPERS = {'ssh','bash','sh','eval','command','sudo','env'}
 
 def flatten(cmd):
@@ -44,6 +45,10 @@ def denied(command):
                 return True
             if base in ('echo','printf') and any(re.search(r'\$\{?'+SENSITIVE.pattern+r'[A-Z0-9_]*\}?',x,re.I) for x in words[i+1:]): return True
         joined=' '.join(words).lower()
+        if (any(os.path.basename(word).lower() in INTERPRETERS for word in words)
+                and FILES.search(joined)
+                and re.search(r'\b(?:open|read|read_text|read_bytes|readFile|readFileSync|createReadStream)\b',joined)):
+            return True
         if re.search(r'\bbb\s+(?:variable|variables|settings|config)\b',joined) and re.search(r'\b(show|list|get|dump|print|view)\b',joined): return True
         if re.search(r'\bvercel\s+env\s+(?:pull|ls)\b',joined) and not re.search(r'>\s*[^\s]+',text): return True
         if re.search(r'\bgit\s+config\s+--get(?:-all)?\s+(?:credential\.helper|credential\.\w+)',joined): return True
