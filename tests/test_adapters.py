@@ -22,6 +22,7 @@ DENY=[
     "bash -c 'ls && openssl enc -base64 -in ~/.aws/credentials'",
     "ssh hsrpc-wsl 'ls && openssl enc -base64 -in ~/.aws/credentials'",
     'ls() { cat "$@"; }; ls ~/.aws/credentials',
+    'ls() (cat "$@"); ls ~/.aws/credentials',
 ]
 
 class AdapterTests(unittest.TestCase):

@@ -51,7 +51,7 @@ def flatten(cmd):
     return out
 
 def denied(command):
-    if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*\{|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
+    if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*(?:\{|\()|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
         return True
     if URI.search(command): return True
     if re.search(r'(?im)(?:^|[;&|]\s*)(?:env|printenv|set|export\s+-p|declare\s+-x)(?:\s*(?:$|[;&|]))', command): return True
