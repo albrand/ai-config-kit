@@ -51,6 +51,8 @@ def flatten(cmd):
     return out
 
 def denied(command):
+    if FILES.search(command) and re.search(r'(?i)\beval\b',command):
+        return True
     if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*(?:\{|\()|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
         return True
     if URI.search(command): return True
