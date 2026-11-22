@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Run a shell command and exact-value scrub captured stdout/stderr."""
-import os, re, shlex, subprocess, sys
+"""Run a shell command and scrub known secret values and common encodings."""
+import base64, os, re, shlex, subprocess, sys
+from urllib.parse import quote, quote_plus
 
 ENV_SOURCE = re.compile(r'(?i)^(?:\.env(?:\..*)?|.*\.env)$')
 
@@ -136,8 +137,18 @@ def has_hsrpc_ssh(command):
     return False
 
 def redact(data,secrets):
-    for secret in sorted(set((v for v in secrets if len(v)>=4)),key=len,reverse=True):
-        data=data.replace(secret.encode(errors='ignore'),b'[MASKED]')
+    candidates=set()
+    for secret in secrets:
+        if len(secret)<4: continue
+        raw=secret.encode(errors='ignore')
+        encoded=base64.b64encode(raw).decode('ascii')
+        hexed=raw.hex()
+        candidates.update((secret,encoded,encoded.rstrip('='),hexed,quote(secret,safe=''),quote_plus(secret,safe='')))
+        if len(encoded)>76:
+            candidates.add('\n'.join(encoded[i:i+76] for i in range(0,len(encoded),76)))
+            candidates.add('\r\n'.join(encoded[i:i+76] for i in range(0,len(encoded),76)))
+    for candidate in sorted((v for v in candidates if len(v)>=4),key=len,reverse=True):
+        data=data.replace(candidate.encode(errors='ignore'),b'[MASKED]')
     return data
 
 def main():

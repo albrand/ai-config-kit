@@ -23,6 +23,7 @@ class GuardTests(unittest.TestCase):
             "echo $BB_ACCOUNT_POOL_PARENT_TOKEN",
             "env", "printenv", "set", "export -p", "declare -x",
             "cat ~/pfull/prod.env", "sed -n '1,20p' .env.local",
+            "base64 ~/pfull/prod.env", "base64 .env.local",
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
         ]:
@@ -44,6 +45,8 @@ class GuardTests(unittest.TestCase):
         fake="mongodb+srv://fake:fake@x"
         self.assertEqual(scrubber.redact(("out="+fake).encode(),[fake]),b"out=[MASKED]", "stdout exact-value redaction failed")
         self.assertEqual(scrubber.redact(("err="+fake).encode(),[fake]),b"err=[MASKED]", "stderr exact-value redaction failed")
+        encoded=__import__('base64').b64encode(fake.encode())
+        self.assertEqual(scrubber.redact(b"encoded="+encoded,[fake]),b"encoded=[MASKED]", "base64 transformed secret survived output redaction")
 
     def test_env_parser_masks_expansions_and_unquoted_comments(self):
         p=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
@@ -75,6 +78,22 @@ class GuardTests(unittest.TestCase):
             result=subprocess.run([sys.executable,str(scrubber_path),"--",command],cwd=temp,capture_output=True,env=env)
         combined=result.stdout+result.stderr
         self.assertFalse(fake.encode() in combined,"fake sourced value survived output redaction")
+        self.assertIn(b"RuntimeError: [MASKED]",combined)
+        self.assertNotEqual(result.returncode,0)
+
+    def test_scrubs_base64_secret_loaded_from_sourced_env_file(self):
+        scrubber_path=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        fake="mongodb+srv://fake-user:fake-password@fake.example/db"
+        encoded=__import__('base64').b64encode(fake.encode())
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-base64-") as temp:
+            env_file=Path(temp) / "prod.env"
+            env_file.write_text("FAKE_DB_URI="+fake+"\n")
+            app="import os,base64; raise RuntimeError(base64.b64encode(os.environ['FAKE_DB_URI'].encode()).decode())"
+            command=("set -a; . "+shlex.quote(str(env_file))+"; set +a; python3 -c "+shlex.quote(app))
+            env=dict(FAKE_ENV_BASE,HOME=temp,TMPDIR=temp)
+            result=subprocess.run([sys.executable,str(scrubber_path),"--",command],cwd=temp,capture_output=True,env=env)
+        combined=result.stdout+result.stderr
+        self.assertNotIn(encoded,combined,"base64 transformed fake secret survived scrubber")
         self.assertIn(b"RuntimeError: [MASKED]",combined)
         self.assertNotEqual(result.returncode,0)
 

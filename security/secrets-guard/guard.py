@@ -6,7 +6,7 @@ SENSITIVE = re.compile(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CR
 URI = re.compile(r'(?i)\b(?:mongodb(?:\+srv)?|neo4j\+s|postgres(?:ql)?|mysql|redis)://[^\s\'"<>]*:[^\s\'"<>]*@')
 FILES = re.compile(r'(?i)(?:\.env[^/\s]*|[^/\s]*\.env|credentials?(?:\.json)?|id_(?:rsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.aws/credentials|Aura[^/]*credentials[^/]*)')
 DUMP = re.compile(r'(?i)^(?:env|printenv|set|export\s+-p|declare\s+-x)$')
-READERS = {'cat','head','tail','less','grep','egrep','fgrep','sed','awk','strings','xxd'}
+READERS = {'cat','head','tail','less','grep','egrep','fgrep','sed','awk','strings','xxd','base64'}
 WRAPPERS = {'ssh','bash','sh','eval','command','sudo','env'}
 
 def flatten(cmd):
