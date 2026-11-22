@@ -45,6 +45,13 @@ def denied(command):
                 return True
             if base in ('echo','printf') and any(re.search(r'\$\{?'+SENSITIVE.pattern+r'[A-Z0-9_]*\}?',x,re.I) for x in words[i+1:]): return True
         joined=' '.join(words).lower()
+        if FILES.search(joined):
+            verb=os.path.basename(words[0]).lower()
+            safe_file_operation = (verb in ('ls','stat','secret-names')
+                                   or (verb in ('grep','egrep','fgrep') and any(x in ('-c','--count','-l','--files-with-matches') for x in words[1:]))
+                                   or (verb in ('.','source') and re.search(r'(?i)\.env(?:\.[^/\s]+)?$',words[-1])))
+            if not safe_file_operation:
+                return True
         if (any(os.path.basename(word).lower() in INTERPRETERS for word in words)
                 and FILES.search(joined)
                 and re.search(r'\b(?:open|read|read_text|read_bytes|readFile|readFileSync|createReadStream)\b',joined)):
