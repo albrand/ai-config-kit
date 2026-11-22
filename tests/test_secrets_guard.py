@@ -1,5 +1,9 @@
 import importlib.util
 from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location("guard", Path(__file__).parents[1] / "security/secrets-guard/guard.py")
@@ -38,6 +42,23 @@ class GuardTests(unittest.TestCase):
         fake="mongodb+srv://fake:fake@x"
         self.assertEqual(scrubber.redact(("out="+fake).encode(),[fake]),b"out=[MASKED]")
         self.assertEqual(scrubber.redact(("err="+fake).encode(),[fake]),b"err=[MASKED]")
+
+    def test_scrubs_values_loaded_from_command_sourced_env_file(self):
+        scrubber_path=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        spec=importlib.util.spec_from_file_location("scrubber_paths",scrubber_path)
+        scrubber=importlib.util.module_from_spec(spec); spec.loader.exec_module(scrubber)
+        fake="mongodb+srv://fake:fake@x"
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-fake-") as temp:
+            env_file=Path(temp) / "prod.env"
+            env_file.write_text("FAKE_DB_URI="+fake+"\n")
+            self.assertEqual(scrubber.sourced_env_paths("cd "+shlex.quote(temp)+" && . prod.env"),[str(env_file)])
+            command=("set -a; . "+shlex.quote(str(env_file))+"; set +a; python3 -c "+
+                     shlex.quote("import os; raise RuntimeError(os.environ['FAKE_DB_URI'])"))
+            result=subprocess.run([sys.executable,str(scrubber_path),"--",command],capture_output=True)
+        combined=result.stdout+result.stderr
+        self.assertNotIn(fake.encode(),combined)
+        self.assertIn(b"RuntimeError: [MASKED]",combined)
+        self.assertNotEqual(result.returncode,0)
 
 
 if __name__ == "__main__":

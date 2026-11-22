@@ -2,6 +2,8 @@
 """Run a shell command and exact-value scrub captured stdout/stderr."""
 import os, re, shlex, subprocess, sys
 
+ENV_SOURCE = re.compile(r'(?i)^(?:\.env(?:\..*)?|.*\.env)$')
+
 def parse_env(text):
     values=[]
     for line in text.splitlines():
@@ -11,6 +13,35 @@ def parse_env(text):
         if len(value)>1 and value[0]==value[-1] and value[0] in "'\"": value=value[1:-1]
         if value and (re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I) or len(value)>=16): values.append(value)
     return values
+
+def sourced_env_paths(command):
+    """Return literal env-file paths named by shell `.` or `source` commands.
+
+    This only tokenizes shell syntax; it never evaluates or sources a file.
+    Reading candidate files lets us mask values that the wrapped command loads
+    after the scrubber starts.
+    """
+    lexer=shlex.shlex(command, posix=True, punctuation_chars=';&|')
+    lexer.whitespace_split=True
+    tokens=list(lexer)
+    paths=[]
+    cwd=os.getcwd()
+    for i,token in enumerate(tokens[:-1]):
+        if token == 'cd':
+            destination=os.path.expanduser(os.path.expandvars(tokens[i+1]))
+            if '$' in destination or '`' in destination or destination == '-':
+                raise ValueError('dynamic directory before env source')
+            cwd=os.path.abspath(destination if os.path.isabs(destination) else os.path.join(cwd,destination))
+            continue
+        if token not in ('.','source'):
+            continue
+        candidate=os.path.expanduser(os.path.expandvars(tokens[i+1]))
+        if not ENV_SOURCE.fullmatch(os.path.basename(candidate)):
+            continue
+        if '$' in candidate or '`' in candidate:
+            raise ValueError('dynamic env source path')
+        paths.append(os.path.abspath(candidate if os.path.isabs(candidate) else os.path.join(cwd,candidate)))
+    return paths
 
 def redact(data,secrets):
     for secret in sorted(set((v for v in secrets if len(v)>=4)),key=len,reverse=True):
@@ -24,10 +55,16 @@ def main():
     for key,value in os.environ.items():
         if value and re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I): secrets.append(value)
     paths=[os.path.expanduser('~/pfull/prod.env'),os.path.expanduser('~/pfull/prod-lane.env'),os.path.expanduser('~/.env')]
+    try:
+        paths.extend(sourced_env_paths(command))
+    except Exception:
+        print('secret scrubber could not inspect sourced env paths; command not run',file=sys.stderr); return 2
     for path in paths:
         try:
             with open(path,errors='replace') as f: secrets.extend(parse_env(f.read()))
         except FileNotFoundError: pass
+        except OSError:
+            print('secret scrubber could not read an env mask file; command not run',file=sys.stderr); return 2
     if re.search(r'\bssh\s+hsrpc-wsl\b',command):
         # Fetch the known remote env file into process memory only; never stream it to the terminal.
         try:
