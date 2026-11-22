@@ -22,6 +22,7 @@ class GuardTests(unittest.TestCase):
     def test_allowed(self):
         for command in [
             "ssh hsrpc-wsl 'cd ~/pfull && ./prodmongo.sh q.js'",
+            "ssh hsrpc-wsl './prodmongo.sh q.js'",
             "set -a; . ~/pfull/prod.env; set +a; node script.js",
             "bb thread tell --message-file note.txt", "grep -c TOKEN .env",
             "grep BB_ACCOUNT_POOL_PARENT_TOKEN file", "git status", "pnpm lint", "ls -la",

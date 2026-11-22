@@ -13,14 +13,19 @@ def mask(s):
 def strings(obj):
     if isinstance(obj,dict):
         kind=obj.get('type'); name=obj.get('name','')
-        if kind in ('function_call','tool_use') or name in ('exec_command','Bash','bash'):
-            inp=obj.get('input')
+        if kind in ('function_call','custom_tool_call','tool_use','tool_call') or name in ('exec_command','Bash','bash','exec'):
+            inp=obj.get('input',obj.get('arguments'))
             if isinstance(inp,str):
                 try: inp=json.loads(inp)
                 except Exception: pass
-            if isinstance(inp,dict):
-                for key in ('command','cmd'):
-                    if isinstance(inp.get(key),str): yield inp[key]
+            def command_fields(x):
+                if isinstance(x,dict):
+                    for k,v in x.items():
+                        if k in ('command','cmd') and isinstance(v,str): yield v
+                        elif isinstance(v,(dict,list)): yield from command_fields(v)
+                elif isinstance(x,list):
+                    for v in x: yield from command_fields(v)
+            yield from command_fields(inp)
         # Traverse only known transcript containers, never arbitrary text fields.
         for key in ('payload','content','message','parts','response_item','messages'):
             v=obj.get(key)
@@ -29,11 +34,13 @@ def strings(obj):
         for v in obj: yield from strings(v)
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('jsonl'); ap.add_argument('--match',required=True); a=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('jsonl'); ap.add_argument('--match',required=True); ap.add_argument('--limit',type=int,default=20); a=ap.parse_args()
     rx=re.compile(a.match,re.I)
     for line in open(a.jsonl,errors='replace'):
         try: obj=json.loads(line)
         except Exception: continue
         for command in strings(obj):
-            if rx.search(command): print(mask(command))
+            if rx.search(command):
+                print(mask(command)); a.limit-=1
+                if a.limit<=0: return
 if __name__=='__main__': main()
