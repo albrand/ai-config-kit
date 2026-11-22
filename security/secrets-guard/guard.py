@@ -50,8 +50,24 @@ def flatten(cmd):
             else: out.append(' '.join(words))
     return out
 
+def contains_eval(cmd):
+    pending=[cmd]; seen=set()
+    while pending:
+        source=pending.pop()
+        if source in seen: continue
+        seen.add(source)
+        lexer=shlex.shlex(source,posix=True,punctuation_chars=';&|()')
+        lexer.whitespace_split=True; lexer.commenters='#'
+        tokens=list(lexer)
+        if any(os.path.basename(token)=='eval' for token in tokens): return True
+        for i,token in enumerate(tokens[:-1]):
+            if token in ('-c','-lc','-ec'): pending.append(tokens[i+1])
+        if tokens and os.path.basename(tokens[0])=='ssh' and len(tokens)>2:
+            pending.append(' '.join(tokens[2:]))
+    return False
+
 def denied(command):
-    if FILES.search(command) and re.search(r'(?i)\beval\b',command):
+    if FILES.search(command) and contains_eval(command):
         return True
     if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*(?:\{|\()|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
         return True
