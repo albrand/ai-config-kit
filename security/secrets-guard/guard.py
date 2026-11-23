@@ -117,7 +117,7 @@ def wrap(command):
 
 # Sessions read hooks once, at start. A session older than the hook file runs unguarded.
 HOOK_FILES={'claude':'claude-pretool.sh','codex':'codex-pretool.sh','antigravity':'gemini-pretool.py'}
-PROVIDER_BY_EXE={'claude':'claude','codex':'codex','agy':'antigravity'}
+PROVIDER_BY_EXE={'claude':'claude','codex':'codex','agy':'antigravity','antigravity':'antigravity'}
 PS_ROW=re.compile(r'^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$')
 RELAUNCH=("Relaunch each listed bb thread (nothing here kills or restarts anything):\n"
           "  bb thread native <thr> --json     # note the terminal id\n"
