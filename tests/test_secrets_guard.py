@@ -205,6 +205,27 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn(fake.encode(),result.stdout+result.stderr)
         self.assertEqual(result.stdout,b"[MASKED]\n")
 
+    def test_sourced_reference_to_shell_local_variable_fails_closed(self):
+        scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        fake="fake-shell-local-0123456789"
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-local-") as temp:
+            env_file=Path(temp)/"fake.env"
+            env_file.write_text("FAKE_TOKEN=$FAKE_LOCAL\nFAKE_OTHER=${FAKE_UNSET_ANYWHERE:-fake-default}\n")
+            app=shlex.quote("import os; print(os.environ['FAKE_TOKEN'])")
+            env=dict(FAKE_ENV_BASE,HOME=temp,TMPDIR=temp)
+            local=("FAKE_LOCAL="+fake+"; set -a; . "+shlex.quote(str(env_file))+"; set +a; python3 -c "+app)
+            result=subprocess.run([sys.executable,str(scrubber),"--",local],cwd=temp,capture_output=True,env=env)
+            self.assertNotIn(fake.encode(),result.stdout+result.stderr,"shell-local value leaked")
+            self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            # A reference to a name set nowhere expands to empty, as in the shell, and still runs.
+            plain=("set -a; . "+shlex.quote(str(env_file))+"; set +a; echo ok")
+            result=subprocess.run([sys.executable,str(scrubber),"--",plain],cwd=temp,capture_output=True,env=env)
+            self.assertEqual((result.returncode,result.stdout),(0,b"ok\n"),result.stderr.decode(errors="replace"))
+            # A name assigned in another env file the command may load also fails closed.
+            (Path(temp)/".env.local").write_text("FAKE_LOCAL="+fake+"\n")
+            result=subprocess.run([sys.executable,str(scrubber),"--",plain],cwd=temp,capture_output=True,env=env)
+            self.assertEqual(result.returncode,2)
+
     def test_cwd_dotenv_example_with_spaced_value_never_blocks_command(self):
         scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
         with tempfile.TemporaryDirectory(prefix="secrets-guard-example-") as temp:

@@ -20,10 +20,11 @@ def _strip_shell_comment(value):
             return value[:i]
     return value
 
-def _expand_env_value(value, variables):
+def _expand_env_value(value, variables, unknown=None):
     pattern=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)')
     def replace(match):
         name=match.group(1) or match.group(4)
+        if unknown is not None and name not in variables: unknown(name)
         current=variables.get(name,'')
         operator=match.group(2)
         if operator and (name not in variables or (operator==':-' and not current)):
@@ -41,14 +42,22 @@ def _fallback_values(raw):
     raw=raw.strip()
     return [raw]+[word for word in raw.split() if len(word)>=8] if raw else []
 
-def parse_env(text, strict=False):
+def parse_env(text, strict=False, local_names=()):
     """Collect values to mask from dotenv text, line by line.
 
     Lines that cannot be parsed exactly are masked (raw value plus words of 8+
     characters) instead of failing. Only with strict=True (a file the command
     itself sources) does a dynamic value raise, because its runtime value is unknown.
+    In strict mode a reference to a name absent from the environment also raises
+    when that name may be set at run time (local_names: names in the command text
+    or assigned in another env file), since the shell would expand it there.
     """
     values=[]; variables=dict(os.environ); open_quote=None
+    def unknown(name):
+        if name in local_names: raise ValueError('env reference to a run-time variable')
+    if not strict: unknown=None
+    def expand_value(text):
+        return _expand_env_value(text,variables,unknown)
     def dynamic(text):
         if strict: raise ValueError('dynamic env value')
         values.extend(_fallback_values(text))
@@ -56,7 +65,7 @@ def parse_env(text, strict=False):
         # Mask the literal text and, where the shell would expand it, the expanded value too.
         values.extend(_fallback_values(text))
         if expand and ('$' in text or '`' in text):
-            try: values.extend(_fallback_values(_expand_env_value(text,variables)))
+            try: values.extend(_fallback_values(expand_value(text)))
             except ValueError: dynamic(text)
     for line in text.splitlines():
         stripped=line.strip()
@@ -88,13 +97,13 @@ def parse_env(text, strict=False):
             if words is None or len(words)>1:
                 # Valid dotenv such as NAME=Some Name <addr@example.com>: mask it, never fail.
                 values.extend(_fallback_values(raw))
-                try: values.extend(_fallback_values(_expand_env_value(raw,variables)))
+                try: values.extend(_fallback_values(expand_value(raw)))
                 except ValueError: dynamic(raw)
                 variables[key]=raw
                 continue
             value=words[0] if words else ''
         if raw[:1]!="'":
-            try: value=_expand_env_value(value,variables)
+            try: value=expand_value(value)
             except ValueError:
                 dynamic(value); variables[key]=value; continue
         variables[key]=value
@@ -209,15 +218,21 @@ def main():
         paths.extend(env_mask_paths(command,sourced))
     except Exception:
         print('secret scrubber could not inspect sourced env paths; command not run',file=sys.stderr); return 2
+    texts={}
     for path in dict.fromkeys(paths):
         try:
-            with open(path,errors='replace') as f: text=f.read()
+            with open(path,errors='replace') as f: texts[path]=f.read()
         except FileNotFoundError: continue
         except Exception:
             if path in sourced:
                 print('secret scrubber could not read a sourced env file; command not run',file=sys.stderr); return 2
-            continue
-        try: secrets.extend(parse_env(text,strict=path in sourced))
+    # Names a sourced file may see set at run time: shell-local assignments in the
+    # command and assignments in any other env file it may load.
+    local_names=set(re.findall(r'[A-Za-z_][A-Za-z0-9_]*',command))
+    for text in texts.values():
+        local_names.update(re.findall(r'(?m)^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=',text))
+    for path,text in texts.items():
+        try: secrets.extend(parse_env(text,strict=path in sourced,local_names=local_names))
         except Exception:
             # Only a file the command itself sources can reach here (dynamic value).
             print('secret scrubber found a dynamic value in a sourced env file; command not run',file=sys.stderr); return 2
