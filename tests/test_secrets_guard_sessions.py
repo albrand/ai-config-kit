@@ -77,8 +77,10 @@ class SessionCoverageTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("11 running session(s)", result.stdout)
             self.assertIn("thr_fakeold0001", result.stdout)
-            self.assertIn("bb thread native <thr> --json", result.stdout)
-            self.assertIn("bb terminal close <term>", result.stdout)
+            self.assertIn("/exit", result.stdout)
+            self.assertIn("bb thread native <thr>", result.stdout)
+            self.assertIn("--check-sessions", result.stdout)
+            self.assertNotIn("bb terminal close <term>\n", result.stdout.replace("`bb terminal close` plus", ""))
 
             ps_file.write_text(PS.split("\n")[2] + "\n" + PS.split("\n")[3] + "\n")  # only the new session
             result = subprocess.run([sys.executable, str(GUARD), "--check-sessions", "--ps-file", str(ps_file)],

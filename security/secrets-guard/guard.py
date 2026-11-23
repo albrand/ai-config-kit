@@ -119,11 +119,12 @@ def wrap(command):
 HOOK_FILES={'claude':'claude-pretool.sh','codex':'codex-pretool.sh','antigravity':'gemini-pretool.py'}
 PROVIDER_BY_EXE={'claude':'claude','codex':'codex','agy':'antigravity','antigravity':'antigravity'}
 PS_ROW=re.compile(r'^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$')
-RELAUNCH=("Relaunch each listed bb thread (nothing here kills or restarts anything):\n"
-          "  bb thread native <thr> --json     # note the terminal id\n"
-          "  bb terminal close <term>\n"
-          "  bb thread native <thr>            # retry if the new terminal exits at once\n"
-          "Rows with thread '-' are not native-hold terminals; relaunch them from their own bb thread or terminal.")
+RELAUNCH=("Restart each listed session so it loads the hook (this tool kills and restarts nothing):\n"
+          "  1. Type /exit in the session itself. `bb terminal close` plus `bb thread native` does not restart it:\n"
+          "     bb reattaches the new terminal to the same old process.\n"
+          "  2. bb thread native <thr>\n"
+          "  3. Confirm with: python3 ~/.agent-hooks/secrets-guard.py --check-sessions   (exit 0 means covered)\n"
+          "Rows with thread '-' are not native-hold terminals; /exit them in whatever terminal or bb thread runs them.")
 
 def hook_mtimes(hooks_dir=None):
     hooks_dir=hooks_dir or os.path.expanduser('~/.agent-hooks'); out={}

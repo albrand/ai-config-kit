@@ -157,7 +157,8 @@ class SecretsGuardInstallTests(unittest.TestCase):
         ps = "  101     1 Thu Nov 12 14:35:18 2026     claude --model fake\n  100     1 Thu Nov 12 14:35:17 2026     /fake/node /fake/bb thread native-hold thr_fakeinst0001 --socket /fake\n"
         text = self.run_installer_with_ps(subprocess.CompletedProcess([], 0, ps, ""))
         self.assertIn("NOT covered", text)
-        self.assertIn("bb terminal close <term>", text)
+        self.assertIn("/exit", text)
+        self.assertIn("bb thread native <thr>", text)
         self.assertIn("INCOMPLETE", text)
 
     def test_installer_says_coverage_is_unknown_when_the_process_listing_fails(self):
