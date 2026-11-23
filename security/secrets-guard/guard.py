@@ -132,6 +132,23 @@ def hook_mtimes(hooks_dir=None):
         except OSError: out[provider]=None
     return out
 
+NODE_LAUNCHERS={'node','nodejs','bun'}
+NODE_PACKAGES=(('@anthropic-ai/claude-code','claude'),('@openai/codex','codex'))
+
+def session_provider(command):
+    """Provider of a Claude Code, Codex or Antigravity process, else None. Matches the executable
+    name, or for a node launcher the script it runs (a package path or a script named like the tool)."""
+    toks=command.split()
+    if not toks: return None
+    exe=os.path.basename(toks[0])
+    if exe in PROVIDER_BY_EXE: return PROVIDER_BY_EXE[exe]
+    if exe in NODE_LAUNCHERS:
+        script=next((t for t in toks[1:] if not t.startswith('-')),'')
+        for package,provider in NODE_PACKAGES:
+            if package in script: return provider
+        return PROVIDER_BY_EXE.get(os.path.splitext(os.path.basename(script))[0])
+    return None
+
 def stale_sessions(ps_text,mtimes):
     """Rows of (provider,pid,start text,thread,why) for sessions started before their hook file.
     ps_text is `ps -axo pid=,ppid=,lstart=,command=` output. An unparseable start time or a
@@ -144,12 +161,11 @@ def stale_sessions(ps_text,mtimes):
             m=re.match(r'^\s*(\d+)\s+(\d+)\s+(.*)$',line)
             if m:  # garbled start time: resume the command at the first known executable
                 toks=m.group(3).split()
-                at=next((i for i,t in enumerate(toks) if os.path.basename(t) in PROVIDER_BY_EXE),len(toks))
+                at=next((i for i in range(len(toks)) if session_provider(' '.join(toks[i:]))),len(toks))
                 rows[int(m.group(1))]=(int(m.group(2)),None,' '.join(toks[at:]))
     found=[]
     for pid,(ppid,start,command) in sorted(rows.items()):
-        argv0=command.split(None,1)[0] if command.split() else ''
-        provider=PROVIDER_BY_EXE.get(os.path.basename(argv0))
+        provider=session_provider(command)
         if not provider: continue
         thread='-'
         parent=rows.get(ppid)

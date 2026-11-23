@@ -27,6 +27,9 @@ PS = """\
   401   400 Tue Nov 17 23:31:26 2026     /fake/bin/codex-code-mode-host --listen
   500     1 Sat Nov 21 00:38:18 2026     agy
   600     1 garbled-start-time           claude --model fake
+  800     1 Thu Nov 12 09:00:00 2026     node /fake/lib/node_modules/@anthropic-ai/claude-code/cli.js --model fake
+  801     1 Thu Nov 12 09:00:01 2026     /fake/bin/node --max-old-space-size=4096 /fake/lib/node_modules/@openai/codex/bin/codex.js
+  802     1 Thu Nov 12 09:00:02 2026     /fake/bin/node /fake/bb thread native-hold thr_fakenode0003
   700     1 Mon Nov 23 12:00:00 2026     /bin/zsh -c claude is only mentioned here
 """
 
@@ -34,12 +37,14 @@ PS = """\
 class SessionCoverageTests(unittest.TestCase):
     def test_old_new_and_unparseable_sessions(self):
         found = {row[1]: row for row in guard.stale_sessions(PS, MTIMES)}
-        self.assertEqual(set(found), {101, 301, 400, 500, 600})
+        self.assertEqual(set(found), {101, 301, 400, 500, 600, 800, 801})
         self.assertEqual(found[101][3:], ("thr_fakeold0001", "started before hook"))
         self.assertEqual(found[301][3], "-")
         self.assertEqual(found[400][0], "codex")
         self.assertEqual(found[500][0], "antigravity")
         self.assertEqual(found[600][4], "unparseable start time")
+        self.assertEqual((found[800][0], found[801][0]), ("claude", "codex"))  # node-launched forms
+        self.assertNotIn(802, found)  # a node process that is not one of the tools
         self.assertNotIn(201, found)  # started after the hook
         self.assertNotIn(401, found)  # codex-code-mode-host is not a session
         self.assertNotIn(700, found)  # only mentions claude in its arguments
@@ -61,7 +66,7 @@ class SessionCoverageTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(GUARD), "--check-sessions", "--ps-file", str(ps_file)],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn("5 running session(s)", result.stdout)
+            self.assertIn("7 running session(s)", result.stdout)
             self.assertIn("thr_fakeold0001", result.stdout)
             self.assertIn("bb thread native <thr> --json", result.stdout)
             self.assertIn("bb terminal close <term>", result.stdout)
