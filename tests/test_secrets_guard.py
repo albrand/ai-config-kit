@@ -222,6 +222,18 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(proc.returncode,2)
             self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
             self.assertNotIn(b"after",proc.stdout)
+            # Bash process substitution runs its command while sourcing; it needs no separator.
+            for form in ("<(cat fake-cred.txt >/dev/stderr)",">(cat fake-cred.txt >/dev/stderr)","a<(cat fake-cred.txt >/dev/stderr)"):
+                with self.assertRaises(ValueError,msg=form):
+                    scrubber.parse_env("FAKE_TOKEN="+form+"\n",strict=True)
+                self.assertTrue(scrubber.parse_env("FAKE_TOKEN="+form+"\n"))
+                env_file=Path(directory,"fake-sourced.env"); env_file.write_text("FAKE_TOKEN="+form+"\n")
+                proc=subprocess.run(["/usr/bin/python3",str(Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"),"--",
+                                     "set +o posix; . ./fake-sourced.env; echo after"],cwd=directory,capture_output=True)
+                self.assertEqual(proc.returncode,2,form)
+                self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
+                self.assertNotIn(b"after",proc.stdout)
+            self.assertIn("fake<(literal)value",scrubber.parse_env("FAKE_TOKEN='fake<(literal)value'\n",strict=True))
 
     def test_env_parser_masks_expanded_unbraced_references_in_every_shape(self):
         scrubber=self._load_scrubber("scrubber_unbraced")

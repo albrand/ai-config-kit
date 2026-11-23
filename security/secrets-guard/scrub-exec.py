@@ -135,6 +135,9 @@ def parse_env(text, strict=False, local_names=()):
         else:
             if strict and re.search(r'[;&|]',raw):
                 raise ValueError('command separator in sourced env value')
+            if strict and re.search(r'[<>]\(',raw):
+                # Bash process substitution runs the inner command while sourcing.
+                raise ValueError('process substitution in sourced env value')
             try: words=shlex.split(raw,posix=True)
             except ValueError:
                 if strict: raise ValueError('unbalanced quote in sourced env value')
