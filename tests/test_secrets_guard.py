@@ -160,14 +160,20 @@ class GuardTests(unittest.TestCase):
               "Zm9vYmFyZmFrZQ=\r\n"
               "-----END FAKE KEY-----\"\r\n"
               "FAKE_AFTER_TOKEN=fake-after-value-123\r\n")
+        shell_lines=("FAKE_STRAY=it's a fake-stray-quote value\r\n","this line is not dotenv fake-unparsed-word\r\n")
         for strict in (False,True):
-            values=scrubber.parse_env(text,strict=strict)
+            # A sourced file is shell: a stray quote or a non-assignment line fails closed there.
+            values=scrubber.parse_env(text if not strict else
+                                      "".join(l for l in text.splitlines(True) if l not in shell_lines),strict=strict)
             for expected in ("Fake Person <fake-person@example.invalid>","<fake-person@example.invalid>",
-                             "fake-exported-value-1","fake-inline-value-12345","fake-stray-quote",
-                             "fake-dollar-value-123$","fake-unparsed-word","Zm9vYmFyZmFrZQ=",
-                             "fake-after-value-123"):
+                             "fake-exported-value-1","fake-inline-value-12345",
+                             "fake-dollar-value-123$","Zm9vYmFyZmFrZQ=","fake-after-value-123")+(
+                             () if strict else ("fake-stray-quote","fake-unparsed-word")):
                 self.assertIn(expected,values,"real dotenv line was not masked: "+expected)
             self.assertFalse(any("\r" in v for v in values),"CRLF leaked into a mask value")
+        for line in shell_lines:
+            with self.assertRaises(ValueError,msg=line):
+                scrubber.parse_env(line,strict=True)
 
     def test_env_parser_dynamic_values_fail_closed_only_when_strict(self):
         scrubber=self._load_scrubber("scrubber_dynamic")
@@ -176,6 +182,27 @@ class GuardTests(unittest.TestCase):
             with self.assertRaises(ValueError,msg=line):
                 scrubber.parse_env(line,strict=True)
             self.assertTrue(scrubber.parse_env(line),"non-strict parse should mask dynamic line: "+line)
+
+    def test_sourced_env_shell_commands_fail_closed_without_output(self):
+        scrubber=self._load_scrubber("scrubber_shell_lines")
+        for line in ("cat fake-cred.txt\n","FAKE_X=a cat fake-cred.txt\n","FAKE_X=a; cat fake-cred.txt\n",
+                     "FAKE_X=\"a\" cat fake-cred.txt\n","FAKE_X=\"a\nb\" ; cat fake-cred.txt\n",
+                     "FAKE_X=a /bin/cat fake-cred.txt\n","FAKE_CMD=cat\nFAKE_X=a $FAKE_CMD fake-cred.txt\n",
+                     "FAKE_X=a ca[t] fake-cred.txt\n","FAKE_X='a' FAKE_Y=b cat fake-cred.txt\n"):
+            with self.assertRaises(ValueError,msg=line):
+                scrubber.parse_env(line,strict=True)
+            scrubber.parse_env(line)
+        self.assertIn("Fake Person <fake@example.invalid>",
+                      scrubber.parse_env("FAKE_FROM=Fake Person <fake@example.invalid>\nexport FAKE_FROM\n",strict=True))
+        with tempfile.TemporaryDirectory() as directory:
+            cred=Path(directory,"fake-cred.txt"); cred.write_text("FAKE-CREDENTIAL-CONTENTS-0001\n")
+            for body in ("cat fake-cred.txt\n","FAKE_X=a cat fake-cred.txt\n"):
+                env_file=Path(directory,"fake-sourced.env"); env_file.write_text(body)
+                proc=subprocess.run(["/usr/bin/python3",str(Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"),"--",". ./fake-sourced.env; echo after"],
+                                    cwd=directory,capture_output=True)
+                self.assertEqual(proc.returncode,2,body)
+                self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
+                self.assertNotIn(b"after",proc.stdout)
 
     def test_env_parser_masks_expanded_unbraced_references_in_every_shape(self):
         scrubber=self._load_scrubber("scrubber_unbraced")

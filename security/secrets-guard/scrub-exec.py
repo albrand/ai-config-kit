@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
 """Run a shell command and scrub known secret values and common encodings."""
-import base64, os, re, shlex, subprocess, sys
+import base64, os, re, shlex, shutil, subprocess, sys
 from urllib.parse import quote, quote_plus
 
 ENV_SOURCE = re.compile(r'(?i)^(?:\.env(?:\..*)?|.*\.env)$')
+SHELL_BUILTINS = {'.',':','[','alias','bg','bind','break','builtin','caller','cd','command','compgen','complete',
+    'continue','declare','dirs','disown','echo','enable','eval','exec','exit','export','false','fc','fg','getopts',
+    'hash','help','history','jobs','kill','let','local','logout','mapfile','popd','printf','pushd','pwd','read',
+    'readarray','readonly','return','set','shift','shopt','source','suspend','test','time','times','trap','true',
+    'type','typeset','ulimit','umask','unalias','unset','wait','if','then','else','elif','fi','for','while','until',
+    'do','done','case','esac','function','select','coproc'}
+
+def _runs_command(word, path=None):
+    """Whether the shell may execute word as a command when sourcing the file.
+
+    A word the shell would still expand ($VAR, a glob, brace or tilde) is treated
+    as a command, since its expanded name is unknown here.
+    """
+    return (word in SHELL_BUILTINS or re.search(r'[/$`*?\[\\{~]',word) is not None
+            or shutil.which(word,path=path) is not None)
 
 def _strip_shell_comment(value):
     quote=None; escaped=False
@@ -74,26 +89,53 @@ def parse_env(text, strict=False, local_names=()):
             closing=stripped.find(open_quote)
             body=stripped if closing<0 else stripped[:closing]
             mask(body,open_quote=='"')
-            if closing>=0: open_quote=None
+            if closing>=0:
+                tail=stripped[closing+1:].strip()
+                if strict and tail and not tail.startswith('#'):
+                    raise ValueError('shell text after quoted value in sourced env file')
+                open_quote=None
             continue
         if not stripped or stripped.startswith('#'): continue
         m=re.match(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$",stripped)
         if not m:
+            # In a sourced file this is a shell command, not a value: it runs, and its
+            # output was never collected for masking.
+            if strict and not re.fullmatch(r'export(?:\s+[A-Za-z_][A-Za-z0-9_]*)+',stripped):
+                raise ValueError('shell command in sourced env file')
             mask(stripped,True)
             continue
         key,raw=m.groups(); raw=_strip_shell_comment(raw).strip()
         quoted=len(raw)>=2 and raw[0]==raw[-1] and raw[0] in "'\""
         if raw[:1] in ("'",'"') and not quoted:
+            if strict and raw.find(raw[0],1)>=0:
+                # The quote closes on this line and shell text follows it.
+                raise ValueError('shell text after quoted value in sourced env file')
             open_quote=raw[0]
             mask(raw[1:],open_quote=='"')
             continue
         if quoted:
+            if strict:
+                # X="a" cat "b" also starts and ends with a quote; the shell would run cat.
+                try: words=shlex.split(raw,posix=True)
+                except ValueError: words=None
+                if words is None or len(words)!=1:
+                    raise ValueError('shell text after quoted value in sourced env file')
             value=raw[1:-1]
             if raw[0]=='"': value=re.sub(r'\\(["\\$`])',r'\1',value)
             else: value=value.replace("'\\''", "'")
         else:
+            if strict and re.search(r'[;&|]',raw):
+                raise ValueError('command separator in sourced env value')
             try: words=shlex.split(raw,posix=True)
-            except ValueError: words=None
+            except ValueError:
+                if strict: raise ValueError('unbalanced quote in sourced env value')
+                words=None
+            if strict and words and len(words)>1:
+                # The shell runs the first non-assignment word after the value as a command.
+                rest=[w for w in words[1:]]
+                while rest and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',rest[0]): rest=rest[1:]
+                if rest and _runs_command(rest[0],variables.get('PATH')):
+                    raise ValueError('sourced env line runs a command')
             if words is None or len(words)>1:
                 # Valid dotenv such as NAME=Some Name <addr@example.com>: mask it, never fail.
                 values.extend(_fallback_values(raw))
@@ -233,9 +275,11 @@ def main():
         local_names.update(re.findall(r'(?m)^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=',text))
     for path,text in texts.items():
         try: secrets.extend(parse_env(text,strict=path in sourced,local_names=local_names))
-        except Exception:
-            # Only a file the command itself sources can reach here (dynamic value).
-            print('secret scrubber found a dynamic value in a sourced env file; command not run',file=sys.stderr); return 2
+        except Exception as error:
+            # Only a file the command itself sources can reach here. Reasons are fixed
+            # strings; anything else is reported generically so no value can leak.
+            reason=str(error).replace(' in sourced env file','') if isinstance(error,ValueError) and re.fullmatch(r"[a-z -]+",str(error)) else 'unparseable line'
+            print(f'secret scrubber: {reason} in sourced env file {path}; command not run',file=sys.stderr); return 2
     if has_hsrpc_ssh(command):
         # Fetch the known remote env file into process memory only; never stream it to the terminal.
         try:
