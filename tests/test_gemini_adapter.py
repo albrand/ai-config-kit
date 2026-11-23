@@ -17,7 +17,7 @@ class GeminiAdapterTests(unittest.TestCase):
             self.assertNotIn('overwrite',result)
         for command in allow:
             result=json.loads(self.call({'toolCall':{'name':'run_command','args':{'CommandLine':command}}}).stdout)
-            self.assertEqual(result['decision'],'allow',command)
+            self.assertEqual(result['decision'],'ask',command)
             self.assertEqual(list(result['overwrite']),['CommandLine'])
             self.assertEqual(shlex.split(result['overwrite']['CommandLine']),['/usr/bin/python3',SCRUBBER,'--',command])
         # A tool that names the argument `command` gets that key rewritten.
@@ -29,7 +29,7 @@ class GeminiAdapterTests(unittest.TestCase):
             Path(directory,".env").write_text("FAKE_SCRUB_TOKEN=fake-scrub-value-0123456789\n")
             result=json.loads(self.call({'toolCall':{'name':'run_command',
                 'args':{'CommandLine':'printf "%s\\n" fake-scrub-value-0123456789'}}}).stdout)
-            self.assertEqual(result['decision'],'allow')
+            self.assertEqual(result['decision'],'ask')
             run=subprocess.run(['/bin/sh','-c',result['overwrite']['CommandLine']],cwd=directory,capture_output=True)
             self.assertEqual(run.returncode,0,run.stderr)
             self.assertEqual(run.stdout,b"[MASKED]\n")
