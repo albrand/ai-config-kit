@@ -47,6 +47,10 @@ def _expand_env_value(value, variables, unknown=None):
         return current
     if '$(' in value or '`' in value:
         raise ValueError('dynamic env value')
+    # Positional and special parameters ($1, $@, $#, $?, $$, $!, $-, $0) take their
+    # value from the running shell, which the scrubber cannot see; so does $[...] arithmetic.
+    if re.search(r'\$[0-9#@*?$!\[-]',pattern.sub('',value)):
+        raise ValueError('dynamic env value')
     expanded=pattern.sub(replace,value)
     if '${' in expanded or '$(' in expanded or '`' in expanded:
         raise ValueError('dynamic env value')

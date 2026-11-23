@@ -203,6 +203,18 @@ class GuardTests(unittest.TestCase):
                 self.assertEqual(proc.returncode,2,body)
                 self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
                 self.assertNotIn(b"after",proc.stdout)
+            # Positional and special parameters come from the running shell: fail closed.
+            for form in ("$1","$@","$*","$#","$?","$$","$!","$0","x$1y","\"$1\"","$[FAKE_N+1]"):
+                with self.assertRaises(ValueError,msg=form):
+                    scrubber.parse_env("FAKE_TOKEN="+form+"\n",strict=True)
+                self.assertTrue(scrubber.parse_env("FAKE_TOKEN="+form+"\n"))
+            env_file=Path(directory,"fake-sourced.env"); env_file.write_text("FAKE_TOKEN=$1\n")
+            proc=subprocess.run(["/usr/bin/python3",str(Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"),"--",
+                                 "set -- fake-positional-secret-0123; . ./fake-sourced.env; echo \"$FAKE_TOKEN\"; echo after"],
+                                cwd=directory,capture_output=True)
+            self.assertEqual(proc.returncode,2)
+            self.assertNotIn(b"fake-positional-secret",proc.stdout+proc.stderr)
+            self.assertNotIn(b"after",proc.stdout)
             # A shell function the command defines before sourcing is a command too.
             env_file=Path(directory,"fake-sourced.env"); env_file.write_text("FAKE_X=x fakeleak fake-cred.txt\n")
             proc=subprocess.run(["/usr/bin/python3",str(Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"),"--",
