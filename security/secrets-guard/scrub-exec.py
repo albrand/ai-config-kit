@@ -137,7 +137,8 @@ def parse_env(text, strict=False, local_names=()):
                 # The shell runs the first non-assignment word after the value as a command.
                 rest=[w for w in words[1:]]
                 while rest and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',rest[0]): rest=rest[1:]
-                if rest and _runs_command(rest[0],variables.get('PATH')):
+                # A word named in the command may be a function or alias it defined first.
+                if rest and (rest[0] in local_names or _runs_command(rest[0],variables.get('PATH'))):
                     raise ValueError('sourced env line runs a command')
             if words is None or len(words)>1:
                 # Valid dotenv such as NAME=Some Name <addr@example.com>: mask it, never fail.

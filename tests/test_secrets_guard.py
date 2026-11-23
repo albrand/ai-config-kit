@@ -203,6 +203,13 @@ class GuardTests(unittest.TestCase):
                 self.assertEqual(proc.returncode,2,body)
                 self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
                 self.assertNotIn(b"after",proc.stdout)
+            # A shell function the command defines before sourcing is a command too.
+            env_file=Path(directory,"fake-sourced.env"); env_file.write_text("FAKE_X=x fakeleak fake-cred.txt\n")
+            proc=subprocess.run(["/usr/bin/python3",str(Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"),"--",
+                                 "fakeleak(){ cat \"$1\"; }; . ./fake-sourced.env; echo after"],cwd=directory,capture_output=True)
+            self.assertEqual(proc.returncode,2)
+            self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
+            self.assertNotIn(b"after",proc.stdout)
 
     def test_env_parser_masks_expanded_unbraced_references_in_every_shape(self):
         scrubber=self._load_scrubber("scrubber_unbraced")
