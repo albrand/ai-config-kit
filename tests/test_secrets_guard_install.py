@@ -49,6 +49,7 @@ class SecretsGuardInstallTests(unittest.TestCase):
             env = {"HOME":str(home),"PATH":FAKE_PATH,"TMPDIR":str(home)}
             result = subprocess.run([sys.executable, str(INSTALLER)], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertRegex(result.stdout, r"running session|started after their guard hook")
 
             installed = home / ".agent-hooks"
             for source_name, installed_name in (

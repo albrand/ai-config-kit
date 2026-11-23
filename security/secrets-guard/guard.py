@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed PreToolUse command guard. Reads hook JSON on stdin."""
-import json, os, re, shlex, sys
+import json, os, re, shlex, subprocess, sys, time
 
 SENSITIVE = re.compile(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)', re.I)
 URI = re.compile(r'(?i)\b(?:mongodb(?:\+srv)?|neo4j\+s|postgres(?:ql)?|mysql|redis)://[^\s\'"<>]*:[^\s\'"<>]*@')
@@ -115,7 +115,76 @@ def wrap(command):
     scrubber=os.path.expanduser('~/.agent-hooks/secrets-scrub-exec.py')
     return '/usr/bin/python3 '+shlex.quote(scrubber)+' -- '+shlex.quote(command)
 
+# Sessions read hooks once, at start. A session older than the hook file runs unguarded.
+HOOK_FILES={'claude':'claude-pretool.sh','codex':'codex-pretool.sh','antigravity':'gemini-pretool.py'}
+PROVIDER_BY_EXE={'claude':'claude','codex':'codex','agy':'antigravity'}
+PS_ROW=re.compile(r'^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.*)$')
+RELAUNCH=("Relaunch each listed bb thread (nothing here kills or restarts anything):\n"
+          "  bb thread native <thr> --json     # note the terminal id\n"
+          "  bb terminal close <term>\n"
+          "  bb thread native <thr>            # retry if the new terminal exits at once\n"
+          "Rows with thread '-' are not native-hold terminals; relaunch them from their own bb thread or terminal.")
+
+def hook_mtimes(hooks_dir=None):
+    hooks_dir=hooks_dir or os.path.expanduser('~/.agent-hooks'); out={}
+    for provider,name in HOOK_FILES.items():
+        try: out[provider]=os.stat(os.path.join(hooks_dir,name)).st_mtime
+        except OSError: out[provider]=None
+    return out
+
+def stale_sessions(ps_text,mtimes):
+    """Rows of (provider,pid,start text,thread,why) for sessions started before their hook file.
+    ps_text is `ps -axo pid=,ppid=,lstart=,command=` output. An unparseable start time or a
+    missing hook file cannot be proven covered, so it is listed."""
+    rows={}
+    for line in ps_text.splitlines():
+        m=PS_ROW.match(line)
+        if m: rows[int(m.group(1))]=(int(m.group(2)),m.group(3),m.group(4))
+        else:
+            m=re.match(r'^\s*(\d+)\s+(\d+)\s+(.*)$',line)
+            if m:  # garbled start time: resume the command at the first known executable
+                toks=m.group(3).split()
+                at=next((i for i,t in enumerate(toks) if os.path.basename(t) in PROVIDER_BY_EXE),len(toks))
+                rows[int(m.group(1))]=(int(m.group(2)),None,' '.join(toks[at:]))
+    found=[]
+    for pid,(ppid,start,command) in sorted(rows.items()):
+        argv0=command.split(None,1)[0] if command.split() else ''
+        provider=PROVIDER_BY_EXE.get(os.path.basename(argv0))
+        if not provider: continue
+        thread='-'
+        parent=rows.get(ppid)
+        if parent:
+            t=re.search(r'\bnative-hold\s+(thr_\w+)',parent[2])
+            if t: thread=t.group(1)
+        mtime=mtimes.get(provider)
+        if mtime is None: why='hook file missing'
+        else:
+            try: started=time.mktime(time.strptime(re.sub(r'\s+',' ',start),'%a %b %d %H:%M:%S %Y'))
+            except (TypeError,ValueError): started=None
+            if started is None: why='unparseable start time'
+            elif started<mtime: why='started before hook'
+            else: continue
+        found.append((provider,pid,start or '?',thread,why))
+    return found
+
+def format_sessions(found):
+    if not found: return 'All running Claude Code, Codex and Antigravity sessions started after their guard hook.'
+    lines=['%d running session(s) are NOT covered by the secrets guard hook:'%len(found)]
+    lines+=['  %-11s pid %-6d started %-24s thread %-16s %s'%(p,pid,st,th,why) for p,pid,st,th,why in found]
+    return '\n'.join(lines)+'\n'+RELAUNCH
+
+def check_sessions(ps_text=None,hooks_dir=None):
+    if ps_text is None:
+        ps_text=subprocess.run(['/bin/ps','-axo','pid=,ppid=,lstart=,command='],capture_output=True,text=True,
+                               env=dict(os.environ,LC_ALL='C')).stdout
+    found=stale_sessions(ps_text,hook_mtimes(hooks_dir))
+    print(format_sessions(found)); return 1 if found else 0
+
 def main():
+    if '--check-sessions' in sys.argv[1:]:
+        args=sys.argv[1:]
+        ps=open(args[args.index('--ps-file')+1]).read() if '--ps-file' in args else None
+        return check_sessions(ps)
     try:
         event=json.load(sys.stdin); tool_input=event.get('tool_input',{})
         command=(tool_input.get('command') or tool_input.get('cmd') or event.get('command') or event.get('cmd'))

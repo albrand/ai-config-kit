@@ -47,6 +47,9 @@ for name in names:
     target={'guard.py':'secrets-guard.py','scrub-exec.py':'secrets-scrub-exec.py'}.get(name,name)
     shutil.copy2(os.path.join(src,name),os.path.join(dest,target))
 shutil.copy2(os.path.join(src,'guard.py'),os.path.join(dest,'guard.py'))
+# copy2 keeps the source mtime; sessions are judged against install time, so stamp the hook scripts now.
+for hook in ('claude-pretool.sh','codex-pretool.sh','gemini-pretool.py'):
+    if os.path.exists(os.path.join(dest,hook)): os.utime(os.path.join(dest,hook),None)
 if not cursor_only:
     for config, provider, command in [
         (os.path.join(home,'.claude/settings.json'),'claude','/bin/sh '+os.path.join(dest,'claude-pretool.sh')),
@@ -108,3 +111,9 @@ command='python3 '+os.path.join(dest,'cursor-pretool.py')
 entries[:]=[entry for entry in entries if entry.get('command')!=command]
 entries.append({'command':command,'failClosed':True})
 tmp=cursor_config+'.tmp'; open(tmp,'w').write(json.dumps(cd,indent=2)+'\n'); os.replace(tmp,cursor_config)
+
+# Running sessions read hooks once at start; list those that predate the hook files. Kills nothing.
+if not cursor_only:
+    sys.path.insert(0,src)
+    import guard
+    guard.check_sessions(hooks_dir=dest)
