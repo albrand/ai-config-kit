@@ -192,8 +192,13 @@ def format_sessions(found):
 
 def check_sessions(ps_text=None,hooks_dir=None):
     if ps_text is None:
-        ps_text=subprocess.run(['/bin/ps','-axo','pid=,ppid=,lstart=,command='],capture_output=True,text=True,
-                               env=dict(os.environ,LC_ALL='C')).stdout
+        try:
+            ran=subprocess.run(['/bin/ps','-axo','pid=,ppid=,lstart=,command='],capture_output=True,text=True,
+                               env=dict(os.environ,LC_ALL='C'))
+            ps_text=ran.stdout
+            if ran.returncode!=0 or not ps_text.strip(): raise OSError('ps exited %s'%ran.returncode)
+        except Exception as error:  # an empty or failed inventory proves nothing
+            print('INVENTORY ERROR: could not list processes (%s); coverage is NOT established.'%error); return 2
     found=stale_sessions(ps_text,hook_mtimes(hooks_dir))
     print(format_sessions(found)); return 1 if found else 0
 

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 GUARD = Path(__file__).parents[1] / "security/secrets-guard/guard.py"
 spec = importlib.util.spec_from_file_location("guard", GUARD)
@@ -80,6 +81,18 @@ class SessionCoverageTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(GUARD), "--check-sessions", "--ps-file", str(ps_file)],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_failed_process_listing_is_an_error_not_all_covered(self):
+        import io, contextlib
+        for fake in (subprocess.CompletedProcess([], 1, "", "boom"), subprocess.CompletedProcess([], 0, "", "")):
+            out = io.StringIO()
+            with unittest.mock.patch.object(guard.subprocess, "run", return_value=fake), contextlib.redirect_stdout(out):
+                status = guard.check_sessions()
+            self.assertEqual(status, 2)
+            self.assertIn("INVENTORY ERROR", out.getvalue())
+            self.assertNotIn("All running", out.getvalue())
+        with unittest.mock.patch.object(guard.subprocess, "run", side_effect=OSError("no ps")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(guard.check_sessions(), 2)
 
 
 if __name__ == "__main__":
