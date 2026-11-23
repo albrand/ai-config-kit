@@ -35,6 +35,12 @@ def _strip_shell_comment(value):
             return value[:i]
     return value
 
+# Names whose value comes from the running shell, not from the file or the scrubber's
+# environment. A sourced value that references one has a run-time value the scrubber cannot see.
+SHELL_STATE_NAMES=(r'(?:_|BASH[A-Z0-9_]*|COMP_[A-Z_]+|FUNCNAME|LINENO|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|'
+                   r'EPOCHREALTIME|PPID|PWD|OLDPWD|SHLVL|HISTCMD|DIRSTACK|PIPESTATUS|GROUPS|UID|EUID|'
+                   r'REPLY|OPTARG|OPTIND|MAPFILE|READLINE_[A-Z_]+)')
+
 def _expand_env_value(value, variables, unknown=None):
     pattern=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)')
     def replace(match):
@@ -52,6 +58,10 @@ def _expand_env_value(value, variables, unknown=None):
     # value from the running shell, which the scrubber cannot see; so does $[...] arithmetic.
     # Checked on the raw value so one inside a ${NAME:-...} default is caught as well.
     if re.search(r'\$[0-9#@*?$!\[-]',value):
+        raise ValueError('dynamic env value')
+    # So do the variables the shell itself maintains: $_ (the last argument of the previous
+    # command), the BASH_* family, FUNCNAME, LINENO, RANDOM, SECONDS, PPID, PWD and the rest.
+    if re.search(r'\$\{?'+SHELL_STATE_NAMES+r'(?![A-Za-z0-9_])',value):
         raise ValueError('dynamic env value')
     expanded=pattern.sub(replace,value)
     if '${' in expanded or '$(' in expanded or '`' in expanded:
@@ -138,6 +148,10 @@ def parse_env(text, strict=False, local_names=()):
             if strict and re.search(r'[<>]\(',raw):
                 # Bash process substitution runs the inner command while sourcing.
                 raise ValueError('process substitution in sourced env value')
+            if strict and re.search(r"(?:^|:)~|\$['\"]",raw):
+                # Tilde expansion reads HOME, PWD or the user database; $'..' decodes escapes.
+                # Neither matches the text in the file, so the value to mask is unknown.
+                raise ValueError('dynamic env value')
             try: words=shlex.split(raw,posix=True)
             except ValueError:
                 if strict: raise ValueError('unbalanced quote in sourced env value')

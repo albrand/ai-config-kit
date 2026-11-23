@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -234,6 +235,50 @@ class GuardTests(unittest.TestCase):
                 self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr)
                 self.assertNotIn(b"after",proc.stdout)
             self.assertIn("fake<(literal)value",scrubber.parse_env("FAKE_TOKEN='fake<(literal)value'\n",strict=True))
+
+    def test_sourced_env_shell_state_class_fails_closed(self):
+        # One table for every Bash construct whose value or side effect comes from the running
+        # shell, not from the file. FAKE values only.
+        scrubber=self._load_scrubber("scrubber_shell_state")
+        names=("_ BASH_COMMAND BASH_ARGV BASH_ARGC BASH_SOURCE BASH_LINENO BASH_EXECUTION_STRING FUNCNAME LINENO "
+               "RANDOM SRANDOM SECONDS EPOCHSECONDS EPOCHREALTIME PPID PWD OLDPWD SHLVL HISTCMD").split()
+        block=["$"+n for n in names]+["${"+n+"}" for n in names]+["x$_ y","\"$_\"","${FAKE_SET:-$_}","${FAKE_SET:-$PWD}"]
+        block+=["$0","$$","$!","$?","$-","$#","$@","$*","$1","${1}","\"$@\""]
+        block+=["$(cat fake-cred.txt)","`cat fake-cred.txt`","x$(cat fake-cred.txt)y","$((1+2))","$[1+2]",
+                "$((a[$(cat fake-cred.txt)]))"]
+        block+=["${!FAKE_NAME}","${FAKE_SET:=fake}","${FAKE_SET@P}","${#FAKE_SET}","${FAKE_SET[@]}"]
+        block+=["<(cat fake-cred.txt)",">(cat fake-cred.txt)","a<(cat fake-cred.txt)"]
+        block+=["~","~+","~-","~root","a:~","$'fake\\x41'"]
+        keep={"glob":("fake-f*","fake-f*"),"brace":("{fake-a,fake-b}","{fake-a,fake-b}"),
+              "single-quoted dollar":("'fake$_literal'","fake$_literal"),
+              "single-quoted tilde":("'~'","~"),
+              "single-quoted shell state":("'$PWD $RANDOM $(x)'","$PWD $RANDOM $(x)")}
+        for form in block:
+            with self.subTest(form=form,strict=True):
+                with self.assertRaises(ValueError,msg=form):
+                    scrubber.parse_env("FAKE_TOKEN="+form+"\n",strict=True)
+            with self.subTest(form=form,strict=False):
+                self.assertTrue(scrubber.parse_env("FAKE_TOKEN="+form+"\n"),form)
+        for label,(raw,value) in keep.items():
+            with self.subTest(keep=label):
+                self.assertIn(value,scrubber.parse_env("FAKE_TOKEN="+raw+"\n",strict=True))
+        with self.subTest(keep="reference to an earlier variable in the same file"):
+            self.assertIn("fake-base-value",scrubber.parse_env("FAKE_BASE=fake-base-value\nFAKE_TOKEN=$FAKE_BASE\n",strict=True))
+            self.assertIn("fake-base-value",scrubber.parse_env("FAKE_BASE=fake-base-value\nFAKE_TOKEN=${FAKE_BASE}\n",strict=True))
+        # End to end: a sourcing command exits 2 and nothing after the source runs.
+        script=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        stale=dict(os.environ); stale["_"]="/usr/bin/fake-stale-last-arg"
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory,"fake-cred.txt").write_text("FAKE-CREDENTIAL-CONTENTS\n")
+            for form in block:
+                Path(directory,"fake-sourced.env").write_text("FAKE_TOKEN="+form+"\n")
+                proc=subprocess.run(["/usr/bin/python3",str(script),"--",
+                                     "set +o posix; : fake-runtime-secret-0123; . ./fake-sourced.env; echo \"$FAKE_TOKEN\"; echo after"],
+                                    cwd=directory,capture_output=True,env=stale)
+                self.assertEqual(proc.returncode,2,form)
+                self.assertNotIn(b"fake-runtime-secret",proc.stdout+proc.stderr,form)
+                self.assertNotIn(b"FAKE-CREDENTIAL-CONTENTS",proc.stdout+proc.stderr,form)
+                self.assertNotIn(b"after",proc.stdout,form)
 
     def test_env_parser_masks_expanded_unbraced_references_in_every_shape(self):
         scrubber=self._load_scrubber("scrubber_unbraced")
