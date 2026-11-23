@@ -52,6 +52,12 @@ class SecretsGuardInstallTests(unittest.TestCase):
             self.assertRegex(result.stdout, r"running session|started after their guard hook")
 
             installed = home / ".agent-hooks"
+            # The coverage check compares session start to these mtimes, so they must not
+            # precede any registration: a session started in between has no hook loaded.
+            registered = max((home / rel).stat().st_mtime_ns for rel in
+                             (".claude/settings.json", ".codex/hooks.json", ".gemini/config/hooks.json"))
+            for hook in ("claude-pretool.sh", "codex-pretool.sh", "gemini-pretool.py"):
+                self.assertGreaterEqual((installed / hook).stat().st_mtime_ns, registered, hook)
             for source_name, installed_name in (
                 ("guard.py", "secrets-guard.py"),
                 ("scrub-exec.py", "secrets-scrub-exec.py"),
