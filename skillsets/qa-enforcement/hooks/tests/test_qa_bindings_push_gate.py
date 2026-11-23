@@ -54,6 +54,13 @@ class PushGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("has no artifacts.scenarios", result.stderr)
 
+    def test_config_without_artifacts_or_paths_is_denied(self):
+        for config in ({}, {"board": "github"}):
+            with self.subTest(config=config):
+                result = self.check_push(config)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("has no artifacts.scenarios", result.stderr)
+
     def test_ready_binding_to_missing_file_is_denied(self):
         result = self.check_push({"artifacts": {"scenarios": "qa/scenarios"}},
                                  {"id": "QAS-ABC234", "binding": {"status": "ready", "file": "tests/missing.spec.ts"}})

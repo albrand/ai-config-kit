@@ -194,7 +194,9 @@ def violations(cwd, commit):
     if not isinstance(config_data, dict):
         raise QaDataError(f"{CONFIG} must be a JSON object")
     if "artifacts" not in config_data:
-        return 0, []  # another QA framework: this gate is not opted in
+        if isinstance(config_data.get("paths"), dict):
+            return 0, []  # foreign QA framework opts in through its paths layout
+        raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
     folder = (config_data.get("artifacts") or {}).get("scenarios")
     if not isinstance(folder, str) or not folder.strip():
         raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
