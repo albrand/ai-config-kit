@@ -43,13 +43,15 @@ def _expand_env_value(value, variables, unknown=None):
         current=variables.get(name,'')
         operator=match.group(2)
         if operator and (name not in variables or (operator==':-' and not current)):
-            return match.group(3) or ''
+            # The shell expands the default word too, so its references get the same checks.
+            return pattern.sub(replace,match.group(3) or '')
         return current
     if '$(' in value or '`' in value:
         raise ValueError('dynamic env value')
     # Positional and special parameters ($1, $@, $#, $?, $$, $!, $-, $0) take their
     # value from the running shell, which the scrubber cannot see; so does $[...] arithmetic.
-    if re.search(r'\$[0-9#@*?$!\[-]',pattern.sub('',value)):
+    # Checked on the raw value so one inside a ${NAME:-...} default is caught as well.
+    if re.search(r'\$[0-9#@*?$!\[-]',value):
         raise ValueError('dynamic env value')
     expanded=pattern.sub(replace,value)
     if '${' in expanded or '$(' in expanded or '`' in expanded:

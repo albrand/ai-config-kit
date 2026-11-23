@@ -268,8 +268,23 @@ class GuardTests(unittest.TestCase):
             result=subprocess.run([sys.executable,str(scrubber),"--",local],cwd=temp,capture_output=True,env=exported)
             self.assertNotIn(fake.encode(),result.stdout+result.stderr,"overwritten exported value leaked")
             self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            # A run-time reference inside a ${NAME:-...} default is checked the same way.
+            nested=Path(temp)/"fake-nested.env"
+            nested.write_text("FAKE_TOKEN=${FAKE_UNSET_ANYWHERE:-$FAKE_LOCAL}\n")
+            nested_cmd=("FAKE_LOCAL="+fake+"; set -a; . "+shlex.quote(str(nested))+"; set +a; python3 -c "+app+"; echo after")
+            result=subprocess.run([sys.executable,str(scrubber),"--",nested_cmd],cwd=temp,capture_output=True,env=env)
+            self.assertNotIn(fake.encode(),result.stdout+result.stderr,"nested default value leaked")
+            self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            self.assertNotIn(b"after",result.stdout)
             # A name the file itself set earlier is known, even when the command mentions it.
             parser=self._load_scrubber("scrubber_assigned_first")
+            for value in ("${FAKE_UNSET_ANYWHERE:-$FAKE_LOCAL}","${FAKE_UNSET_ANYWHERE-x$FAKE_LOCAL}"):
+                with self.assertRaises(ValueError,msg=value):
+                    parser.parse_env("FAKE_TOKEN="+value+"\n",strict=True,local_names={"FAKE_LOCAL"})
+            with self.assertRaises(ValueError):
+                parser.parse_env("FAKE_TOKEN=${FAKE_UNSET_ANYWHERE:-$1}\n",strict=True)
+            self.assertIn("fake-nested-default-0123",parser.parse_env(
+                "FAKE_TOKEN=${FAKE_UNSET_ANYWHERE:-fake-nested-default-0123}\n",strict=True))
             self.assertIn("fake-assigned-first-0123",parser.parse_env(
                 "FAKE_LOCAL=fake-assigned-first-0123\nFAKE_TOKEN=$FAKE_LOCAL\n",strict=True,local_names={"FAKE_LOCAL"}))
             # A reference to a name set nowhere expands to empty, as in the shell, and still runs.
