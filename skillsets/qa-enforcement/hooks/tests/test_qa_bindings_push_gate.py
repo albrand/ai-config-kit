@@ -67,6 +67,27 @@ class PushGateTests(unittest.TestCase):
         result = self.check_push(config, scenario, scenario_file="qa/scenarios/one.json", binding_file="tests/example.spec.ts")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_nested_paths_scenario_without_binding_is_allowed(self):
+        result = self.check_push({"paths": {"scenarios": "qa/scenarios"}},
+                                 {"id": "QAS-ABC234", "title": "Nested"},
+                                 scenario_file="qa/scenarios/sub/a.json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_nested_ready_binding_missing_file_is_denied_for_both_layouts(self):
+        scenario = {"id": "QAS-ABC234", "title": "Nested",
+                    "binding": {"status": "ready", "file": "tests/missing.spec.ts"}}
+        for config in ({"paths": {"scenarios": "qa/scenarios"}},
+                       {"artifacts": {"scenarios": "qa/scenarios"}}):
+            with self.subTest(config=config):
+                result = self.check_push(config, scenario, scenario_file="qa/scenarios/sub/b.json")
+                self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_nested_json_scenario_counts_for_paths_folder(self):
+        result = self.check_push({"paths": {"scenarios": "qa/scenarios"}},
+                                 {"id": "QAS-ABC234", "title": "Nested"},
+                                 scenario_file="qa/scenarios/sub/only.json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_declared_artifacts_without_scenarios_is_denied(self):
         result = self.check_push({"artifacts": {}})
         self.assertEqual(result.returncode, 2)

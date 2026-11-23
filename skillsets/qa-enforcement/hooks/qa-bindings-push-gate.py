@@ -202,7 +202,7 @@ def violations(cwd, commit):
     if not isinstance(folder, str) or not folder.strip():
         raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
     folder = folder.rstrip("/")
-    names = [n for n in git(cwd, ["ls-tree", "--name-only", commit, f"{folder}/"]).decode().split("\n") if n.endswith(".json")]
+    names = [n for n in git(cwd, ["ls-tree", "-r", "--name-only", commit, f"{folder}/"]).decode().split("\n") if n.endswith(".json")]
     if paths_based and not names:
         raise QaDataError(f"{CONFIG} paths.scenarios '{folder}' has no scenario files in this commit")
     scenarios = [s for n, t in files_at(cwd, commit, names).items() if t is not None for s in qa_json(t, n).get("scenarios", [])]
