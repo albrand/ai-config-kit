@@ -244,6 +244,15 @@ class GuardTests(unittest.TestCase):
             result=subprocess.run([sys.executable,str(scrubber),"--",local],cwd=temp,capture_output=True,env=env)
             self.assertNotIn(fake.encode(),result.stdout+result.stderr,"shell-local value leaked")
             self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            # The same when the name is already exported and the command overwrites it.
+            exported=dict(env,FAKE_LOCAL="fake-stale-exported-0123")
+            result=subprocess.run([sys.executable,str(scrubber),"--",local],cwd=temp,capture_output=True,env=exported)
+            self.assertNotIn(fake.encode(),result.stdout+result.stderr,"overwritten exported value leaked")
+            self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            # A name the file itself set earlier is known, even when the command mentions it.
+            parser=self._load_scrubber("scrubber_assigned_first")
+            self.assertIn("fake-assigned-first-0123",parser.parse_env(
+                "FAKE_LOCAL=fake-assigned-first-0123\nFAKE_TOKEN=$FAKE_LOCAL\n",strict=True,local_names={"FAKE_LOCAL"}))
             # A reference to a name set nowhere expands to empty, as in the shell, and still runs.
             plain=("set -a; . "+shlex.quote(str(env_file))+"; set +a; echo ok")
             result=subprocess.run([sys.executable,str(scrubber),"--",plain],cwd=temp,capture_output=True,env=env)

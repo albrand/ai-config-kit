@@ -39,7 +39,7 @@ def _expand_env_value(value, variables, unknown=None):
     pattern=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)')
     def replace(match):
         name=match.group(1) or match.group(4)
-        if unknown is not None and name not in variables: unknown(name)
+        if unknown is not None: unknown(name)
         current=variables.get(name,'')
         operator=match.group(2)
         if operator and (name not in variables or (operator==':-' and not current)):
@@ -68,8 +68,11 @@ def parse_env(text, strict=False, local_names=()):
     or assigned in another env file), since the shell would expand it there.
     """
     values=[]; variables=dict(os.environ); open_quote=None
+    assigned=set()
     def unknown(name):
-        if name in local_names: raise ValueError('env reference to a run-time variable')
+        # The command may set or overwrite this name before sourcing (even one already in
+        # the environment), so its run-time value is unknown unless this file set it first.
+        if name in local_names and name not in assigned: raise ValueError('env reference to a run-time variable')
     if not strict: unknown=None
     def expand_value(text):
         return _expand_env_value(text,variables,unknown)
@@ -141,14 +144,14 @@ def parse_env(text, strict=False, local_names=()):
                 values.extend(_fallback_values(raw))
                 try: values.extend(_fallback_values(expand_value(raw)))
                 except ValueError: dynamic(raw)
-                variables[key]=raw
+                variables[key]=raw; assigned.add(key)
                 continue
             value=words[0] if words else ''
         if raw[:1]!="'":
             try: value=expand_value(value)
             except ValueError:
-                dynamic(value); variables[key]=value; continue
-        variables[key]=value
+                dynamic(value); variables[key]=value; assigned.add(key); continue
+        variables[key]=value; assigned.add(key)
         if value and (re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I) or len(value)>=16):
             values.extend((raw[1:-1] if quoted else value,value))
     return values
