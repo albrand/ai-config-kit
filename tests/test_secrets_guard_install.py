@@ -138,6 +138,34 @@ class SecretsGuardInstallTests(unittest.TestCase):
             self.assertTrue(config["hooks"]["state"][user_hook_key]["enabled"])
             self.assertEqual(config["hooks"]["state"][old_guard_key]["trusted_hash"],codex_hash(updated[0]["hooks"][0]["command"],"Bash"))
 
+    def run_installer_with_ps(self, ps_result):
+        import contextlib, io, runpy, unittest.mock
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-ps-") as tmp:
+            home = Path(tmp)
+            seed_home(home, {"hooks": {"PreToolUse": []}}, "[profiles.default]\nmodel = 'test'\n")
+            out = io.StringIO()
+            real_run = subprocess.run
+            fake = lambda cmd, *a, **k: ps_result if cmd and cmd[0] == "/bin/ps" else real_run(cmd, *a, **k)
+            with unittest.mock.patch.dict(os.environ, {"HOME": str(home)}), \
+                 unittest.mock.patch.object(subprocess, "run", side_effect=fake), contextlib.redirect_stdout(out):
+                runpy.run_path(str(INSTALLER), run_name="__main__")
+            # The install itself still completed.
+            self.assertTrue((home / ".agent-hooks/claude-pretool.sh").exists())
+            return out.getvalue()
+
+    def test_installer_lists_stale_sessions_and_says_coverage_is_incomplete(self):
+        ps = "  101     1 Thu Nov 12 14:35:18 2026     claude --model fake\n  100     1 Thu Nov 12 14:35:17 2026     /fake/node /fake/bb thread native-hold thr_fakeinst0001 --socket /fake\n"
+        text = self.run_installer_with_ps(subprocess.CompletedProcess([], 0, ps, ""))
+        self.assertIn("NOT covered", text)
+        self.assertIn("bb terminal close <term>", text)
+        self.assertIn("INCOMPLETE", text)
+
+    def test_installer_says_coverage_is_unknown_when_the_process_listing_fails(self):
+        text = self.run_installer_with_ps(subprocess.CompletedProcess([], 1, "", "boom"))
+        self.assertIn("INVENTORY ERROR", text)
+        self.assertIn("INCOMPLETE", text)
+        self.assertNotIn("All running", text)
+
 
 if __name__ == "__main__":
     unittest.main()

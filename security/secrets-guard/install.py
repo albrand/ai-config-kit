@@ -117,4 +117,6 @@ if not cursor_only:
         os.utime(os.path.join(dest,hook),None)
     sys.path.insert(0,src)
     import guard
-    guard.check_sessions(hooks_dir=dest)
+    if guard.check_sessions(hooks_dir=dest):
+        print('Files are installed, but coverage is INCOMPLETE until the sessions above are relaunched. '
+              'Prove it with: python3 %s --check-sessions (exit 0 means covered).' % os.path.join(dest,'secrets-guard.py'))
