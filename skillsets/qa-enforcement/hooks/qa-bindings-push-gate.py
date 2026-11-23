@@ -190,7 +190,10 @@ def violations(cwd, commit):
     config = files_at(cwd, commit, [CONFIG]).get(CONFIG)
     if config is None:
         return 0, []  # no QA config on this commit: nothing to check
-    folder = (qa_json(config, CONFIG).get("artifacts") or {}).get("scenarios")
+    config_data = qa_json(config, CONFIG)
+    if "artifacts" not in config_data:
+        return 0, []  # another QA framework: this gate is not opted in
+    folder = (config_data.get("artifacts") or {}).get("scenarios")
     if not isinstance(folder, str) or not folder.strip():
         raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
     folder = folder.rstrip("/")
