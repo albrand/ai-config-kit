@@ -193,17 +193,18 @@ def violations(cwd, commit):
     config_data = qa_json(config, CONFIG)
     if not isinstance(config_data, dict):
         raise QaDataError(f"{CONFIG} must be a JSON object")
-    if "artifacts" not in config_data:
+    paths_based = "artifacts" not in config_data
+    if paths_based:
         paths = config_data.get("paths")
-        scenarios_path = paths.get("scenarios") if isinstance(paths, dict) else None
-        if isinstance(scenarios_path, str) and scenarios_path.strip():
-            return 0, []  # foreign QA framework opts in through its paths layout
-        raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
-    folder = (config_data.get("artifacts") or {}).get("scenarios")
+        folder = paths.get("scenarios") if isinstance(paths, dict) else None
+    else:
+        folder = (config_data.get("artifacts") or {}).get("scenarios")
     if not isinstance(folder, str) or not folder.strip():
         raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
     folder = folder.rstrip("/")
     names = [n for n in git(cwd, ["ls-tree", "--name-only", commit, f"{folder}/"]).decode().split("\n") if n.endswith(".json")]
+    if paths_based and not names:
+        raise QaDataError(f"{CONFIG} paths.scenarios '{folder}' has no scenario files in this commit")
     scenarios = [s for n, t in files_at(cwd, commit, names).items() if t is not None for s in qa_json(t, n).get("scenarios", [])]
     bound = [s for s in scenarios if isinstance(s, dict) and needs_bound_test(s)]
     texts = files_at(cwd, commit, [s["binding"]["file"].strip() for s in bound])

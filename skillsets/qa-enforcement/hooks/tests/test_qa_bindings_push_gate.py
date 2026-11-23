@@ -12,7 +12,7 @@ HOOK = Path(os.environ.get("QA_BINDINGS_HOOK", ROOT / "skillsets/qa-enforcement/
 
 
 class PushGateTests(unittest.TestCase):
-    def check_push(self, config=None, scenario=None, hook=HOOK):
+    def check_push(self, config=None, scenario=None, hook=HOOK, scenario_file="qa/scenarios/index.json", binding_file=None):
         with tempfile.TemporaryDirectory(prefix="qa-bindings-gate-") as temp:
             repo = Path(temp)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -23,9 +23,13 @@ class PushGateTests(unittest.TestCase):
                 path.parent.mkdir(parents=True)
                 path.write_text(json.dumps(config))
             if scenario is not None:
-                path = repo / "qa/scenarios/index.json"
+                path = repo / scenario_file
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps({"scenarios": [scenario]}))
+                path.write_text(json.dumps({"scenarios": scenario if isinstance(scenario, list) else [scenario]}))
+            if binding_file is not None:
+                path = repo / binding_file
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("test('@QAS-ABC234', () => {});\n")
             else:
                 (repo / "tracked.txt").write_text("fixture\n")
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -35,14 +39,32 @@ class PushGateTests(unittest.TestCase):
             return subprocess.run(["python3", str(hook)], input=json.dumps(event), text=True,
                                   capture_output=True, cwd=repo)
 
-    def test_foreign_perci_config_is_not_opted_in(self):
+    def test_foreign_perci_config_with_unbound_scenario_is_allowed(self):
         result = self.check_push({
             "board": "QA-123", "team": "Perci", "acceptanceHeadings": ["Acceptance criteria"],
             "environments": ["test", "production"],
             "paths": {"requirements": "qa/requirements", "scenarios": "qa/scenarios",
                       "designs": "qa/designs", "runs": "qa/runs", "reports": "qa/reports",
                       "bugs": "qa/bugs", "manual": "qa/manual"},
-        })
+        }, {"id": "QAS-ABC234", "title": "Example scenario"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_paths_scenarios_folder_without_json_is_denied(self):
+        config = {"paths": {"scenarios": "qa/typo"}}
+        result = self.check_push(config)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("paths.scenarios 'qa/typo' has no scenario files", result.stderr)
+
+    def test_paths_scenario_missing_binding_file_is_denied(self):
+        config = {"paths": {"scenarios": "qa/scenarios"}}
+        scenario = {"id": "QAS-ABC234", "title": "Example", "binding": {"status": "ready", "file": "tests/missing.spec.ts"}}
+        result = self.check_push(config, scenario, scenario_file="qa/scenarios/one.json")
+        self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_paths_scenario_with_binding_file_is_allowed(self):
+        config = {"paths": {"scenarios": "qa/scenarios"}}
+        scenario = {"id": "QAS-ABC234", "title": "Example", "binding": {"status": "ready", "file": "tests/example.spec.ts"}}
+        result = self.check_push(config, scenario, scenario_file="qa/scenarios/one.json", binding_file="tests/example.spec.ts")
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_declared_artifacts_without_scenarios_is_denied(self):
