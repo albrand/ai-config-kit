@@ -177,6 +177,34 @@ class GuardTests(unittest.TestCase):
                 scrubber.parse_env(line,strict=True)
             self.assertTrue(scrubber.parse_env(line),"non-strict parse should mask dynamic line: "+line)
 
+    def test_env_parser_masks_expanded_unbraced_references_in_every_shape(self):
+        scrubber=self._load_scrubber("scrubber_unbraced")
+        scrubber.os.environ["FAKE_REF_SOURCE"]="fake-referenced-value-42"
+        try:
+            for text in ("FAKE_A=$FAKE_REF_SOURCE\n",
+                         "FAKE_B=fake words $FAKE_REF_SOURCE\n",
+                         "FAKE_C=\"fake open $FAKE_REF_SOURCE\nfake line two\"\n",
+                         "FAKE_D=\"fake open\n$FAKE_REF_SOURCE tail\"\n"):
+                for strict in (False,True):
+                    self.assertIn("fake-referenced-value-42",scrubber.parse_env(text,strict=strict),
+                                  "expanded unbraced reference not masked: "+repr(text))
+        finally:
+            del scrubber.os.environ["FAKE_REF_SOURCE"]
+
+    def test_sourced_unbraced_reference_is_masked_after_expansion(self):
+        scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        fake="fake-source-value-0123456789"
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-unbraced-") as temp:
+            env_file=Path(temp)/"fake.env"
+            env_file.write_text("FAKE_TOKEN=$FAKE_SOURCE\n")
+            command=("set -a; . "+shlex.quote(str(env_file))+"; set +a; python3 -c "+
+                     shlex.quote("import os; print(os.environ['FAKE_TOKEN'])"))
+            env=dict(FAKE_ENV_BASE,HOME=temp,TMPDIR=temp,FAKE_SOURCE=fake)
+            result=subprocess.run([sys.executable,str(scrubber),"--",command],cwd=temp,capture_output=True,env=env)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors="replace"))
+        self.assertNotIn(fake.encode(),result.stdout+result.stderr)
+        self.assertEqual(result.stdout,b"[MASKED]\n")
+
     def test_cwd_dotenv_example_with_spaced_value_never_blocks_command(self):
         scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
         with tempfile.TemporaryDirectory(prefix="secrets-guard-example-") as temp:

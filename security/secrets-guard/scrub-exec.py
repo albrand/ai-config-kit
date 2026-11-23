@@ -41,9 +41,6 @@ def _fallback_values(raw):
     raw=raw.strip()
     return [raw]+[word for word in raw.split() if len(word)>=8] if raw else []
 
-def _is_dynamic(text):
-    return '$(' in text or '`' in text or '${' in text
-
 def parse_env(text, strict=False):
     """Collect values to mask from dotenv text, line by line.
 
@@ -55,28 +52,31 @@ def parse_env(text, strict=False):
     def dynamic(text):
         if strict: raise ValueError('dynamic env value')
         values.extend(_fallback_values(text))
+    def mask(text, expand):
+        # Mask the literal text and, where the shell would expand it, the expanded value too.
+        values.extend(_fallback_values(text))
+        if expand and ('$' in text or '`' in text):
+            try: values.extend(_fallback_values(_expand_env_value(text,variables)))
+            except ValueError: dynamic(text)
     for line in text.splitlines():
         stripped=line.strip()
         if open_quote:
             # Continuation of a multi-line quoted value, such as a PEM block.
             closing=stripped.find(open_quote)
             body=stripped if closing<0 else stripped[:closing]
-            if open_quote=='"' and _is_dynamic(body): dynamic(body)
-            else: values.extend(_fallback_values(body))
+            mask(body,open_quote=='"')
             if closing>=0: open_quote=None
             continue
         if not stripped or stripped.startswith('#'): continue
         m=re.match(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$",stripped)
         if not m:
-            if _is_dynamic(stripped): dynamic(stripped)
-            else: values.extend(_fallback_values(stripped))
+            mask(stripped,True)
             continue
         key,raw=m.groups(); raw=_strip_shell_comment(raw).strip()
         quoted=len(raw)>=2 and raw[0]==raw[-1] and raw[0] in "'\""
         if raw[:1] in ("'",'"') and not quoted:
             open_quote=raw[0]
-            if open_quote=='"' and _is_dynamic(raw): dynamic(raw[1:])
-            else: values.extend(_fallback_values(raw[1:]))
+            mask(raw[1:],open_quote=='"')
             continue
         if quoted:
             value=raw[1:-1]
