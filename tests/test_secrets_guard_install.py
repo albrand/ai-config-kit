@@ -25,7 +25,7 @@ def codex_hash(command, matcher, timeout=600):
     return "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def seed_home(home, codex_hooks, config_text=""):
+def seed_home(home, codex_hooks, config_text="", gemini_hooks=None):
     (home / ".claude").mkdir()
     (home / ".codex").mkdir()
     (home / ".gemini/config").mkdir(parents=True)
@@ -33,7 +33,7 @@ def seed_home(home, codex_hooks, config_text=""):
     (home / ".claude/settings.json").write_text(json.dumps({"hooks": {"PreToolUse": []}}))
     (home / ".codex/hooks.json").write_text(json.dumps(codex_hooks))
     (home / ".codex/config.toml").write_text(config_text)
-    (home / ".gemini/config/hooks.json").write_text("{}\n")
+    (home / ".gemini/config/hooks.json").write_text(json.dumps(gemini_hooks or {}) + "\n")
     (home / ".cursor/hooks.json").write_text("{}\n")
 
 
@@ -41,7 +41,11 @@ class SecretsGuardInstallTests(unittest.TestCase):
     def test_installer_copies_adapters_registers_hooks_and_trusts_only_guard(self):
         with tempfile.TemporaryDirectory(prefix="secrets-guard-install-") as tmp:
             home = Path(tmp)
-            seed_home(home,{"hooks": {"PreToolUse": []}},"[profiles.default]\nmodel = 'test'\n")
+            old = {"matcher": "run_command", "hooks": [{"type": "command", "command": "/usr/bin/python3 /old/.agent-hooks/gemini-pretool.py", "timeout": 5}]}
+            other = {"matcher": "run_command", "hooks": [{"type": "command", "command": "/bin/true"}]}
+            seed_home(home,{"hooks": {"PreToolUse": []}},"[profiles.default]\nmodel = 'test'\n",
+                      {"secrets-guard": {"BeforeTool": [old]}, "legacy-copy": {"BeforeTool": [old]},
+                       "unrelated": {"BeforeTool": [other]}})
             env = {"HOME":str(home),"PATH":FAKE_PATH,"TMPDIR":str(home)}
             result = subprocess.run([sys.executable, str(INSTALLER)], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -73,7 +77,13 @@ class SecretsGuardInstallTests(unittest.TestCase):
             self.assertTrue(trust["enabled"])
 
             gemini = json.loads((home / ".gemini/config/hooks.json").read_text())
-            self.assertIn("gemini-pretool.py", gemini["secrets-guard"]["BeforeTool"][0]["hooks"][0]["command"])
+            # Antigravity fires PreToolUse, never BeforeTool; an old registration is migrated.
+            entry = gemini["secrets-guard"]["PreToolUse"][0]
+            self.assertEqual(entry["matcher"], "run_command")
+            self.assertIn(str(installed / "gemini-pretool.py"), entry["hooks"][0]["command"])
+            self.assertNotIn("BeforeTool", gemini["secrets-guard"])
+            self.assertNotIn("legacy-copy", gemini)
+            self.assertEqual(gemini["unrelated"], {"BeforeTool": [other]})
             cursor = json.loads((home / ".cursor/hooks.json").read_text())
             cursor_hook = cursor["hooks"]["beforeShellExecution"][-1]
             self.assertTrue(cursor_hook["failClosed"])

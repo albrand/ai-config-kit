@@ -110,6 +110,11 @@ def denied(command):
         if re.search(r'\bgit\s+config\s+--get(?:-all)?\s+(?:credential\.helper|credential\.\w+)',joined): return True
     return False
 
+def wrap(command):
+    """Run an allowed command through the scrubber so known secret values are masked."""
+    scrubber=os.path.expanduser('~/.agent-hooks/secrets-scrub-exec.py')
+    return '/usr/bin/python3 '+shlex.quote(scrubber)+' -- '+shlex.quote(command)
+
 def main():
     try:
         event=json.load(sys.stdin); tool_input=event.get('tool_input',{})
@@ -117,9 +122,7 @@ def main():
         if not isinstance(command,str): raise ValueError('missing command')
         if denied(command):
             print(json.dumps({'block':True,'reason':'Secret-value output blocked. Use secret-names <file> to inspect variable names with values masked.'})); return 0
-        scrubber=os.path.expanduser('~/.agent-hooks/secrets-scrub-exec.py')
-        wrapped='/usr/bin/python3 '+shlex.quote(scrubber)+' -- '+shlex.quote(command)
-        print(json.dumps({'block':False,'reason':'','updated_command':wrapped})); return 0
+        print(json.dumps({'block':False,'reason':'','updated_command':wrap(command)})); return 0
     except Exception:
         print(json.dumps({'block':True,'reason':'Secret guard failed closed; command not run.'})); return 0
 if __name__=='__main__': sys.exit(main())

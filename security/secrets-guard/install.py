@@ -73,13 +73,21 @@ if not cursor_only:
         if provider=='codex':
             trust_codex_hooks(home,registrations)
 
-# Antigravity ACP reads global named hooks from ~/.gemini/config/hooks.json.
+# Antigravity ACP reads global named hooks from ~/.gemini/config/hooks.json. Its tool event is
+# PreToolUse; BeforeTool is the Gemini CLI name, which Antigravity never fires.
 if not cursor_only:
     gconfig=os.path.join(home,'.gemini/config/hooks.json')
     stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     shutil.copy2(gconfig,gconfig+'.'+stamp+'.bak')
     gd=json.load(open(gconfig))
-    gd['secrets-guard']={'BeforeTool':[{'matcher':'run_command','hooks':[{'type':'command','command':'/usr/bin/python3 '+os.path.join(dest,'gemini-pretool.py'),'timeout':5}]}]}
+    # Migrate an earlier BeforeTool registration of this adapter under any hook name.
+    for hook_name,events in list(gd.items()):
+        if not isinstance(events,dict) or not isinstance(events.get('BeforeTool'),list): continue
+        kept=[e for e in events['BeforeTool'] if 'gemini-pretool.py' not in json.dumps(e)]
+        if kept: events['BeforeTool']=kept
+        else: del events['BeforeTool']
+        if not events: del gd[hook_name]
+    gd['secrets-guard']={'PreToolUse':[{'matcher':'run_command','hooks':[{'type':'command','command':'/usr/bin/python3 '+os.path.join(dest,'gemini-pretool.py'),'timeout':5}]}]}
     tmp=gconfig+'.tmp'; open(tmp,'w').write(json.dumps(gd,indent=2)+'\n'); os.replace(tmp,gconfig)
 
 # OpenCode discovers plugins from this global directory.
