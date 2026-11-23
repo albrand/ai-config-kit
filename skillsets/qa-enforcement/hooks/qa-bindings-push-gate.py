@@ -47,7 +47,7 @@ def qa_json(text, name):
     except ValueError as error:
         raise QaDataError(f"{name} is not valid JSON ({error})")
     if not isinstance(value, dict):
-        raise QaDataError(f"{name} is not a JSON object")
+        raise QaDataError(f"{name} must be a JSON object")
     if "scenarios" in value and not isinstance(value["scenarios"], list):
         raise QaDataError(f"{name} has a scenarios field that is not a list")
     for i, s in enumerate(value.get("scenarios") or []):
@@ -191,6 +191,8 @@ def violations(cwd, commit):
     if config is None:
         return 0, []  # no QA config on this commit: nothing to check
     config_data = qa_json(config, CONFIG)
+    if not isinstance(config_data, dict):
+        raise QaDataError(f"{CONFIG} must be a JSON object")
     if "artifacts" not in config_data:
         return 0, []  # another QA framework: this gate is not opted in
     folder = (config_data.get("artifacts") or {}).get("scenarios")

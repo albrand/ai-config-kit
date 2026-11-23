@@ -44,6 +44,16 @@ class PushGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("has no artifacts.scenarios", result.stderr)
 
+    def test_non_object_config_is_denied_clearly(self):
+        result = self.check_push([])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("qa/qa.config.json must be a JSON object", result.stderr)
+
+    def test_null_artifacts_is_denied(self):
+        result = self.check_push({"artifacts": None})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("has no artifacts.scenarios", result.stderr)
+
     def test_ready_binding_to_missing_file_is_denied(self):
         result = self.check_push({"artifacts": {"scenarios": "qa/scenarios"}},
                                  {"id": "QAS-ABC234", "binding": {"status": "ready", "file": "tests/missing.spec.ts"}})
