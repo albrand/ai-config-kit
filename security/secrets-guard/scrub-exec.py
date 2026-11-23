@@ -29,36 +29,80 @@ def _expand_env_value(value, variables):
         if operator and (name not in variables or (operator==':-' and not current)):
             return match.group(3) or ''
         return current
+    if '$(' in value or '`' in value:
+        raise ValueError('dynamic env value')
     expanded=pattern.sub(replace,value)
-    if '$' in expanded or '`' in expanded or '$(' in value:
+    if '${' in expanded or '$(' in expanded or '`' in expanded:
         raise ValueError('dynamic env value')
     return expanded
 
-def parse_env(text):
-    values=[]; variables=dict(os.environ)
+def _fallback_values(raw):
+    """Mask a value the parser cannot interpret exactly: the raw text and its long words."""
+    raw=raw.strip()
+    return [raw]+[word for word in raw.split() if len(word)>=8] if raw else []
+
+def _is_dynamic(text):
+    return '$(' in text or '`' in text or '${' in text
+
+def parse_env(text, strict=False):
+    """Collect values to mask from dotenv text, line by line.
+
+    Lines that cannot be parsed exactly are masked (raw value plus words of 8+
+    characters) instead of failing. Only with strict=True (a file the command
+    itself sources) does a dynamic value raise, because its runtime value is unknown.
+    """
+    values=[]; variables=dict(os.environ); open_quote=None
+    def dynamic(text):
+        if strict: raise ValueError('dynamic env value')
+        values.extend(_fallback_values(text))
     for line in text.splitlines():
         stripped=line.strip()
+        if open_quote:
+            # Continuation of a multi-line quoted value, such as a PEM block.
+            closing=stripped.find(open_quote)
+            body=stripped if closing<0 else stripped[:closing]
+            if open_quote=='"' and _is_dynamic(body): dynamic(body)
+            else: values.extend(_fallback_values(body))
+            if closing>=0: open_quote=None
+            continue
         if not stripped or stripped.startswith('#'): continue
         m=re.match(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$",stripped)
-        if not m: raise ValueError('unsupported env-file syntax')
+        if not m:
+            if _is_dynamic(stripped): dynamic(stripped)
+            else: values.extend(_fallback_values(stripped))
+            continue
         key,raw=m.groups(); raw=_strip_shell_comment(raw).strip()
         quoted=len(raw)>=2 and raw[0]==raw[-1] and raw[0] in "'\""
-        if raw[:1] in ("'",'"') and not quoted: raise ValueError('unclosed env-file quote')
+        if raw[:1] in ("'",'"') and not quoted:
+            open_quote=raw[0]
+            if open_quote=='"' and _is_dynamic(raw): dynamic(raw[1:])
+            else: values.extend(_fallback_values(raw[1:]))
+            continue
         if quoted:
             value=raw[1:-1]
             if raw[0]=='"': value=re.sub(r'\\(["\\$`])',r'\1',value)
             else: value=value.replace("'\\''", "'")
         else:
-            words=shlex.split(raw,posix=True)
-            if len(words)>1: raise ValueError('ambiguous unquoted env value')
+            try: words=shlex.split(raw,posix=True)
+            except ValueError: words=None
+            if words is None or len(words)>1:
+                # Valid dotenv such as NAME=Some Name <addr@example.com>: mask it, never fail.
+                values.extend(_fallback_values(raw))
+                try: values.extend(_fallback_values(_expand_env_value(raw,variables)))
+                except ValueError: dynamic(raw)
+                variables[key]=raw
+                continue
             value=words[0] if words else ''
-        if raw[:1]!="'": value=_expand_env_value(value,variables)
+        if raw[:1]!="'":
+            try: value=_expand_env_value(value,variables)
+            except ValueError:
+                dynamic(value); variables[key]=value; continue
         variables[key]=value
         if value and (re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I) or len(value)>=16):
             values.extend((raw[1:-1] if quoted else value,value))
     return values
 
-def env_mask_paths(command):
+def env_mask_paths(command, sourced=None):
     """Find env files sourced by the command and dotenv files in its cwd(s).
 
     This only tokenizes shell syntax; it never evaluates or sources a file.
@@ -86,7 +130,9 @@ def env_mask_paths(command):
             continue
         if '$' in candidate or '`' in candidate:
             raise ValueError('dynamic env source path')
-        paths.append(os.path.abspath(candidate if os.path.isabs(candidate) else os.path.join(cwd,candidate)))
+        path=os.path.abspath(candidate if os.path.isabs(candidate) else os.path.join(cwd,candidate))
+        paths.append(path)
+        if sourced is not None: sourced.add(path)
     for directory in dict.fromkeys(directories):
         try:
             with os.scandir(directory) as entries:
@@ -158,16 +204,23 @@ def main():
     for key,value in os.environ.items():
         if value and re.search(r'(TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)',key,re.I): secrets.append(value)
     paths=[os.path.expanduser('~/pfull/prod.env'),os.path.expanduser('~/pfull/prod-lane.env'),os.path.expanduser('~/.env')]
+    sourced=set()
     try:
-        paths.extend(env_mask_paths(command))
+        paths.extend(env_mask_paths(command,sourced))
     except Exception:
         print('secret scrubber could not inspect sourced env paths; command not run',file=sys.stderr); return 2
     for path in dict.fromkeys(paths):
         try:
-            with open(path,errors='replace') as f: secrets.extend(parse_env(f.read()))
-        except FileNotFoundError: pass
+            with open(path,errors='replace') as f: text=f.read()
+        except FileNotFoundError: continue
         except Exception:
-            print('secret scrubber could not read an env mask file; command not run',file=sys.stderr); return 2
+            if path in sourced:
+                print('secret scrubber could not read a sourced env file; command not run',file=sys.stderr); return 2
+            continue
+        try: secrets.extend(parse_env(text,strict=path in sourced))
+        except Exception:
+            # Only a file the command itself sources can reach here (dynamic value).
+            print('secret scrubber found a dynamic value in a sourced env file; command not run',file=sys.stderr); return 2
     if has_hsrpc_ssh(command):
         # Fetch the known remote env file into process memory only; never stream it to the terminal.
         try:

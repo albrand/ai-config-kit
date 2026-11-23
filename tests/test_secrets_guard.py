@@ -141,6 +141,70 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(commented.encode() in combined,"commented fake value survived redaction")
         self.assertEqual(combined.count(b"[MASKED]"),2,"expected stdout and stderr values to be masked")
 
+    def _load_scrubber(self, name):
+        p=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        s=importlib.util.spec_from_file_location(name,p); scrubber=importlib.util.module_from_spec(s); s.loader.exec_module(scrubber)
+        return scrubber
+
+    def test_env_parser_masks_real_dotenv_lines_instead_of_failing(self):
+        scrubber=self._load_scrubber("scrubber_real_dotenv")
+        text=("# fake comment line\r\n"
+              "\r\n"
+              "FAKE_FROM=Fake Person <fake-person@example.invalid>\r\n"
+              "export FAKE_EXPORTED_TOKEN=fake-exported-value-1\r\n"
+              "FAKE_INLINE=fake-inline-value-12345 # fake trailing comment\r\n"
+              "FAKE_STRAY=it's a fake-stray-quote value\r\n"
+              "FAKE_DOLLAR=fake-dollar-value-123$\r\n"
+              "this line is not dotenv fake-unparsed-word\r\n"
+              "FAKE_PEM=\"-----BEGIN FAKE KEY-----\r\n"
+              "Zm9vYmFyZmFrZQ=\r\n"
+              "-----END FAKE KEY-----\"\r\n"
+              "FAKE_AFTER_TOKEN=fake-after-value-123\r\n")
+        for strict in (False,True):
+            values=scrubber.parse_env(text,strict=strict)
+            for expected in ("Fake Person <fake-person@example.invalid>","<fake-person@example.invalid>",
+                             "fake-exported-value-1","fake-inline-value-12345","fake-stray-quote",
+                             "fake-dollar-value-123$","fake-unparsed-word","Zm9vYmFyZmFrZQ=",
+                             "fake-after-value-123"):
+                self.assertIn(expected,values,"real dotenv line was not masked: "+expected)
+            self.assertFalse(any("\r" in v for v in values),"CRLF leaked into a mask value")
+
+    def test_env_parser_dynamic_values_fail_closed_only_when_strict(self):
+        scrubber=self._load_scrubber("scrubber_dynamic")
+        for line in ("FAKE_A=$(echo fake)\n","FAKE_B=`echo fake`\n","FAKE_C=\"${FAKE_UNSET:?fake}\"\n",
+                     "FAKE_D=fake words $(echo x)\n","echo $(fake)\n"):
+            with self.assertRaises(ValueError,msg=line):
+                scrubber.parse_env(line,strict=True)
+            self.assertTrue(scrubber.parse_env(line),"non-strict parse should mask dynamic line: "+line)
+
+    def test_cwd_dotenv_example_with_spaced_value_never_blocks_command(self):
+        scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-example-") as temp:
+            for name in (".env.example",".env.sample",".env.template"):
+                (Path(temp)/name).write_text("EMAIL_FROM=Fake Sender <fake-sender@example.invalid>\nFAKE_DYN=$(echo fake)\n")
+            subprocess.run(["git","init","-q",temp],check=True)
+            env=dict(FAKE_ENV_BASE,HOME=temp,TMPDIR=temp)
+            for command in ("echo ok","git status --short","cat .env.example"):
+                result=subprocess.run([sys.executable,str(scrubber),"--",command],cwd=temp,capture_output=True,env=env)
+                self.assertEqual(result.returncode,0,command+" blocked: "+result.stderr.decode(errors="replace"))
+                self.assertNotIn(b"fake-sender@example.invalid",result.stdout+result.stderr,"example value not masked")
+            self.assertEqual(subprocess.run([sys.executable,str(scrubber),"--","echo ok"],cwd=temp,capture_output=True,env=env).stdout,b"ok\n")
+
+    def test_sourced_unquoted_spaced_value_runs_and_is_masked(self):
+        scrubber=Path(__file__).parents[1] / "security/secrets-guard/scrub-exec.py"
+        fake="fake-live-value-0123456789"
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-spaced-") as temp:
+            env_file=Path(temp)/"fake.env"
+            env_file.write_text("FAKE_X="+fake+"\r\nFAKE_NAME=Fake Spaced fake-spaced-word\r\n# fake comment\r\nexport FAKE_Y=fake-exported-0123456789\r\n")
+            command=("set -a; . "+shlex.quote(str(env_file))+"; set +a; python3 -c "+
+                     shlex.quote("import os; print(os.environ['FAKE_X']); print(os.environ['FAKE_Y'])"))
+            env=dict(FAKE_ENV_BASE,HOME=temp,TMPDIR=temp)
+            result=subprocess.run([sys.executable,str(scrubber),"--",command],cwd=temp,capture_output=True,env=env)
+        combined=result.stdout+result.stderr
+        self.assertNotIn(b"failed closed",combined); self.assertNotIn(b"command not run",combined)
+        self.assertNotIn(fake.encode(),combined); self.assertNotIn(b"fake-exported-0123456789",combined)
+        self.assertEqual(result.stdout.replace(b"\r",b""),b"[MASKED]\n[MASKED]\n")
+
 
 if __name__ == "__main__":
     unittest.main()
