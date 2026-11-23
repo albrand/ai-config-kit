@@ -159,7 +159,7 @@ GITHUB_GRAPHQL_WRITE_RE = re.compile(
     r"\b(mergeBranch|createRef|updateRef|updateRefs|createCommitOnBranch)\b")
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
-LOOKUP_BUDGET_S = 3.2
+LOOKUP_BUDGET_S = 8.0
 _SELFTEST_LOOKUP_BUDGET_S = None
 _LOOKUP_DEADLINE = None
 # The whole PreToolUse decision must land before the host's hook timeout: a
@@ -416,6 +416,67 @@ def qa_run_dirs(root, sha=None, rd=None):
     return dirs
 
 
+def tree_equivalent_commits(root, reference, commits):
+    """Return tree-equivalence booleans for commits using one pair of batch reads."""
+    unique = list(dict.fromkeys(c for c in commits if re.fullmatch(r"[0-9a-f]{40}", c or "")))
+    if not unique or not re.fullmatch(r"[0-9a-f]{40}", reference or ""):
+        return [False] * len(commits)
+    commit_ids = [reference] + unique
+    p = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
+                       input="".join(c + "\n" for c in commit_ids).encode(), capture_output=True,
+                       timeout=GIT_TIMEOUT_S)
+    if p.returncode:
+        return [False] * len(commits)
+    pos, trees = 0, []
+    for expected in commit_ids:
+        end = p.stdout.find(b"\n", pos)
+        if end < 0:
+            return [False] * len(commits)
+        header = p.stdout[pos:end].split()
+        if len(header) != 3 or header[0].decode() != expected or header[1] != b"commit":
+            return [False] * len(commits)
+        size = int(header[2])
+        body = p.stdout[end + 1:end + 1 + size]
+        pos = end + 1 + size + 1
+        match = re.search(rb"(?:^|\n)tree ([0-9a-f]+)\n", body)
+        if not match:
+            return [False] * len(commits)
+        trees.append(match.group(1).decode())
+    tree_out = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
+                              input="".join(t + "\n" for t in trees).encode(), capture_output=True,
+                              timeout=GIT_TIMEOUT_S)
+    if tree_out.returncode:
+        return [False] * len(commits)
+    pos, entries = 0, []
+    for expected in trees:
+        end = tree_out.stdout.find(b"\n", pos)
+        if end < 0:
+            return [False] * len(commits)
+        header = tree_out.stdout[pos:end].split()
+        if len(header) != 3 or header[0].decode() != expected or header[1] != b"tree":
+            return [False] * len(commits)
+        size = int(header[2])
+        body = tree_out.stdout[end + 1:end + 1 + size]
+        pos = end + 1 + size + 1
+        oid_size = len(expected) // 2
+        row, offset = [], 0
+        while offset < len(body):
+            nul = body.find(b"\0", offset)
+            if nul < 0 or nul + 1 + oid_size > len(body):
+                return [False] * len(commits)
+            mode_name = body[offset:nul].split(b" ", 1)
+            if len(mode_name) != 2:
+                return [False] * len(commits)
+            mode, name = mode_name
+            oid = body[nul + 1:nul + 1 + oid_size]
+            if name != b".qa":
+                row.append((mode, name, oid))
+            offset = nul + 1 + oid_size
+        entries.append(tuple(sorted(row)))
+    by_commit = {c: entries[i + 1] for i, c in enumerate(unique)}
+    return [entries[0] == by_commit.get(c) for c in commits]
+
+
 def resolve_run(root, sha, rd, equiv=False, listing=None):
     """(dir, None) for the one run re-walked at `sha` (or at its parent under
     a .qa/-only head; with equiv, at a commit whose tree outside .qa/ is
@@ -447,9 +508,25 @@ def resolve_run(root, sha, rd, equiv=False, listing=None):
         seen.append("%s@%s" % (d, walked[:12] or "-"))
         if walked and (walked == sha or rewalk_parent_ok(root, sha, walked)):
             matches.append(d)
-        elif equiv and walk_fresh(root, sha, walked, equiv=True):
-            equiv_matches.append(d)
-    if not matches:
+        # Equivalence fallback is batched below after exact/parent matches.
+    if not matches and equiv:
+        # Tree equivalence is the fallback for a deployment built from a
+        # commit with identical code to a later QA walk. Resolve all candidate
+        # top-level trees in two batched object reads instead of spawning two
+        # `git ls-tree` processes for every historical run directory.
+        candidates = []
+        for d, rel in zip(cands, rels):
+            try:
+                content = contents[rel] if many else rd["read"](rel)
+                walked = str(json.loads(content).get("sha") or "") if content else ""
+            except Exception:
+                walked = ""
+            if walked:
+                candidates.append((d, walked))
+        remaining = [(d, walked) for d, walked in candidates
+                     if walked != sha and not rewalk_parent_ok(root, sha, walked)]
+        equivalent = tree_equivalent_commits(root, sha, [walked for _, walked in remaining])
+        equiv_matches = [d for (d, _), matches_tree in zip(remaining, equivalent) if matches_tree]
         matches = equiv_matches
     if len(matches) == 1:
         return matches[0], None
@@ -2186,10 +2263,15 @@ def deployment_commit(root, ref, team, cwd):
     if left < 0.3:
         return None, ("deployment %s: provenance lookup budget (%.1f s per command) is spent; "
                       "ship one deployment per command" % (host, lookup_budget))
-    path = "/v13/deployments/%s%s" % (host, ("?" + team) if team else "")
+    # `vercel api` ignores slug/teamId query parameters and uses the CLI's
+    # current team. Pass the scope as a global CLI option instead.
+    scope = team.split("=", 1)[1] if team and "=" in team else team
     env = dict(os.environ, VERCEL_TELEMETRY_DISABLED="1", NO_COLOR="1")
     try:
-        p = subprocess.run(["vercel", "api", path, "--raw", "--non-interactive"],
+        command = ["vercel", "--scope", scope, "api", "/v13/deployments/%s" % host,
+                   "--raw", "--non-interactive"] if scope else [
+                       "vercel", "api", "/v13/deployments/%s" % host, "--raw", "--non-interactive"]
+        p = subprocess.run(command,
                            cwd=cwd if os.path.isdir(cwd) else root, capture_output=True, text=True,
                            timeout=left, env=env)
     except FileNotFoundError:
@@ -3022,6 +3104,73 @@ def selftest_batch_framing(expect):
                 subprocess.run = real_run
 
 
+def selftest_tree_equivalence(expect):
+    """Differentially prove the batched predicate matches the original oracle."""
+    with tempfile.TemporaryDirectory(prefix="qa-tree-equivalence-") as root:
+        def git(*args):
+            return subprocess.run(["git", "-C", root, *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "fixture@example.invalid")
+        git("config", "user.name", "fixture")
+        os.makedirs(os.path.join(root, "sub"))
+        os.makedirs(os.path.join(root, ".qa"))
+        with open(os.path.join(root, "top.txt"), "w") as f:
+            f.write("top\n")
+        with open(os.path.join(root, "sub", "nested.txt"), "w") as f:
+            f.write("nested\n")
+        with open(os.path.join(root, "exec.sh"), "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(root, "exec.sh"), 0o755)
+        with open(os.path.join(root, ".qa", "note"), "w") as f:
+            f.write("one\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        commits = [git("rev-parse", "HEAD")]
+        changes = [
+            (".qa/note", "two\n", None),
+            ("top.txt", "changed\n", None),
+            ("sub/nested.txt", "changed\n", None),
+            ("exec.sh", None, 0o644),
+        ]
+        for i, (rel, content, mode) in enumerate(changes):
+            path = os.path.join(root, rel)
+            if content is not None:
+                with open(path, "w") as f:
+                    f.write(content)
+            if mode is not None:
+                os.chmod(path, mode)
+            git("add", rel)
+            git("commit", "-qm", "change-%d" % i)
+            commits.append(git("rev-parse", "HEAD"))
+        differential_ok = True
+        for reference in commits:
+            actual = tree_equivalent_commits(root, reference, commits)
+            expected = [tree_equiv_outside_qa(root, reference, candidate) for candidate in commits]
+            differential_ok = differential_ok and actual == expected
+        expect(differential_ok,
+               "tree_equivalent_commits matches tree_equiv_outside_qa across code, nested, .qa and mode changes")
+
+        absent = "f" * 40
+        blob = subprocess.run(["git", "-C", root, "hash-object", "-w", "--stdin"],
+                             input=b"not a commit", capture_output=True, check=True,
+                             timeout=GIT_TIMEOUT_S).stdout.decode().strip()
+        expect(tree_equivalent_commits(root, commits[0], [absent, blob]) == [False, False],
+               "tree_equivalent_commits fails closed for missing and non-commit object ids")
+        real_run = subprocess.run
+        def malformed(args, **kwargs):
+            if args[:1] == ["git"] and "--batch" in args:
+                return subprocess.CompletedProcess(args, 0, b"malformed\n", b"")
+            return real_run(args, **kwargs)
+        subprocess.run = malformed
+        try:
+            got = tree_equivalent_commits(root, commits[0], [commits[1]])
+        finally:
+            subprocess.run = real_run
+        expect(got == [False], "tree_equivalent_commits fails closed on malformed batch output")
+
+
 def selftest(v4_gate=None, v4_templates=None):
     """Prove each deny/allow path on scratch repos. A check that cannot go red proves nothing."""
     import shutil
@@ -3046,6 +3195,9 @@ def selftest(v4_gate=None, v4_templates=None):
         fh.write("#!/usr/bin/env python3\n"
                  "import json, os, sys, time\n"
                  "a = sys.argv[1:]\n"
+                 "scope = ''\n"
+                 "if len(a) >= 2 and a[0] == '--scope':\n"
+                 "    scope, a = a[1], a[2:]\n"
                  "if a[:1] != ['api'] or len(a) < 2:\n"
                  "    sys.exit(0)\n"
                  "ref, _, q = a[1].split('/v13/deployments/', 1)[-1].partition('?')\n"
@@ -3058,7 +3210,7 @@ def selftest(v4_gate=None, v4_templates=None):
                  "if ref == 'dpl_offline':\n"
                  "    sys.stderr.write('Error: request to https://api.vercel.com failed, reason: getaddrinfo ENOTFOUND\\n')\n"
                  "    sys.exit(1)\n"
-                 "if 'teamId=team_fx' not in q.split('&') or ref not in fx:\n"
+                 "if (scope != 'team_fx' and 'teamId=team_fx' not in q.split('&')) or ref not in fx:\n"
                  "    sys.stderr.write('Error: Deployment not found (404)\\n')\n"
                  "    sys.exit(1)\n"
                  "time.sleep(fx[ref].get('_sleep', 0))\n"
@@ -3073,6 +3225,7 @@ def selftest(v4_gate=None, v4_templates=None):
             fails.append(name)
 
     selftest_batch_framing(expect)
+    selftest_tree_equivalence(expect)
 
     def sh(cmd, cwd=None, inp=""):
         return subprocess.run(cmd, shell=True, cwd=cwd, input=inp, capture_output=True, text=True)
@@ -3294,8 +3447,7 @@ def selftest(v4_gate=None, v4_templates=None):
                    "prerequisites": {"verified": True, "evidence": "shot", "items": []},
                    "journey": {"walked": True, "same_actor": True, "same_surface": True, "evidence": "shot",
                                "steps": [{"page": "Login", "control": "Submit", "surface": "Web",
-                                          "observed": True, "expected": {"value": "Submit button is shown", "source": "selftest acceptance criterion"},
-                                          "actual": "Submit button is shown", "match": True, "evidence": "shot"}]},
+                                          "observed": True, "evidence": "shot"}]},
                    "terminal": {"status": "passed", "evidence": "shot"}}, fh)
     commit_qa(r1)  # v3: evidence must be committed; head is a .qa-only commit over sha1
     p = hookrun(r1, "git push origin main")
@@ -4229,13 +4381,28 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
     deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
-    expect(LOOKUP_BUDGET_S == 3.2, "v5: production provenance lookup budget remains 3.2 s")
+    expect(LOOKUP_BUDGET_S == 8.0, "v5: production provenance lookup budget is 8.0 s")
     p = hook5(r9, "vercel promote dpl_slow",
               env={"QA_GATE_SELFTEST": "1", "QA_GATE_SELFTEST_LOOKUP_BUDGET_S": "30"},
               fixture_timeout=False)
-    expect(p.returncode == 2 and "timed out after 3.2 s" in p.stderr,
+    expect(p.returncode == 2 and "timed out after 8.0 s" in p.stderr,
            "v5 DENY  production lookup budget times out the slow fake at 3.2 s [%s]"
            % " ".join(p.stderr.split())[-110:])
+    stalled_git = os.path.join(tmp, "stalled-batch-git")
+    os.makedirs(stalled_git)
+    real_git_path = shutil.which("git")
+    stall_marker = os.path.join(tmp, "stalled-batch-called")
+    with open(os.path.join(stalled_git, "git"), "w") as fh:
+        fh.write("#!/bin/sh\ntouch %s\nsleep 11\nexec %s \"$@\"\n" % (stall_marker, real_git_path))
+    os.chmod(os.path.join(stalled_git, "git"), 0o755)
+    t0 = time.monotonic()
+    p = hook5(r9, "vercel promote dpl_unwalked",
+              env={"PATH": stalled_git + os.pathsep + os.environ["PATH"]}, fixture_timeout=False)
+    took = time.monotonic() - t0
+    expect(p.returncode == 2 and "Ship denied" in p.stderr and os.path.isfile(stall_marker) and took < 10.5,
+           "v5 DENY  stalled git during a promote rc=%d invoked=%s in %.2f s (< 10.5) [%s]"
+           % (p.returncode, os.path.isfile(stall_marker), took,
+              " ".join((p.stderr or p.stdout).split())[-100:]))
     deny5(r9, "vercel promote dpl_foreign", "source commit not in this clone", "not in this clone")
     deny5(r9, "vercel promote dpl_nogit", "deployment without git metadata", "no git provenance")
     deny5(r9, "vercel promote dpl_dirty", "deployment built from a dirty tree", "uncommitted changes")
