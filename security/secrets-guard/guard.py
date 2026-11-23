@@ -143,10 +143,11 @@ def session_provider(command):
     exe=os.path.basename(toks[0])
     if exe in PROVIDER_BY_EXE: return PROVIDER_BY_EXE[exe]
     if exe in NODE_LAUNCHERS:
-        script=next((t for t in toks[1:] if not t.startswith('-')),'')
-        for package,provider in NODE_PACKAGES:
-            if package in script: return provider
-        return PROVIDER_BY_EXE.get(os.path.splitext(os.path.basename(script))[0])
+        for t in toks[1:]:  # any argument, so options that take a value (--require x) cannot hide the script
+            for package,provider in NODE_PACKAGES:
+                if package in t: return provider
+            stem,ext=os.path.splitext(os.path.basename(t))
+            if ext in ('.js','.mjs','.cjs') and stem in PROVIDER_BY_EXE: return PROVIDER_BY_EXE[stem]
     return None
 
 def stale_sessions(ps_text,mtimes):
