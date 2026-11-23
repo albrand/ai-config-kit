@@ -36,7 +36,13 @@ class PushGateTests(unittest.TestCase):
                                   capture_output=True, cwd=repo)
 
     def test_foreign_perci_config_is_not_opted_in(self):
-        result = self.check_push({"board": "QA", "paths": {"scenarios": "qa/scenarios"}})
+        result = self.check_push({
+            "board": "QA-123", "team": "Perci", "acceptanceHeadings": ["Acceptance criteria"],
+            "environments": ["test", "production"],
+            "paths": {"requirements": "qa/requirements", "scenarios": "qa/scenarios",
+                      "designs": "qa/designs", "runs": "qa/runs", "reports": "qa/reports",
+                      "bugs": "qa/bugs", "manual": "qa/manual"},
+        })
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_declared_artifacts_without_scenarios_is_denied(self):
@@ -58,6 +64,13 @@ class PushGateTests(unittest.TestCase):
         for config in ({}, {"board": "github"}):
             with self.subTest(config=config):
                 result = self.check_push(config)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("has no artifacts.scenarios", result.stderr)
+
+    def test_incomplete_paths_signature_is_denied(self):
+        for paths in ({}, {"scenarios": ""}, {"scenarios": 7}, "qa"):
+            with self.subTest(paths=paths):
+                result = self.check_push({"paths": paths})
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("has no artifacts.scenarios", result.stderr)
 
