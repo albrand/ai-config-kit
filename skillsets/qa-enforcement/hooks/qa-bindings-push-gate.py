@@ -47,7 +47,7 @@ def qa_json(text, name):
     except ValueError as error:
         raise QaDataError(f"{name} is not valid JSON ({error})")
     if not isinstance(value, dict):
-        raise QaDataError(f"{name} is not a JSON object")
+        raise QaDataError(f"{name} must be a JSON object")
     if "scenarios" in value and not isinstance(value["scenarios"], list):
         raise QaDataError(f"{name} has a scenarios field that is not a list")
     for i, s in enumerate(value.get("scenarios") or []):
@@ -190,11 +190,21 @@ def violations(cwd, commit):
     config = files_at(cwd, commit, [CONFIG]).get(CONFIG)
     if config is None:
         return 0, []  # no QA config on this commit: nothing to check
-    folder = (qa_json(config, CONFIG).get("artifacts") or {}).get("scenarios")
+    config_data = qa_json(config, CONFIG)
+    if not isinstance(config_data, dict):
+        raise QaDataError(f"{CONFIG} must be a JSON object")
+    paths_based = "artifacts" not in config_data
+    if paths_based:
+        paths = config_data.get("paths")
+        folder = paths.get("scenarios") if isinstance(paths, dict) else None
+    else:
+        folder = (config_data.get("artifacts") or {}).get("scenarios")
     if not isinstance(folder, str) or not folder.strip():
         raise QaDataError(f"{CONFIG} has no artifacts.scenarios")
     folder = folder.rstrip("/")
-    names = [n for n in git(cwd, ["ls-tree", "--name-only", commit, f"{folder}/"]).decode().split("\n") if n.endswith(".json")]
+    names = [n for n in git(cwd, ["ls-tree", "-r", "--name-only", commit, f"{folder}/"]).decode().split("\n") if n.endswith(".json")]
+    if paths_based and not names:
+        raise QaDataError(f"{CONFIG} paths.scenarios '{folder}' has no scenario files in this commit")
     scenarios = [s for n, t in files_at(cwd, commit, names).items() if t is not None for s in qa_json(t, n).get("scenarios", [])]
     bound = [s for s in scenarios if isinstance(s, dict) and needs_bound_test(s)]
     texts = files_at(cwd, commit, [s["binding"]["file"].strip() for s in bound])
