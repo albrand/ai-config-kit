@@ -138,6 +138,23 @@ class SecretsGuardInstallTests(unittest.TestCase):
             self.assertTrue(config["hooks"]["state"][user_hook_key]["enabled"])
             self.assertEqual(config["hooks"]["state"][old_guard_key]["trusted_hash"],codex_hash(updated[0]["hooks"][0]["command"],"Bash"))
 
+    def test_reinstall_with_unchanged_registrations_keeps_hook_mtimes(self):
+        with tempfile.TemporaryDirectory(prefix="secrets-guard-mtime-") as tmp:
+            home = Path(tmp)
+            seed_home(home, {"hooks": {"PreToolUse": []}}, "[profiles.default]\nmodel = 'test'\n")
+            env = {"HOME": str(home), "PATH": FAKE_PATH, "TMPDIR": str(home)}
+            hooks = ("claude-pretool.sh", "codex-pretool.sh", "gemini-pretool.py")
+            for attempt in range(2):
+                result = subprocess.run([sys.executable, str(INSTALLER)], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if attempt == 0:
+                    first = {h: (home / ".agent-hooks" / h).stat().st_mtime_ns for h in hooks}
+                    for h in hooks:  # pretend the first install was long ago
+                        os.utime(home / ".agent-hooks" / h, ns=(1_000_000_000_000_000_000,) * 2)
+                    first = {h: 1_000_000_000_000_000_000 for h in hooks}
+            second = {h: (home / ".agent-hooks" / h).stat().st_mtime_ns for h in hooks}
+            self.assertEqual(second, first)
+
     def run_installer_with_ps(self, ps_result):
         import contextlib, io, runpy, unittest.mock
         with tempfile.TemporaryDirectory(prefix="secrets-guard-ps-") as tmp:

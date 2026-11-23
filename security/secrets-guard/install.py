@@ -32,6 +32,18 @@ def trust_codex_hooks(home, registrations):
 home=os.path.expanduser('~'); src=os.path.dirname(os.path.abspath(__file__))
 dest=os.path.join(home,'.agent-hooks'); os.makedirs(dest,exist_ok=True)
 cursor_only='--cursor-only' in sys.argv[1:]
+# A session loads hooks once, when it starts. Remember each hook script's mtime and registration file
+# so a reinstall that changes no registration keeps its original mtime and does not make every
+# running session look uncovered.
+HOOK_REGISTRATIONS={'claude-pretool.sh':'.claude/settings.json','codex-pretool.sh':'.codex/hooks.json','gemini-pretool.py':'.gemini/config/hooks.json'}
+def _read(path):
+    try: return json.load(open(path))  # compare content, so a reformat alone is not a changed registration
+    except (OSError,ValueError): return None
+def _mtime(path):
+    try: return os.stat(path).st_mtime_ns
+    except OSError: return None
+before_registration={h:_read(os.path.join(home,r)) for h,r in HOOK_REGISTRATIONS.items()}
+before_mtime={h:_mtime(os.path.join(dest,h)) for h in HOOK_REGISTRATIONS}
 if not cursor_only and os.path.exists(os.path.join(home,'.codex/hooks.json')) and not os.path.isfile(os.path.join(home,'.codex/config.toml')):
     raise SystemExit('Codex config.toml is missing; refusing an untrusted guard registration')
 if not cursor_only and os.path.exists(os.path.join(home,'.codex/hooks.json')):
@@ -110,11 +122,15 @@ entries.append({'command':command,'failClosed':True})
 tmp=cursor_config+'.tmp'; open(tmp,'w').write(json.dumps(cd,indent=2)+'\n'); os.replace(tmp,cursor_config)
 
 # Running sessions read hooks once at start; list those that predate the hook files. Kills nothing.
-# copy2 keeps the source mtime, and a session that started before the registrations finished has no
+# copy2 takes the source mtime, and a session that started before the registrations finished has no
 # hook loaded, so stamp the hook scripts only now, after every registration was written.
 if not cursor_only:
-    for hook in ('claude-pretool.sh','codex-pretool.sh','gemini-pretool.py'):
-        os.utime(os.path.join(dest,hook),None)
+    for hook,registration in HOOK_REGISTRATIONS.items():
+        target=os.path.join(dest,hook)
+        if before_mtime[hook] is None or before_registration[hook]!=_read(os.path.join(home,registration)):
+            os.utime(target,None)  # new or changed registration: sessions older than now lack the hook
+        else:
+            os.utime(target,ns=(before_mtime[hook],before_mtime[hook]))  # unchanged: keep the original time
     sys.path.insert(0,src)
     import guard
     if guard.check_sessions(hooks_dir=dest):
