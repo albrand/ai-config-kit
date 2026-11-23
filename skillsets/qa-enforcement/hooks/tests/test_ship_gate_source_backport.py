@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(os.environ.get("SHIP_GATE_SCRIPT", Path(__file__).resolve().parents[2] / "shared/qa-sweep/scripts/ship-gate.py"))
@@ -37,8 +38,15 @@ class ShipGateBackportTests(unittest.TestCase):
         self.assertEqual(ship_gate.tree_equivalent_commits(str(self.repo), first, [equivalent, different]), [True, False])
         self.assertEqual(ship_gate.tree_equivalent_commits(str(self.repo), first, ["not-a-sha"]), [False])
 
-    def test_lookup_budget_is_eight_seconds(self):
-        self.assertEqual(ship_gate.LOOKUP_BUDGET_S, 8.0)
+    def test_lookup_over_3_2_seconds_denies_without_waiting(self):
+        self.assertEqual(ship_gate.LOOKUP_BUDGET_S, 3.2)
+        ship_gate._LOOKUP_DEADLINE = None
+        with patch.object(ship_gate.time, "monotonic", side_effect=[100.0, 103.3]), \
+             patch.object(ship_gate.subprocess, "run") as run:
+            result, reason = ship_gate._run_attempt(str(self.repo), "owner/repo", "123", 1)
+        self.assertIsNone(result)
+        self.assertIn("timed out after 3.2 s", reason)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

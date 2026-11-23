@@ -159,7 +159,7 @@ GITHUB_GRAPHQL_WRITE_RE = re.compile(
     r"\b(mergeBranch|createRef|updateRef|updateRefs|createCommitOnBranch)\b")
 GH_API_VALUE_FLAGS = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "--input",
                       "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
-LOOKUP_BUDGET_S = 8.0
+LOOKUP_BUDGET_S = 3.2
 _SELFTEST_LOOKUP_BUDGET_S = None
 _LOOKUP_DEADLINE = None
 # The whole PreToolUse decision must land before the host's hook timeout: a
@@ -4382,11 +4382,11 @@ def selftest(v4_gate=None, v4_templates=None):
     deny5(r9, "vercel rolling-release start --dpl dpl_unwalked", "rolling release of an unwalked deployment", U)
     deny5(r9, "vercel promote dpl_unknown", "unknown deployment", "provenance lookup failed")
     deny5(r9, "vercel promote dpl_offline", "API offline", "provenance lookup failed")
-    expect(LOOKUP_BUDGET_S == 8.0, "v5: production provenance lookup budget is 8.0 s")
+    expect(LOOKUP_BUDGET_S == 3.2, "v5: production provenance lookup budget remains 3.2 s")
     p = hook5(r9, "vercel promote dpl_slow",
               env={"QA_GATE_SELFTEST": "1", "QA_GATE_SELFTEST_LOOKUP_BUDGET_S": "30"},
               fixture_timeout=False)
-    expect(p.returncode == 2 and "timed out after 8.0 s" in p.stderr,
+    expect(p.returncode == 2 and "timed out after 3.2 s" in p.stderr,
            "v5 DENY  production lookup budget times out the slow fake at 3.2 s [%s]"
            % " ".join(p.stderr.split())[-110:])
     stalled_git = os.path.join(tmp, "stalled-batch-git")
