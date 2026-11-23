@@ -144,7 +144,9 @@ def parse_env(text, strict=False, local_names=()):
                 rest=[w for w in words[1:]]
                 while rest and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',rest[0]): rest=rest[1:]
                 # A word named in the command may be a function or alias it defined first.
-                if rest and (rest[0] in local_names or _runs_command(rest[0],variables.get('PATH'))):
+                # If the command may set PATH at run time, any word may resolve to a command.
+                path_unknown='PATH' in local_names and 'PATH' not in assigned
+                if rest and (path_unknown or rest[0] in local_names or _runs_command(rest[0],variables.get('PATH'))):
                     raise ValueError('sourced env line runs a command')
             if words is None or len(words)>1:
                 # Valid dotenv such as NAME=Some Name <addr@example.com>: mask it, never fail.

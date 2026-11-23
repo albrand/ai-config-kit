@@ -276,8 +276,21 @@ class GuardTests(unittest.TestCase):
             self.assertNotIn(fake.encode(),result.stdout+result.stderr,"nested default value leaked")
             self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
             self.assertNotIn(b"after",result.stdout)
+            # A PATH the command sets before sourcing can make any word after a spaced value a command.
+            bindir=Path(temp)/"fakebin"; bindir.mkdir()
+            (Path(temp)/"fake-path-cred.txt").write_text("fake-path-secret-0123456789\n")
+            (bindir/"fakeleak").write_text("#!/bin/sh\n/bin/cat "+shlex.quote(str(Path(temp)/"fake-path-cred.txt"))+"\n"); (bindir/"fakeleak").chmod(0o755)
+            spaced=Path(temp)/"fake-spaced.env"; spaced.write_text("FAKE_X=a fakeleak file\n")
+            path_cmd=("PATH="+shlex.quote(str(bindir))+":/usr/bin:/bin; . "+shlex.quote(str(spaced))+"; echo after")
+            result=subprocess.run([sys.executable,str(scrubber),"--",path_cmd],cwd=temp,capture_output=True,env=env)
+            self.assertNotIn(b"fake-path-secret",result.stdout+result.stderr,"runtime-PATH command ran")
+            self.assertEqual(result.returncode,2); self.assertIn(b"command not run",result.stderr)
+            self.assertNotIn(b"after",result.stdout)
             # A name the file itself set earlier is known, even when the command mentions it.
             parser=self._load_scrubber("scrubber_assigned_first")
+            self.assertIn("fake-path-spaced-0123",parser.parse_env("FAKE_X=fake-path-spaced-0123 Name\n",strict=True))
+            with self.assertRaises(ValueError):
+                parser.parse_env("FAKE_X=a fakeleak file\n",strict=True,local_names={"PATH"})
             for value in ("${FAKE_UNSET_ANYWHERE:-$FAKE_LOCAL}","${FAKE_UNSET_ANYWHERE-x$FAKE_LOCAL}"):
                 with self.assertRaises(ValueError,msg=value):
                     parser.parse_env("FAKE_TOKEN="+value+"\n",strict=True,local_names={"FAKE_LOCAL"})
