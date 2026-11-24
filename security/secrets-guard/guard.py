@@ -90,7 +90,7 @@ def _denied_untokenizable(command):
     if FILES.search(command): return True
     if re.search(r'(?i)(?:console\.log|print|printf|echo)\s*\(?\s*(?:process\.env\.|\$\{?)[A-Z0-9_]*'+SENSITIVE.pattern, command): return True
     if re.search(r'(?i)\b(?:echo|printf)\b[^\n;&|]*\$\{?'+SENSITIVE.pattern, command): return True
-    if re.search(r'(?im)(?:^|[;&|(){`!]|\$\(|\b(?:if|then|else|elif|do|while|until|time)\b)\s*(?:(?:command|sudo|nohup|time|exec|builtin|xargs|nice|stdbuf)\s+(?:-\S+\s+)*)*(?:\S*/)?(?:env|printenv|set|export\s+-p|declare\s+-x)\s*(?=$|[;&|(){}`)])', command): return True
+    if re.search(r'(?im)(?:^|[;&|(){`!]|\$\(|\b(?:if|then|else|elif|do|while|until|time)\b)\s*(?:(?:command|sudo|nohup|time|exec|builtin|xargs|nice|stdbuf)\s+(?:-\S+\s+)*)*(?:\S*/)?(?:env|printenv|set|export\s+-p|declare\s+-x)(?:\s+-[-\w=]*)*\s*(?=$|[;&|(){}`)<>])', command): return True
     lowered=command.lower()
     if re.search(r'\bbb\s+(?:variable|variables|settings|config)\b',lowered) and re.search(r'\b(show|list|get|dump|print|view)\b',lowered): return True
     if re.search(r'\bvercel\s+env\s+(?:pull|ls)\b',lowered): return True

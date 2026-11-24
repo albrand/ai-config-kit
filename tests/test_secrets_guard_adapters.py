@@ -40,6 +40,9 @@ class ApostropheTests(unittest.TestCase):
         self.assertTrue(guard.denied("echo can't; command env"))
         self.assertTrue(guard.denied("echo can't; sudo -E /usr/bin/env"))
         self.assertTrue(guard.denied("echo can't; exec printenv"))
+        self.assertTrue(guard.denied("echo can't; env -0"))
+        self.assertTrue(guard.denied("echo can't; printenv -0"))
+        self.assertTrue(guard.denied("echo can't; env -0 > out.txt"))
         self.assertFalse(guard.denied("cat > n.txt <<EOF\ncan't set env vars here\nEOF"))
 
 
@@ -60,6 +63,12 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("Secret-value output blocked", result.stderr)
         self.assertIn("Secret-value output blocked", result.stdout)
         self.assertNotIn("failed closed", result.stderr + result.stdout)
+
+    def test_untokenizable_dump_is_blocked_through_the_adapter(self):
+        for command in ("echo can't; env -0", "echo can't; printenv -0"):
+            result = self.run_adapter(command)
+            self.assertEqual(result.returncode, 2, command)
+            self.assertIn("Secret-value output blocked", result.stderr)
 
     def test_allowed_command_passes_with_updated_input(self):
         result = self.run_adapter("ls")
