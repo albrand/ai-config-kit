@@ -8,6 +8,9 @@ FILES = re.compile(r'(?i)(?:\.env[^/\s]*|[^/\s]*\.env|credentials?(?:\.json)?|id
 DUMP = re.compile(r'(?i)^(?:env|printenv|set|export\s+-p|declare\s+-x)$')
 READERS = {'cat','head','tail','less','grep','egrep','fgrep','sed','awk','strings','xxd','base64'}
 INTERPRETERS = {'python','python2','python3','node','ruby','perl'}
+WRAPPER_OPTION_VALUES = {'command':set(),'nohup':set(),'exec':set(),'time':set(),'builtin':set(),
+    'sudo':{'-u','-g','-C','-D','-h','-p','-r','-t','-U'},'nice':{'-n'},'xargs':{'-I','-L','-n','-P','-s','-E','-d'},
+    'stdbuf':{'-i','-o','-e'}}
 WRAPPERS = {'ssh','bash','sh','eval','command','sudo','env'}
 
 def flatten(cmd):
@@ -44,6 +47,7 @@ def flatten(cmd):
                 if i+1<len(words): pending.append(' '.join(words[i+1:]))
                 else: out.append(' '.join(words))
             elif verb in ('command','sudo','nohup','time','env'):
+                out.append(' '.join(words))  # keep the wrapper line whole so option values (sudo -u root env) are not lost
                 nested=words[1:]
                 while nested and (nested[0].startswith('-') or (verb=='env' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',nested[0]))): nested=nested[1:]
                 if nested: pending.append(' '.join(nested))
@@ -109,10 +113,18 @@ def _denied_tokenized(command):
         words=[t for t in toks if t not in ('2>/dev/null','>/dev/null')]
         # A dump verb counts only in command position: the segment's first word after assignments and wrappers.
         # Later words are arguments or heredoc body text (SQL `SET search_path`), not a shell `set`.
-        head=0
-        while head<len(words) and (re.fullmatch(r'[A-Za-z_]\w*=.*',words[head])
-                or os.path.basename(words[head]) in ('command','sudo','nohup','exec','xargs','time','nice','builtin','stdbuf')
-                or (head>0 and words[head].startswith('-'))): head+=1
+        head=0; wrapper=None
+        while head<len(words):
+            w=words[head]
+            if wrapper is None:
+                if re.fullmatch(r'[A-Za-z_]\w*=.*',w): head+=1; continue
+                if os.path.basename(w) in WRAPPER_OPTION_VALUES: wrapper=os.path.basename(w); head+=1; continue
+                break
+            if w.startswith('-') and w!='-':  # a wrapper option; one that takes a separate value consumes it too
+                head+=2 if w in WRAPPER_OPTION_VALUES[wrapper] else 1
+            elif re.fullmatch(r'[A-Za-z_]\w*=.*',w) and wrapper in ('sudo','xargs'): head+=1
+            else: wrapper=None  # first non-option word: if it is another wrapper the loop continues, else it is the command
+            if wrapper is None and not (os.path.basename(w) in WRAPPER_OPTION_VALUES or re.fullmatch(r'[A-Za-z_]\w*=.*',w)): break
         if head<len(words) and DUMP.fullmatch(words[head].rsplit('/',1)[-1]): return True
         for i,t in enumerate(words):
             base=t.rsplit('/',1)[-1]

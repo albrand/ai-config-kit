@@ -40,6 +40,8 @@ class GuardTests(unittest.TestCase):
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
             "x=1 env", "sudo env", "foo; set", "a && printenv", "ls\nset", "/usr/bin/env", "xargs printenv",
+            "sudo -u root env", "nice -n 5 printenv", "xargs -I{} env", "stdbuf -o0 env", "command -p env",
+            "sudo -u root nohup env", "FOO=1 sudo -E printenv",
         ]:
             self.assertTrue(guard.denied(command), command)
 
