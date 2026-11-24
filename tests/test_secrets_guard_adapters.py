@@ -31,6 +31,9 @@ class ApostropheTests(unittest.TestCase):
 
     def test_unbalanced_quote_still_denies_environment_dump(self):
         self.assertTrue(guard.denied("echo can't\nenv"))
+        self.assertTrue(guard.denied("echo can't; (env)"))
+        self.assertTrue(guard.denied("echo can't; { printenv; }"))
+        self.assertTrue(guard.denied("echo can't; x=$(env)"))
 
 
 class CodexAdapterTests(unittest.TestCase):
