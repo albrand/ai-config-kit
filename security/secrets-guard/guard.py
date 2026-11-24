@@ -69,8 +69,10 @@ def contains_eval(cmd):
 def denied(command):
     if FILES.search(command) and ('$' in command or '`' in command):
         return True
-    if FILES.search(command) and contains_eval(command):
-        return True
+    if FILES.search(command):
+        try:
+            if contains_eval(command): return True
+        except ValueError: return True  # cannot tokenize a command that names a secret file: fail closed
     if FILES.search(command) and re.search(r'(?is)(?:\bfunction\s+[A-Za-z_][A-Za-z0-9_]*|\b[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*(?:\{|\()|\balias\s+[A-Za-z_][A-Za-z0-9_]*\s*=)',command):
         return True
     if URI.search(command): return True
@@ -79,10 +81,25 @@ def denied(command):
     # `set -a` is an assignment-export mode, not a shell variable dump.
     if re.search(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+\.env[^;]*;\s*set\s+\+a', command):
         command = re.sub(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+;\s*set\s+\+a', 'source-env-internally', command)
+    try: return _denied_tokenized(command)
+    except ValueError: return _denied_untokenizable(command)
+
+def _denied_untokenizable(command):
+    # An unbalanced quote (an apostrophe in a heredoc or patch body) defeats the shell tokenizer.
+    # Fall back to whole-text checks, which stay strict: any secret-file name or secret-variable print denies.
+    if FILES.search(command): return True
+    if re.search(r'(?i)(?:console\.log|print|printf|echo)\s*\(?\s*(?:process\.env\.|\$\{?)[A-Z0-9_]*'+SENSITIVE.pattern, command): return True
+    if re.search(r'(?i)\b(?:echo|printf)\b[^\n;&|]*\$\{?'+SENSITIVE.pattern, command): return True
+    lowered=command.lower()
+    if re.search(r'\bbb\s+(?:variable|variables|settings|config)\b',lowered) and re.search(r'\b(show|list|get|dump|print|view)\b',lowered): return True
+    if re.search(r'\bvercel\s+env\s+(?:pull|ls)\b',lowered): return True
+    if re.search(r'\bgit\s+config\s+--get(?:-all)?\s+(?:credential\.helper|credential\.\w+)',lowered): return True
+    return False
+
+def _denied_tokenized(command):
     for text in flatten(command):
         if re.search(r'(?i)(?:console\.log|print|printf|echo)\s*\(?\s*(?:process\.env\.|\$\{?)[A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASS|URI|URL|DSN|DATABASE|CREDENTIAL)', text): return True
-        try: toks=shlex.split(text)
-        except ValueError: raise
+        toks=shlex.split(text)
         if not toks: continue
         words=[t for t in toks if t not in ('2>/dev/null','>/dev/null')]
         for i,t in enumerate(words):
