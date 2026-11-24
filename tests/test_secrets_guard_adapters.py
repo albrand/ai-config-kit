@@ -33,6 +33,9 @@ class ApostropheTests(unittest.TestCase):
         self.assertTrue(guard.denied("printenv API_TOKEN"))
         self.assertTrue(guard.denied("cat <<EOF\ncan't\nEOF\nprintenv API_TOKEN"))
 
+    def test_line_continuation_does_not_hide_a_dump(self):
+        self.assertTrue(guard.denied("cat <<EOF\ncan't\nEOF\nenv \\\n -0"))
+
     def test_unbalanced_quote_still_denies_environment_dump(self):
         self.assertTrue(guard.denied("echo can't\nenv"))
         self.assertTrue(guard.denied("echo can't; (env)"))
@@ -79,6 +82,11 @@ class CodexAdapterTests(unittest.TestCase):
 
     def test_heredoc_then_secret_variable_print_is_blocked_through_the_adapter(self):
         result = self.run_adapter("cat <<EOF\ncan't\nEOF\nprintenv API_TOKEN")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Secret-value output blocked", result.stderr)
+
+    def test_continued_dump_after_heredoc_is_blocked_through_the_adapter(self):
+        result = self.run_adapter("cat <<EOF\ncan't\nEOF\nenv \\\n -0")
         self.assertEqual(result.returncode, 2)
         self.assertIn("Secret-value output blocked", result.stderr)
 

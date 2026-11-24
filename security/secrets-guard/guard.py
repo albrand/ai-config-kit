@@ -89,6 +89,7 @@ def denied(command):
 def _denied_untokenizable(command):
     # An unbalanced quote (an apostrophe in a heredoc or patch body) defeats the shell tokenizer.
     # Fall back to whole-text checks, which stay strict: any secret-file name or secret-variable print denies.
+    command=re.sub(r'\\\n[ \t]*',' ',command)  # a line continuation is a space to the shell
     if FILES.search(command): return True
     if re.search(r'(?i)(?:console\.log|print|printf|echo)\s*\(?\s*(?:process\.env\.|\$\{?)[A-Z0-9_]*'+SENSITIVE.pattern, command): return True
     if re.search(r'(?i)\b(?:echo|printf)\b[^\n;&|]*\$\{?'+SENSITIVE.pattern, command): return True
