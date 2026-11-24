@@ -37,6 +37,10 @@ class ApostropheTests(unittest.TestCase):
         self.assertTrue(guard.denied("echo can't; if env; then :; fi"))
         self.assertTrue(guard.denied("echo can't; while printenv; do :; done"))
         self.assertTrue(guard.denied("echo can't; ! env"))
+        self.assertTrue(guard.denied("echo can't; command env"))
+        self.assertTrue(guard.denied("echo can't; sudo -E /usr/bin/env"))
+        self.assertTrue(guard.denied("echo can't; exec printenv"))
+        self.assertFalse(guard.denied("cat > n.txt <<EOF\ncan't set env vars here\nEOF"))
 
 
 class CodexAdapterTests(unittest.TestCase):
