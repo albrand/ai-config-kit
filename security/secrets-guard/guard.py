@@ -47,6 +47,7 @@ def flatten(cmd):
                 nested=words[1:]
                 while nested and (nested[0].startswith('-') or (verb=='env' and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*',nested[0]))): nested=nested[1:]
                 if nested: pending.append(' '.join(nested))
+                elif verb=='env': out.append('env')  # no payload: env prints the whole environment
             else: out.append(' '.join(words))
     return out
 
@@ -106,9 +107,15 @@ def _denied_tokenized(command):
         toks=shlex.split(text)
         if not toks: continue
         words=[t for t in toks if t not in ('2>/dev/null','>/dev/null')]
+        # A dump verb counts only in command position: the segment's first word after assignments and wrappers.
+        # Later words are arguments or heredoc body text (SQL `SET search_path`), not a shell `set`.
+        head=0
+        while head<len(words) and (re.fullmatch(r'[A-Za-z_]\w*=.*',words[head])
+                or os.path.basename(words[head]) in ('command','sudo','nohup','exec','xargs','time','nice','builtin','stdbuf')
+                or (head>0 and words[head].startswith('-'))): head+=1
+        if head<len(words) and DUMP.fullmatch(words[head].rsplit('/',1)[-1]): return True
         for i,t in enumerate(words):
             base=t.rsplit('/',1)[-1]
-            if DUMP.fullmatch(t): return True
             if base in READERS and any(FILES.search(x) for x in words[i+1:]):
                 # grep count and name-only searches are safe
                 if base in ('grep','egrep','fgrep') and any(x in ('-c','--count','-l','--files-with-matches') for x in words[i+1:]): continue

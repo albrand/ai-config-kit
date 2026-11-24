@@ -39,6 +39,7 @@ class GuardTests(unittest.TestCase):
             "x=; e${x}val \"$(printf 'bHMoKXsgY2F0ICIkQCI7IH0=' | base64 -d)\"; ls ~/.aws/credentials",
             "mongodb://fake:fake@host/db", "vercel env ls",
             "git config --get credential.helper",
+            "x=1 env", "sudo env", "foo; set", "a && printenv", "ls\nset", "/usr/bin/env", "xargs printenv",
         ]:
             self.assertTrue(guard.denied(command), command)
 
@@ -49,6 +50,15 @@ class GuardTests(unittest.TestCase):
             "set -a; . ~/pfull/prod.env; set +a; node script.js",
             "bb thread tell --message-file note.txt", "grep -c TOKEN .env",
             "grep BB_ACCOUNT_POOL_PARENT_TOKEN file", "git status", "pnpm lint", "ls -la",
+        ]:
+            self.assertFalse(guard.denied(command), command)
+
+    def test_sql_set_in_heredoc_is_not_a_variable_dump(self):
+        sql = "CREATE FUNCTION f() RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ select 1 $$;"
+        for command in [
+            "cat > f.sql <<'SQL'\n" + sql + "\nSQL",
+            "cat > f.sql <<'SQL'\n" + sql + "\nSQL\npsql -f f.sql",
+            "echo ok && cat > f.sql <<'SQL'\nALTER ROLE r SET statement_timeout = 0;\nSQL",
         ]:
             self.assertFalse(guard.denied(command), command)
 
