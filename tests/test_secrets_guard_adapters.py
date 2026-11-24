@@ -34,6 +34,9 @@ class ApostropheTests(unittest.TestCase):
         self.assertTrue(guard.denied("echo can't; (env)"))
         self.assertTrue(guard.denied("echo can't; { printenv; }"))
         self.assertTrue(guard.denied("echo can't; x=$(env)"))
+        self.assertTrue(guard.denied("echo can't; if env; then :; fi"))
+        self.assertTrue(guard.denied("echo can't; while printenv; do :; done"))
+        self.assertTrue(guard.denied("echo can't; ! env"))
 
 
 class CodexAdapterTests(unittest.TestCase):
