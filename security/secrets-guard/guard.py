@@ -78,6 +78,8 @@ def denied(command):
     if URI.search(command): return True
     if re.search(r'(?im)(?:^|[;&|]\s*)(?:env|printenv|set|export\s+-p|declare\s+-x)(?:\s*(?:$|[;&|]))', command): return True
     if re.search(r'(?i)(?:os\.environ|process\.env|getenv\s*\()',command) and re.search(r'(?i)(?:print|echo|printf|console\.log|write\s*\()',command) and SENSITIVE.search(command): return True
+    # Printing one secret-named variable is a value dump too, whether or not the tokenizer can parse the rest.
+    if re.search(r'(?i)\bprintenv\s+(?:-\S+\s+)*[\'"]?[A-Z0-9_]*'+SENSITIVE.pattern, command): return True
     # `set -a` is an assignment-export mode, not a shell variable dump.
     if re.search(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+\.env[^;]*;\s*set\s+\+a', command):
         command = re.sub(r'(?<!\S)set\s+-a\s*;\s*(?:\.|source)\s+[^;]+;\s*set\s+\+a', 'source-env-internally', command)
